@@ -1,1 +1,2 @@
--- The template owns no business tables. Add service-domain migrations here.\nSELECT 1;
+-- The template owns no business tables. Add service-domain migrations here.
+SELECT 1;
