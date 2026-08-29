@@ -16,10 +16,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
@@ -34,11 +34,15 @@ jobs:
           ./bin/api -version | grep -F "version=ci-${GITHUB_SHA::12} commit=$GITHUB_SHA build_time=$build_time"
       - name: Vet
         run: go vet ./...
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.13.1
+          args: ./...
       - name: Verify generated Swagger
         run: go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -o docs --parseInternal && git diff --exit-code -- docs
       - uses: bufbuild/buf-setup-action@v1
         with:
-          version: "2.13.1"
+          version: "1.50.0"
           github_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify protobuf contracts and generated code
         env:
@@ -48,7 +52,7 @@ jobs:
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             buf breaking --against ".git#branch=origin/$BASE_REF" --against-config buf.yaml
-          else
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
             buf breaking --against '.git#ref=HEAD^' --against-config buf.yaml
           fi
           make proto-check
@@ -77,8 +81,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
@@ -92,7 +96,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: docker/setup-qemu-action@v3
