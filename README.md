@@ -2,6 +2,28 @@
 
 Production-oriented starter using Gin, Uber Fx, Viper, slog + lumberjack, sqlx, Redis, JWT, robfig/cron, and golang-migrate. Fork it or change the module path before starting a separate project.
 
+<!-- microgen:template-only:start -->
+## Generate a new microservice
+
+Install the Cobra-based project generator once, then create independent services from a Git branch, tag, or commit. GitHub module paths automatically derive GHCR and Buf module names; every value can be overridden.
+
+```bash
+go install github.com/bufbuild/buf/cmd/buf@v1.72.0
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+go install github.com/lihongjie0209/go-api-template/cmd/microgen@latest
+microgen new \
+  --name orders-service \
+  --namespace commerce \
+  --module github.com/acme/orders-service \
+  --migration-table orders_service_schema_migrations
+```
+
+Use `--ref v1.0.0` to pin a released template or `--source /path/to/go-api-template` while developing the template locally. Other parameters include `--output`, `--image`, `--buf-module`, `--description`, `--generate=false`, `--tidy=false`, and `--git-init=false`. The generator refuses to overwrite an existing destination, regenerates protobuf descriptors through Buf, runs `go mod tidy`, initializes a fresh Git repository by default, edits business Go code through parser/AST plus `go/format`, edits `go.mod` through `x/mod/modfile`, and removes the generator itself from generated services.
+
+Every generated project includes explicit `development`, `test`, `production`, and Compose profiles. Development favors local diagnostics, test disables external side effects and telemetry, and production fails fast until database, Redis, authentication, migration, and TLS secrets are injected by the deployment platform.
+<!-- microgen:template-only:end -->
+
 ## Quick start
 
 ```bash
@@ -43,7 +65,8 @@ After unit and integration tests pass, CI builds `linux/amd64` and `linux/arm64`
 The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference, run the migration Job, and then deploy the service:
 
 ```bash
-kubectl create secret generic go-api-template \
+kubectl create namespace microservices --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/app?sslmode=require' \
   --from-literal=APP_REDIS_ADDRESS='redis:6379' \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
@@ -51,7 +74,7 @@ kubectl create secret generic go-api-template \
   --from-literal=APP_AUTH_CLIENT_ID='replace-me' \
   --from-literal=APP_AUTH_CLIENT_SECRET='replace-me'
 kubectl apply -f deployments/migrate-job.yaml
-kubectl wait --for=condition=complete job/go-api-template-migrate --timeout=5m
+kubectl wait --namespace microservices --for=condition=complete job/go-api-template-migrate --timeout=5m
 kubectl apply -f deployments/kubernetes.yaml
 ```
 
@@ -197,6 +220,12 @@ make migrate-down
 go run ./cmd/migrate -steps 1
 go run ./cmd/migrate -steps -1
 ```
+
+Set `APP_MIGRATION_AUTO_UP=true` to run all pending migrations before each service process starts its database pool, scheduler, HTTP server, or gRPC server. Startup fails when migration fails. Concurrent replicas are serialized by the database migration lock, and replicas that acquire the lock later observe `ErrNoChange` and continue. Keep destructive/down migrations as an explicit deployment operation; automatic startup only runs `up`.
+
+Every service must set its own `APP_MIGRATION_TABLE`, for example `orders_service_schema_migrations`. The value is passed to the database driver as `x-migrations-table`; both migration history and the advisory lock are therefore isolated when services share one physical database. Table names are restricted to lowercase letters, digits, and underscores and to PostgreSQL's 63-character identifier limit.
+
+The Compose and Kubernetes examples enable startup migration for the primary PostgreSQL database. The standalone migration command and Kubernetes migration Job remain available for controlled release pipelines or maintenance operations.
 
 Use a `mysql://` URL for MySQL and `postgres://` for PostgreSQL/Kingbase. The sample schema and indexes still require review against real data volume and access patterns.
 

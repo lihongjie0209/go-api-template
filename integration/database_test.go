@@ -7,15 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	appdb "github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
 	"github.com/lihongjie0209/go-api-template/internal/user"
-	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -31,9 +32,22 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			migrationCfg := config.Migration{Path: migrationPath, DatabaseURL: migrationURL}
-			if err := migration.Run(migrationCfg, "up", 0); err != nil {
-				t.Fatalf("migration up: %v", err)
+			migrationCfg := config.Migration{Path: migrationPath, DatabaseURL: migrationURL, Table: "integration_" + databaseType + "_schema_migrations"}
+			migrationErrors := make(chan error, 3)
+			var migrations sync.WaitGroup
+			for range 3 {
+				migrations.Add(1)
+				go func() {
+					defer migrations.Done()
+					migrationErrors <- migration.Run(migrationCfg, "up", 0)
+				}()
+			}
+			migrations.Wait()
+			close(migrationErrors)
+			for err := range migrationErrors {
+				if err != nil {
+					t.Fatalf("concurrent migration up: %v", err)
+				}
 			}
 
 			db, err := appdb.Open(ctx, config.Database{Type: databaseType, DSN: dsn, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second})
@@ -95,7 +109,7 @@ func startDatabase(t *testing.T, ctx context.Context, databaseType string) (stri
 		}
 		return dsn, dsn
 	case "mysql":
-		container, err := mysql.Run(ctx, "mysql:8.4", mysql.WithDatabase("app"), mysql.WithUsername("app"), mysql.WithPassword("app"), testcontainers.WithAlwaysPull())
+		container, err := mysql.Run(ctx, "mysql:8.4", mysql.WithDatabase("app"), mysql.WithUsername("app"), mysql.WithPassword("app"))
 		if err != nil {
 			t.Fatal(err)
 		}

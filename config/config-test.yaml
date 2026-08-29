@@ -1,8 +1,25 @@
 app:
+  env: test
   shutdown_timeout: 2s
 log:
   level: error
+  format: json
+database:
+  enabled: false
+redis:
+  enabled: false
+rate_limit:
+  enabled: false
+idempotency:
+  enabled: false
+migration:
+  auto_up: false
 cron:
   enabled: false
 grpc:
   reflection_enabled: false
+swagger:
+  enabled: false
+observability:
+  metrics_enabled: false
+  tracing_enabled: false

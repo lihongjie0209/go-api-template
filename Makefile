@@ -12,6 +12,9 @@ run:
 build:
 	go build -ldflags="$(LDFLAGS)" -o bin/api ./cmd/api
 	go build -trimpath -o bin/migrate ./cmd/migrate
+# microgen:template-only:start
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/microgen ./cmd/microgen
+# microgen:template-only:end
 
 docker-build:
 	docker build \

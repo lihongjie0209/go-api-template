@@ -2,6 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: go-api-template-migrate
+  namespace: microservices
   labels:
     app.kubernetes.io/name: go-api-template
     app.kubernetes.io/component: migration

@@ -18,7 +18,6 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/app"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
-	"github.com/lihongjie0209/go-api-template/internal/migration"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -42,9 +41,6 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrationPath, _ := filepath.Abs(filepath.Join("..", "migrations", "postgres"))
-	if err := migration.Run(config.Migration{Path: migrationPath, DatabaseURL: dsn}, "up", 0); err != nil {
-		t.Fatal(err)
-	}
 
 	redisContainer, err := rediscontainer.Run(ctx, "redis:7.4-alpine")
 	if err != nil {
@@ -70,6 +66,7 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		GRPC:          config.GRPC{Enabled: true, Address: grpcAddress, MaxReceiveBytes: 4 << 20},
 		Log:           config.Log{Level: "error", Format: "json", File: filepath.Join(t.TempDir(), "app.log"), MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
 		Database:      config.Database{Enabled: true, Type: "postgres", DSN: dsn, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second},
+		Migration:     config.Migration{AutoUp: true, Path: migrationPath, DatabaseURL: dsn, Table: "integration_e2e_schema_migrations"},
 		Redis:         config.Redis{Enabled: true, Address: redisOptions.Addr, DB: redisOptions.DB, DialTimeout: 5 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second},
 		Health:        config.Health{DatabaseTimeout: 2 * time.Second, RedisTimeout: 2 * time.Second},
 		Observability: config.Observability{MetricsEnabled: true},

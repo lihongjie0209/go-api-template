@@ -158,8 +158,10 @@ type Cron struct {
 	SampleSpec string `mapstructure:"sample_spec"`
 }
 type Migration struct {
+	AutoUp      bool   `mapstructure:"auto_up"`
 	Path        string `mapstructure:"path"`
 	DatabaseURL string `mapstructure:"database_url"`
+	Table       string `mapstructure:"table"`
 }
 type User struct {
 	CacheTTL       time.Duration `mapstructure:"cache_ttl"`
@@ -266,6 +268,7 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 }
 
 var validProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var validMigrationTable = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
 func profileConfigPath(path, profile string) string {
 	extension := filepath.Ext(path)
@@ -352,6 +355,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("cron.sample_spec", "0 */5 * * * *")
 	v.SetDefault("migration.path", "migrations/postgres")
 	v.SetDefault("migration.database_url", "")
+	v.SetDefault("migration.auto_up", false)
+	v.SetDefault("migration.table", "go_api_template_schema_migrations")
 	v.SetDefault("user.cache_ttl", "5m")
 	v.SetDefault("user.lock_ttl", "10s")
 	v.SetDefault("user.lock_retry_delay", "100ms")
@@ -381,6 +386,9 @@ func (c Config) Validate() error {
 	}
 	if c.Database.Enabled && (c.Database.DSN == "" || !isDBType(c.Database.Type)) {
 		return errors.New("enabled database requires dsn and type mysql, postgres, or kingbase")
+	}
+	if c.Migration.AutoUp && (!c.Database.Enabled || c.Migration.Path == "" || c.Migration.DatabaseURL == "" || !validMigrationTable.MatchString(c.Migration.Table)) {
+		return errors.New("migration.auto_up requires enabled database, path, database_url, and a valid service-specific table")
 	}
 	if c.Redis.Enabled && c.Redis.Address == "" {
 		return errors.New("enabled redis requires address")

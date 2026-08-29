@@ -4,19 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/logging"
+	"github.com/lihongjie0209/go-api-template/internal/migration"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/outbound"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	grpctransport "github.com/lihongjie0209/go-api-template/internal/transport/grpc"
 	httptransport "github.com/lihongjie0209/go-api-template/internal/transport/http"
 	"github.com/lihongjie0209/go-api-template/internal/user"
-	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
@@ -29,6 +31,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(newLogger),
 		fx.Provide(observability.NewTracing),
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger { return &fxevent.SlogLogger{Logger: logger} }),
+		MigrationModule,
 		DatabaseModule,
 		CacheModule,
 		fx.Provide(idempotency.New),
@@ -41,6 +44,19 @@ func New(cfg config.Config) *fx.App {
 		fx.StartTimeout(cfg.App.ShutdownTimeout),
 		fx.StopTimeout(cfg.App.ShutdownTimeout),
 	)
+}
+
+func runStartupMigration(cfg config.Config, logger *slog.Logger) error {
+	if !cfg.Migration.AutoUp {
+		return nil
+	}
+	started := time.Now()
+	logger.Info("running startup database migration", "path", cfg.Migration.Path)
+	if err := migration.Run(cfg.Migration, "up", 0); err != nil {
+		return fmt.Errorf("startup database migration: %w", err)
+	}
+	logger.Info("startup database migration completed", "duration", time.Since(started))
+	return nil
 }
 
 func newLogger(lc fx.Lifecycle, cfg config.Config) (*slog.Logger, error) {
@@ -94,6 +110,7 @@ var DatabaseModule = fx.Module("database", fx.Provide(newDatabase), fx.Invoke(fu
 		logger.Warn("database is disabled")
 	}
 }))
+var MigrationModule = fx.Module("migration", fx.Invoke(runStartupMigration))
 var CacheModule = fx.Module("cache", fx.Provide(newRedis, newLocker), fx.Invoke(func(client *redis.Client, logger *slog.Logger) {
 	if client == nil {
 		logger.Warn("redis is disabled")

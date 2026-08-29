@@ -94,8 +94,10 @@ cron:
   timezone: Asia/Shanghai
   sample_spec: "0 */5 * * * *"
 migration:
+  auto_up: false
   path: migrations/postgres
   database_url: ""
+  table: go_api_template_schema_migrations
 
 user:
   cache_ttl: 5m

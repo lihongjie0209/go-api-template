@@ -1,13 +1,20 @@
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservices
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: go-api-template
+  namespace: microservices
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: go-api-template
+  namespace: microservices
 data:
   APP_ENV: production
   APP_HTTP_ADDRESS: 0.0.0.0:8080
@@ -18,11 +25,15 @@ data:
   APP_RATE_LIMIT_ENABLED: "true"
   APP_IDEMPOTENCY_ENABLED: "true"
   APP_OBSERVABILITY_METRICS_ENABLED: "true"
+  APP_MIGRATION_AUTO_UP: "true"
+  APP_MIGRATION_PATH: /app/migrations/postgres
+  APP_MIGRATION_TABLE: go_api_template_schema_migrations
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: go-api-template
+  namespace: microservices
   labels:
     app.kubernetes.io/name: go-api-template
 spec:
@@ -119,6 +130,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: go-api-template
+  namespace: microservices
   labels:
     app.kubernetes.io/name: go-api-template
 spec:
@@ -139,6 +151,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: go-api-template
+  namespace: microservices
 spec:
   minAvailable: 1
   selector:
@@ -149,6 +162,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: go-api-template
+  namespace: microservices
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -171,6 +185,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: go-api-template
+  namespace: microservices
 spec:
   podSelector:
     matchLabels:

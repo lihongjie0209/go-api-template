@@ -52,6 +52,20 @@ jobs:
             buf breaking --against '.git#ref=HEAD^' --against-config buf.yaml
           fi
           make proto-check
+      - name: Verify generated microservice
+        run: |
+          go build -o /tmp/microgen ./cmd/microgen
+          generated_root="$(mktemp -d)"
+          /tmp/microgen new \
+            --name ci-service \
+            --namespace ci-services \
+            --module github.com/example/ci-service \
+            --source . \
+            --output "$generated_root/ci-service" \
+            --git-init=false
+          cd "$generated_root/ci-service"
+          go test ./...
+          go vet ./...
       - name: Validate Kubernetes manifests
         run: go run github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0 -strict -summary deployments/*.yaml
 

@@ -1,11 +1,34 @@
+# Production deliberately fails fast until secrets, endpoints, and TLS files
+# are injected through APP_* variables or the platform secret manager.
 app:
   env: production
+http:
+  address: 0.0.0.0:8080
 log:
   level: info
+  format: json
 swagger:
   enabled: false
   require_auth: true
 grpc:
+  address: 0.0.0.0:9090
   reflection_enabled: false
   tls:
     enabled: true
+    cert_file: ""
+    key_file: ""
+database:
+  enabled: true
+  dsn: ""
+redis:
+  enabled: true
+migration:
+  auto_up: true
+  database_url: ""
+rate_limit:
+  enabled: true
+idempotency:
+  enabled: true
+observability:
+  metrics_enabled: true
+  tracing_enabled: false
