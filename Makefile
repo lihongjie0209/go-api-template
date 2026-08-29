@@ -1,4 +1,4 @@
-.PHONY: run build docker-build test test-race test-integration lint fmt proto proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
+.PHONY: run build docker-build test test-race test-integration lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
@@ -52,9 +52,15 @@ swagger-check: swagger
 	git diff --exit-code -- docs
 
 proto:
-	protoc --go_out=. --go_opt=module=github.com/lihongjie0209/go-api-template --go-grpc_out=. --go-grpc_opt=module=github.com/lihongjie0209/go-api-template proto/hello/v1/hello.proto
+	buf generate
 
-proto-check: proto
+proto-lint:
+	buf lint
+
+proto-breaking:
+	buf breaking --against '.git#ref=HEAD^' --against-config buf.yaml
+
+proto-check: proto-lint proto
 	git diff --exit-code -- gen
 
 migrate-up:

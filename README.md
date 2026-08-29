@@ -36,6 +36,46 @@ curl -sS -X POST http://127.0.0.1:8080/api/v1/version
 
 The Compose `compose` profile runs the API against PostgreSQL while also migrating MySQL for compatibility work. The development stack intentionally does not start Prometheus, Grafana, Jaeger or an OTel Collector.
 
+## Container publishing and Kubernetes
+
+After unit and integration tests pass, CI builds `linux/amd64` and `linux/arm64` images and publishes `main`, `sha-*`, and semantic-version tags to `ghcr.io/lihongjie0209/go-api-template`. Images include Git metadata, an SBOM, and build provenance. Pull requests build both architectures without publishing.
+
+The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference, run the migration Job, and then deploy the service:
+
+```bash
+kubectl create secret generic go-api-template \
+  --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/app?sslmode=require' \
+  --from-literal=APP_REDIS_ADDRESS='redis:6379' \
+  --from-literal=APP_REDIS_PASSWORD='replace-me' \
+  --from-literal=APP_JWT_SECRET='replace-with-at-least-32-random-bytes' \
+  --from-literal=APP_AUTH_CLIENT_ID='replace-me' \
+  --from-literal=APP_AUTH_CLIENT_SECRET='replace-me'
+kubectl apply -f deployments/migrate-job.yaml
+kubectl wait --for=condition=complete job/go-api-template-migrate --timeout=5m
+kubectl apply -f deployments/kubernetes.yaml
+```
+
+Replace the example values through your secret manager in production. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
+
+## Shared gRPC contracts
+
+Protobuf definitions are governed by Buf through `buf.yaml` and reproducible generation settings in `buf.gen.yaml`. Run `make proto-lint`, `make proto-breaking`, and `make proto`; CI rejects incompatible schema changes and generated-code drift.
+
+For multiple production services, move `proto/` plus the two Buf configuration files into a dedicated contracts repository such as `company-apis`. Producers own API review and publish immutable Buf Schema Registry labels/tags; Go and non-Go consumers depend on a pinned generated SDK version instead of copying `.proto` or generated files. The lifecycle should be: propose schema change, lint and breaking check, review, publish contract version, upgrade consumers, then deploy the compatible producer.
+
+```text
+company-apis (single source of truth)
+  └── proto/<domain>/<service>/v1/*.proto
+          │ buf push + immutable label/tag
+          ▼
+Buf Schema Registry / generated SDKs
+          ├── producer: pinned Go module
+          ├── Go consumer: pinned Go module
+          └── other languages: pinned native package
+```
+
+Never reuse deleted field numbers or names: mark them `reserved`. Introduce breaking contracts under a new package such as `orders.v2`, and keep `v1` available until consumers have migrated. The module name in this template is `buf.build/lihongjie0209/go-api-template`; publishing it requires a matching BSR account/module and a `BUF_TOKEN` secret. For an internal installation, replace the module name with the organization's BSR module.
+
 All nested config keys can be overridden with `APP_` environment variables: `database.dsn` becomes `APP_DATABASE_DSN`. Environment values override the YAML file. Keep secrets out of YAML and source control.
 
 Environment profiles work like Spring Boot: load `config.yaml`, then an optional sibling `config-{env}.yaml`, then apply environment variables. Select the profile with `-env production` or `APP_ENV=production`; the flag has the highest priority. The active profile and loaded file list are available through `config.Config.Runtime`, while the profile is also placed in HTTP/gRPC contexts through `environment.FromContext` and attached to every structured log entry.
