@@ -1,0 +1,11 @@
+app:
+  env: production
+log:
+  level: info
+swagger:
+  enabled: false
+  require_auth: true
+grpc:
+  reflection_enabled: false
+  tls:
+    enabled: true

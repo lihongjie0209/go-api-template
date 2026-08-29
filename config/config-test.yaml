@@ -1,0 +1,8 @@
+app:
+  shutdown_timeout: 2s
+log:
+  level: error
+cron:
+  enabled: false
+grpc:
+  reflection_enabled: false

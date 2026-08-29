@@ -1,0 +1,11 @@
+app:
+  env: compose
+log:
+  level: debug
+  file: /app/logs/app.log
+swagger:
+  enabled: true
+grpc:
+  reflection_enabled: true
+cron:
+  enabled: true

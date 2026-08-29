@@ -1,0 +1,7 @@
+# Development profile overrides. Environment variables still take precedence.
+log:
+  level: debug
+swagger:
+  enabled: true
+grpc:
+  reflection_enabled: true

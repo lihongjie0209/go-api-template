@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-api-template
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: go-api-template
+  template:
+    metadata:
+      labels:
+        app: go-api-template
+    spec:
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: api
+          image: go-api-template:latest
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9090
+          startupProbe:
+            httpGet: {path: /live, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /live, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-api-template
+spec:
+  selector:
+    app: go-api-template
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 9090
+      targetPort: grpc

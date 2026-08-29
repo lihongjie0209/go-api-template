@@ -1,0 +1,445 @@
+basePath: /
+definitions:
+  buildinfo.Info:
+    properties:
+      build_time:
+        type: string
+      commit:
+        type: string
+      started_at:
+        type: string
+      uptime:
+        type: string
+      version:
+        type: string
+    type: object
+  health.Dependency:
+    properties:
+      latency:
+        type: string
+      status:
+        type: string
+    type: object
+  health.Status:
+    properties:
+      dependencies:
+        additionalProperties:
+          $ref: '#/definitions/health.Dependency'
+        type: object
+      status:
+        type: string
+    type: object
+  httptransport.CreateUserRequest:
+    properties:
+      email:
+        example: alice@example.com
+        type: string
+      name:
+        example: Alice
+        type: string
+    required:
+    - email
+    - name
+    type: object
+  httptransport.DeleteUserRequest:
+    properties:
+      id:
+        format: uuid
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.GetUserRequest:
+    properties:
+      id:
+        format: uuid
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.ListUsersRequest:
+    properties:
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+    type: object
+  httptransport.LoginRequest:
+    properties:
+      client_id:
+        example: local-client
+        type: string
+      client_secret:
+        example: local-secret
+        type: string
+    required:
+    - client_id
+    - client_secret
+    type: object
+  httptransport.LoginResponseBody:
+    properties:
+      access_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  httptransport.MeResponseBody:
+    properties:
+      subject:
+        type: string
+    type: object
+  httptransport.Response:
+    properties:
+      body: {}
+      code:
+        type: integer
+      message:
+        type: string
+      request_id:
+        type: string
+    type: object
+  httptransport.UpdateUserRequest:
+    properties:
+      email:
+        type: string
+      id:
+        format: uuid
+        type: string
+      name:
+        type: string
+      version:
+        type: integer
+    required:
+    - email
+    - id
+    - name
+    - version
+    type: object
+  user.Page:
+    properties:
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+      users:
+        items:
+          $ref: '#/definitions/user.User'
+        type: array
+    type: object
+  user.User:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: 'Production-oriented Go Web API scaffold. Application error codes:
+    0 success; 10000-19999 common/input; 20000-29999 authentication/authorization;
+    30000-39999 business; 50000-59999 infrastructure.'
+  title: Go API Template
+  version: "1.0"
+paths:
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Client credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.LoginResponseBody'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "401":
+          description: 'Code 20001: invalid credentials'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "429":
+          description: 'Code 10029: rate limited'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      summary: Issue a JWT access token
+      tags:
+      - authentication
+  /api/v1/me:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.MeResponseBody'
+              type: object
+        "401":
+          description: 'Code 20001: unauthorized'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Return the authenticated subject
+      tags:
+      - authentication
+  /api/v1/users/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/user.User'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "409":
+          description: 'Code 30009: email already exists'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Create a user
+      tags:
+      - users
+  /api/v1/users/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID and current version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a user using optimistic locking
+      tags:
+      - users
+  /api/v1/users/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/user.User'
+              type: object
+        "404":
+          description: 'Code 10004: user not found'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a user
+      tags:
+      - users
+  /api/v1/users/list:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Pagination
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ListUsersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/user.Page'
+              type: object
+      security:
+      - Bearer: []
+      summary: List users
+      tags:
+      - users
+  /api/v1/users/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User and current version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/user.User'
+              type: object
+        "409":
+          description: 'Code 30009: version conflict'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Update a user using optimistic locking
+      tags:
+      - users
+  /api/v1/version:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/buildinfo.Info'
+              type: object
+      summary: Return build and runtime version information
+      tags:
+      - operations
+  /live:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/health.Status'
+              type: object
+      summary: Check process liveness
+      tags:
+      - operations
+  /ready:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/health.Status'
+              type: object
+        "503":
+          description: 'Code 50003: dependency unavailable'
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/health.Status'
+              type: object
+      summary: Check database and Redis readiness
+      tags:
+      - operations
+schemes:
+- http
+- https
+securityDefinitions:
+  Bearer:
+    description: Enter "Bearer {JWT}".
+    in: header
+    name: Authorization
+    type: apiKey
+  PSK:
+    description: Enter "PSK {shared-key}" for routes configured with PSK authentication.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
