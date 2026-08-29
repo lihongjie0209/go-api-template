@@ -41,6 +41,7 @@ type Runtime struct {
 
 type App struct {
 	Name            string        `mapstructure:"name"`
+	Schema          string        `mapstructure:"schema"`
 	Env             string        `mapstructure:"env"`
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
 }
@@ -86,6 +87,8 @@ type Log struct {
 }
 type Database struct {
 	Enabled         bool          `mapstructure:"enabled"`
+	Name            string        `mapstructure:"name"`
+	Schema          string        `mapstructure:"schema"`
 	Type            string        `mapstructure:"type"`
 	DSN             string        `mapstructure:"dsn"`
 	MaxOpenConns    int           `mapstructure:"max_open_conns"`
@@ -158,10 +161,13 @@ type Cron struct {
 	SampleSpec string `mapstructure:"sample_spec"`
 }
 type Migration struct {
-	AutoUp      bool   `mapstructure:"auto_up"`
-	Path        string `mapstructure:"path"`
-	DatabaseURL string `mapstructure:"database_url"`
-	Table       string `mapstructure:"table"`
+	AutoUp       bool   `mapstructure:"auto_up"`
+	CreateSchema bool   `mapstructure:"create_schema"`
+	Path         string `mapstructure:"path"`
+	DatabaseURL  string `mapstructure:"database_url"`
+	Table        string `mapstructure:"table"`
+	Schema       string `mapstructure:"-"`
+	DatabaseName string `mapstructure:"-"`
 }
 type User struct {
 	CacheTTL       time.Duration `mapstructure:"cache_ttl"`
@@ -260,6 +266,8 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
+	cfg.Migration.Schema = cfg.Database.Schema
+	cfg.Migration.DatabaseName = cfg.Database.Name
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -313,6 +321,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.conn_max_lifetime", "5m")
 	v.SetDefault("database.conn_max_idle_time", "1m")
 	v.SetDefault("database.enabled", false)
+	v.SetDefault("database.name", "go_api_template_db")
+	v.SetDefault("database.schema", "go_api_template")
 	v.SetDefault("database.type", "postgres")
 	v.SetDefault("database.dsn", "")
 	v.SetDefault("redis.address", "127.0.0.1:6379")
@@ -356,6 +366,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("migration.path", "migrations/postgres")
 	v.SetDefault("migration.database_url", "")
 	v.SetDefault("migration.auto_up", false)
+	v.SetDefault("migration.create_schema", false)
 	v.SetDefault("migration.table", "go_api_template_schema_migrations")
 	v.SetDefault("user.cache_ttl", "5m")
 	v.SetDefault("user.lock_ttl", "10s")
@@ -369,6 +380,12 @@ func setDefaults(v *viper.Viper) {
 }
 
 func (c Config) Validate() error {
+	if !validMigrationTable.MatchString(c.Database.Name) {
+		return errors.New("database.name must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
+	if c.Database.Schema != "" && !validMigrationTable.MatchString(c.Database.Schema) {
+		return errors.New("database.schema must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
 	if c.HTTP.Address == "" {
 		return errors.New("http.address is required")
 	}

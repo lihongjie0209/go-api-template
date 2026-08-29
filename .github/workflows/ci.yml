@@ -59,6 +59,8 @@ jobs:
           /tmp/microgen new \
             --name ci-service \
             --namespace ci-services \
+            --database-name ci_service_db \
+            --database-schema ci_service \
             --module github.com/example/ci-service \
             --source . \
             --output "$generated_root/ci-service" \

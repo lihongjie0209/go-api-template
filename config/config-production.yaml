@@ -19,11 +19,14 @@ grpc:
     key_file: ""
 database:
   enabled: true
+  name: go_api_template_db
+  schema: go_api_template
   dsn: ""
 redis:
   enabled: true
 migration:
   auto_up: true
+  create_schema: false
   database_url: ""
 rate_limit:
   enabled: true

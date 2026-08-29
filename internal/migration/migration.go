@@ -1,10 +1,12 @@
 package migration
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -23,8 +25,11 @@ func Run(cfg config.Migration, direction string, steps int) (runErr error) {
 		return fmt.Errorf("resolve migration path: %w", err)
 	}
 	source := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}).String()
-	databaseURL, err := withMigrationTable(cfg.DatabaseURL, cfg.Table)
+	databaseURL, err := withMigrationOptions(cfg.DatabaseURL, cfg.DatabaseName, cfg.Table, cfg.Schema)
 	if err != nil {
+		return err
+	}
+	if err := ensureSchema(cfg, databaseURL); err != nil {
 		return err
 	}
 	m, err := migrate.New(source, databaseURL)
@@ -53,11 +58,26 @@ func Run(cfg config.Migration, direction string, steps int) (runErr error) {
 	return runErr
 }
 
-func withMigrationTable(databaseURL, table string) (string, error) {
-	if table == "" {
+func withMigrationOptions(databaseURL, databaseName, table, schema string) (string, error) {
+	if databaseName == "" && table == "" && schema == "" {
 		return databaseURL, nil
 	}
 	if strings.HasPrefix(databaseURL, "mysql://") {
+		if databaseName != "" {
+			queryIndex := strings.IndexByte(databaseURL, '?')
+			pathEnd := len(databaseURL)
+			if queryIndex >= 0 {
+				pathEnd = queryIndex
+			}
+			slash := strings.LastIndex(databaseURL[:pathEnd], "/")
+			if slash < 0 {
+				return "", errors.New("mysql migration URL is missing database path")
+			}
+			databaseURL = databaseURL[:slash+1] + databaseName + databaseURL[pathEnd:]
+		}
+		if table == "" {
+			return databaseURL, nil
+		}
 		separator := "?"
 		if strings.Contains(databaseURL, "?") {
 			separator = "&"
@@ -69,7 +89,40 @@ func withMigrationTable(databaseURL, table string) (string, error) {
 		return "", fmt.Errorf("parse migration database URL: %w", err)
 	}
 	query := parsed.Query()
-	query.Set("x-migrations-table", table)
+	if databaseName != "" {
+		parsed.Path = "/" + databaseName
+	}
+	if table != "" {
+		query.Set("x-migrations-table", table)
+	}
+	if schema != "" {
+		query.Set("search_path", schema)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+func ensureSchema(cfg config.Migration, databaseURL string) error {
+	if !cfg.CreateSchema || cfg.Schema == "" || strings.HasPrefix(cfg.DatabaseURL, "mysql://") {
+		return nil
+	}
+	if !regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`).MatchString(cfg.Schema) {
+		return errors.New("invalid migration schema")
+	}
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		return fmt.Errorf("parse database URL for schema creation: %w", err)
+	}
+	query := parsed.Query()
+	query.Del("x-migrations-table")
+	parsed.RawQuery = query.Encode()
+	db, err := sql.Open("postgres", parsed.String())
+	if err != nil {
+		return fmt.Errorf("open database to create schema: %w", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE SCHEMA IF NOT EXISTS "` + cfg.Schema + `"`); err != nil {
+		return fmt.Errorf("create migration schema %q: %w", cfg.Schema, err)
+	}
+	return nil
 }

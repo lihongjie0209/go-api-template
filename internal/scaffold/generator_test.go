@@ -15,7 +15,7 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	source := filepath.Join(root, "template")
 	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.25.0\n")
 	writeFixture(t, source, "main.go", "package main\nimport x \""+templateModule+"/internal/example\"\nvar _ = x.Name\nconst service = \""+templateName+"\"\n")
-	writeFixture(t, source, "deployments/app.yaml", "namespace: "+templateNamespace+"\nimage: "+templateImage+"\ntable: "+templateMigrationTable+"\n")
+	writeFixture(t, source, "deployments/app.yaml", "namespace: "+templateNamespace+"\nimage: "+templateImage+"\ntable: "+templateMigrationTable+"\ndatabase: "+templateDatabaseName+"\nschema: "+templateDatabaseSchema+"\n")
 	writeFixture(t, source, "config/config-development.yaml", "app:\n  name: "+templateName+"\n")
 	writeFixture(t, source, "config/config-test.yaml", "app:\n  name: "+templateName+"\n")
 	writeFixture(t, source, "config/config-production.yaml", "app:\n  name: "+templateName+"\n")
@@ -35,6 +35,8 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "namespace: commerce")
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "image: ghcr.io/acme/orders-service")
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "table: orders_service_schema_migrations")
+	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "database: orders_service")
+	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "schema: orders_service")
 	for _, profile := range []string{"development", "test", "production"} {
 		if _, err := os.Stat(filepath.Join(output, "config", "config-"+profile+".yaml")); err != nil {
 			t.Fatalf("profile %s: %v", profile, err)

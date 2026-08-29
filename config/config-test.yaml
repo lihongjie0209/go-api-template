@@ -6,6 +6,8 @@ log:
   format: json
 database:
   enabled: false
+  name: go_api_template_db
+  schema: go_api_template
 redis:
   enabled: false
 rate_limit:

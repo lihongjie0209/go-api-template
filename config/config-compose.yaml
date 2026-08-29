@@ -5,6 +5,9 @@ log:
   file: /app/logs/app.log
 swagger:
   enabled: true
+database:
+  name: go_api_template_db
+  schema: go_api_template
 grpc:
   reflection_enabled: true
 cron:

@@ -33,6 +33,8 @@ const (
 	templateBufModule      = "buf.build/lihongjie0209/go-api-template"
 	templateNamespace      = "microservices"
 	templateMigrationTable = "go_api_template_schema_migrations"
+	templateDatabaseName   = "go_api_template_db"
+	templateDatabaseSchema = "go_api_template"
 	templateDescription    = "Production-oriented starter using Gin, Uber Fx, Viper, slog + lumberjack, sqlx, Redis, JWT, robfig/cron, and golang-migrate. Fork it or change the module path before starting a separate project."
 	maxArchiveBytes        = 100 << 20
 )
@@ -44,6 +46,8 @@ type Options struct {
 	Name           string
 	Namespace      string
 	MigrationTable string
+	DatabaseName   string
+	DatabaseSchema string
 	Module         string
 	Output         string
 	Source         string
@@ -65,6 +69,12 @@ func (o *Options) Defaults() {
 	}
 	if o.MigrationTable == "" {
 		o.MigrationTable = strings.ReplaceAll(o.Name, "-", "_") + "_schema_migrations"
+	}
+	if o.DatabaseName == "" {
+		o.DatabaseName = strings.ReplaceAll(o.Name, "-", "_")
+	}
+	if o.DatabaseSchema == "" {
+		o.DatabaseSchema = strings.ReplaceAll(o.Name, "-", "_")
 	}
 	if o.Ref == "" {
 		o.Ref = "main"
@@ -92,6 +102,12 @@ func (o Options) Validate() error {
 	}
 	if !migrationTablePattern.MatchString(o.MigrationTable) {
 		return errors.New("migration-table must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
+	if !migrationTablePattern.MatchString(o.DatabaseName) {
+		return errors.New("database-name must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
+	if !migrationTablePattern.MatchString(o.DatabaseSchema) {
+		return errors.New("database-schema must contain lowercase letters, digits, or underscores and be at most 63 characters")
 	}
 	if err := module.CheckPath(o.Module); err != nil {
 		return fmt.Errorf("invalid Go module path: %w", err)
@@ -149,6 +165,8 @@ func Generate(ctx context.Context, options Options) (string, error) {
 		{templateBufModule, options.BufModule},
 		{templateNamespace, options.Namespace},
 		{templateMigrationTable, options.MigrationTable},
+		{templateDatabaseName, options.DatabaseName},
+		{templateDatabaseSchema, options.DatabaseSchema},
 		{templateDescription, options.Description},
 		{templateName, options.Name},
 	}

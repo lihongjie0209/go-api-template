@@ -6,14 +6,17 @@ x-app-env: &app-env
   APP_GRPC_ADDRESS: 0.0.0.0:9090
   APP_DATABASE_ENABLED: "true"
   APP_DATABASE_TYPE: postgres
-  APP_DATABASE_DSN: postgres://app:app@postgres:5432/app?sslmode=disable
+  APP_DATABASE_NAME: go_api_template_db
+  APP_DATABASE_SCHEMA: go_api_template
+  APP_DATABASE_DSN: postgres://app:app@postgres:5432/go_api_template_db?sslmode=disable&search_path=go_api_template
   APP_REDIS_ENABLED: "true"
   APP_REDIS_ADDRESS: redis:6379
   APP_RATE_LIMIT_ENABLED: "true"
   APP_IDEMPOTENCY_ENABLED: "true"
   APP_MIGRATION_AUTO_UP: "true"
+  APP_MIGRATION_CREATE_SCHEMA: "true"
   APP_MIGRATION_PATH: /app/migrations/postgres
-  APP_MIGRATION_DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
+  APP_MIGRATION_DATABASE_URL: postgres://app:app@postgres:5432/go_api_template_db?sslmode=disable&search_path=go_api_template
   APP_MIGRATION_TABLE: go_api_template_schema_migrations
   APP_JWT_SECRET: dev-only-jwt-secret-change-me-000000
   APP_AUTH_CLIENT_ID: local-client
@@ -32,7 +35,7 @@ services:
     image: mysql:8.4
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: app
+      MYSQL_DATABASE: go_api_template_db
       MYSQL_USER: app
       MYSQL_PASSWORD: app
     ports: ["3306:3306"]
@@ -48,11 +51,11 @@ services:
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
+      POSTGRES_DB: go_api_template_db
     ports: ["5432:5432"]
     volumes: [postgres-data:/var/lib/postgresql/data]
     healthcheck:
-      test: [CMD-SHELL, pg_isready -U app -d app]
+      test: [CMD-SHELL, pg_isready -U app -d go_api_template_db]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -74,7 +77,9 @@ services:
     command: [-config, /app/config/config.yaml, -env, compose, -direction, up]
     environment:
       APP_MIGRATION_PATH: /app/migrations/postgres
-      APP_MIGRATION_DATABASE_URL: postgres://app:app@postgres:5432/app?sslmode=disable
+      APP_DATABASE_SCHEMA: go_api_template
+      APP_MIGRATION_CREATE_SCHEMA: "true"
+      APP_MIGRATION_DATABASE_URL: postgres://app:app@postgres:5432/go_api_template_db?sslmode=disable&search_path=go_api_template
     depends_on:
       postgres: {condition: service_healthy}
     restart: "no"
@@ -85,7 +90,7 @@ services:
     command: [-config, /app/config/config.yaml, -env, compose, -direction, up]
     environment:
       APP_MIGRATION_PATH: /app/migrations/mysql
-      APP_MIGRATION_DATABASE_URL: mysql://app:app@tcp(mysql:3306)/app
+      APP_MIGRATION_DATABASE_URL: mysql://app:app@tcp(mysql:3306)/go_api_template_db
     depends_on:
       mysql: {condition: service_healthy}
     restart: "no"

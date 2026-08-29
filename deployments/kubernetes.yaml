@@ -21,6 +21,8 @@ data:
   APP_GRPC_ADDRESS: 0.0.0.0:9090
   APP_DATABASE_ENABLED: "true"
   APP_DATABASE_TYPE: postgres
+  APP_DATABASE_NAME: go_api_template_db
+  APP_DATABASE_SCHEMA: go_api_template
   APP_REDIS_ENABLED: "true"
   APP_RATE_LIMIT_ENABLED: "true"
   APP_IDEMPOTENCY_ENABLED: "true"

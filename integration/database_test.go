@@ -32,7 +32,11 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			migrationCfg := config.Migration{Path: migrationPath, DatabaseURL: migrationURL, Table: "integration_" + databaseType + "_schema_migrations"}
+			schema := ""
+			if databaseType == "postgres" {
+				schema = "integration_postgres"
+			}
+			migrationCfg := config.Migration{Path: migrationPath, DatabaseURL: migrationURL, Table: "integration_" + databaseType + "_schema_migrations", Schema: schema, CreateSchema: schema != ""}
 			migrationErrors := make(chan error, 3)
 			var migrations sync.WaitGroup
 			for range 3 {
@@ -50,7 +54,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				}
 			}
 
-			db, err := appdb.Open(ctx, config.Database{Type: databaseType, DSN: dsn, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second})
+			db, err := appdb.Open(ctx, config.Database{Type: databaseType, DSN: dsn, Schema: schema, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -36,6 +36,8 @@ log:
   compress: true
 database:
   enabled: false
+  name: go_api_template_db
+  schema: go_api_template
   type: postgres
   dsn: ""
   max_open_conns: 25
@@ -95,6 +97,7 @@ cron:
   sample_spec: "0 */5 * * * *"
 migration:
   auto_up: false
+  create_schema: false
   path: migrations/postgres
   database_url: ""
   table: go_api_template_schema_migrations

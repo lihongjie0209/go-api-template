@@ -16,6 +16,8 @@ microgen new \
   --name orders-service \
   --namespace commerce \
   --module github.com/acme/orders-service \
+  --database-name orders_service \
+  --database-schema orders_service \
   --migration-table orders_service_schema_migrations
 ```
 
@@ -99,7 +101,17 @@ Buf Schema Registry / generated SDKs
 
 Never reuse deleted field numbers or names: mark them `reserved`. Introduce breaking contracts under a new package such as `orders.v2`, and keep `v1` available until consumers have migrated. The module name in this template is `buf.build/lihongjie0209/go-api-template`; publishing it requires a matching BSR account/module and a `BUF_TOKEN` secret. For an internal installation, replace the module name with the organization's BSR module.
 
-All nested config keys can be overridden with `APP_` environment variables: `database.dsn` becomes `APP_DATABASE_DSN`. Environment values override the YAML file. Keep secrets out of YAML and source control.
+All nested config keys can be overridden with `APP_` environment variables: `database.name` becomes `APP_DATABASE_NAME` and `database.dsn` becomes `APP_DATABASE_DSN`. Environment values override the YAML file. Keep secrets out of YAML and source control.
+
+`microgen` optionally reads `.microgen.yaml` (preferred) or `microgen.yaml` from the current directory. Values in that file act as defaults; `MICROGEN_*` environment variables and explicit flags override them. For example:
+
+```yaml
+namespace: commerce
+module: github.com/acme/orders-service
+database-name: orders_service
+database-schema: orders_service
+migration-table: orders_service_schema_migrations
+```
 
 Environment profiles work like Spring Boot: load `config.yaml`, then an optional sibling `config-{env}.yaml`, then apply environment variables. Select the profile with `-env production` or `APP_ENV=production`; the flag has the highest priority. The active profile and loaded file list are available through `config.Config.Runtime`, while the profile is also placed in HTTP/gRPC contexts through `environment.FromContext` and attached to every structured log entry.
 
@@ -224,6 +236,8 @@ go run ./cmd/migrate -steps -1
 Set `APP_MIGRATION_AUTO_UP=true` to run all pending migrations before each service process starts its database pool, scheduler, HTTP server, or gRPC server. Startup fails when migration fails. Concurrent replicas are serialized by the database migration lock, and replicas that acquire the lock later observe `ErrNoChange` and continue. Keep destructive/down migrations as an explicit deployment operation; automatic startup only runs `up`.
 
 Every service must set its own `APP_MIGRATION_TABLE`, for example `orders_service_schema_migrations`. The value is passed to the database driver as `x-migrations-table`; both migration history and the advisory lock are therefore isolated when services share one physical database. Table names are restricted to lowercase letters, digits, and underscores and to PostgreSQL's 63-character identifier limit.
+
+PostgreSQL and Kingbase services may also share one database while using independent schemas. Set `APP_DATABASE_SCHEMA` (or `--database-schema` when generating) and the application connection will enforce that schema as `search_path`; startup migrations use the same schema, including their service-specific history table. Set `APP_MIGRATION_CREATE_SCHEMA=true` only when the runtime role is allowed to create schemas (enabled in Compose); production defaults to false so the platform/DBA can provision the schema with least privilege. MySQL ignores the schema setting and uses the selected database name.
 
 The Compose and Kubernetes examples enable startup migration for the primary PostgreSQL database. The standalone migration command and Kubernetes migration Job remain available for controlled release pipelines or maintenance operations.
 
