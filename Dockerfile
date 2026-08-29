@@ -24,6 +24,7 @@ LABEL org.opencontainers.image.title="go-api-template" \
       org.opencontainers.image.created="${BUILD_TIME}" \
       org.opencontainers.image.source="https://github.com/lihongjie0209/go-api-template"
 WORKDIR /app
+RUN mkdir -p /app/logs && chown -R app:app /app
 COPY --from=build /out/api /app/api
 COPY --from=build /out/migrate /app/migrate
 COPY config /app/config
