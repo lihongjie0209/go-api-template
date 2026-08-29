@@ -1,8 +1,9 @@
-.PHONY: run build test test-race test-integration lint fmt proto proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
+.PHONY: run build docker-build test test-race test-integration lint fmt proto proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
 
-VERSION ?= dev
-COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GOPROXY ?= https://proxy.golang.org,direct
 LDFLAGS = -s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=$(VERSION) -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=$(COMMIT) -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=$(BUILD_TIME)
 
 run:
@@ -10,7 +11,15 @@ run:
 
 build:
 	go build -ldflags="$(LDFLAGS)" -o bin/api ./cmd/api
-	go build -o bin/migrate ./cmd/migrate
+	go build -trimpath -o bin/migrate ./cmd/migrate
+
+docker-build:
+	docker build \
+		--build-arg GOPROXY="$(GOPROXY)" \
+		--build-arg VERSION="$(VERSION)" \
+		--build-arg COMMIT="$(COMMIT)" \
+		--build-arg BUILD_TIME="$(BUILD_TIME)" \
+		--tag go-api-template:$(VERSION) .
 
 test:
 	go test ./...
@@ -22,7 +31,7 @@ test-integration:
 	go test -tags=integration -count=1 -timeout=15m ./integration/...
 
 dev-up:
-	docker compose up --build -d --wait
+	VERSION="$(VERSION)" COMMIT="$(COMMIT)" BUILD_TIME="$(BUILD_TIME)" docker compose up --build -d --wait
 
 dev-down:
 	docker compose down --remove-orphans

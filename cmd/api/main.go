@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/lihongjie0209/go-api-template/internal/app"
+	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 )
 
@@ -25,7 +26,12 @@ import (
 func main() {
 	configPath := flag.String("config", "config/config.yaml", "configuration file path")
 	profile := flag.String("env", "", "active environment profile (overrides APP_ENV and config)")
+	showVersion := flag.Bool("version", false, "print build version information and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("version=%s commit=%s build_time=%s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildTime)
+		return
+	}
 	cfg, err := config.LoadWithProfile(*configPath, *profile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load configuration: %v\n", err)

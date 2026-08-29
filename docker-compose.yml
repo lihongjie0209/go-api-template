@@ -19,6 +19,9 @@ x-app-build: &app-build
   context: .
   args:
     GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    VERSION: ${VERSION:-dev}
+    COMMIT: ${COMMIT:-unknown}
+    BUILD_TIME: ${BUILD_TIME:-unknown}
 
 services:
   mysql:

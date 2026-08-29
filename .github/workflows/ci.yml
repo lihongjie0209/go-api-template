@@ -21,6 +21,11 @@ jobs:
         run: go mod tidy && git diff --exit-code -- go.mod go.sum
       - name: Test with race detector
         run: go test -race -shuffle=on -coverprofile=coverage.out ./...
+      - name: Build with Git metadata
+        run: |
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          make build VERSION="ci-${GITHUB_SHA::12}" COMMIT="$GITHUB_SHA" BUILD_TIME="$build_time"
+          ./bin/api -version | grep -F "version=ci-${GITHUB_SHA::12} commit=$GITHUB_SHA build_time=$build_time"
       - name: Vet
         run: go vet ./...
       - name: Verify generated Swagger

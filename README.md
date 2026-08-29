@@ -24,6 +24,16 @@ make dev-down
 
 If the default Go module proxy is unavailable on your network, override it only for the build, for example `GOPROXY=https://goproxy.cn,direct make dev-up`.
 
+Release metadata is injected automatically at build time. `make build`, `make docker-build`, and `make dev-up` embed the Git-derived version, full commit SHA, and UTC build time into the API binary. Docker images also expose the same values as OCI labels. Override them when needed with `VERSION=v1.2.3 COMMIT=<sha> BUILD_TIME=<RFC3339>`.
+
+```bash
+make docker-build
+docker inspect go-api-template:$(git describe --tags --always --dirty) \
+  --format '{{json .Config.Labels}}'
+./bin/api -version
+curl -sS -X POST http://127.0.0.1:8080/api/v1/version
+```
+
 The Compose `compose` profile runs the API against PostgreSQL while also migrating MySQL for compatibility work. The development stack intentionally does not start Prometheus, Grafana, Jaeger or an OTel Collector.
 
 All nested config keys can be overridden with `APP_` environment variables: `database.dsn` becomes `APP_DATABASE_DSN`. Environment values override the YAML file. Keep secrets out of YAML and source control.
