@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 )
 
 type Claims struct{ jwt.RegisteredClaims }

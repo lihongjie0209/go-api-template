@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"

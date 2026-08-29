@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/google/uuid"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

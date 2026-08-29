@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/go-redsync/redsync/v4"
 	redsyncgoredis "github.com/go-redsync/redsync/v4/redis/goredis/v9"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

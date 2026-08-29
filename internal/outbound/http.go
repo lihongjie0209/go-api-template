@@ -47,7 +47,7 @@ func NewHTTPClient(name string, cfg config.HTTPUpstream, metrics *observability.
 	}
 	client := &HTTPClient{name: name, baseURL: baseURL, cfg: cfg, metrics: metrics, client: &http.Client{Transport: otelhttp.NewTransport(transport), Timeout: cfg.Timeout}}
 	if cfg.Breaker.Enabled {
-		client.breaker = gobreaker.NewCircuitBreaker[*http.Response](gobreaker.Settings{
+		client.breaker = gobreaker.NewCircuitBreaker[*http.Response](gobreaker.Settings{ //nolint:bodyclose // The caller owns every returned response body.
 			Name: name, Timeout: cfg.Breaker.OpenTimeout,
 			ReadyToTrip: func(counts gobreaker.Counts) bool { return counts.ConsecutiveFailures >= cfg.Breaker.FailureThreshold },
 			IsExcluded:  func(err error) bool { return errors.Is(err, context.Canceled) },
@@ -143,9 +143,10 @@ func retryableHTTPStatus(status int) bool {
 	return status == 429 || status == 502 || status == 503 || status == 504
 }
 func applyHTTPAuth(request *http.Request, auth config.ClientAuth) {
-	if auth.Type == "bearer" {
+	switch auth.Type {
+	case "bearer":
 		request.Header.Set("Authorization", "Bearer "+auth.Token)
-	} else if auth.Type == "psk" {
+	case "psk":
 		request.Header.Set("Authorization", "PSK "+auth.Token)
 	}
 }

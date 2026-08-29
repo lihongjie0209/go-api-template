@@ -23,21 +23,22 @@ func NewRegistry(lc fx.Lifecycle, cfg config.Config, metrics *observability.Metr
 	for name, upstream := range cfg.Outbound.HTTP {
 		client, err := NewHTTPClient(name, upstream, metrics)
 		if err != nil {
-			registry.close()
+			_ = registry.close()
 			return nil, fmt.Errorf("create outbound HTTP client %q: %w", name, err)
 		}
 		registry.http[name] = client
 	}
 	for name, upstream := range cfg.Outbound.GRPC {
 		clientCfg := grpcclient.Config{Name: name, Target: upstream.Target, Timeout: upstream.Timeout, Retry: upstream.Retry, Breaker: upstream.Breaker, Metrics: metrics, TLS: grpcclient.TLSConfig{Enabled: upstream.TLS.Enabled, ServerName: upstream.TLS.ServerName, CAFile: upstream.TLS.CAFile, CertFile: upstream.TLS.CertFile, KeyFile: upstream.TLS.KeyFile}}
-		if upstream.Auth.Type == "bearer" {
+		switch upstream.Auth.Type {
+		case "bearer":
 			clientCfg.Token = upstream.Auth.Token
-		} else if upstream.Auth.Type == "psk" {
+		case "psk":
 			clientCfg.PSK = upstream.Auth.Token
 		}
 		connection, err := grpcclient.Dial(clientCfg)
 		if err != nil {
-			registry.close()
+			_ = registry.close()
 			return nil, fmt.Errorf("create outbound gRPC client %q: %w", name, err)
 		}
 		registry.grpc[name] = connection

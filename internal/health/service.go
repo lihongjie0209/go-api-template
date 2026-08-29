@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

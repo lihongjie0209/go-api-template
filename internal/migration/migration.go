@@ -120,9 +120,31 @@ func ensureSchema(cfg config.Migration, databaseURL string) error {
 	if err != nil {
 		return fmt.Errorf("open database to create schema: %w", err)
 	}
-	defer db.Close()
-	if _, err := db.Exec(`CREATE SCHEMA IF NOT EXISTS "` + cfg.Schema + `"`); err != nil {
+	defer func() { _ = db.Close() }()
+	if err := createSchema(db, cfg.Schema); err != nil {
 		return fmt.Errorf("create migration schema %q: %w", cfg.Schema, err)
+	}
+	return nil
+}
+
+func createSchema(db *sql.DB, schema string) (err error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin schema creation: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, "go-api-template:schema:"+schema); err != nil {
+		return fmt.Errorf("lock schema creation: %w", err)
+	}
+	if _, err = tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + schema + `"`); err != nil {
+		return fmt.Errorf("execute schema creation: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema creation: %w", err)
 	}
 	return nil
 }

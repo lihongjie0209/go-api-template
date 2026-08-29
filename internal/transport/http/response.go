@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/gin-gonic/gin"
+	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"go.opentelemetry.io/otel/trace"
 )
 

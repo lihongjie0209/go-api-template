@@ -51,8 +51,8 @@ fmt:
 swagger:
 	go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -o docs --parseInternal
 
-swagger-check: swagger
-	git diff --exit-code -- docs
+swagger-check:
+	@tmp_dir=$$(mktemp -d); trap 'rm -rf "$$tmp_dir"' EXIT; cp -R docs "$$tmp_dir/docs"; $(MAKE) swagger; diff -ru "$$tmp_dir/docs" docs
 
 proto:
 	buf generate

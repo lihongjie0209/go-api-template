@@ -9,15 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/principal"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
-	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -218,6 +219,7 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 			return
 		}
 		c.Set("subject", claims.Subject)
+		c.Request = c.Request.WithContext(principal.WithContext(c.Request.Context(), principal.Principal{Subject: claims.Subject, Method: principal.AuthenticationJWT}))
 		c.Next()
 	}
 }
@@ -231,6 +233,7 @@ func Authentication(service *auth.Service, logger *slog.Logger, cfg config.Auth)
 				return
 			}
 			c.Set("subject", "psk")
+			c.Request = c.Request.WithContext(principal.WithContext(c.Request.Context(), principal.Principal{Subject: "psk", Method: principal.AuthenticationPSK}))
 			c.Next()
 			return
 		}

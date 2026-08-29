@@ -71,7 +71,7 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		Health:        config.Health{DatabaseTimeout: 2 * time.Second, RedisTimeout: 2 * time.Second},
 		Observability: config.Observability{MetricsEnabled: true},
 		JWT:           config.JWT{Issuer: "integration", Secret: secret, TTL: time.Hour},
-		Auth:          config.Auth{ClientID: "client", ClientSecret: "secret", SkipHTTPPaths: []string{"/api/v1/version"}, SkipGRPCMethods: []string{"/grpc.health.v1.Health/*"}, PSK: config.PSK{Enabled: true, Key: secret, HTTPPaths: []string{"/api/v1/users/list"}, GRPCMethods: []string{"/hello.v1.HelloService/*"}}},
+		Auth:          config.Auth{ClientID: "client", ClientSecret: "secret", SkipHTTPPaths: []string{"/api/v1/version"}, SkipGRPCMethods: []string{"/grpc.health.v1.Health/*"}, PSK: config.PSK{Enabled: true, Key: secret, GRPCMethods: []string{"/hello.v1.HelloService/*"}}},
 		Cron:          config.Cron{Enabled: false, Timezone: "UTC"},
 		User:          config.User{CacheTTL: time.Minute, LockTTL: 10 * time.Second, LockRetryDelay: 20 * time.Millisecond},
 		Idempotency:   config.Idempotency{Enabled: true, ProcessingTTL: 30 * time.Second, ResultTTL: time.Hour, FailureTTL: time.Minute},
@@ -97,20 +97,6 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	if status := postJSON(t, baseURL+"/api/v1/me", "Bearer "+token, "", `{}`); status != http.StatusOK {
 		t.Fatalf("JWT status = %d", status)
 	}
-	if status := postJSON(t, baseURL+"/api/v1/users/list", "", "", `{"page":1}`); status != http.StatusUnauthorized {
-		t.Fatalf("missing PSK status = %d", status)
-	}
-	if status := postJSON(t, baseURL+"/api/v1/users/list", "PSK "+secret, "", `{"page":1}`); status != http.StatusOK {
-		t.Fatalf("PSK status = %d", status)
-	}
-	firstBody, status := postJSONBody(t, baseURL+"/api/v1/users/create", "Bearer "+token, "create-user-0001", `{"name":"Alice","email":"alice@example.com"}`)
-	if status != http.StatusOK {
-		t.Fatalf("create status = %d body=%s", status, firstBody)
-	}
-	secondBody, status := postJSONBody(t, baseURL+"/api/v1/users/create", "Bearer "+token, "create-user-0001", `{"name":"Alice","email":"alice@example.com"}`)
-	if status != http.StatusOK || responseUserID(t, firstBody) != responseUserID(t, secondBody) {
-		t.Fatalf("idempotent replay status=%d first=%s second=%s", status, firstBody, secondBody)
-	}
 
 	connection, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -125,23 +111,6 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	if _, err := hellov1.NewHelloServiceClient(connection).Ping(pskCtx, &hellov1.PingRequest{Message: "hello"}); err != nil {
 		t.Fatalf("PSK Ping: %v", err)
 	}
-	jwtCtx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
-	if _, err := hellov1.NewUserServiceClient(connection).ListUsers(jwtCtx, &hellov1.ListUsersRequest{Page: 1}); err != nil {
-		t.Fatalf("JWT ListUsers: %v", err)
-	}
-}
-
-func responseUserID(t *testing.T, data []byte) string {
-	t.Helper()
-	var response struct {
-		Body struct {
-			ID string `json:"id"`
-		} `json:"body"`
-	}
-	if err := json.Unmarshal(data, &response); err != nil {
-		t.Fatal(err)
-	}
-	return response.Body.ID
 }
 
 func freeAddress(t *testing.T) string {

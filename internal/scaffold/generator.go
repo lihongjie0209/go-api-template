@@ -149,7 +149,7 @@ func Generate(ctx context.Context, options Options) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create temporary output: %w", err)
 	}
-	defer os.RemoveAll(temporary)
+	defer func() { _ = os.RemoveAll(temporary) }()
 
 	if options.Source != "" {
 		err = copyLocal(options.Source, temporary)
@@ -246,7 +246,7 @@ func downloadTemplate(ctx context.Context, ref, destination string) error {
 	if err != nil {
 		return fmt.Errorf("download template: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("download template: unexpected HTTP status %s", response.Status)
 	}
@@ -265,7 +265,7 @@ func extractTarGzip(source io.Reader, destination string) error {
 	if err != nil {
 		return fmt.Errorf("open template archive: %w", err)
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 	reader := tar.NewReader(gzipReader)
 	for {
 		header, err := reader.Next()
@@ -455,7 +455,7 @@ func copyFile(source, destination string, entry fs.DirEntry) error {
 	if err != nil {
 		return err
 	}
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}

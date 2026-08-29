@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"time"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
@@ -17,7 +18,8 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 		return nil, err
 	}
 	var db *sqlx.DB
-	if driver == "pgx" && (cfg.Name != "" || cfg.Schema != "") {
+	switch driver {
+	case "pgx":
 		connectionConfig, parseErr := pgx.ParseConfig(cfg.DSN)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse database dsn: %w", parseErr)
@@ -28,18 +30,27 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 		if cfg.Schema != "" {
 			connectionConfig.RuntimeParams["search_path"] = cfg.Schema
 		}
+		connectionConfig.RuntimeParams["timezone"] = "Asia/Shanghai"
 		db = sqlx.NewDb(stdlib.OpenDB(*connectionConfig), driver)
-	} else if driver == "mysql" && cfg.Name != "" {
+	case "mysql":
 		connectionConfig, parseErr := mysqlDriver.ParseDSN(cfg.DSN)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse database dsn: %w", parseErr)
 		}
-		connectionConfig.DBName = cfg.Name
+		if cfg.Name != "" {
+			connectionConfig.DBName = cfg.Name
+		}
+		location, locationErr := time.LoadLocation("Asia/Shanghai")
+		if locationErr != nil {
+			return nil, fmt.Errorf("load database timezone: %w", locationErr)
+		}
+		connectionConfig.ParseTime = true
+		connectionConfig.Loc = location
 		db, err = sqlx.Open(driver, connectionConfig.FormatDSN())
 		if err != nil {
 			return nil, fmt.Errorf("open database: %w", err)
 		}
-	} else {
+	default:
 		db, err = sqlx.Open(driver, cfg.DSN)
 		if err != nil {
 			return nil, fmt.Errorf("open database: %w", err)

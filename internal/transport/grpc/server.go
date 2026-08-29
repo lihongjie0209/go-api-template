@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
-	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -21,8 +19,9 @@ import (
 	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/principal"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
-	"github.com/lihongjie0209/go-api-template/internal/user"
+
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
@@ -41,7 +40,7 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, healthService *apphealth.Service, userService *user.Service, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, healthService *apphealth.Service, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	options := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(cfg.GRPC.MaxReceiveBytes),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
@@ -57,7 +56,6 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, he
 	}
 	grpcServer := grpc.NewServer(options...)
 	hellov1.RegisterHelloServiceServer(grpcServer, &helloServer{})
-	hellov1.RegisterUserServiceServer(grpcServer, &userServer{service: userService})
 	grpc_health_v1.RegisterHealthServer(grpcServer, &healthServer{health: healthService})
 	if cfg.GRPC.ReflectionEnabled {
 		reflection.Register(grpcServer)
@@ -117,69 +115,6 @@ type healthServer struct {
 	health *apphealth.Service
 }
 
-type userServer struct {
-	hellov1.UnimplementedUserServiceServer
-	service *user.Service
-}
-
-func (s *userServer) CreateUser(ctx context.Context, req *hellov1.CreateUserRequest) (*hellov1.User, error) {
-	created, err := s.service.Create(ctx, req.GetName(), req.GetEmail())
-	return userResponse(created, err)
-}
-func (s *userServer) GetUser(ctx context.Context, req *hellov1.GetUserRequest) (*hellov1.User, error) {
-	found, err := s.service.Get(ctx, req.GetId())
-	return userResponse(found, err)
-}
-func (s *userServer) ListUsers(ctx context.Context, req *hellov1.ListUsersRequest) (*hellov1.ListUsersResponse, error) {
-	page, err := s.service.List(ctx, int(req.GetPage()), int(req.GetPageSize()))
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	users := make([]*hellov1.User, 0, len(page.Users))
-	for _, item := range page.Users {
-		users = append(users, toProtoUser(item))
-	}
-	return &hellov1.ListUsersResponse{Users: users, Total: page.Total, Page: int32(page.Page), PageSize: int32(page.PageSize)}, nil
-}
-func (s *userServer) UpdateUser(ctx context.Context, req *hellov1.UpdateUserRequest) (*hellov1.User, error) {
-	updated, err := s.service.Update(ctx, req.GetId(), req.GetName(), req.GetEmail(), req.GetVersion())
-	return userResponse(updated, err)
-}
-func (s *userServer) DeleteUser(ctx context.Context, req *hellov1.DeleteUserRequest) (*hellov1.DeleteUserResponse, error) {
-	if err := s.service.Delete(ctx, req.GetId(), req.GetVersion()); err != nil {
-		return nil, grpcError(err)
-	}
-	return &hellov1.DeleteUserResponse{Deleted: true}, nil
-}
-
-func userResponse(value user.User, err error) (*hellov1.User, error) {
-	if err != nil {
-		return nil, grpcError(err)
-	}
-	return toProtoUser(value), nil
-}
-func toProtoUser(value user.User) *hellov1.User {
-	return &hellov1.User{Id: value.ID, Name: value.Name, Email: value.Email, Version: value.Version, CreatedAt: value.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: value.UpdatedAt.Format(time.RFC3339Nano)}
-}
-func grpcError(err error) error {
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
-		return status.Error(codes.Internal, "internal server error")
-	}
-	code := codes.Internal
-	switch appErr.Code {
-	case apperror.CodeInvalidArgument:
-		code = codes.InvalidArgument
-	case apperror.CodeNotFound:
-		code = codes.NotFound
-	case apperror.CodeConflict:
-		code = codes.Aborted
-	case apperror.CodeDependencyUnavailable:
-		code = codes.Unavailable
-	}
-	return status.Error(code, appErr.Message)
-}
-
 func (s *healthServer) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
 	_, ready := s.health.Ready(ctx)
 	serving := grpc_health_v1.HealthCheckResponse_NOT_SERVING
@@ -235,7 +170,7 @@ func authenticateGRPC(ctx context.Context, method string, service *auth.Service,
 		if len(values) == 0 || !auth.VerifyPSK(values[0], cfg.PSK.Key) {
 			return nil, status.Error(codes.Unauthenticated, "missing or invalid PSK")
 		}
-		return context.WithValue(ctx, subjectKey{}, "psk"), nil
+		return principal.WithContext(ctx, principal.Principal{Subject: "psk", Method: principal.AuthenticationPSK}), nil
 	}
 	if auth.MatchesAny(method, cfg.SkipGRPCMethods) {
 		return ctx, nil
@@ -251,7 +186,7 @@ func authenticateGRPC(ctx context.Context, method string, service *auth.Service,
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 	}
-	return context.WithValue(ctx, subjectKey{}, claims.Subject), nil
+	return principal.WithContext(ctx, principal.Principal{Subject: claims.Subject, Method: principal.AuthenticationJWT}), nil
 }
 
 type contextServerStream struct {
@@ -329,8 +264,6 @@ func metricsStreamInterceptor(metrics *observability.Metrics, logger *slog.Logge
 		return err
 	}
 }
-
-type subjectKey struct{}
 
 func recoveryInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (response any, err error) {

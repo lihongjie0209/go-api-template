@@ -1,6 +1,6 @@
 # Go Web API Template
 
-Production-oriented starter using Gin, Uber Fx, Viper, slog + lumberjack, sqlx, Redis, JWT, robfig/cron, and golang-migrate. Fork it or change the module path before starting a separate project.
+Production-oriented starter using Gin, Uber Fx, Viper, slog + lumberjack, sqlx, Redis, NATS JetStream, JWT, robfig/cron, and golang-migrate. Fork it or change the module path before starting a separate project.
 
 <!-- microgen:template-only:start -->
 ## Generate a new microservice
@@ -171,6 +171,8 @@ Redis-backed GCRA limits are configurable for IP, API route, authenticated user 
 Configure `http.trusted_proxies` explicitly before trusting forwarding headers. CORS is deny-by-default, JSON bodies require `application/json`, and baseline browser security headers are enabled globally.
 
 JWT bypass and PSK policies are configuration-driven. `auth.skip_http_paths` and `auth.skip_grpc_methods` bypass authentication; `auth.psk.http_paths` and `auth.psk.grpc_methods` require `Authorization: PSK <key>` and take precedence over bypass/JWT rules. Patterns use Go `path.Match`: `*` and `?` are supported but do not cross `/`. Enable PSK with `APP_AUTH_PSK_ENABLED=true` and inject a key of at least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML.
+
+Authenticated JWT and PSK callers are injected into the request `context.Context` through `internal/principal`; application and repository code should read this principal when constructing explicit audit fields. NATS JetStream is available through `internal/eventbus` and is disabled by default. Domain writes that publish events must first persist them in the same database transaction through a service-owned outbox; the bus publisher must only dispatch committed rows. Consumers use durable names, explicit acknowledgements, redelivery, and idempotent processing.
 
 ## OpenAPI and observability
 

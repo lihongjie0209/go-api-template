@@ -11,6 +11,7 @@ import (
 	stdpprof "net/http/pprof"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	docs "github.com/lihongjie0209/go-api-template/docs"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
@@ -18,7 +19,6 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/ratelimit"
-	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -58,14 +58,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, authService
 		subject, _ := value.(string)
 		return subject
 	}, logger))
-	api.POST("/auth/login", RateLimit(limiter, cfg.RateLimit.Login, "login", func(c *gin.Context) string { return c.ClientIP() }, logger), handler.Login)
 	api.POST("/version", handler.Version)
 	api.POST("/me", handler.Me)
-	api.POST("/users/create", handler.CreateUser)
-	api.POST("/users/get", handler.GetUser)
-	api.POST("/users/list", handler.ListUsers)
-	api.POST("/users/update", handler.UpdateUser)
-	api.POST("/users/delete", handler.DeleteUser)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
 	lc.Append(fx.Hook{OnStart: func(context.Context) error {

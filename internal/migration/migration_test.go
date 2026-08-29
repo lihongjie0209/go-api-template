@@ -1,8 +1,11 @@
 package migration
 
 import (
+	"database/sql"
 	"net/url"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestWithMigrationTable(t *testing.T) {
@@ -26,6 +29,25 @@ func TestWithMigrationTable(t *testing.T) {
 	}
 	if parsed.Path != "/orders_db" {
 		t.Fatalf("database path = %q", parsed.Path)
+	}
+}
+
+func TestCreateSchemaSerializesConcurrentBootstrap(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtext\(\$1\)\)`).WithArgs("go-api-template:schema:orders").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`CREATE SCHEMA IF NOT EXISTS "orders"`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := createSchema((*sql.DB)(db), "orders"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

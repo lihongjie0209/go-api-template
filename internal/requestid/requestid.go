@@ -23,11 +23,15 @@ func Valid(value string) bool {
 		return false
 	}
 	for _, char := range value {
-		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("-_.", char)) {
+		if !allowedCharacter(char) {
 			return false
 		}
 	}
 	return true
+}
+
+func allowedCharacter(char rune) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("-_.", char)
 }
 func Generate() string {
 	value := make([]byte, 16)

@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
-	"github.com/gin-gonic/gin"
+	"github.com/lihongjie0209/go-api-template/internal/principal"
 )
 
 func TestRequestID(t *testing.T) {
@@ -57,7 +58,14 @@ func TestAuthentication_PSKPrecedesSkipAndJWT(t *testing.T) {
 				SkipHTTPPaths: []string{"/api/v1/external/*"},
 				PSK:           config.PSK{Enabled: true, Key: key, HTTPPaths: []string{"/api/v1/external/*"}},
 			}))
-			router.POST("/api/v1/external/callback", func(c *gin.Context) { OK(c, nil) })
+			router.POST("/api/v1/external/callback", func(c *gin.Context) {
+				value, ok := principal.FromContext(c.Request.Context())
+				if test.status == http.StatusOK && (!ok || value.Subject != "psk" || value.Method != principal.AuthenticationPSK) {
+					c.AbortWithStatus(http.StatusInternalServerError)
+					return
+				}
+				OK(c, nil)
+			})
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/external/callback", nil)
 			request.Header.Set("Authorization", test.header)
 			recorder := httptest.NewRecorder()

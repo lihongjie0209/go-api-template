@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lihongjie0209/go-api-template/internal/config"
 	redisrate "github.com/go-redis/redis_rate/v10"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

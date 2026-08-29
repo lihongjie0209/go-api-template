@@ -38,7 +38,7 @@ jobs:
         run: go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -o docs --parseInternal && git diff --exit-code -- docs
       - uses: bufbuild/buf-setup-action@v1
         with:
-          version: "1.72.0"
+          version: "2.13.1"
           github_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify protobuf contracts and generated code
         env:
@@ -52,6 +52,7 @@ jobs:
             buf breaking --against '.git#ref=HEAD^' --against-config buf.yaml
           fi
           make proto-check
+      # microgen:template-only:start
       - name: Verify generated microservice
         run: |
           go build -o /tmp/microgen ./cmd/microgen
@@ -68,6 +69,7 @@ jobs:
           cd "$generated_root/ci-service"
           go test ./...
           go vet ./...
+      # microgen:template-only:end
       - name: Validate Kubernetes manifests
         run: go run github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0 -strict -summary deployments/*.yaml
 
