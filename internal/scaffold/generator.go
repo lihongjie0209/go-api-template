@@ -389,7 +389,7 @@ func stripTemplateOnly(value string) string {
 
 func markerBlockBounds(value string, start, end int) (int, int) {
 	lineStart := strings.LastIndexByte(value[:start], '\n') + 1
-	lineEnd := end
+	var lineEnd int
 	if newline := strings.IndexByte(value[end:], '\n'); newline >= 0 {
 		lineEnd = end + newline + 1
 	} else {
