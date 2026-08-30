@@ -194,6 +194,10 @@ type EventBus struct {
 	PublishTimeout     time.Duration `mapstructure:"publish_timeout"`
 	ConsumerAckWait    time.Duration `mapstructure:"consumer_ack_wait"`
 	ConsumerMaxDeliver int           `mapstructure:"consumer_max_deliver"`
+	DispatchInterval   time.Duration `mapstructure:"dispatch_interval"`
+	DispatchBatchSize  int           `mapstructure:"dispatch_batch_size"`
+	DispatchLease      time.Duration `mapstructure:"dispatch_lease"`
+	DispatchRetryDelay time.Duration `mapstructure:"dispatch_retry_delay"`
 }
 type Outbound struct {
 	HTTP map[string]HTTPUpstream `mapstructure:"http"`
@@ -392,8 +396,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("idempotency.failure_ttl", "5m")
 	v.SetDefault("event_bus.enabled", false)
 	v.SetDefault("event_bus.urls", []string{"nats://127.0.0.1:4222"})
-	v.SetDefault("event_bus.stream_name", "SERVICE_EVENTS")
-	v.SetDefault("event_bus.subjects", []string{"service.>"})
+	v.SetDefault("event_bus.stream_name", "PLATFORM_EVENTS")
+	v.SetDefault("event_bus.subjects", []string{"platform.>"})
 	v.SetDefault("event_bus.storage", "file")
 	v.SetDefault("event_bus.max_age", "168h")
 	v.SetDefault("event_bus.duplicate_window", "10m")
@@ -402,6 +406,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("event_bus.publish_timeout", "5s")
 	v.SetDefault("event_bus.consumer_ack_wait", "30s")
 	v.SetDefault("event_bus.consumer_max_deliver", 10)
+	v.SetDefault("event_bus.dispatch_interval", "1s")
+	v.SetDefault("event_bus.dispatch_batch_size", 100)
+	v.SetDefault("event_bus.dispatch_lease", "30s")
+	v.SetDefault("event_bus.dispatch_retry_delay", "2s")
 	v.SetDefault("outbound.http", map[string]any{})
 	v.SetDefault("outbound.grpc", map[string]any{})
 }
@@ -509,8 +517,8 @@ func (c Config) Validate() error {
 	if c.Idempotency.Enabled && (!c.Redis.Enabled || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0) {
 		return errors.New("enabled idempotency requires redis and positive TTL values")
 	}
-	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) == 0 || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0) {
-		return errors.New("enabled event_bus requires URLs, stream, subjects, valid storage, positive timeouts, and max deliveries")
+	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.DispatchInterval <= 0 || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchLease <= 0 || c.EventBus.DispatchRetryDelay <= 0) {
+		return errors.New("enabled event_bus requires URLs, stream, canonical platform.> subjects, valid storage, positive timeouts, delivery, and dispatch settings")
 	}
 	for name, upstream := range c.Outbound.HTTP {
 		if upstream.BaseURL == "" || upstream.Timeout <= 0 {

@@ -116,7 +116,7 @@ idempotency:
 event_bus:
   enabled: false
   urls: [nats://127.0.0.1:4222]
-  stream_name: SERVICE_EVENTS
+  stream_name: PLATFORM_EVENTS
   subjects: [platform.>]
   storage: file
   max_age: 168h
@@ -126,6 +126,10 @@ event_bus:
   publish_timeout: 5s
   consumer_ack_wait: 30s
   consumer_max_deliver: 10
+  dispatch_interval: 1s
+  dispatch_batch_size: 100
+  dispatch_lease: 30s
+  dispatch_retry_delay: 2s
 
 # Named outbound clients. Put environment-specific endpoints and credentials in
 # config-{env}.yaml or APP_ variables.
