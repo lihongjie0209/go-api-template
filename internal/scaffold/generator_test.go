@@ -67,6 +67,26 @@ func TestOptionsValidation(t *testing.T) {
 	}
 }
 
+func TestStripTemplateOnlyRemovesIndentedMarkerLines(t *testing.T) {
+	t.Parallel()
+	input := "run: |\n  first\n  # microgen:template-only:start\n  removed\n  # microgen:template-only:end\n- name: next\n"
+	want := "run: |\n  first\n- name: next\n"
+
+	if got := stripTemplateOnly(input); got != want {
+		t.Fatalf("stripTemplateOnly() = %q, want %q", got, want)
+	}
+}
+
+func TestStripTemplateOnlyPreservesInlineContent(t *testing.T) {
+	t.Parallel()
+	input := "before <!-- microgen:template-only:start -->removed<!-- microgen:template-only:end --> after"
+	want := "before  after"
+
+	if got := stripTemplateOnly(input); got != want {
+		t.Fatalf("stripTemplateOnly() = %q, want %q", got, want)
+	}
+}
+
 func writeFixture(t *testing.T, root, relative, content string) {
 	t.Helper()
 	path := filepath.Join(root, relative)

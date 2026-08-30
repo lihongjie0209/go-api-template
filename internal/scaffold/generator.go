@@ -380,13 +380,32 @@ func stripTemplateOnly(value string) string {
 				break
 			}
 			end := start + endRelative + len(markers[1])
-			if end < len(value) && value[end] == '\n' {
-				end++
-			}
-			value = value[:start] + value[end:]
+			removeStart, removeEnd := markerBlockBounds(value, start, end)
+			value = value[:removeStart] + value[removeEnd:]
 		}
 	}
 	return value
+}
+
+func markerBlockBounds(value string, start, end int) (int, int) {
+	lineStart := strings.LastIndexByte(value[:start], '\n') + 1
+	lineEnd := end
+	if newline := strings.IndexByte(value[end:], '\n'); newline >= 0 {
+		lineEnd = end + newline + 1
+	} else {
+		lineEnd = len(value)
+	}
+
+	leading := value[lineStart:start]
+	trailingEnd := lineEnd
+	if trailingEnd > end && value[trailingEnd-1] == '\n' {
+		trailingEnd--
+	}
+	trailing := value[end:trailingEnd]
+	if strings.TrimSpace(leading) == "" && strings.TrimSpace(trailing) == "" {
+		return lineStart, lineEnd
+	}
+	return start, end
 }
 
 func rewriteGoFile(path string, replacements []struct{ old, new string }) error {
