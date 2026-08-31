@@ -297,7 +297,8 @@ outbound:
 ```bash
 go test ./...
 go test -race ./...
-make test-integration # requires Docker; runs Testcontainers MySQL/PostgreSQL/Redis and HTTP/gRPC E2E tests
+make test-integration    # local: compile the integration-tag suite only
+make ci-test-integration # GitHub CI: run Testcontainers MySQL/PostgreSQL/Redis and HTTP/gRPC E2E tests
 golangci-lint run ./...
 ```
 
