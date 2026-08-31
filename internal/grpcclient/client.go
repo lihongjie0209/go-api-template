@@ -74,7 +74,12 @@ func Dial(cfg Config) (*grpc.ClientConn, error) {
 	if cfg.Retry.MaxAttempts > 1 {
 		interceptors = append(interceptors, retryInterceptor(cfg.Retry))
 	}
-	options := []grpc.DialOption{grpc.WithTransportCredentials(transport), grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithChainUnaryInterceptor(interceptors...)}
+	options := []grpc.DialOption{
+		grpc.WithTransportCredentials(transport),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithChainUnaryInterceptor(interceptors...),
+		grpc.WithChainStreamInterceptor(metadataStreamInterceptor(cfg.Token, cfg.PSK)),
+	}
 	return grpc.NewClient(cfg.Target, options...)
 }
 
@@ -166,23 +171,34 @@ func timeoutInterceptor(timeout time.Duration) grpc.UnaryClientInterceptor {
 }
 func metadataInterceptor(token, psk string) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, connection *grpc.ClientConn, invoker grpc.UnaryInvoker, options ...grpc.CallOption) error {
-		pairs := []string{}
-		if token != "" {
-			pairs = append(pairs, "authorization", "Bearer "+token)
-		} else if psk != "" {
-			pairs = append(pairs, "authorization", "PSK "+psk)
-		}
-		if requestID, ok := RequestIDFromContext(ctx); ok {
-			pairs = append(pairs, "x-request-id", requestID)
-		}
-		if key, ok := idempotency.FromContext(ctx); ok {
-			pairs = append(pairs, "idempotency-key", key)
-		}
-		if len(pairs) > 0 {
-			ctx = metadata.AppendToOutgoingContext(ctx, pairs...)
-		}
+		ctx = withOutgoingMetadata(ctx, token, psk)
 		return invoker(ctx, method, req, reply, connection, options...)
 	}
+}
+
+func metadataStreamInterceptor(token, psk string) grpc.StreamClientInterceptor {
+	return func(ctx context.Context, descriptor *grpc.StreamDesc, connection *grpc.ClientConn, method string, streamer grpc.Streamer, options ...grpc.CallOption) (grpc.ClientStream, error) {
+		return streamer(withOutgoingMetadata(ctx, token, psk), descriptor, connection, method, options...)
+	}
+}
+
+func withOutgoingMetadata(ctx context.Context, token, psk string) context.Context {
+	pairs := make([]string, 0, 6)
+	if token != "" {
+		pairs = append(pairs, "authorization", "Bearer "+token)
+	} else if psk != "" {
+		pairs = append(pairs, "authorization", "PSK "+psk)
+	}
+	if requestID, ok := RequestIDFromContext(ctx); ok {
+		pairs = append(pairs, "x-request-id", requestID)
+	}
+	if key, ok := idempotency.FromContext(ctx); ok {
+		pairs = append(pairs, "idempotency-key", key)
+	}
+	if len(pairs) == 0 {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
 
 func WithRequestID(ctx context.Context, id string) context.Context {
