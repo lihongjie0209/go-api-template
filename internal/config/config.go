@@ -6,10 +6,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
@@ -282,7 +284,13 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	}
 	v.Set("app.env", profile)
 	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
+	if err := v.Unmarshal(
+		&cfg,
+		viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			stringToStringSliceHook(),
+		)),
+	); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.Migration.Schema = cfg.Database.Schema
@@ -292,6 +300,27 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	}
 	cfg.Runtime = Runtime{ActiveProfile: profile, ConfigFiles: loadedFiles}
 	return cfg, nil
+}
+
+func stringToStringSliceHook() mapstructure.DecodeHookFuncType {
+	stringSliceType := reflect.TypeFor[[]string]()
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if from.Kind() != reflect.String || to != stringSliceType {
+			return data, nil
+		}
+		raw := strings.TrimSpace(data.(string))
+		if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+			raw = strings.TrimSpace(raw[1 : len(raw)-1])
+		}
+		if raw == "" {
+			return []string{}, nil
+		}
+		values := strings.Split(raw, ",")
+		for index := range values {
+			values[index] = strings.Trim(strings.TrimSpace(values[index]), `"'`)
+		}
+		return values, nil
+	}
 }
 
 var validProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)

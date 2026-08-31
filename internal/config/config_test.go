@@ -23,6 +23,34 @@ func TestLoad_EnvironmentOverridesFile(t *testing.T) {
 	}
 }
 
+func TestLoad_EnvironmentStringSlicesAcceptBracketedLists(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("http:\n  address: 127.0.0.1:8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(
+		"APP_AUTH_PSK_GRPC_METHODS",
+		"[/platform.export.v1.ExportProviderService/*, /platform.import.v1.ImportProviderService/*]",
+	)
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := []string{
+		"/platform.export.v1.ExportProviderService/*",
+		"/platform.import.v1.ImportProviderService/*",
+	}
+	if len(cfg.Auth.PSK.GRPCMethods) != len(want) {
+		t.Fatalf("GRPCMethods = %#v", cfg.Auth.PSK.GRPCMethods)
+	}
+	for index := range want {
+		if cfg.Auth.PSK.GRPCMethods[index] != want[index] {
+			t.Fatalf("GRPCMethods[%d] = %q, want %q", index, cfg.Auth.PSK.GRPCMethods[index], want[index])
+		}
+	}
+}
+
 func TestLoad_UsesCanonicalPlatformEventStreamDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
