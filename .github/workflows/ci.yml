@@ -44,6 +44,8 @@ jobs:
           args: ./...
       - name: Verify generated Swagger
         run: go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/api/main.go -o docs --parseInternal && git diff --exit-code -- docs
+      - name: Verify integration execution policy
+        run: make integration-policy-check
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: "1.50.0"
