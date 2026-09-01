@@ -19,8 +19,9 @@ import (
 	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
-	"github.com/lihongjie0209/go-api-template/internal/principal"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/trace"
@@ -40,12 +41,12 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, healthService *apphealth.Service, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, authorizer platformauthz.Authorizer, healthService *apphealth.Service, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	options := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(cfg.GRPC.MaxReceiveBytes),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), authInterceptor(authService, cfg.Auth), metricsInterceptor(metrics, logger)),
-		grpc.ChainStreamInterceptor(environmentStreamInterceptor(cfg.Runtime.ActiveProfile), requestIDStreamInterceptor, idempotencyStreamInterceptor, recoveryStreamInterceptor(logger), authStreamInterceptor(authService, cfg.Auth), metricsStreamInterceptor(metrics, logger)),
+		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), authInterceptor(authService, cfg.Auth), platformauthz.UnaryServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), metricsInterceptor(metrics, logger)),
+		grpc.ChainStreamInterceptor(environmentStreamInterceptor(cfg.Runtime.ActiveProfile), requestIDStreamInterceptor, idempotencyStreamInterceptor, recoveryStreamInterceptor(logger), authStreamInterceptor(authService, cfg.Auth), platformauthz.StreamServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), metricsStreamInterceptor(metrics, logger)),
 	}
 	if cfg.GRPC.TLS.Enabled {
 		creds, err := serverCredentials(cfg.GRPC.TLS)
@@ -63,6 +64,15 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, he
 	server := &Server{server: grpcServer, address: cfg.GRPC.Address, logger: logger}
 	lc.Append(fx.Hook{OnStart: server.start(cfg.GRPC.Enabled), OnStop: server.stop})
 	return server, nil
+}
+
+func helloRequirement(enabled bool) platformauthz.GRPCResolver {
+	return func(method string) (platformauthz.Requirement, bool) {
+		if !enabled || method != hellov1.HelloService_Ping_FullMethodName {
+			return platformauthz.Requirement{}, false
+		}
+		return platformauthz.Requirement{Resource: "example.hello", Action: "ping", Scope: platformauthz.ScopePrincipal}, true
+	}
 }
 
 func (s *Server) start(enabled bool) func(context.Context) error {
@@ -170,7 +180,7 @@ func authenticateGRPC(ctx context.Context, method string, service *auth.Service,
 		if len(values) == 0 || !auth.VerifyPSK(values[0], cfg.PSK.Key) {
 			return nil, status.Error(codes.Unauthenticated, "missing or invalid PSK")
 		}
-		return principal.WithContext(ctx, principal.Principal{Subject: "psk", Method: principal.AuthenticationPSK}), nil
+		return platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount}), nil
 	}
 	if auth.MatchesAny(method, cfg.SkipGRPCMethods) {
 		return ctx, nil
@@ -182,11 +192,11 @@ func authenticateGRPC(ctx context.Context, method string, service *auth.Service,
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
-	claims, err := service.Parse(raw)
+	identity, err := service.Verify(ctx, raw)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 	}
-	return principal.WithContext(ctx, principal.Principal{Subject: claims.Subject, Method: principal.AuthenticationJWT}), nil
+	return platformprincipal.WithContext(ctx, identity), nil
 }
 
 type contextServerStream struct {

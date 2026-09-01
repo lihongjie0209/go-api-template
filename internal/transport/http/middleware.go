@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -16,9 +17,10 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
-	"github.com/lihongjie0209/go-api-template/internal/principal"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -213,13 +215,14 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 			Fail(c, logger, apperror.Unauthorized("missing bearer token"))
 			return
 		}
-		claims, err := service.Parse(raw)
+		identity, err := service.Verify(c.Request.Context(), raw)
 		if err != nil {
 			Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
 			return
 		}
-		c.Set("subject", claims.Subject)
-		c.Request = c.Request.WithContext(principal.WithContext(c.Request.Context(), principal.Principal{Subject: claims.Subject, Method: principal.AuthenticationJWT}))
+		c.Set("subject", identity.ID)
+		ctx := platformprincipal.WithContext(c.Request.Context(), identity)
+		c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, header))
 		c.Next()
 	}
 }
@@ -233,7 +236,8 @@ func Authentication(service *auth.Service, logger *slog.Logger, cfg config.Auth)
 				return
 			}
 			c.Set("subject", "psk")
-			c.Request = c.Request.WithContext(principal.WithContext(c.Request.Context(), principal.Principal{Subject: "psk", Method: principal.AuthenticationPSK}))
+			ctx := platformprincipal.WithContext(c.Request.Context(), platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount})
+			c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, c.GetHeader("Authorization")))
 			c.Next()
 			return
 		}
@@ -243,6 +247,32 @@ func Authentication(service *auth.Service, logger *slog.Logger, cfg config.Auth)
 		}
 		authenticate(c)
 	}
+}
+
+func Authorization(enabled bool, authorizer platformauthz.Authorizer, logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requirement, protected := exampleHTTPRequirement(c.FullPath())
+		if !enabled || !protected {
+			c.Next()
+			return
+		}
+		if err := platformauthz.Enforce(c.Request.Context(), authorizer, requirement); err != nil {
+			if errors.Is(err, platformauthz.ErrDecisionUnavailable) {
+				Fail(c, logger, apperror.Unavailable("authorization decision is unavailable", err))
+				return
+			}
+			Fail(c, logger, apperror.Forbidden("permission denied"))
+			return
+		}
+		c.Next()
+	}
+}
+
+func exampleHTTPRequirement(route string) (platformauthz.Requirement, bool) {
+	if route != "/api/v1/example/ping" {
+		return platformauthz.Requirement{}, false
+	}
+	return platformauthz.Requirement{Resource: "example.hello", Action: "ping", Scope: platformauthz.ScopePrincipal}, true
 }
 
 func requestID(c *gin.Context) string {

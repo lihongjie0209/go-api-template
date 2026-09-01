@@ -19,13 +19,14 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/ratelimit"
+	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, authService *auth.Service, limiter *ratelimit.Limiter, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, authService *auth.Service, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -53,13 +54,14 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, authService
 		}
 		swagger.GET("/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
-	api := router.Group("/api/v1", RateLimit(limiter, cfg.RateLimit.IP, "ip", func(c *gin.Context) string { return c.ClientIP() }, logger), RateLimit(limiter, cfg.RateLimit.API, "api", func(c *gin.Context) string { return c.FullPath() }, logger), Authentication(authService, logger, cfg.Auth), RateLimit(limiter, cfg.RateLimit.User, "user", func(c *gin.Context) string {
+	api := router.Group("/api/v1", RateLimit(limiter, cfg.RateLimit.IP, "ip", func(c *gin.Context) string { return c.ClientIP() }, logger), RateLimit(limiter, cfg.RateLimit.API, "api", func(c *gin.Context) string { return c.FullPath() }, logger), Authentication(authService, logger, cfg.Auth), Authorization(cfg.Authorization.Enabled, authorizer, logger), RateLimit(limiter, cfg.RateLimit.User, "user", func(c *gin.Context) string {
 		value, _ := c.Get("subject")
 		subject, _ := value.(string)
 		return subject
 	}, logger))
 	api.POST("/version", handler.Version)
 	api.POST("/me", handler.Me)
+	api.POST("/example/ping", handler.Ping)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
 	lc.Append(fx.Hook{OnStart: func(context.Context) error {
@@ -102,4 +104,4 @@ func registerPprof(group *gin.RouterGroup) {
 	}
 }
 
-var Module = fx.Module("http", fx.Provide(auth.New, health.New, ratelimit.New, NewHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, NewHandler, NewServer), fx.Invoke(func(*http.Server) {}))

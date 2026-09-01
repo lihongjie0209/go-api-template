@@ -34,6 +34,20 @@ definitions:
       subject:
         type: string
     type: object
+  httptransport.PingRequest:
+    properties:
+      message:
+        type: string
+    required:
+    - message
+    type: object
+  httptransport.PingResponseBody:
+    properties:
+      message:
+        type: string
+      version:
+        type: string
+    type: object
   httptransport.Response:
     properties:
       body: {}
@@ -52,6 +66,46 @@ info:
   title: Go API Template
   version: "1.0"
 paths:
+  /api/v1/example/ping:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Ping request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.PingResponseBody'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: 'Code 20003: permission denied'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: 'Code 50003: authorization unavailable'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Exercise an authenticated and authorized business endpoint
+      tags:
+      - example
   /api/v1/me:
     post:
       produces:

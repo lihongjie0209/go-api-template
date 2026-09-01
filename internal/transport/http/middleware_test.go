@@ -12,7 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
-	"github.com/lihongjie0209/go-api-template/internal/principal"
+	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 func TestRequestID(t *testing.T) {
@@ -34,6 +35,14 @@ func TestRequestID(t *testing.T) {
 	}
 	if response.RequestID != "client-request-1" {
 		t.Fatalf("request_id = %q", response.RequestID)
+	}
+}
+
+func TestExampleHTTPRequirementProtectsBusinessRoute(t *testing.T) {
+	t.Parallel()
+	requirement, ok := exampleHTTPRequirement("/api/v1/example/ping")
+	if !ok || requirement.Resource != "example.hello" || requirement.Action != "ping" || requirement.Scope != platformauthz.ScopePrincipal {
+		t.Fatalf("requirement = %+v, %v", requirement, ok)
 	}
 }
 
@@ -59,8 +68,8 @@ func TestAuthentication_PSKPrecedesSkipAndJWT(t *testing.T) {
 				PSK:           config.PSK{Enabled: true, Key: key, HTTPPaths: []string{"/api/v1/external/*"}},
 			}))
 			router.POST("/api/v1/external/callback", func(c *gin.Context) {
-				value, ok := principal.FromContext(c.Request.Context())
-				if test.status == http.StatusOK && (!ok || value.Subject != "psk" || value.Method != principal.AuthenticationPSK) {
+				value, ok := platformprincipal.FromContext(c.Request.Context())
+				if test.status == http.StatusOK && (!ok || value.ID != "go-api-template:psk" || value.Type != platformprincipal.TypeServiceAccount) {
 					c.AbortWithStatus(http.StatusInternalServerError)
 					return
 				}

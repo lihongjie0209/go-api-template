@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,6 +75,20 @@ func TestConfig_ValidateJWTSecret(t *testing.T) {
 	cfg := Config{HTTP: HTTP{Address: "127.0.0.1:8080"}, Auth: Auth{ClientID: "client", ClientSecret: "secret"}, JWT: JWT{Secret: "short"}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() error = nil, want error")
+	}
+}
+
+func TestConfig_ValidateAuthorizationDependency(t *testing.T) {
+	t.Parallel()
+	cfg := Config{
+		HTTP:          HTTP{Address: "127.0.0.1:8080", RequestTimeout: time.Second},
+		Database:      Database{Name: "go_api_template_db"},
+		Health:        Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second},
+		User:          User{CacheTTL: time.Second, LockTTL: time.Second, LockRetryDelay: time.Millisecond},
+		Authorization: Authorization{Enabled: true},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "outbound.grpc.authorization") {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/authorization"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
@@ -38,6 +39,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(idempotency.New),
 		fx.Provide(observability.NewMetrics),
 		outbound.Module,
+		fx.Provide(authorization.New),
 		scheduler.Module,
 		grpctransport.Module,
 		httptransport.Module,

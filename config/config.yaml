@@ -81,6 +81,9 @@ jwt:
 auth:
   client_id: ""
   client_secret: ""
+  jwks_url: ""
+  issuer: identity-service
+  audience: go-api-template
   # Supports path.Match wildcards; '*' never crosses '/'.
   skip_http_paths: [/api/v1/version]
   skip_grpc_methods:
@@ -91,6 +94,8 @@ auth:
     key: ""
     http_paths: []
     grpc_methods: []
+authorization:
+  enabled: false
 cron:
   enabled: true
   timezone: Asia/Shanghai
@@ -135,4 +140,18 @@ event_bus:
 # config-{env}.yaml or APP_ variables.
 outbound:
   http: {}
-  grpc: {}
+  grpc:
+    authorization:
+      target: 127.0.0.1:9092
+      timeout: 2s
+      retry:
+        max_attempts: 1
+        initial_backoff: 100ms
+        max_backoff: 1s
+        methods: []
+      breaker:
+        enabled: true
+        failure_threshold: 5
+        open_timeout: 30s
+      tls:
+        enabled: false

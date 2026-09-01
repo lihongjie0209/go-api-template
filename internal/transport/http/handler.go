@@ -22,6 +22,15 @@ type MeResponseBody struct {
 	Subject string `json:"subject"`
 }
 
+type PingRequest struct {
+	Message string `json:"message" binding:"required"`
+}
+
+type PingResponseBody struct {
+	Message string `json:"message"`
+	Version string `json:"version"`
+}
+
 // Login godoc
 // @Summary Issue a JWT access token
 // @Tags authentication
@@ -68,6 +77,27 @@ func (h *Handler) Ready(c *gin.Context) {
 func (h *Handler) Me(c *gin.Context) {
 	subject, _ := c.Get("subject")
 	OK(c, gin.H{"subject": subject})
+}
+
+// Ping godoc
+// @Summary Exercise an authenticated and authorized business endpoint
+// @Tags example
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PingRequest true "Ping request"
+// @Success 200 {object} Response{body=PingResponseBody}
+// @Failure 400 {object} Response "Code 10001: invalid request"
+// @Failure 403 {object} Response "Code 20003: permission denied"
+// @Failure 503 {object} Response "Code 50003: authorization unavailable"
+// @Router /api/v1/example/ping [post]
+func (h *Handler) Ping(c *gin.Context) {
+	var request PingRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Fail(c, h.logger, apperror.Invalid("invalid JSON request", err))
+		return
+	}
+	OK(c, PingResponseBody{Message: request.Message, Version: buildinfo.Version})
 }
 
 // Version godoc
