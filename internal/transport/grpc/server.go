@@ -2,12 +2,8 @@ package grpctransport
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -25,6 +21,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
+	platformidempotency "github.com/lihongjie0209/microservice-platform-go/idempotency"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -37,10 +34,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
-	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 type Server struct {
@@ -53,7 +46,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, au
 	options := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(cfg.GRPC.MaxReceiveBytes),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), authInterceptor(authService, cfg.Auth), platformauthz.UnaryServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), idempotencyExecutionInterceptor(idempotencyManager, cfg.Idempotency.GRPCMethods, logger), metricsInterceptor(metrics, logger)),
+		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), authInterceptor(authService, cfg.Auth), platformauthz.UnaryServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), platformidempotency.UnaryServerInterceptor(idempotencyManager, cfg.Idempotency.GRPCMethods, logger), metricsInterceptor(metrics, logger)),
 		grpc.ChainStreamInterceptor(environmentStreamInterceptor(cfg.Runtime.ActiveProfile), requestIDStreamInterceptor, idempotencyStreamInterceptor, recoveryStreamInterceptor(logger), authStreamInterceptor(authService, cfg.Auth), platformauthz.StreamServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), metricsStreamInterceptor(metrics, logger)),
 	}
 	if cfg.GRPC.TLS.Enabled {
@@ -168,121 +161,6 @@ func idempotencyInterceptor(ctx context.Context, req any, info *grpc.UnaryServer
 	return handler(idempotency.WithContext(ctx, values[0]), req)
 }
 
-type idempotencyManagerAPI interface {
-	Enabled() bool
-	Begin(context.Context, string, string) (idempotency.Decision, error)
-	Complete(context.Context, string, string, any) error
-	Fail(context.Context, string, string, idempotency.Failure) error
-}
-
-type cachedGRPCResponse struct {
-	Payload []byte `json:"payload"`
-}
-
-func idempotencyExecutionInterceptor(manager idempotencyManagerAPI, methods []string, logger *slog.Logger) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		key, ok := idempotency.FromContext(ctx)
-		if !ok || manager == nil || !manager.Enabled() || !auth.MatchesAny(info.FullMethod, methods) {
-			return handler(ctx, req)
-		}
-		fingerprint, err := grpcIdempotencyFingerprint(ctx, info.FullMethod, req)
-		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, "invalid idempotent request")
-		}
-		decision, err := manager.Begin(ctx, key, fingerprint)
-		if err != nil {
-			return nil, status.Error(codes.Unavailable, "idempotency is unavailable")
-		}
-		switch decision.State {
-		case idempotency.StateCompleted:
-			return replayGRPCResponse(info.FullMethod, decision.Response)
-		case idempotency.StateFailed:
-			return nil, status.Error(codes.Code(decision.Failure.GRPCCode), decision.Failure.Message)
-		case idempotency.StateProcessing:
-			return nil, status.Error(codes.Aborted, "request is already processing")
-		case idempotency.StateConflict:
-			return nil, status.Error(codes.AlreadyExists, "idempotency key belongs to a different request")
-		case idempotency.StateAcquired:
-		default:
-			return nil, status.Error(codes.Unavailable, "idempotency state is invalid")
-		}
-
-		response, handlerErr := handler(ctx, req)
-		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer cancel()
-		if handlerErr != nil {
-			failureStatus := status.Convert(handlerErr)
-			err = manager.Fail(persistCtx, key, decision.Owner, idempotency.Failure{Message: failureStatus.Message(), GRPCCode: int(failureStatus.Code())})
-		} else {
-			message, messageOK := response.(proto.Message)
-			if !messageOK {
-				return nil, status.Error(codes.Internal, "idempotent response is not protobuf")
-			}
-			payload, marshalErr := proto.MarshalOptions{Deterministic: true}.Marshal(message)
-			if marshalErr != nil {
-				return nil, status.Error(codes.Internal, "encode idempotent response")
-			}
-			err = manager.Complete(persistCtx, key, decision.Owner, cachedGRPCResponse{Payload: payload})
-		}
-		if err != nil {
-			logger.ErrorContext(ctx, "persist grpc idempotency result", "error", err, "method", info.FullMethod)
-		}
-		return response, handlerErr
-	}
-}
-
-func grpcIdempotencyFingerprint(ctx context.Context, method string, request any) (string, error) {
-	message, ok := request.(proto.Message)
-	if !ok {
-		return "", errors.New("request is not protobuf")
-	}
-	payload, err := proto.MarshalOptions{Deterministic: true}.Marshal(message)
-	if err != nil {
-		return "", err
-	}
-	principal, _ := platformprincipal.FromContext(ctx)
-	hash := sha256.New()
-	_, _ = hash.Write([]byte(principal.ID))
-	_, _ = hash.Write([]byte("\x00" + method + "\x00"))
-	_, _ = hash.Write(payload)
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func replayGRPCResponse(method string, encoded json.RawMessage) (proto.Message, error) {
-	var cached cachedGRPCResponse
-	if err := json.Unmarshal(encoded, &cached); err != nil {
-		return nil, status.Error(codes.Unavailable, "decode idempotent response")
-	}
-	output, err := grpcMethodOutput(method)
-	if err != nil {
-		return nil, status.Error(codes.Unavailable, "resolve idempotent response")
-	}
-	response := dynamicpb.NewMessage(output)
-	if err := proto.Unmarshal(cached.Payload, response); err != nil {
-		return nil, status.Error(codes.Unavailable, "decode idempotent response payload")
-	}
-	return response, nil
-}
-
-func grpcMethodOutput(method string) (protoreflect.MessageDescriptor, error) {
-	serviceName, methodName, ok := strings.Cut(strings.TrimPrefix(method, "/"), "/")
-	if !ok {
-		return nil, errors.New("invalid full method")
-	}
-	descriptor, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(serviceName))
-	if err != nil {
-		return nil, err
-	}
-	service, ok := descriptor.(protoreflect.ServiceDescriptor)
-	if !ok {
-		return nil, errors.New("descriptor is not a service")
-	}
-	methodDescriptor := service.Methods().ByName(protoreflect.Name(methodName))
-	if methodDescriptor == nil {
-		return nil, errors.New("method descriptor not found")
-	}
-	return methodDescriptor.Output(), nil
-}
 func environmentInterceptor(profile string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		return handler(environment.WithContext(ctx, profile), req)
