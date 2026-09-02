@@ -2,6 +2,9 @@ package grpctransport
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -9,6 +12,7 @@ import (
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -18,7 +22,109 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 )
+
+type fakeGRPCIdempotencyManager struct {
+	decision    idempotency.Decision
+	fingerprint string
+	completed   *cachedGRPCResponse
+	failed      *idempotency.Failure
+}
+
+func (*fakeGRPCIdempotencyManager) Enabled() bool { return true }
+func (m *fakeGRPCIdempotencyManager) Begin(_ context.Context, _, fingerprint string) (idempotency.Decision, error) {
+	m.fingerprint = fingerprint
+	return m.decision, nil
+}
+func (m *fakeGRPCIdempotencyManager) Complete(_ context.Context, _, _ string, response any) error {
+	value, ok := response.(cachedGRPCResponse)
+	if ok {
+		m.completed = &value
+	}
+	return nil
+}
+func (m *fakeGRPCIdempotencyManager) Fail(_ context.Context, _, _ string, failure idempotency.Failure) error {
+	m.failed = &failure
+	return nil
+}
+
+func grpcIdempotencyContext() context.Context {
+	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	return idempotency.WithContext(ctx, "operation-1")
+}
+
+func TestIdempotencyExecutionInterceptorCompletesAndReplays(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := &fakeGRPCIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	interceptor := idempotencyExecutionInterceptor(manager, []string{hellov1.HelloService_Ping_FullMethodName}, logger)
+	info := &grpc.UnaryServerInfo{FullMethod: hellov1.HelloService_Ping_FullMethodName}
+	request := &hellov1.PingRequest{Message: "hello"}
+	response, err := interceptor(grpcIdempotencyContext(), request, info, func(context.Context, any) (any, error) {
+		return &hellov1.PingResponse{Message: "hello", Version: "1.0.0"}, nil
+	})
+	if err != nil || response.(*hellov1.PingResponse).GetMessage() != "hello" {
+		t.Fatalf("response=%v error=%v", response, err)
+	}
+	if manager.fingerprint == "" || manager.completed == nil {
+		t.Fatalf("fingerprint=%q completed=%+v", manager.fingerprint, manager.completed)
+	}
+	encoded, err := json.Marshal(*manager.completed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.decision = idempotency.Decision{State: idempotency.StateCompleted, Response: encoded}
+	calls := 0
+	replayed, err := interceptor(grpcIdempotencyContext(), request, info, func(context.Context, any) (any, error) {
+		calls++
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, ok := replayed.(proto.Message)
+	if !ok || calls != 0 {
+		t.Fatalf("replayed=%T calls=%d", replayed, calls)
+	}
+	field := message.ProtoReflect().Descriptor().Fields().ByName("message")
+	if got := message.ProtoReflect().Get(field).String(); got != "hello" {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestGRPCIdempotencyFingerprintIncludesPrincipal(t *testing.T) {
+	t.Parallel()
+	request := &hellov1.PingRequest{Message: "hello"}
+	first, err := grpcIdempotencyFingerprint(grpcIdempotencyContext(), hellov1.HelloService_Ping_FullMethodName, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-2", Type: platformprincipal.TypeUser})
+	second, err := grpcIdempotencyFingerprint(other, hellov1.HelloService_Ping_FullMethodName, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("different principals produced the same fingerprint")
+	}
+}
+
+func TestIdempotencyExecutionInterceptorBypassesUnconfiguredMethod(t *testing.T) {
+	t.Parallel()
+	manager := &fakeGRPCIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateConflict}}
+	interceptor := idempotencyExecutionInterceptor(manager, []string{"/other.Service/Create"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	calls := 0
+	response, err := interceptor(
+		grpcIdempotencyContext(),
+		&hellov1.PingRequest{Message: "hello"},
+		&grpc.UnaryServerInfo{FullMethod: hellov1.HelloService_Ping_FullMethodName},
+		func(context.Context, any) (any, error) { calls++; return &hellov1.PingResponse{Message: "hello"}, nil },
+	)
+	if err != nil || calls != 1 || response.(*hellov1.PingResponse).GetMessage() != "hello" || manager.fingerprint != "" {
+		t.Fatalf("response=%v error=%v calls=%d fingerprint=%q", response, err, calls, manager.fingerprint)
+	}
+}
 
 func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	t.Parallel()

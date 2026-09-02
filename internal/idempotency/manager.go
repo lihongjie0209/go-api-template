@@ -25,6 +25,7 @@ type Failure struct {
 	Code       int    `json:"code"`
 	Message    string `json:"message"`
 	HTTPStatus int    `json:"http_status"`
+	GRPCCode   int    `json:"grpc_code,omitempty"`
 }
 type Decision struct {
 	State    State
@@ -35,12 +36,16 @@ type Decision struct {
 type Manager struct {
 	client *redis.Client
 	cfg    config.Idempotency
+	scope  string
 }
 
 func New(client *redis.Client, cfg config.Config) *Manager {
-	return &Manager{client: client, cfg: cfg.Idempotency}
+	return &Manager{client: client, cfg: cfg.Idempotency, scope: cfg.App.Name}
 }
 func (m *Manager) Enabled() bool { return m != nil && m.cfg.Enabled }
+func (m *Manager) storageKey(key string) string {
+	return "idempotency:" + m.scope + ":" + key
+}
 
 var beginScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -58,7 +63,7 @@ func (m *Manager) Begin(ctx context.Context, key, fingerprint string) (Decision,
 		return Decision{}, errors.New("idempotency is unavailable")
 	}
 	owner := uuid.NewString()
-	value, err := beginScript.Run(ctx, m.client, []string{"idempotency:" + key}, fingerprint, m.cfg.ProcessingTTL.Milliseconds(), owner).Slice()
+	value, err := beginScript.Run(ctx, m.client, []string{m.storageKey(key)}, fingerprint, m.cfg.ProcessingTTL.Milliseconds(), owner).Slice()
 	if err != nil {
 		return Decision{}, fmt.Errorf("begin idempotency request: %w", err)
 	}
@@ -93,7 +98,7 @@ func (m *Manager) Complete(ctx context.Context, key, owner string, response any)
 	if err != nil {
 		return fmt.Errorf("encode idempotency response: %w", err)
 	}
-	changed, err := finishScript.Run(ctx, m.client, []string{"idempotency:" + key}, owner, string(StateCompleted), "response", encoded, m.cfg.ResultTTL.Milliseconds()).Int()
+	changed, err := finishScript.Run(ctx, m.client, []string{m.storageKey(key)}, owner, string(StateCompleted), "response", encoded, m.cfg.ResultTTL.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("complete idempotency request: %w", err)
 	}
@@ -108,7 +113,7 @@ func (m *Manager) Fail(ctx context.Context, key, owner string, failure Failure) 
 	if err != nil {
 		return fmt.Errorf("encode idempotency failure: %w", err)
 	}
-	changed, err := finishScript.Run(ctx, m.client, []string{"idempotency:" + key}, owner, string(StateFailed), "failure", encoded, m.cfg.FailureTTL.Milliseconds()).Int()
+	changed, err := finishScript.Run(ctx, m.client, []string{m.storageKey(key)}, owner, string(StateFailed), "failure", encoded, m.cfg.FailureTTL.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("fail idempotency request: %w", err)
 	}

@@ -186,6 +186,8 @@ type User struct {
 }
 type Idempotency struct {
 	Enabled       bool          `mapstructure:"enabled"`
+	HTTPPaths     []string      `mapstructure:"http_paths"`
+	GRPCMethods   []string      `mapstructure:"grpc_methods"`
 	ProcessingTTL time.Duration `mapstructure:"processing_ttl"`
 	ResultTTL     time.Duration `mapstructure:"result_ttl"`
 	FailureTTL    time.Duration `mapstructure:"failure_ttl"`
@@ -569,8 +571,24 @@ func (c Config) Validate() error {
 	if c.User.CacheTTL <= 0 || c.User.LockTTL <= 0 || c.User.LockRetryDelay <= 0 {
 		return errors.New("user cache and lock durations must be positive")
 	}
-	if c.Idempotency.Enabled && (!c.Redis.Enabled || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0) {
-		return errors.New("enabled idempotency requires redis and positive TTL values")
+	if c.Idempotency.Enabled && (!c.Redis.Enabled || (len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0) {
+		return errors.New("enabled idempotency requires redis, at least one route pattern, and positive TTL values")
+	}
+	for _, pattern := range c.Idempotency.HTTPPaths {
+		if !strings.HasPrefix(pattern, "/api/") {
+			return fmt.Errorf("idempotency.http_paths contains path outside /api %q", pattern)
+		}
+		if _, err := path.Match(pattern, "/validation/target"); err != nil {
+			return fmt.Errorf("idempotency.http_paths contains invalid pattern %q: %w", pattern, err)
+		}
+	}
+	for _, pattern := range c.Idempotency.GRPCMethods {
+		if !strings.HasPrefix(pattern, "/") || strings.Count(pattern, "/") != 2 {
+			return fmt.Errorf("idempotency.grpc_methods contains invalid method pattern %q", pattern)
+		}
+		if _, err := path.Match(pattern, "/validation/target"); err != nil {
+			return fmt.Errorf("idempotency.grpc_methods contains invalid pattern %q: %w", pattern, err)
+		}
 	}
 	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.DispatchInterval <= 0 || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchLease <= 0 || c.EventBus.DispatchRetryDelay <= 0) {
 		return errors.New("enabled event_bus requires URLs, stream, canonical platform.> subjects, valid storage, positive timeouts, delivery, and dispatch settings")

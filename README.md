@@ -245,24 +245,13 @@ The Compose and Kubernetes examples enable startup migration for the primary Pos
 
 Use a `mysql://` URL for MySQL and `postgres://` for PostgreSQL/Kingbase. The sample schema and indexes still require review against real data volume and access patterns.
 
-## User module example
-
-`internal/user` demonstrates explicit SQL repositories, context propagation, a transaction boundary on create, optimistic locking through `version`, pagination, normalized input validation, Redis read-through caching, and a redsync lock keyed by a SHA-256 digest of the email. HTTP and gRPC are transport adapters over the same service.
-
-```bash
-curl -X POST http://127.0.0.1:8080/api/v1/users/create \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"name":"Alice","email":"alice@example.com"}'
-```
-
-Updates and deletes must send the current `version`; stale writes return application code `30009`.
-
 ## Idempotency
 
-Enable Redis-backed idempotency with `APP_IDEMPOTENCY_ENABLED=true`. Send an `Idempotency-Key` containing 8–128 safe ASCII characters on HTTP or `idempotency-key` metadata on gRPC. User creation stores `processing`, `completed`, or `failed` state; the same key and request replays the original business result, concurrent execution returns `30010`, and reusing a key with different input returns `30009`.
+Enable Redis-backed idempotency and explicitly list protected mutation routes with `idempotency.http_paths` and `idempotency.grpc_methods`; both lists support the same `*` wildcard syntax as authentication rules and can be overridden with bracketed environment lists. Enabling the feature without Redis, positive TTLs, or at least one protected route fails startup. Query/list POST endpoints must not be included.
 
-The Redis state transition uses Lua plus an owner token, so an expired worker cannot overwrite a newer owner. The database transaction commits before the completed result is published; unique database constraints remain the final integrity boundary.
+Clients send an `Idempotency-Key` containing 8–128 safe ASCII characters on HTTP or `idempotency-key` metadata on unary gRPC. The fingerprint includes the authenticated principal, method, route, and deterministic request payload. The same key and request replays the original unified JSON or protobuf result, concurrent execution returns the request-in-progress error, and reusing a key with different input returns a conflict. HTTP replay uses the current Request ID rather than leaking the original request context.
+
+Redis keys include the service name so independently deployed services can safely share one Redis database. State transitions use Lua plus an owner token, so an expired worker cannot overwrite a newer owner. The database transaction commits before the completed result is published; unique database constraints remain the final integrity boundary.
 
 ## Outbound clients
 

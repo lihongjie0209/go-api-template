@@ -52,6 +52,26 @@ func TestLoad_EnvironmentStringSlicesAcceptBracketedLists(t *testing.T) {
 	}
 }
 
+func TestLoad_IdempotencyRouteListsCanBeOverriddenByEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("idempotency:\n  http_paths: []\n  grpc_methods: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APP_IDEMPOTENCY_HTTP_PATHS", "[/api/v1/orders/create, /api/v1/orders/retry]")
+	t.Setenv("APP_IDEMPOTENCY_GRPC_METHODS", "[/orders.v1.OrderService/Create]")
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Idempotency.HTTPPaths) != 2 || cfg.Idempotency.HTTPPaths[1] != "/api/v1/orders/retry" {
+		t.Fatalf("HTTPPaths = %#v", cfg.Idempotency.HTTPPaths)
+	}
+	if len(cfg.Idempotency.GRPCMethods) != 1 || cfg.Idempotency.GRPCMethods[0] != "/orders.v1.OrderService/Create" {
+		t.Fatalf("GRPCMethods = %#v", cfg.Idempotency.GRPCMethods)
+	}
+}
+
 func TestLoad_UsesCanonicalPlatformEventStreamDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
