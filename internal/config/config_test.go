@@ -92,6 +92,21 @@ func TestConfig_ValidateAuthorizationDependency(t *testing.T) {
 	}
 }
 
+func TestValidateClientPolicy_PlaintextCredentialsRequireExplicitNonProductionOptIn(t *testing.T) {
+	retry := Retry{MaxAttempts: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
+	auth := ClientAuth{Type: "psk", Token: strings.Repeat("p", 32)}
+	if err := validateClientPolicy("application", auth, retry, Breaker{}, ClientTLS{}, false); err == nil || !strings.Contains(err.Error(), "allow_insecure") {
+		t.Fatalf("validateClientPolicy() error = %v", err)
+	}
+	insecureTLS := ClientTLS{AllowInsecure: true}
+	if err := validateClientPolicy("application", auth, retry, Breaker{}, insecureTLS, false); err != nil {
+		t.Fatalf("validateClientPolicy() development error = %v", err)
+	}
+	if err := validateClientPolicy("application", auth, retry, Breaker{}, insecureTLS, true); err == nil || !strings.Contains(err.Error(), "production") {
+		t.Fatalf("validateClientPolicy() production error = %v", err)
+	}
+}
+
 func TestLoadWithProfile_MergesProfileThenEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "config.yaml")
