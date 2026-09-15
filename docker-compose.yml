@@ -20,7 +20,8 @@ x-app-env: &app-env
   APP_MIGRATION_PATH: /app/migrations/postgres
   APP_MIGRATION_DATABASE_URL: postgres://app:app@postgres:5432/go_api_template_db?sslmode=disable&search_path=go_api_template
   APP_MIGRATION_TABLE: go_api_template_schema_migrations
-  APP_JWT_SECRET: dev-only-jwt-secret-change-me-000000
+  APP_JWT_KEY_ID: compose-development
+  APP_JWT_PRIVATE_KEY_FILE: /tmp/go-api-template-compose-jwt.pem
   APP_AUTH_CLIENT_ID: local-client
   APP_AUTH_CLIENT_SECRET: local-secret
 
@@ -110,6 +111,9 @@ services:
 
   api:
     build: *app-build
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - umask 077; openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/go-api-template-compose-jwt.pem >/dev/null 2>&1; exec /app/api -config /app/config/config.yaml
     environment: *app-env
     ports: ["8080:8080", "9090:9090"]
     volumes: [api-logs:/app/logs]

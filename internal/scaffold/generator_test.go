@@ -16,9 +16,10 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.25.0\n")
 	writeFixture(t, source, "main.go", "package main\nimport x \""+templateModule+"/internal/example\"\nvar _ = x.Name\nconst service = \""+templateName+"\"\n")
 	writeFixture(t, source, "deployments/app.yaml", "namespace: "+templateNamespace+"\nimage: "+templateImage+"\ntable: "+templateMigrationTable+"\ndatabase: "+templateDatabaseName+"\nschema: "+templateDatabaseSchema+"\n")
-	writeFixture(t, source, "config/config-development.yaml", "app:\n  name: "+templateName+"\n")
-	writeFixture(t, source, "config/config-test.yaml", "app:\n  name: "+templateName+"\n")
-	writeFixture(t, source, "config/config-production.yaml", "app:\n  name: "+templateName+"\n")
+	profileConfig := "app:\n  name: " + templateName + "\ndatabase:\n  name: " + templateDatabaseName + "\n  schema: " + templateDatabaseSchema + "\nmigration:\n  table: " + templateMigrationTable + "\n"
+	writeFixture(t, source, "config/config-development.yaml", profileConfig)
+	writeFixture(t, source, "config/config-test.yaml", profileConfig)
+	writeFixture(t, source, "config/config-production.yaml", profileConfig)
 	writeFixture(t, source, ".git/config", "must not be copied")
 	writeFixture(t, source, "cmd/microgen/main.go", "package main")
 	output := filepath.Join(root, "orders")
@@ -38,10 +39,16 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "database: orders_service")
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "schema: orders_service")
 	for _, profile := range []string{"development", "test", "production"} {
-		if _, err := os.Stat(filepath.Join(output, "config", "config-"+profile+".yaml")); err != nil {
+		path := filepath.Join(output, "config", "config-"+profile+".yaml")
+		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("profile %s: %v", profile, err)
 		}
+		assertContains(t, path, "name: orders-service")
+		assertContains(t, path, "name: orders_service")
+		assertContains(t, path, "schema: orders_service")
+		assertContains(t, path, "table: orders_service_schema_migrations")
 	}
+	assertNoTemplateIdentity(t, output)
 	if _, err := os.Stat(filepath.Join(output, ".git")); !os.IsNotExist(err) {
 		t.Fatalf("source .git was copied: %v", err)
 	}
@@ -55,6 +62,32 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	formatted, err := format.Source(goSource)
 	if err != nil || string(formatted) != string(goSource) {
 		t.Fatalf("generated Go source is not formatted: %v", err)
+	}
+}
+
+func assertNoTemplateIdentity(t *testing.T, root string) {
+	t.Helper()
+	forbidden := []string{templateModule, templateImage, templateBufModule, templateNamespace, templateMigrationTable, templateDatabaseName, templateDatabaseSchema, templateName}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.IndexByte(string(data), 0) >= 0 {
+			return nil
+		}
+		for _, value := range forbidden {
+			if strings.Contains(string(data), value) {
+				t.Errorf("%s retains template identity %q", path, value)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

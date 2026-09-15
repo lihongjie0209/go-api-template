@@ -30,7 +30,9 @@ Every generated project includes explicit `development`, `test`, `production`, a
 
 ```bash
 cp config/config.yaml config/config.local.yaml
-export APP_JWT_SECRET='replace-with-at-least-32-random-bytes'
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/go-api-template-jwt.pem
+export APP_JWT_KEY_ID='local-development'
+export APP_JWT_PRIVATE_KEY_FILE='/tmp/go-api-template-jwt.pem'
 export APP_AUTH_CLIENT_ID='local-client'
 export APP_AUTH_CLIENT_SECRET='local-secret'
 go run ./cmd/api -config config/config.local.yaml
@@ -72,7 +74,8 @@ kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/app?sslmode=require' \
   --from-literal=APP_REDIS_ADDRESS='redis:6379' \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
-  --from-literal=APP_JWT_SECRET='replace-with-at-least-32-random-bytes' \
+  --from-literal=APP_JWT_KEY_ID='production-2026-01' \
+  --from-file=APP_JWT_PRIVATE_KEY='/secure/path/jwt-private.pem' \
   --from-literal=APP_AUTH_CLIENT_ID='replace-me' \
   --from-literal=APP_AUTH_CLIENT_SECRET='replace-me'
 kubectl apply -f deployments/migrate-job.yaml

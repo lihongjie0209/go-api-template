@@ -141,6 +141,53 @@ func TestLoadWithProfile_MergesProfileThenEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoad_DiscoversCurrentDirectoryConfigAndProfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("app:\n  name: current-directory-service\nlog:\n  level: info\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config-test.yaml"), []byte("log:\n  level: debug\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("APP_ENV", "test")
+	t.Setenv("APP_LOG_LEVEL", "error")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.App.Name != "current-directory-service" || cfg.App.Env != "test" {
+		t.Fatalf("app = %+v", cfg.App)
+	}
+	if cfg.Log.Level != "error" {
+		t.Fatalf("Log.Level = %q, want environment override", cfg.Log.Level)
+	}
+	if len(cfg.Runtime.ConfigFiles) != 2 {
+		t.Fatalf("ConfigFiles = %v", cfg.Runtime.ConfigFiles)
+	}
+	for _, name := range []string{"config.yaml", "config-test.yaml"} {
+		if !strings.HasSuffix(cfg.Runtime.ConfigFiles[0], name) && !strings.HasSuffix(cfg.Runtime.ConfigFiles[1], name) {
+			t.Fatalf("ConfigFiles = %v, missing %s", cfg.Runtime.ConfigFiles, name)
+		}
+	}
+}
+
+func TestLoad_UsesDefaultsWhenCurrentDirectoryHasNoConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.App.Name != "go-api-template" || cfg.App.Env != "development" {
+		t.Fatalf("app = %+v", cfg.App)
+	}
+	if len(cfg.Runtime.ConfigFiles) != 0 {
+		t.Fatalf("ConfigFiles = %v, want no loaded files", cfg.Runtime.ConfigFiles)
+	}
+}
+
 func TestConfig_ValidatePSKLength(t *testing.T) {
 	t.Parallel()
 	cfg := Config{HTTP: HTTP{Address: "127.0.0.1:8080", RequestTimeout: time.Second}, Health: Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}, User: User{CacheTTL: time.Second, LockTTL: time.Second, LockRetryDelay: time.Millisecond}, Auth: Auth{PSK: PSK{Enabled: true, Key: "short"}}}

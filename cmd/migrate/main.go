@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config/config.yaml", "configuration file path")
+	configPath := flag.String("config", "", "configuration file path (default: discover config.* in . or ./config)")
 	profile := flag.String("env", "", "active environment profile (overrides APP_ENV and config)")
 	direction := flag.String("direction", "up", "migration direction: up or down")
 	steps := flag.Int("steps", 0, "number of steps; negative values migrate down")

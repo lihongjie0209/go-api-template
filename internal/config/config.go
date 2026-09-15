@@ -326,7 +326,13 @@ func Load(path string) (Config, error) { return LoadWithProfile(path, "") }
 
 func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	v := viper.New()
-	v.SetConfigFile(path)
+	if path == "" {
+		v.SetConfigName("config")
+		v.AddConfigPath(".")
+		v.AddConfigPath("./config")
+	} else {
+		v.SetConfigFile(path)
+	}
 	v.SetEnvPrefix("APP")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
@@ -337,10 +343,11 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 		return Config{}, fmt.Errorf("bind authorization target: %w", err)
 	}
 	setDefaults(v)
-	if err := v.ReadInConfig(); err != nil {
+	readErr := v.ReadInConfig()
+	if readErr != nil {
 		var notFound viper.ConfigFileNotFoundError
-		if path != "" || !errors.As(err, &notFound) {
-			return Config{}, fmt.Errorf("read config: %w", err)
+		if path != "" || !errors.As(readErr, &notFound) {
+			return Config{}, fmt.Errorf("read config: %w", readErr)
 		}
 	}
 	profile := strings.ToLower(strings.TrimSpace(explicitProfile))
@@ -350,9 +357,14 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	if !validProfile.MatchString(profile) {
 		return Config{}, fmt.Errorf("invalid environment profile %q", profile)
 	}
-	loadedFiles := []string{path}
-	profilePath := profileConfigPath(path, profile)
-	if profilePath != path {
+	basePath := ""
+	loadedFiles := make([]string, 0, 2)
+	if readErr == nil {
+		basePath = v.ConfigFileUsed()
+		loadedFiles = append(loadedFiles, basePath)
+	}
+	profilePath := profileConfigPath(basePath, profile)
+	if profilePath != basePath {
 		if _, err := os.Stat(profilePath); err == nil {
 			v.SetConfigFile(profilePath)
 			if err := v.MergeInConfig(); err != nil {
@@ -409,6 +421,9 @@ var validMigrationTable = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 var validRedisPrefix = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,127}:$`)
 
 func profileConfigPath(path, profile string) string {
+	if path == "" {
+		return "config-" + profile + ".yaml"
+	}
 	extension := filepath.Ext(path)
 	base := strings.TrimSuffix(path, extension)
 	return base + "-" + profile + extension

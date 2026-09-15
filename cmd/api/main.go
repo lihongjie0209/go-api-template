@@ -24,7 +24,7 @@ import (
 // @name Authorization
 // @description Enter "PSK {shared-key}" for routes configured with PSK authentication.
 func main() {
-	configPath := flag.String("config", "config/config.yaml", "configuration file path")
+	configPath := flag.String("config", "", "configuration file path (default: discover config.* in . or ./config)")
 	profile := flag.String("env", "", "active environment profile (overrides APP_ENV and config)")
 	showVersion := flag.Bool("version", false, "print build version information and exit")
 	flag.Parse()
