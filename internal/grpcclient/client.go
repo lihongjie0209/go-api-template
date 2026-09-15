@@ -17,6 +17,7 @@ import (
 	"github.com/sony/gobreaker/v2"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	_ "google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -76,6 +77,7 @@ func Dial(cfg Config) (*grpc.ClientConn, error) {
 	}
 	options := []grpc.DialOption{
 		grpc.WithTransportCredentials(transport),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(interceptors...),
 		grpc.WithChainStreamInterceptor(metadataStreamInterceptor(cfg.Token, cfg.PSK)),

@@ -18,6 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/sony/gobreaker/v2"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -34,18 +35,27 @@ type HTTPClient struct {
 func (c *HTTPClient) CloseIdleConnections() { c.client.CloseIdleConnections() }
 
 func NewHTTPClient(name string, cfg config.HTTPUpstream, metrics *observability.Metrics) (*HTTPClient, error) {
-	if cfg.Auth.Type != "" && !cfg.TLS.Enabled {
-		return nil, errors.New("refusing to send outbound HTTP credentials without TLS")
-	}
 	baseURL, err := url.Parse(cfg.BaseURL)
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
 		return nil, fmt.Errorf("parse outbound HTTP base URL %q", cfg.BaseURL)
+	}
+	if cfg.TLS.Enabled && baseURL.Scheme != "https" {
+		return nil, errors.New("outbound HTTP TLS requires an https base URL")
+	}
+	if cfg.Auth.Type != "" && baseURL.Scheme != "https" && !cfg.TLS.AllowInsecure {
+		return nil, errors.New("refusing to send outbound HTTP credentials without TLS")
 	}
 	transport, err := httpTransport(cfg.TLS, cfg.Timeout)
 	if err != nil {
 		return nil, err
 	}
-	client := &HTTPClient{name: name, baseURL: baseURL, cfg: cfg, metrics: metrics, client: &http.Client{Transport: otelhttp.NewTransport(transport), Timeout: cfg.Timeout}}
+	client := &HTTPClient{name: name, baseURL: baseURL, cfg: cfg, metrics: metrics, client: &http.Client{
+		Transport: otelhttp.NewTransport(transport),
+		Timeout:   cfg.Timeout,
+		// Redirects are returned to the caller so credentials can never be
+		// forwarded to a location selected by an upstream response.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 	if cfg.Breaker.Enabled {
 		client.breaker = gobreaker.NewCircuitBreaker[*http.Response](gobreaker.Settings{ //nolint:bodyclose // The caller owns every returned response body.
 			Name: name, Timeout: cfg.Breaker.OpenTimeout,
@@ -110,6 +120,12 @@ func (c *HTTPClient) doWithRetry(ctx context.Context, method, requestPath string
 		}
 		if len(body) > 0 && request.Header.Get("Content-Type") == "" {
 			request.Header.Set("Content-Type", "application/json")
+		}
+		if id, ok := requestid.FromContext(ctx); ok {
+			request.Header.Set("X-Request-ID", id)
+		}
+		if key, ok := idempotency.FromContext(ctx); ok {
+			request.Header.Set("Idempotency-Key", key)
 		}
 		applyHTTPAuth(request, c.cfg.Auth)
 		response, err := c.client.Do(request)
