@@ -17,6 +17,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
+	"github.com/lihongjie0209/go-api-template/internal/authorization"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	appdb "github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/files"
@@ -100,6 +101,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testIdentityUserLifecycle(t, ctx, db)
 			testServiceAccountLifecycle(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
+			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testMenuLifecycle(t, ctx, db, permissionID)
 			testPlatformConfigLifecycle(t, ctx, db)
 			testFileLifecycle(t, ctx, db)
@@ -110,6 +112,96 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
+	t.Helper()
+	const (
+		tenantID       = "authorization-tenant"
+		adminMemberID  = "authorization-admin-member"
+		targetMemberID = "authorization-target-member"
+	)
+	actorCtx := platformprincipal.SystemContext(ctx, "authorization-integration")
+	now := time.Now()
+	err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		statements := []struct {
+			query string
+			args  []any
+		}{
+			{
+				`INSERT INTO tenants(id,code,name,description,status,owner_user_id,owner_name,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
+				[]any{tenantID, "authorization-integration", "Authorization Integration", "", "active", "authorization-admin", "Authorization Admin", now, "authorization-integration", now, "authorization-integration"},
+			},
+			{
+				`INSERT INTO tenant_memberships(id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
+				[]any{adminMemberID, tenantID, "authorization-admin", "authorization.admin", "Authorization Admin", "active", now, now, "authorization-integration", now, "authorization-integration"},
+			},
+			{
+				`INSERT INTO tenant_memberships(id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
+				[]any{targetMemberID, tenantID, "authorization-target", "authorization.target", "Authorization Target", "active", now, now, "authorization-integration", now, "authorization-integration"},
+			},
+		}
+		for _, statement := range statements {
+			if _, execErr := tx.ExecContext(actorCtx, tx.Rebind(statement.query), statement.args...); execErr != nil {
+				return execErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{User: config.User{LockTTL: time.Second, LockRetryDelay: time.Millisecond}}
+	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, cfg)
+	if err := service.SetTenantPermissions(actorCtx, tenantID, []string{permissionID}); err != nil {
+		t.Fatalf("set tenant permission ceiling: %v", err)
+	}
+	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true); err != nil {
+		t.Fatalf("set tenant administrator: %v", err)
+	}
+	adminCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: adminMemberID})
+	role, err := service.CreateRole(adminCtx, "auditor", "审计员", "integration role", []string{permissionID})
+	if err != nil || role.Version != 1 {
+		t.Fatalf("created tenant role=%+v err=%v", role, err)
+	}
+	permissions, err := service.RolePermissions(adminCtx, role.ID)
+	if err != nil || len(permissions) != 1 || permissions[0].ID != permissionID || permissions[0].Name == "" {
+		t.Fatalf("role permissions=%+v err=%v", permissions, err)
+	}
+	if err := service.SetMemberRoles(adminCtx, targetMemberID, []string{role.ID}); err != nil {
+		t.Fatalf("set member roles: %v", err)
+	}
+	memberRoles, err := service.MemberRoles(adminCtx, targetMemberID)
+	if err != nil || len(memberRoles) != 1 || memberRoles[0].Name != "审计员" {
+		t.Fatalf("member roles=%+v err=%v", memberRoles, err)
+	}
+	targetCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-target", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: targetMemberID})
+	effective, err := service.EffectivePermissions(targetCtx, "")
+	if err != nil || len(effective) != 1 || effective[0] != permissionID {
+		t.Fatalf("effective permissions=%v err=%v", effective, err)
+	}
+	page, err := service.PageRoles(adminCtx, authorization.RolePageInput{Request: pagination.Request{Page: 1, PageSize: 20}, Keyword: "审计", IDs: []string{role.ID}, Statuses: []string{"active"}})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("tenant role page=%+v err=%v", page, err)
+	}
+	otherTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeUser, TenantID: "other-tenant", MembershipID: "other-member"})
+	if _, err := service.GetRole(otherTenantCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("cross-tenant role lookup error=%v", err)
+	}
+	updated, err := service.UpdateRole(adminCtx, role.ID, "高级审计员", role.Description, "active", role.Version)
+	if err != nil || updated.Version != role.Version+1 {
+		t.Fatalf("updated tenant role=%+v err=%v", updated, err)
+	}
+	if _, err := service.UpdateRole(adminCtx, role.ID, "旧版本", role.Description, "active", role.Version); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+		t.Fatalf("stale tenant role update error=%v", err)
+	}
+	if err := service.DeleteRole(adminCtx, role.ID, updated.Version); err != nil {
+		t.Fatalf("delete tenant role: %v", err)
+	}
+	if _, err := service.GetRole(adminCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("deleted tenant role lookup error=%v", err)
 	}
 }
 
