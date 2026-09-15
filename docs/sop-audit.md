@@ -53,7 +53,7 @@ CI run alone is insufficient.
 
 | Service | Status | Current evidence or next gap |
 | --- | --- | --- |
-| application-service | in_progress | Shared renewable locks and the audited Outbox worker are integrated. All six domain/outbox tables carry logical-delete fields and database-owned actor/time/version maintenance; business tables reject physical deletion while Outbox retains bounded cleanup. PostgreSQL/MySQL run `35021395183` exposed a count-query join defect; commit `e84a1d0` added the fix and focused SQL regression, and replacement run `35022048846` passed all verify and Testcontainers jobs. Commit `a4bea45` adopts shared operation/security producers for tenant grant/revoke with production fail-closed security delivery. Remaining gaps include standard page filters and operation/security coverage for the other mutations. |
+| application-service | in_progress | Database-owned audit/soft delete, audited Outbox cleanup, renewable menu publication locks and tenant isolation are implemented; run `35022048846` passed PostgreSQL/MySQL after the count-query regression was covered. Commit `f269c93` adds operation records for every catalog/menu/grant mutation and independent security events for menu publication and grant changes; run `35022750864` passed. Contract v0.56.2 and commit `979dcd6` add bounded fuzzy/ID/status/time filters, cross-dialect indexes, generated Swagger and container assertions; run `35023303526` is pending. Remaining audit gap: replace the service-local route-to-permission map with the platform database-owned route-policy decision path before marking verified. |
 | audit-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
 | authorization-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
 | billing-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
@@ -73,6 +73,18 @@ CI run alone is insufficient.
 | tenant-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
 | webhook-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
 | workflow-service | pending | Repository has pre-existing uncommitted changes and will be audited without overwriting them. |
+
+## Application service audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract and presentation | HTTP remains POST+JSON and gRPC shares the v0.56.2 contract. Application pages support bounded fuzzy keyword, ID IN, status, created-time and updated-time filters; tenant grants support application ID IN, status, active-at-now and audit-time ranges. Grant responses pair application display records with IDs. Swagger is generated and drift-checked. |
+| Tenant and authorization | Tenant grant reads/writes compare the requested tenant with the authenticated principal unless the caller is explicitly platform-scoped. The remaining non-compliance is the local HTTP/gRPC route requirement map; it must delegate route identity and expressions to the database-owned platform route-policy path. |
+| Logs | All application catalog, menu and grant writes publish shared durable operation records with outcome, duration and Request ID. Menu publication and tenant grant changes additionally publish independent security records; production security delivery is fail-closed. Payloads contain bounded identifiers and versions, never metadata or entitlement JSON. |
+| Cache and lock | Catalog/grant reads have no local cache, avoiding stale authorization state. Menu publication alone needs serialization and uses one renewable SDK lease per application; unrelated applications do not contend and ownership loss cancels the transaction context. |
+| Concurrency and audit | Mutable rows require optimistic versions. Database triggers own actor/time/version and logical-deletion invariants for all six tables; business tables reject physical deletion. Outbox is the documented bounded-retention exception and its worker injects a system audit actor. |
+| Scale | Filter predicates have PostgreSQL/Kingbase partial and MySQL composite indexes. The catalog and current grants are mutable reference data and are not partitioned; immutable high-volume events live in the bounded Outbox/audit pipelines instead. |
+| Tests | Unit tests cover filter normalization/ranges, SQL join parity, log outcomes and fail-closed security delivery. Service-local integration tests exercise PostgreSQL/MySQL migrations, DB-owned audit behavior, logical delete, filtered pages and Redis lock contention; GitHub CI is authoritative for container execution. |
 
 ## Route policy audit decisions
 
