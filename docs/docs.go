@@ -23,12 +23,24 @@ const docTemplate = `{
                 "tags": [
                     "authentication"
                 ],
-                "summary": "Publish JWT verification keys",
+                "summary": "Publish JWT verification keys in the common API envelope",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/auth.JWKS"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/auth.JWKS"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -6757,7 +6769,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
 	Title:            "Go API Template",
-	Description:      "Production-oriented Go Web API scaffold. Application error codes: 0 success; 10000-19999 common/input; 20000-29999 authentication/authorization; 30000-39999 business; 50000-59999 infrastructure.",
+	Description:      "Production-oriented Go Web API scaffold. Stable application codes: 0 success; 10001 invalid argument; 10004 not found; 10008 timeout; 10029 throttled; 20001 unauthorized; 20003 forbidden; 30009 conflict; 30010 processing; 50000 internal; 50003 dependency unavailable; 50004 authorization unavailable; 50005 route policy missing.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

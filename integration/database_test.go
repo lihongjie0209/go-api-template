@@ -91,6 +91,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			if userTables != 0 {
 				t.Fatal("generic template migration must not create a users table")
 			}
+			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
 			if databaseType == "postgres" {
 				testPostgresAuditInfrastructure(t, ctx, db)
 			}
@@ -107,6 +108,29 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func assertServiceMigrationHistory(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType, table string) {
+	t.Helper()
+	var customHistory, defaultHistory int
+	if databaseType == "postgres" {
+		if err := db.GetContext(ctx, &customHistory, `SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename=$1`, table); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.GetContext(ctx, &defaultHistory, `SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename='schema_migrations'`); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := db.GetContext(ctx, &customHistory, `SELECT count(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?`, table); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.GetContext(ctx, &defaultHistory, `SELECT count(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='schema_migrations'`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if customHistory != 1 || defaultHistory != 0 {
+		t.Fatalf("migration history custom=%d default=%d", customHistory, defaultHistory)
 	}
 }
 

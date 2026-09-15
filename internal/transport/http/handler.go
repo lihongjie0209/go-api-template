@@ -41,13 +41,16 @@ type PingResponseBody struct {
 // @Router /live [post]
 func (h *Handler) Live(c *gin.Context) { OK(c, h.health.Live()) }
 
-// JWKS godoc
-// @Summary Publish JWT verification keys
+// JWKS publishes the raw RFC 7517 document on the standard GET endpoint.
+func (h *Handler) JWKS(c *gin.Context) { c.JSON(200, h.auth.JWKS()) }
+
+// JWKSAPI godoc
+// @Summary Publish JWT verification keys in the common API envelope
 // @Tags authentication
 // @Produce json
-// @Success 200 {object} auth.JWKS
+// @Success 200 {object} Response{body=auth.JWKS}
 // @Router /api/v1/.well-known/jwks.json [post]
-func (h *Handler) JWKS(c *gin.Context) { c.JSON(200, h.auth.JWKS()) }
+func (h *Handler) JWKSAPI(c *gin.Context) { OK(c, h.auth.JWKS()) }
 
 // Ready godoc
 // @Summary Check database and Redis readiness

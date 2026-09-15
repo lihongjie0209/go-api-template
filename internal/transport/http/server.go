@@ -65,7 +65,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	}, logger))
 	api.Use(IdempotencyExecution(idempotencyManager, cfg.Idempotency.HTTPPaths, logger))
 	api.POST("/version", handler.Version)
-	api.POST("/.well-known/jwks.json", handler.JWKS)
+	api.POST("/.well-known/jwks.json", handler.JWKSAPI)
 	api.POST("/auth/login", RateLimit(limiter, cfg.RateLimit.Login, "login", func(c *gin.Context) string { return c.ClientIP() }, logger), authenticationHandler.Login)
 	api.POST("/auth/user/login", RateLimit(limiter, cfg.RateLimit.Login, "user-login", func(c *gin.Context) string { return c.ClientIP() }, logger), userAuthenticationHandler.Login)
 	api.POST("/auth/refresh", userAuthenticationHandler.Refresh)

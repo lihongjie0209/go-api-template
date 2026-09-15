@@ -128,7 +128,7 @@ curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
 Business endpoints use POST with JSON; operational probes also expose GET for Docker/Kubernetes. Responses always use:
 
 ```json
-{"code":0,"message":"success","body":{}}
+{"code":0,"message":"success","body":{},"request_id":"0199..."}
 ```
 
 ## Error codes
@@ -136,10 +136,10 @@ Business endpoints use POST with JSON; operational probes also expose GET for Do
 | Range | Meaning | Examples |
 |---|---|---|
 | `0` | success | `0` |
-| `10000-19999` | protocol/input/common | invalid argument `10001`, not found `10004`, throttled `10029` |
+| `10000-19999` | protocol/input/common | invalid argument `10001`, not found `10004`, request timeout `10008`, throttled `10029` |
 | `20000-29999` | authentication/authorization | unauthorized `20001`, forbidden `20003` |
-| `30000-39999` | business rules | conflict `30009` |
-| `50000-59999` | server/infrastructure | internal `50000`, dependency unavailable `50003` |
+| `30000-39999` | business rules | conflict `30009`, idempotent request processing `30010` |
+| `50000-59999` | server/infrastructure | internal `50000`, dependency unavailable `50003`, authorization unavailable `50004`, route policy missing `50005` |
 
 HTTP status codes remain semantically correct; clients should use `code` for stable application behavior. Technical errors are logged and never returned to clients.
 
