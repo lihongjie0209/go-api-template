@@ -42,6 +42,38 @@ Status values:
 | Docker Compose and Makefile | verified | `make dev-up` starts only the API, PostgreSQL, MySQL compatibility database, Redis, NATS JetStream and both migration jobs; no production observability stack is pulled into local development. The Compose profile enables PostgreSQL schema isolation, service migration history, startup auto-up and required infrastructure health ordering, and generates an ephemeral asymmetric JWT key. Make owns build/test/compile-only integration/CI integration/migration/protobuf/Swagger/format/lint/container lifecycle commands. CI parses the Compose model to reject drift. |
 | CI and release metadata | verified | The verify job runs shuffled race/coverage tests, vet, golangci-lint, reachable-vulnerability scanning, module tidiness, integration-policy checks, Compose/Kubernetes validation, Buf breaking/generated checks, Swagger drift checks and a generated-service build. The independent integration job is the only path that executes Testcontainers; local `test-integration` compiles it without containers. API and migration binaries, Docker images, version endpoints, OTel resources and OCI labels receive the same version/commit/build time, and CI executes both binaries to prove linker injection. Tagged releases publish multi-architecture GHCR images with SBOM and provenance only after verify and integration succeed. |
 
+## Standalone platform service audit inventory
+
+Template compliance is not evidence that an independently versioned service is
+compliant. Each repository below remains `pending` until its own contracts,
+authorization, tenant/application isolation, logs, cache/lock decisions,
+optimistic locking, audit fields, presentation, observability, unit tests and
+service-local Testcontainers evidence have been inspected. A green historical
+CI run alone is insufficient.
+
+| Service | Status | Current evidence or next gap |
+| --- | --- | --- |
+| application-service | in_progress | Initial inspection found that its six domain/outbox tables lack mandatory logical-delete fields and database-owned audit triggers; the service also predates the shared operation/security-log SDKs and renewable lock helper. Remediation is next. |
+| audit-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| authorization-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| billing-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| config-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| data-export-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| dictionary-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| file-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| identity-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| import-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| metering-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| notification-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| rule-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| scheduler-service | verified | Detailed scheduler evidence is recorded above; CI run `35018833829` is green. |
+| search-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| service-registry-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| swagger-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| tenant-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| webhook-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
+| workflow-service | pending | Repository has pre-existing uncommitted changes and will be audited without overwriting them. |
+
 ## Route policy audit decisions
 
 | Concern | Decision and evidence |
