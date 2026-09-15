@@ -97,7 +97,9 @@ func TestService_UploadCompensatesWhenDatabaseInsertFails(t *testing.T) {
 	db := sqlx.NewDb(raw, "pgx")
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO files`).WillReturnError(errors.New("database unavailable"))
+	mock.ExpectExec(`INSERT INTO files .*object_delete_attempts, object_delete_error`).
+		WithArgs(sqlmock.AnyArg(), "tenant-1", sqlmock.AnyArg(), "report.txt", "text/plain; charset=utf-8", int64(5), "etag-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), "user-1", 1, 0, "").
+		WillReturnError(errors.New("database unavailable"))
 	mock.ExpectRollback()
 	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
 	service := New(db, database.NewTransactor(db), storage, nil, operationStub{}, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})

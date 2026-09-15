@@ -443,8 +443,8 @@ func (s *Service) validateContentType(contentType string) error {
 
 func insert(ctx context.Context, tx *sqlx.Tx, record Record, actorID string) error {
 	now := time.Now()
-	query := tx.Rebind(`INSERT INTO files (id, tenant_id, object_key, original_name, content_type, size_bytes, etag, checksum_sha256, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	_, err := tx.ExecContext(ctx, query, record.ID, record.TenantID, record.ObjectKey, record.OriginalName, record.ContentType, record.SizeBytes, record.ETag, record.ChecksumSHA256, now, actorID, now, actorID, 1)
+	query := tx.Rebind(`INSERT INTO files (id, tenant_id, object_key, original_name, content_type, size_bytes, etag, checksum_sha256, created_at, created_by, updated_at, updated_by, version, object_delete_attempts, object_delete_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	_, err := tx.ExecContext(ctx, query, record.ID, record.TenantID, record.ObjectKey, record.OriginalName, record.ContentType, record.SizeBytes, record.ETag, record.ChecksumSHA256, now, actorID, now, actorID, 1, 0, "")
 	return err
 }
 
