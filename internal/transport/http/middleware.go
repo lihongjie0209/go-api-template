@@ -337,7 +337,9 @@ func RateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension s
 		}
 		result, err := limiter.Allow(c.Request.Context(), "rate:"+dimension+":"+key, rule)
 		if err != nil {
-			if limiter.FailOpen() {
+			// Login throttling is an account-protection boundary and must never
+			// inherit the availability-oriented fail-open policy.
+			if limiter.FailOpen() && dimension != "login" {
 				logger.Warn("rate limit check failed open", "request_id", requestID(c), "dimension", dimension, "error", err)
 				c.Next()
 				return
@@ -379,7 +381,7 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 
 // DatabaseAuthentication verifies credentials when supplied. Whether an
 // anonymous principal may proceed is decided by the database-owned policy.
-func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg config.Auth) gin.HandlerFunc {
+func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := strings.TrimSpace(c.GetHeader("Authorization"))
 		if header == "" {
@@ -401,11 +403,11 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 			}
 			identity = verified
 		case strings.EqualFold(scheme, "PSK"):
-			if !cfg.PSK.Enabled || !auth.VerifyPSK(header, cfg.PSK.Key) {
+			if !cfg.Auth.PSK.Enabled || !auth.VerifyPSK(header, cfg.Auth.PSK.Key) {
 				Fail(c, logger, apperror.Unauthorized("invalid PSK"))
 				return
 			}
-			identity = platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount}
+			identity = platformprincipal.Principal{ID: cfg.App.Name + ":psk", Type: platformprincipal.TypeServiceAccount}
 		default:
 			Fail(c, logger, apperror.Unauthorized("unsupported authorization scheme"))
 			return

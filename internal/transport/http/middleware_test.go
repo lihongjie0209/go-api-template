@@ -16,6 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
+	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -266,10 +267,10 @@ func TestDatabaseAuthenticationVerifiesSuppliedCredentials(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			router := gin.New()
-			router.Use(RequestID(), DatabaseAuthentication(service, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Auth{PSK: config.PSK{Enabled: true, Key: key}}))
+			router.Use(RequestID(), DatabaseAuthentication(service, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{App: config.App{Name: "orders-service"}, Auth: config.Auth{PSK: config.PSK{Enabled: true, Key: key}}}))
 			router.POST("/api/v1/external/callback", func(c *gin.Context) {
 				value, ok := platformprincipal.FromContext(c.Request.Context())
-				if strings.HasPrefix(test.header, "PSK ") && (!ok || value.ID != "go-api-template:psk" || value.Type != platformprincipal.TypeServiceAccount) {
+				if strings.HasPrefix(test.header, "PSK ") && (!ok || value.ID != "orders-service:psk" || value.Type != platformprincipal.TypeServiceAccount) {
 					c.AbortWithStatus(http.StatusInternalServerError)
 					return
 				}
@@ -313,6 +314,59 @@ func TestTimeoutPropagatesCancellation(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))
 	if recorder.Code != http.StatusGatewayTimeout {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusGatewayTimeout)
+	}
+}
+
+func TestLoginRateLimitNeverFailsOpen(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	limiter := appLimit.New(nil, config.Config{RateLimit: config.RateLimit{Enabled: true, FailOpen: true}})
+	rule := config.RateLimitRule{Rate: 1, Burst: 1, Period: time.Minute}
+	for _, test := range []struct {
+		name      string
+		dimension string
+		status    int
+		called    bool
+	}{
+		{name: "login fails closed", dimension: "login", status: http.StatusServiceUnavailable},
+		{name: "ordinary API follows fail open", dimension: "api", status: http.StatusOK, called: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			router := gin.New()
+			router.Use(RequestID(), RateLimit(limiter, rule, test.dimension, func(*gin.Context) string { return "key" }, logger))
+			router.POST("/test", func(c *gin.Context) { called = true; OK(c, nil) })
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))
+			if recorder.Code != test.status || called != test.called {
+				t.Fatalf("status=%d called=%t", recorder.Code, called)
+			}
+		})
+	}
+}
+
+func TestSecurityHeadersAndCORSWhitelist(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(RequestID(), SecurityHeaders(), CORS(config.CORS{Enabled: true, AllowedOrigins: []string{"https://admin.example.com"}, AllowedHeaders: []string{"Content-Type"}, ExposedHeaders: []string{"X-Request-ID"}, MaxAge: time.Hour}))
+	router.POST("/test", func(c *gin.Context) { OK(c, nil) })
+
+	allowed := httptest.NewRequest(http.MethodPost, "/test", nil)
+	allowed.Header.Set("Origin", "https://admin.example.com")
+	allowedRecorder := httptest.NewRecorder()
+	router.ServeHTTP(allowedRecorder, allowed)
+	if allowedRecorder.Code != http.StatusOK || allowedRecorder.Header().Get("Access-Control-Allow-Origin") != "https://admin.example.com" || allowedRecorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("allowed response status=%d headers=%v", allowedRecorder.Code, allowedRecorder.Header())
+	}
+
+	denied := httptest.NewRequest(http.MethodPost, "/test", nil)
+	denied.Header.Set("Origin", "https://evil.example.com")
+	deniedRecorder := httptest.NewRecorder()
+	router.ServeHTTP(deniedRecorder, denied)
+	if deniedRecorder.Code != http.StatusForbidden {
+		t.Fatalf("denied status=%d", deniedRecorder.Code)
 	}
 }
 

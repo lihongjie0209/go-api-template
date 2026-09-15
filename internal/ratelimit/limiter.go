@@ -18,13 +18,18 @@ type Result struct {
 	RetryAfter time.Duration
 }
 type Limiter struct {
-	enabled  bool
-	failOpen bool
-	backend  *redisrate.Limiter
+	enabled   bool
+	failOpen  bool
+	keyPrefix string
+	backend   *redisrate.Limiter
 }
 
 func New(client *redis.Client, cfg config.Config) *Limiter {
-	limiter := &Limiter{enabled: cfg.RateLimit.Enabled, failOpen: cfg.RateLimit.FailOpen}
+	prefix := cfg.Redis.KeyPrefix
+	if prefix == "" {
+		prefix = cfg.App.Name + ":"
+	}
+	limiter := &Limiter{enabled: cfg.RateLimit.Enabled, failOpen: cfg.RateLimit.FailOpen, keyPrefix: prefix}
 	if client != nil {
 		limiter.backend = redisrate.NewLimiter(client)
 	}
@@ -39,7 +44,7 @@ func (l *Limiter) Allow(ctx context.Context, key string, rule config.RateLimitRu
 	if l.backend == nil {
 		return Result{}, errors.New("redis rate limiter is unavailable")
 	}
-	result, err := l.backend.Allow(ctx, key, redisrate.Limit{Rate: rule.Rate, Burst: rule.Burst, Period: rule.Period})
+	result, err := l.backend.Allow(ctx, l.keyPrefix+key, redisrate.Limit{Rate: rule.Rate, Burst: rule.Burst, Period: rule.Period})
 	if err != nil {
 		return Result{}, fmt.Errorf("check redis rate limit: %w", err)
 	}

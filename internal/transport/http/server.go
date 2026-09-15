@@ -58,7 +58,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	}
 	// JWKS clients require the standard GET endpoint and raw RFC 7517 document.
 	router.GET("/.well-known/jwks.json", handler.JWKS)
-	api := router.Group("/api/v1", RateLimit(limiter, cfg.RateLimit.IP, "ip", func(c *gin.Context) string { return c.ClientIP() }, logger), RateLimit(limiter, cfg.RateLimit.API, "api", func(c *gin.Context) string { return c.FullPath() }, logger), DatabaseAuthentication(authService, logger, cfg.Auth), DatabaseAuthorization(cfg.Authorization.Enabled, cfg.App.Name, authorizer, routePolicies, logger), RateLimit(limiter, cfg.RateLimit.User, "user", func(c *gin.Context) string {
+	api := router.Group("/api/v1", RateLimit(limiter, cfg.RateLimit.IP, "ip", func(c *gin.Context) string { return c.ClientIP() }, logger), RateLimit(limiter, cfg.RateLimit.API, "api", func(c *gin.Context) string { return c.FullPath() }, logger), DatabaseAuthentication(authService, logger, cfg), DatabaseAuthorization(cfg.Authorization.Enabled, cfg.App.Name, authorizer, routePolicies, logger), RateLimit(limiter, cfg.RateLimit.User, "user", func(c *gin.Context) string {
 		value, _ := c.Get("subject")
 		subject, _ := value.(string)
 		return subject
