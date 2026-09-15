@@ -34,19 +34,10 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 		connectionConfig.RuntimeParams["timezone"] = "Asia/Shanghai"
 		db = sqlx.NewDb(otelsql.OpenDB(stdlib.GetConnector(*connectionConfig)), driver)
 	case "mysql":
-		connectionConfig, parseErr := mysqlDriver.ParseDSN(cfg.DSN)
+		connectionConfig, parseErr := mysqlConnectionConfig(cfg.DSN, cfg.Name)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse database dsn: %w", parseErr)
 		}
-		if cfg.Name != "" {
-			connectionConfig.DBName = cfg.Name
-		}
-		location, locationErr := time.LoadLocation("Asia/Shanghai")
-		if locationErr != nil {
-			return nil, fmt.Errorf("load database timezone: %w", locationErr)
-		}
-		connectionConfig.ParseTime = true
-		connectionConfig.Loc = location
 		connector, connectorErr := mysqlDriver.NewConnector(connectionConfig)
 		if connectorErr != nil {
 			return nil, fmt.Errorf("create mysql connector: %w", connectorErr)
@@ -72,6 +63,27 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 	return db, nil
+}
+
+func mysqlConnectionConfig(dsn, databaseName string) (*mysqlDriver.Config, error) {
+	connectionConfig, err := mysqlDriver.ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if databaseName != "" {
+		connectionConfig.DBName = databaseName
+	}
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return nil, err
+	}
+	connectionConfig.ParseTime = true
+	connectionConfig.Loc = location
+	if connectionConfig.Params == nil {
+		connectionConfig.Params = make(map[string]string)
+	}
+	connectionConfig.Params["time_zone"] = "'+08:00'"
+	return connectionConfig, nil
 }
 
 func driverName(dbType string) (string, error) {

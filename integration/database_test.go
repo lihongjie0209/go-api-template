@@ -91,6 +91,11 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				}
 			} else if err := db.GetContext(ctx, &userTables, `SELECT count(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'users'`); err != nil {
 				t.Fatal(err)
+			} else {
+				var timezone string
+				if err := db.GetContext(ctx, &timezone, `SELECT @@session.time_zone`); err != nil || timezone != "+08:00" {
+					t.Fatalf("timezone=%q err=%v", timezone, err)
+				}
 			}
 			if userTables != 0 {
 				t.Fatal("generic template migration must not create a users table")
