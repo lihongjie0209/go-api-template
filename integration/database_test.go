@@ -861,7 +861,11 @@ func startDatabase(t *testing.T, ctx context.Context, databaseType string) (stri
 		}
 		return dsn, dsn
 	case "mysql":
-		container, err := mysql.Run(ctx, "mysql:8.4", mysql.WithDatabase("app"), mysql.WithUsername("app"), mysql.WithPassword("app"))
+		configPath, err := filepath.Abs(filepath.Join("testdata", "mysql.cnf"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		container, err := mysql.Run(ctx, "mysql:8.4", mysql.WithDatabase("app"), mysql.WithUsername("app"), mysql.WithPassword("app"), mysql.WithConfigFile(configPath))
 		if err != nil {
 			t.Fatal(err)
 		}

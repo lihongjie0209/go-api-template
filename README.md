@@ -154,6 +154,13 @@ Set `APP_DATABASE_ENABLED=true`, `APP_DATABASE_TYPE`, and `APP_DATABASE_DSN`.
 
 The official Kingbase documentation describes Gokb as a pure-Go `database/sql` driver registered as `kingbase`, but distribution commonly accompanies the product rather than a stable public Go module.
 
+MySQL audit fields are maintained by database triggers. The migration identity
+therefore needs `TRIGGER` on the service database. When binary logging is
+enabled, the database administrator must also enable
+`log_bin_trust_function_creators=1` (the development Compose and Testcontainers
+profiles already do this); application runtime credentials do not need trigger
+creation privileges after migration.
+
 Every business table, including pure association tables, must contain `created_at`, `created_by`, `updated_at`, `updated_by`, `version`, `deleted_at`, and `deleted_by`. PostgreSQL and Kingbase migrations must call `app_enable_audit('<table>')` immediately after creating a table. The trigger owns timestamps, actor IDs, version increments and soft-delete metadata, preserves creation metadata, and rejects physical `DELETE`.
 
 Repositories must execute writes through `database.Transactor.Within`. It copies the authenticated principal ID from `context.Context` into the transaction-local PostgreSQL setting `app.actor_id`; missing actors fail before business SQL executes, and transaction-local scope prevents identity leaking through the connection pool. Background jobs must explicitly use `principal.SystemContext`. Updates and soft deletes must still include `WHERE id = $1 AND version = $2` for optimistic concurrency. A migration contract unit test fails CI when any new table omits an audit column or PostgreSQL/Kingbase trigger registration.
