@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/XSAM/otelsql"
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -31,7 +32,7 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 			connectionConfig.RuntimeParams["search_path"] = cfg.Schema
 		}
 		connectionConfig.RuntimeParams["timezone"] = "Asia/Shanghai"
-		db = sqlx.NewDb(stdlib.OpenDB(*connectionConfig), driver)
+		db = sqlx.NewDb(otelsql.OpenDB(stdlib.GetConnector(*connectionConfig)), driver)
 	case "mysql":
 		connectionConfig, parseErr := mysqlDriver.ParseDSN(cfg.DSN)
 		if parseErr != nil {
@@ -46,7 +47,11 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 		}
 		connectionConfig.ParseTime = true
 		connectionConfig.Loc = location
-		db, err = sqlx.Open(driver, connectionConfig.FormatDSN())
+		connector, connectorErr := mysqlDriver.NewConnector(connectionConfig)
+		if connectorErr != nil {
+			return nil, fmt.Errorf("create mysql connector: %w", connectorErr)
+		}
+		db = sqlx.NewDb(otelsql.OpenDB(connector), driver)
 		if err != nil {
 			return nil, fmt.Errorf("open database: %w", err)
 		}

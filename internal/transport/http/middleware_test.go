@@ -370,6 +370,35 @@ func TestSecurityHeadersAndCORSWhitelist(t *testing.T) {
 	}
 }
 
+func TestPprofBearerProtection(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	const token = "01234567890123456789012345678901"
+	for _, test := range []struct {
+		name   string
+		header string
+		status int
+	}{
+		{name: "missing", status: http.StatusUnauthorized},
+		{name: "wrong scheme", header: "PSK " + token, status: http.StatusUnauthorized},
+		{name: "wrong token", header: "Bearer 01234567890123456789012345678902", status: http.StatusUnauthorized},
+		{name: "valid", header: "Bearer " + token, status: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(pprofAuth(token))
+			router.GET("/debug", func(c *gin.Context) { c.Status(http.StatusOK) })
+			request := httptest.NewRequest(http.MethodGet, "/debug", nil)
+			request.Header.Set("Authorization", test.header)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != test.status {
+				t.Fatalf("status=%d, want %d", recorder.Code, test.status)
+			}
+		})
+	}
+}
+
 type oneByteReader struct{}
 
 func (*oneByteReader) Read(buffer []byte) (int, error) { buffer[0] = 'x'; return 1, io.EOF }

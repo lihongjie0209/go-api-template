@@ -31,7 +31,14 @@ func NewTracing(lc fx.Lifecycle, cfg config.Config) (*Tracing, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}
-	res := resource.NewSchemaless(attribute.String("service.name", cfg.App.Name), attribute.String("service.version", buildinfo.Version))
+	res := resource.NewSchemaless(
+		attribute.String("service.name", cfg.App.Name),
+		attribute.String("service.version", buildinfo.Version),
+		attribute.String("service.namespace", cfg.App.Schema),
+		attribute.String("deployment.environment.name", cfg.Runtime.ActiveProfile),
+		attribute.String("vcs.ref.head.revision", buildinfo.Commit),
+		attribute.String("service.build.time", buildinfo.BuildTime),
+	)
 	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Observability.TracingSampleRatio))))
 	tracing.provider = provider
 	otel.SetTracerProvider(provider)

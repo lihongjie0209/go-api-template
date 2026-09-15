@@ -19,6 +19,8 @@ github.com/MicahParks/keyfunc/v3 v3.8.1 h1:VR3jlEs2wz1xGjvUUwUHeoB+eJ6gUnBrpnIBy
 github.com/MicahParks/keyfunc/v3 v3.8.1/go.mod h1:LcorJ0sz2tZGvgZqIfaeyLkJmM+kxIfRDu8dFY0TAas=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
+github.com/XSAM/otelsql v0.44.0 h1:KxCiv26Fh4okTPlgROE2BWk+lgi20pdgMGxuSwgbRls=
+github.com/XSAM/otelsql v0.44.0/go.mod h1:FySZIr4R4WWMqvIjf2Iah7C0LAlpKvs9XRkaX7rE608=
 github.com/alicebob/miniredis/v2 v2.38.0 h1:nZAzCR+Lj+Vxk4ZXzm2NuKq2O33RXj1XxJ2e2uP9jiw=
 github.com/alicebob/miniredis/v2 v2.38.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj6OXMm/+iu5cLMM=
 github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.6.0 h1:uWzn3io54f9L9mvwsQQSv1KpkkFA06hBxI++RvIyvpI=
@@ -240,8 +242,6 @@ github.com/leodido/go-urn v1.5.0 h1:pLqT2kq1zpHW/1D18QMjMpdtX7cekxqtJJjg5ANyWw0=
 github.com/leodido/go-urn v1.5.0/go.mod h1:9BORnCDhdPBJNDEX+w1bJisa8yOKYi116VeO96s4ifE=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
-github.com/lihongjie0209/microservice-platform-go v0.15.6 h1:cIqR/pf5BhmFtFf5lWHyjS5bX4lx4T+d3gxQnA3amX4=
-github.com/lihongjie0209/microservice-platform-go v0.15.6/go.mod h1:6gqa4AxM74fsXSK33fsnD+UtZ1X3o5zyuzODTmGDKcQ=
 github.com/lihongjie0209/microservice-platform-go v0.15.7 h1:gvUcDr2W+n+DWMRRRVoW35VSbbR5CNARi6g9JR8wY9I=
 github.com/lihongjie0209/microservice-platform-go v0.15.7/go.mod h1:6gqa4AxM74fsXSK33fsnD+UtZ1X3o5zyuzODTmGDKcQ=
 github.com/lihongjie0209/platform-protos v0.29.0 h1:RYRNjFDZ6lsiYliRcuiQfcAkbyIccuGnML8hSsEPZKU=

@@ -240,7 +240,7 @@ func HTTPMetrics(metrics *observability.Metrics) gin.HandlerFunc {
 
 func Recovery(logger *slog.Logger) gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		logger.Error("http panic recovered", "request_id", requestID(c), "panic", recovered)
+		logger.ErrorContext(c.Request.Context(), "http panic recovered", "request_id", requestID(c), "panic", recovered)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, Response{Code: apperror.CodeInternal, Message: "internal server error", Body: nil, RequestID: requestID(c)})
 	})
 }
@@ -340,7 +340,7 @@ func RateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension s
 			// Login throttling is an account-protection boundary and must never
 			// inherit the availability-oriented fail-open policy.
 			if limiter.FailOpen() && dimension != "login" {
-				logger.Warn("rate limit check failed open", "request_id", requestID(c), "dimension", dimension, "error", err)
+				logger.WarnContext(c.Request.Context(), "rate limit check failed open", "request_id", requestID(c), "dimension", dimension, "error", err)
 				c.Next()
 				return
 			}
