@@ -148,12 +148,12 @@ func testMySQLLogRetention(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	old := time.Now().AddDate(-3, 0, 0)
 	now := time.Now()
-	operationInsert := db.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,source,operation,protocol,duration_ms,succeeded,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if _, err := db.ExecContext(ctx, operationInsert, "expired-operation", "tenant-retention", "actor", "system", "backend", "retention.test", "service", 1, true, old, now, "retention-test", now, "retention-test", 1); err != nil {
+	operationInsert := db.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,application_id,source,operation,resource_type,resource_id,protocol,method,route,request_payload,duration_ms,succeeded,error_code,error_message,request_id,trace_id,client_ip,user_agent,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if _, err := db.ExecContext(ctx, operationInsert, "expired-operation", "tenant-retention", "actor", "system", "", "backend", "retention.test", "", "", "service", "", "", "", 1, true, "", "", "", "", "", "", `{}`, old, now, "retention-test", now, "retention-test", 1); err != nil {
 		t.Fatal(err)
 	}
-	securityInsert := db.Rebind(`INSERT INTO security_logs(id,event_type,succeeded,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?)`)
-	if _, err := db.ExecContext(ctx, securityInsert, "expired-security", "login", true, old, now, "retention-test", now, "retention-test", 1); err != nil {
+	securityInsert := db.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_type,subject_id,subject_type,event_type,succeeded,reason,error_code,error_message,identifier_hash,token_id_hash,session_id,request_id,trace_id,client_ip,user_agent,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if _, err := db.ExecContext(ctx, securityInsert, "expired-security", "tenant-retention", "actor", "system", "subject", "user", "login", true, "", "", "", "", "", "", "", "", "", "", `{}`, old, now, "retention-test", now, "retention-test", 1); err != nil {
 		t.Fatal(err)
 	}
 	manager := datalifecycle.New(db, config.Config{Database: config.Database{Type: "mysql"}, DataLifecycle: config.DataLifecycle{
