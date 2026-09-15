@@ -209,9 +209,11 @@ Authorized administrators use `POST /api/v1/operation-logs/get` and `POST /api/v
 
 ## Security logs
 
-Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Supported event types are `login`, `token_refresh`, `logout` and `forced_logout`. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON metadata.
+Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Events cover authentication/session lifecycle and security-sensitive changes to identities, tenants, authorization, route policies, menus and platform configuration. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON metadata.
 
 Login has no authenticated principal yet, so `POST /api/v1/auth/login` records the attempted identifier using a keyed HMAC-SHA256 digest and fills the subject only after successful authentication. Token and refresh-token bodies are never accepted as metadata; callers may provide a JTI through `TokenID`, which is also stored only as a keyed digest. Inject an independent `APP_SECURITY_LOG_HASH_KEY` of at least 32 random bytes.
+
+Authorized administrators can query this independent trail through `POST /api/v1/security-logs/get` and `POST /api/v1/security-logs/page`. Tenant principals are constrained in SQL to their active tenant; platform principals may filter tenants explicitly. Reads are themselves recorded as `security_log_accessed` events and fail before disclosure if that event cannot be enqueued. Paging provides bounded subject/event/session/request/IP filters, success state, normalized identifier lookup and a half-open occurrence-time range. Token hashes are never returned.
 
 Successful authentication defaults to fail-closed when the security event cannot be enqueued, while failed attempts still return unauthorized and report queue failures to the service log. Set `security_log.fail_closed=false` only when availability requirements explicitly outweigh audit completeness. Login uses the dedicated brute-force rate-limit rule and derives IP through the configured trusted-proxy policy.
 

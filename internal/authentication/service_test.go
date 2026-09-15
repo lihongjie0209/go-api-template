@@ -2,6 +2,7 @@ package authentication
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,15 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIdentitySessionInsertInitializesRequiredState(t *testing.T) {
+	t.Parallel()
+	for _, column := range []string{"previous_refresh_token_hash", "revoke_reason"} {
+		if !strings.Contains(identitySessionInsertSQL, column) {
+			t.Fatalf("session insert does not initialize required column %q", column)
+		}
+	}
+}
 
 func TestService_ChangePasswordRevokesEveryActiveSession(t *testing.T) {
 	db, mock, err := sqlmock.New()

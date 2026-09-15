@@ -29,7 +29,7 @@ Status values:
 | Distributed cache and locks | in_progress | Public SDK v0.15.2 owns bounded Redis cache and renewable Redsync contracts; its GitHub CI is green. The template adds namespaces, metrics/traces, lease-context propagation and unit/integration competition coverage. Successful template GitHub CI execution remains open. |
 | Idempotency | in_progress | HTTP/gRPC fingerprinting includes the complete principal/tenant context and canonical payloads; owner-token state transitions, renewable processing leases, loss cancellation, bounded replay, retryable-failure release, metrics/traces and Redis competition coverage exist. Successful template GitHub CI execution remains open. |
 | Operation logs and frontend events | in_progress | Durable JetStream ingestion, idempotent database persistence, recursive sanitization, tenant-scoped get/page APIs, frontend events, IP/UA/request/trace correlation and indexed filters are implemented. Partition/retention/archive policy and successful GitHub CI evidence remain open. |
-| Security logs | pending | Audit independent durable path, unauthenticated login identity, IP/UA, sanitization, retention/query APIs and fail-closed behavior. |
+| Security logs | in_progress | Independent durable ingestion, unauthenticated identifier hashing, recursive shared credential detection, tenant-scoped get/page APIs, access auditing, IP/UA/request/trace correlation, fail-closed critical writes and composite query indexes are implemented. Partition/retention/archive policy and isolated PostgreSQL/MySQL execution remain open. |
 | Health checks | pending | Audit per-dependency deadlines, envelopes, probe behavior and readiness dependency list. |
 | Request middleware and rate limiting | pending | Audit request ID, cancellation, body/content type, CORS, proxy trust, security headers, Redis rate limits and brute-force policy. |
 | HTTP/gRPC outbound reliability | pending | Audit configured discovery, JWT/PSK/mTLS, retry/circuit breaker/deadline, metrics and trace propagation. |
@@ -213,6 +213,21 @@ Status values:
 | Presentation | Metadata exposes original filename, detected MIME type, size, ETag, checksum, audit actors/times and version while hiding provider object keys and deletion internals. |
 | Tests | Unit tests cover database-failure cleanup, SQL tenant isolation, declared-size mismatch, durable retry persistence, key validation and provider configuration. An isolated PostgreSQL/MySQL lifecycle covers upload, filtered paging, cross-tenant denial, logical/physical deletion and cleanup state; actual CI execution remains open. |
 | Shared capability | Uses the common pagination, principal, transaction, distributed-lock, operation-log, metrics and tracing abstractions; S3 and OSS implement one provider-neutral store contract. |
+
+## Security log audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | Authorized callers use POST+JSON `security-logs/get` and `security-logs/page`. Paging uses shared bounds and supports keyword, bounded ID/tenant/actor/subject/event/session/request/IP sets, success state, normalized identifier lookup and a validated half-open occurrence-time range. |
+| Tenant isolation and authorization | Tenant principals always receive a SQL `tenant_id` predicate; only platform principals may request explicit tenant sets. Database route policies own route authorization, and missing policies deny access. Token hashes are never serialized. |
+| Independent audit path | Security events use their own recorder, JetStream subject, durable consumer and table rather than the operation-log chain. Successful security-log reads enqueue `security_log_accessed` with operation, result count, IP, UA, request and trace correlation; an enqueue failure prevents disclosure. |
+| Unauthenticated identity | Login attempts need no principal. Identifiers are normalized then stored only as keyed HMAC-SHA256 values; opaque token values use a separate non-normalizing hash path. The raw identifier/token is excluded from JSON payloads. |
+| Sanitization | Security metadata uses the public SDK's recursive credential-field detector. Password, secret, token, authorization, cookie, API-key, client-secret and private-key variants are rejected at the recorder boundary; metadata and error fields are bounded. |
+| Cache and locks | Logs are append-only and read directly through indexed SQL, so a cache would risk stale or cross-tenant disclosure. Event IDs plus database conflict handling make consumer retries idempotent; no distributed lock is required. |
+| Optimistic lock and audit | Log rows are immutable application records. They still contain the mandatory audit/version/soft-delete fields and use the global PostgreSQL/Kingbase audit trigger; consumer writes execute under a system or originating actor context. |
+| Indexing and lifecycle | Tenant/newest, tenant/event and tenant/subject composite indexes support the exposed access patterns, with PostgreSQL BRIN for time scans. Partition creation, retention, archival and deletion governance remain open and prevent this feature from being marked verified. |
+| Tests | Unit tests cover keyed/normalized hashing, opaque-token preservation, recursive credential rejection, tenant SQL scoping and bounded/range/event validation. Cross-dialect Testcontainers query and ingestion execution remains open. |
+| Shared capability | The recorder uses shared principal/request context, transaction, event bus, observability and SDK redaction capability rather than service-local secret-key lists. |
 
 ## Distributed cache and lock audit decisions
 

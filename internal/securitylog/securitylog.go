@@ -19,6 +19,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	platformredact "github.com/lihongjie0209/microservice-platform-go/redact"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -46,6 +47,7 @@ const (
 	EventTenantAuthorization   EventType = "tenant_authorization_changed"
 	EventMenuChanged           EventType = "platform_menu_changed"
 	EventPlatformConfigChanged EventType = "platform_config_changed"
+	EventSecurityLogAccess     EventType = "security_log_accessed"
 )
 
 const envelopeType = "platform.security-log.recorded.v1"
@@ -101,12 +103,13 @@ type Service struct {
 	cfg        config.SecurityLog
 	appName    string
 	bus        *eventbus.Bus
+	db         *sqlx.DB
 	transactor *database.Transactor
 	metrics    *observability.Metrics
 }
 
-func New(cfg config.Config, bus *eventbus.Bus, transactor *database.Transactor, metrics *observability.Metrics) *Service {
-	return &Service{cfg: cfg.SecurityLog, appName: cfg.App.Name, bus: bus, transactor: transactor, metrics: metrics}
+func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics) *Service {
+	return &Service{cfg: cfg.SecurityLog, appName: cfg.App.Name, bus: bus, db: db, transactor: transactor, metrics: metrics}
 }
 func (s *Service) Enabled() bool    { return s.cfg.Enabled }
 func (s *Service) FailClosed() bool { return s.cfg.FailClosed }
@@ -119,6 +122,9 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 		return fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
 	}
 	actor, _ := platformprincipal.FromContext(ctx)
+	if entry.TenantID == "" {
+		entry.TenantID = actor.TenantID
+	}
 	metadata, err := safeMetadata(entry.Metadata, s.cfg.MaxPayloadBytes)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidEntry, err)
@@ -126,7 +132,7 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 	requestID, _ := requestid.FromContext(ctx)
 	span := trace.SpanContextFromContext(ctx)
 	now := time.Now()
-	value := payload{EventType: entry.EventType, ActorID: actor.ID, ActorType: string(actor.Type), SubjectID: entry.SubjectID, SubjectType: entry.SubjectType, TenantID: entry.TenantID, Succeeded: entry.Succeeded, Reason: truncate(entry.Reason, 1024), ErrorCode: truncate(entry.ErrorCode, 128), ErrorMessage: truncate(entry.ErrorMessage, 2048), IdentifierHash: s.hash(entry.Identifier), TokenIDHash: s.hash(entry.TokenID), SessionID: truncate(entry.SessionID, 256), RequestID: requestID, TraceID: span.TraceID().String(), ClientIP: truncate(entry.ClientIP, 256), UserAgent: truncate(entry.UserAgent, 1024), Metadata: metadata, OccurredAt: now}
+	value := payload{EventType: entry.EventType, ActorID: actor.ID, ActorType: string(actor.Type), SubjectID: entry.SubjectID, SubjectType: entry.SubjectType, TenantID: entry.TenantID, Succeeded: entry.Succeeded, Reason: truncate(entry.Reason, 1024), ErrorCode: truncate(entry.ErrorCode, 128), ErrorMessage: truncate(entry.ErrorMessage, 2048), IdentifierHash: s.hashIdentifier(entry.Identifier), TokenIDHash: s.hash(entry.TokenID), SessionID: truncate(entry.SessionID, 256), RequestID: requestID, TraceID: span.TraceID().String(), ClientIP: truncate(entry.ClientIP, 256), UserAgent: truncate(entry.UserAgent, 1024), Metadata: metadata, OccurredAt: now}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("encode security log: %w", err)
@@ -192,8 +198,12 @@ func (s *Service) hash(value string) string {
 	_, _ = mac.Write([]byte(value))
 	return hex.EncodeToString(mac.Sum(nil))
 }
+
+func (s *Service) hashIdentifier(value string) string {
+	return s.hash(strings.ToLower(strings.TrimSpace(value)))
+}
 func validEvent(value EventType) bool {
-	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventRoutePolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged
+	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventRoutePolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess
 }
 func safeMetadata(value any, limit int) (json.RawMessage, error) {
 	if value == nil {
@@ -206,11 +216,12 @@ func safeMetadata(value any, limit int) (json.RawMessage, error) {
 	if len(data) > limit {
 		return nil, fmt.Errorf("metadata exceeds %d bytes", limit)
 	}
-	lower := strings.ToLower(string(data))
-	for _, forbidden := range []string{"password", "access_token", "refresh_token", "authorization", "cookie"} {
-		if strings.Contains(lower, `"`+forbidden+`"`) {
-			return nil, fmt.Errorf("metadata contains forbidden credential field %q", forbidden)
-		}
+	sensitive, err := platformredact.ContainsSensitiveJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	if sensitive {
+		return nil, errors.New("metadata contains a credential field")
 	}
 	return data, nil
 }

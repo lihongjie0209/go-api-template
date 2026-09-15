@@ -1933,6 +1933,136 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/security-logs/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "security-logs"
+                ],
+                "summary": "Get a security log within the caller's tenant scope",
+                "parameters": [
+                    {
+                        "description": "Security log",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.SecurityLogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/securitylog.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/security-logs/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "security-logs"
+                ],
+                "summary": "Page security logs within the caller's tenant scope",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.SecurityLogPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/securitylog.Page"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-authorization/administrators/set": {
             "post": {
                 "security": [
@@ -4966,6 +5096,97 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.SecurityLogIDRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "httptransport.SecurityLogPageRequest": {
+            "type": "object",
+            "properties": {
+                "actor_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "client_ips": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "event_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/securitylog.EventType"
+                    }
+                },
+                "identifier": {
+                    "type": "string"
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "occurred_at_from": {
+                    "type": "string"
+                },
+                "occurred_at_to": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "request_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "session_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "succeeded": {
+                    "type": "boolean"
+                },
+                "tenant_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "httptransport.SessionPageRequest": {
             "type": "object",
             "properties": {
@@ -6121,6 +6342,150 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "securitylog.EventType": {
+            "type": "string",
+            "enum": [
+                "login",
+                "token_refresh",
+                "logout",
+                "forced_logout",
+                "password_changed",
+                "password_reset",
+                "session_revoked",
+                "logout_all",
+                "membership_added",
+                "membership_changed",
+                "membership_removed",
+                "route_policy_changed",
+                "permission_definition_changed",
+                "identity_user_changed",
+                "tenant_changed",
+                "tenant_context_switch",
+                "tenant_authorization_changed",
+                "platform_menu_changed",
+                "platform_config_changed",
+                "security_log_accessed"
+            ],
+            "x-enum-varnames": [
+                "EventLogin",
+                "EventTokenRefresh",
+                "EventLogout",
+                "EventForcedLogout",
+                "EventPasswordChanged",
+                "EventPasswordReset",
+                "EventSessionRevoked",
+                "EventLogoutAll",
+                "EventMembershipAdded",
+                "EventMembershipChanged",
+                "EventMembershipRemoved",
+                "EventRoutePolicyChanged",
+                "EventPermissionChanged",
+                "EventIdentityUserChanged",
+                "EventTenantChanged",
+                "EventTenantContextSwitch",
+                "EventTenantAuthorization",
+                "EventMenuChanged",
+                "EventPlatformConfigChanged",
+                "EventSecurityLogAccess"
+            ]
+        },
+        "securitylog.Page": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/securitylog.Record"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "securitylog.Record": {
+            "type": "object",
+            "properties": {
+                "actor_id": {
+                    "type": "string"
+                },
+                "actor_type": {
+                    "type": "string"
+                },
+                "client_ip": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "event_type": {
+                    "$ref": "#/definitions/securitylog.EventType"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "identifier_hash": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "subject_id": {
+                    "type": "string"
+                },
+                "subject_type": {
+                    "type": "string"
+                },
+                "succeeded": {
+                    "type": "boolean"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "user_agent": {
                     "type": "string"
                 },
                 "version": {

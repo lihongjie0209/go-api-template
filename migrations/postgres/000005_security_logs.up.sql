@@ -30,6 +30,9 @@ CREATE TABLE security_logs (
 CREATE INDEX security_logs_subject_occurred_idx ON security_logs (subject_id, occurred_at DESC);
 CREATE INDEX security_logs_identifier_occurred_idx ON security_logs (identifier_hash, occurred_at DESC);
 CREATE INDEX security_logs_event_occurred_idx ON security_logs (event_type, occurred_at DESC);
+CREATE INDEX security_logs_tenant_occurred_idx ON security_logs (tenant_id, occurred_at DESC, id DESC);
+CREATE INDEX security_logs_tenant_event_occurred_idx ON security_logs (tenant_id, event_type, occurred_at DESC);
+CREATE INDEX security_logs_tenant_subject_occurred_idx ON security_logs (tenant_id, subject_id, occurred_at DESC);
 CREATE INDEX security_logs_request_idx ON security_logs (request_id) WHERE request_id <> '';
 CREATE INDEX security_logs_occurred_brin_idx ON security_logs USING brin (occurred_at);
 SELECT app_enable_audit('security_logs');

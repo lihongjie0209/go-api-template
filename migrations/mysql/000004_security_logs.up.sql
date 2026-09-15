@@ -29,5 +29,8 @@ CREATE TABLE security_logs (
     KEY security_logs_subject_occurred_idx (subject_id(128), occurred_at),
     KEY security_logs_identifier_occurred_idx (identifier_hash(64), occurred_at),
     KEY security_logs_event_occurred_idx (event_type(64), occurred_at),
+    KEY security_logs_tenant_occurred_idx (tenant_id(64), occurred_at, id),
+    KEY security_logs_tenant_event_occurred_idx (tenant_id(64), event_type(64), occurred_at),
+    KEY security_logs_tenant_subject_occurred_idx (tenant_id(64), subject_id(128), occurred_at),
     KEY security_logs_request_idx (request_id(128))
 );

@@ -875,6 +875,66 @@ definitions:
     - session_id
     - version
     type: object
+  httptransport.SecurityLogIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.SecurityLogPageRequest:
+    properties:
+      actor_ids:
+        items:
+          type: string
+        type: array
+      client_ips:
+        items:
+          type: string
+        type: array
+      event_types:
+        items:
+          $ref: '#/definitions/securitylog.EventType'
+        type: array
+      identifier:
+        type: string
+      ids:
+        items:
+          type: string
+        type: array
+      keyword:
+        type: string
+      occurred_at_from:
+        type: string
+      occurred_at_to:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      request_ids:
+        items:
+          type: string
+        type: array
+      session_ids:
+        items:
+          type: string
+        type: array
+      subject_ids:
+        items:
+          type: string
+        type: array
+      subject_types:
+        items:
+          type: string
+        type: array
+      succeeded:
+        type: boolean
+      tenant_ids:
+        items:
+          type: string
+        type: array
+    type: object
   httptransport.SessionPageRequest:
     properties:
       page:
@@ -1646,6 +1706,114 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  securitylog.EventType:
+    enum:
+    - login
+    - token_refresh
+    - logout
+    - forced_logout
+    - password_changed
+    - password_reset
+    - session_revoked
+    - logout_all
+    - membership_added
+    - membership_changed
+    - membership_removed
+    - route_policy_changed
+    - permission_definition_changed
+    - identity_user_changed
+    - tenant_changed
+    - tenant_context_switch
+    - tenant_authorization_changed
+    - platform_menu_changed
+    - platform_config_changed
+    - security_log_accessed
+    type: string
+    x-enum-varnames:
+    - EventLogin
+    - EventTokenRefresh
+    - EventLogout
+    - EventForcedLogout
+    - EventPasswordChanged
+    - EventPasswordReset
+    - EventSessionRevoked
+    - EventLogoutAll
+    - EventMembershipAdded
+    - EventMembershipChanged
+    - EventMembershipRemoved
+    - EventRoutePolicyChanged
+    - EventPermissionChanged
+    - EventIdentityUserChanged
+    - EventTenantChanged
+    - EventTenantContextSwitch
+    - EventTenantAuthorization
+    - EventMenuChanged
+    - EventPlatformConfigChanged
+    - EventSecurityLogAccess
+  securitylog.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/securitylog.Record'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  securitylog.Record:
+    properties:
+      actor_id:
+        type: string
+      actor_type:
+        type: string
+      client_ip:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      error_code:
+        type: string
+      error_message:
+        type: string
+      event_type:
+        $ref: '#/definitions/securitylog.EventType'
+      id:
+        type: string
+      identifier_hash:
+        type: string
+      metadata:
+        type: object
+      occurred_at:
+        type: string
+      reason:
+        type: string
+      request_id:
+        type: string
+      session_id:
+        type: string
+      subject_id:
+        type: string
+      subject_type:
+        type: string
+      succeeded:
+        type: boolean
+      tenant_id:
+        type: string
+      trace_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      user_agent:
         type: string
       version:
         type: integer
@@ -2918,6 +3086,82 @@ paths:
       summary: Create or update a database-owned route policy
       tags:
       - route-policies
+  /api/v1/security-logs/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Security log
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SecurityLogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/securitylog.Record'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a security log within the caller's tenant scope
+      tags:
+      - security-logs
+  /api/v1/security-logs/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SecurityLogPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/securitylog.Page'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page security logs within the caller's tenant scope
+      tags:
+      - security-logs
   /api/v1/tenant-authorization/administrators/set:
     post:
       consumes:

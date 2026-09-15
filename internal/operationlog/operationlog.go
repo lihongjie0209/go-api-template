@@ -16,6 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	platformredact "github.com/lihongjie0209/microservice-platform-go/redact"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -187,12 +188,7 @@ func sanitizedJSON(value any, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var decoded any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return "", err
-	}
-	redact(decoded)
-	data, err = json.Marshal(decoded)
+	data, err = platformredact.JSON(data)
 	if err != nil {
 		return "", err
 	}
@@ -207,12 +203,7 @@ func sanitizedRawJSON(value any, limit int) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	var decoded any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return nil, err
-	}
-	redact(decoded)
-	data, err = json.Marshal(decoded)
+	data, err = platformredact.JSON(data)
 	if err != nil {
 		return nil, err
 	}
@@ -220,24 +211,6 @@ func sanitizedRawJSON(value any, limit int) (json.RawMessage, error) {
 		return nil, fmt.Errorf("JSON payload exceeds %d bytes", limit)
 	}
 	return json.RawMessage(data), nil
-}
-
-func redact(value any) {
-	switch current := value.(type) {
-	case map[string]any:
-		for key, child := range current {
-			lower := strings.ToLower(key)
-			if strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "authorization") || strings.Contains(lower, "cookie") {
-				current[key] = "[REDACTED]"
-				continue
-			}
-			redact(child)
-		}
-	case []any:
-		for _, child := range current {
-			redact(child)
-		}
-	}
 }
 
 func truncate(value string, limit int) string {

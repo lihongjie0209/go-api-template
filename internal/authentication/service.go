@@ -82,6 +82,8 @@ type Service struct {
 	cfg    config.Config
 }
 
+const identitySessionInsertSQL = `INSERT INTO identity_sessions (id,user_id,refresh_token_hash,previous_refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?, '',?,?, '',?,?,?,?,?,?,1)`
+
 func New(db *sqlx.DB, tx *database.Transactor, users *identity.Service, jwt *auth.Service, cfg config.Config) *Service {
 	return &Service{db, tx, users, jwt, auth.NewPasswordHasher(), cfg}
 }
@@ -297,7 +299,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		if rows != 1 {
 			return ErrInvalidCredentials
 		}
-		insert := tx.Rebind(`INSERT INTO identity_sessions (id,user_id,refresh_token_hash,expires_at,last_seen_at,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`)
+		insert := tx.Rebind(identitySessionInsertSQL)
 		_, e = tx.ExecContext(systemCtx, insert, sessionID, user.ID, hash, now.Add(s.cfg.Authentication.RefreshTTL), now, ip, ua, now, user.ID, now, user.ID)
 		return e
 	})

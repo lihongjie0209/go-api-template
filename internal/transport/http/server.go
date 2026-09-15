@@ -28,7 +28,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, platformConfigHandler *PlatformConfigHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, routePolicyHandler *RoutePolicyHandler, operationLogHandler *OperationLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, authorizer platformauthz.Authorizer, routePolicies *routepolicy.Manager, routeRepository *routepolicy.Repository, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, platformConfigHandler *PlatformConfigHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, routePolicyHandler *RoutePolicyHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, authorizer platformauthz.Authorizer, routePolicies *routepolicy.Manager, routeRepository *routepolicy.Repository, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -143,6 +143,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	api.POST("/operation-logs/frontend/record", operationLogHandler.RecordFrontend)
 	api.POST("/operation-logs/get", operationLogHandler.Get)
 	api.POST("/operation-logs/page", operationLogHandler.Page)
+	api.POST("/security-logs/get", securityLogHandler.Get)
+	api.POST("/security-logs/page", securityLogHandler.Page)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
 	policyContext, stopPolicies := context.WithCancel(context.Background())
@@ -221,4 +223,4 @@ func discoveredBusinessRoutes(router *gin.Engine, serviceName string) ([]routepo
 	return routes, nil
 }
 
-var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, NewHandler, NewFileHandler, NewUserHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewPlatformConfigHandler, NewMenuHandler, NewPermissionHandler, NewRoutePolicyHandler, NewOperationLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, NewHandler, NewFileHandler, NewUserHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewPlatformConfigHandler, NewMenuHandler, NewPermissionHandler, NewRoutePolicyHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
