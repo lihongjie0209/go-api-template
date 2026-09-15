@@ -109,6 +109,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testMenuLifecycle(t, ctx, db, permissionID)
 			testPlatformConfigLifecycle(t, ctx, db)
+			assertFileQueryIndexes(t, ctx, db, databaseType)
 			testFileLifecycle(t, ctx, db)
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
@@ -117,6 +118,29 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func assertFileQueryIndexes(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string) {
+	t.Helper()
+	wanted := []string{
+		"files_object_delete_pending_idx",
+		"files_tenant_content_created_idx",
+		"files_tenant_creator_created_idx",
+		"files_tenant_size_created_idx",
+	}
+	for _, index := range wanted {
+		var count int
+		if databaseType == "postgres" {
+			if err := db.GetContext(ctx, &count, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND tablename='files' AND indexname=$1`, index); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := db.GetContext(ctx, &count, `SELECT count(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='files' AND index_name=?`, index); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("file index %s count=%d", index, count)
+		}
 	}
 }
 
