@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
 )
@@ -14,7 +15,12 @@ func main() {
 	profile := flag.String("env", "", "active environment profile (overrides APP_ENV and config)")
 	direction := flag.String("direction", "up", "migration direction: up or down")
 	steps := flag.Int("steps", 0, "number of steps; negative values migrate down")
+	showVersion := flag.Bool("version", false, "print build version information and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("version=%s commit=%s build_time=%s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildTime)
+		return
+	}
 	if *direction != "up" && *direction != "down" {
 		fmt.Fprintln(os.Stderr, "direction must be up or down")
 		os.Exit(2)

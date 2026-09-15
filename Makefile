@@ -1,4 +1,4 @@
-.PHONY: run build docker-build test test-race test-integration ci-test-integration integration-policy-check lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
+.PHONY: run build docker-build test test-race test-integration ci-test-integration integration-policy-check compose-check lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || echo unknown)
@@ -10,8 +10,8 @@ run:
 	go run ./cmd/api -config config/config.yaml
 
 build:
-	go build -ldflags="$(LDFLAGS)" -o bin/api ./cmd/api
-	go build -trimpath -o bin/migrate ./cmd/migrate
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/api ./cmd/api
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/migrate ./cmd/migrate
 # microgen:template-only:start
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/microgen ./cmd/microgen
 # microgen:template-only:end
@@ -38,6 +38,9 @@ ci-test-integration:
 
 integration-policy-check:
 	sh scripts/test-integration-policy.sh
+
+compose-check:
+	docker compose config --quiet
 
 dev-up:
 	VERSION="$(VERSION)" COMMIT="$(COMMIT)" BUILD_TIME="$(BUILD_TIME)" docker compose up --build -d --wait
