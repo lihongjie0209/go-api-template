@@ -2,15 +2,22 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/robfig/cron/v3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/fx"
 )
+
+var ErrSkipped = errors.New("scheduled job skipped because its distributed lock is held")
 
 func New(lc fx.Lifecycle, cfg config.Config, locker cache.Locker, metrics *observability.Metrics, logger *slog.Logger) (*cron.Cron, error) {
 	location, err := time.LoadLocation(cfg.Cron.Timezone)
@@ -22,8 +29,11 @@ func New(lc fx.Lifecycle, cfg config.Config, locker cache.Locker, metrics *obser
 		if _, err := runner.AddFunc(cfg.Cron.SampleSpec, func() {
 			started := time.Now()
 			status := "success"
-			if err := runSample(locker, logger); err != nil {
+			if err := runSample(cfg.App.Name, locker, logger); err != nil {
 				status = "error"
+				if errors.Is(err, ErrSkipped) {
+					status = "skipped"
+				}
 			}
 			metrics.ObserveCron("sample", status, started)
 		}); err != nil {
@@ -48,30 +58,27 @@ func New(lc fx.Lifecycle, cfg config.Config, locker cache.Locker, metrics *obser
 	return runner, nil
 }
 
-func runSample(locker cache.Locker, logger *slog.Logger) error {
+func runSample(serviceName string, locker cache.Locker, logger *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if locker == nil {
-		logger.Info("sample scheduled job executed")
+	jobRequestID := requestid.Generate()
+	ctx = requestid.WithContext(platformprincipal.SystemContext(ctx, serviceName+":scheduler:sample"), jobRequestID)
+	ctx, span := otel.Tracer("go-api-template/scheduler").Start(ctx, "cron.sample")
+	defer span.End()
+	acquired, err := cache.TryWithLock(ctx, locker, "cron:sample", time.Minute, func(leaseCtx context.Context) error {
+		logger.InfoContext(leaseCtx, "sample scheduled job executed", "job", "sample", "request_id", jobRequestID)
 		return nil
-	}
-	lock, acquired, err := locker.TryLock(ctx, "cron:sample", time.Minute)
+	})
 	if err != nil {
-		logger.Error("scheduled job lock failed", "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "job failed")
+		logger.ErrorContext(ctx, "scheduled job failed", "job", "sample", "request_id", jobRequestID, "error", err)
 		return err
 	}
 	if !acquired {
-		logger.Info("sample scheduled job skipped", "reason", "lock held")
-		return nil
+		logger.InfoContext(ctx, "sample scheduled job skipped", "job", "sample", "request_id", jobRequestID, "reason", "lock held")
+		return ErrSkipped
 	}
-	defer func() {
-		unlockCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if err := lock.Unlock(unlockCtx); err != nil {
-			logger.Error("scheduled job unlock failed", "error", err)
-		}
-	}()
-	logger.Info("sample scheduled job executed")
 	return nil
 }
 

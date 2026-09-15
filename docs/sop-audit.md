@@ -33,7 +33,7 @@ Status values:
 | Health checks | verified | `/live` is dependency-free; `/ready` checks the configured SQL database and Redis concurrently with independent positive timeouts, returns the common envelope and HTTP 503 on failure, and drives gRPC Check/List readiness. Kubernetes startup/liveness/readiness probes target the correct endpoints. Unit tests cover enabled/disabled/down dependencies and timeout isolation. |
 | Request middleware and rate limiting | verified | Bounded validated/generated Request IDs propagate through response, Context, logs and errors; request deadlines cancel SQL/Redis work; body/content-type checks, exact-origin CORS, trusted proxies and security headers are configured centrally. Service-namespaced Redis limits cover IP/API/user dimensions, while login has its own stricter rule and always fails closed. Unit and isolated HTTP integration tests cover these boundaries. |
 | HTTP/gRPC outbound reliability | verified | Named configuration registers HTTP and gRPC clients with caller cancellation plus bounded deadlines, JWT/PSK transport safeguards, custom CA/mTLS, idempotency-aware exponential retries, circuit breakers, request/idempotency/trace propagation and low-cardinality metrics. HTTP redirects are caller-visible and cannot forward credentials. gRPC supports DNS and registered custom resolver targets with round-robin balancing; connections and idle transports close through Fx lifecycle. Unit tests cover retry safety, plaintext rejection/opt-in, correlation, redirects and gRPC metadata. |
-| Scheduler | pending | Audit job ownership, system principal, overlap locking, failure metrics, gRPC dynamic invocation and tests. |
+| Scheduler | in_progress | robfig/cron lifecycle, Asia/Shanghai scheduling, local overlap prevention, service-scoped system principals, Request IDs, spans/metrics and fail-closed renewable distributed try-lock execution are implemented. The standalone scheduler service's database-backed job definitions and reflection-free descriptor-driven dynamic gRPC invocation still require end-to-end audit evidence. |
 | Database migrations and audit triggers | pending | Audit all dialects, per-service history/schema isolation, startup ordering, up/down tests and every-table audit contract. |
 | OpenAPI/Swagger | pending | Audit every registered HTTP route, auth/error documentation, generated model consistency and CI drift check. |
 | Observability and diagnostics | pending | Audit HTTP/gRPC/DB/Redis/cron/storage/lock metrics, traces, correlated logs, protected pprof and build metadata. |
@@ -213,6 +213,19 @@ Status values:
 | Presentation | Metadata exposes original filename, detected MIME type, size, ETag, checksum, audit actors/times and version while hiding provider object keys and deletion internals. |
 | Tests | Unit tests cover database-failure cleanup, SQL tenant isolation, declared-size mismatch, durable retry persistence, key validation and provider configuration. An isolated PostgreSQL/MySQL lifecycle covers upload, filtered paging, cross-tenant denial, logical/physical deletion and cleanup state; actual CI execution remains open. |
 | Shared capability | Uses the common pagination, principal, transaction, distributed-lock, operation-log, metrics and tracing abstractions; S3 and OSS implement one provider-neutral store contract. |
+
+## Scheduler audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Ownership and lifecycle | robfig/cron is owned by Fx: it starts only when enabled and shutdown waits for running jobs until the application shutdown Context expires. Six-field expressions and the configured `Asia/Shanghai` location are explicit. |
+| Identity and correlation | Each invocation creates a bounded Request ID and a service-scoped system principal (`<service>:scheduler:<job>`), then propagates that Context into its work and structured logs. Scheduled jobs never impersonate a user. |
+| Overlap and distributed lock | robfig `SkipIfStillRunning` prevents overlap in one process. Cross-instance execution uses the SDK `TryWithLock`: contention is reported as `skipped`, Redis absence/error fails closed, acquired leases renew every third of their TTL, and lock loss cancels the callback Context. |
+| Correctness | A lock is coordination, not durable job state. Job handlers must remain idempotent and use transactions, unique constraints or optimistic versions for authoritative writes. Lock keys are scoped to one logical job rather than the whole scheduler. |
+| Observability | Every run records bounded `success`, `skipped`, or `error` cron metrics, creates an OpenTelemetry span, and logs job name plus Request ID without business identifiers as metric labels. Panic recovery is installed in the cron chain. |
+| Authorization/logging | Internal gRPC calls must use the scheduler service account and database route policies. Whether a target mutation emits operation/security logs remains owned by the target service, preventing duplicate audit records in the scheduler. |
+| Tests | Unit tests cover missing-lock fail-closed behavior, distributed contention and acquired execution; the shared SDK tests renewable `TryWithLock`. Standalone scheduler persistence, retry policy and dynamic gRPC invocation integration evidence remains open. |
+| Shared capability | Scheduling uses mature robfig/cron and the public SDK lock lifecycle. The scheduler service must consume shared dynamic-gRPC and service-registry SDK packages rather than generated clients or local discovery code. |
 
 ## Security log audit decisions
 
