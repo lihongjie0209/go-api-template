@@ -32,6 +32,9 @@ CREATE TABLE operation_logs (
 );
 CREATE INDEX operation_logs_tenant_occurred_idx ON operation_logs (tenant_id, occurred_at DESC, id);
 CREATE INDEX operation_logs_actor_occurred_idx ON operation_logs (actor_id, occurred_at DESC);
+CREATE INDEX operation_logs_tenant_operation_idx ON operation_logs (tenant_id, operation, occurred_at DESC);
+CREATE INDEX operation_logs_tenant_resource_idx ON operation_logs (tenant_id, resource_type, resource_id, occurred_at DESC);
+CREATE INDEX operation_logs_tenant_application_idx ON operation_logs (tenant_id, application_id, occurred_at DESC) WHERE application_id <> '';
 CREATE INDEX operation_logs_request_id_idx ON operation_logs (request_id) WHERE request_id <> '';
 CREATE INDEX operation_logs_occurred_brin_idx ON operation_logs USING brin (occurred_at);
 SELECT app_enable_audit('operation_logs');

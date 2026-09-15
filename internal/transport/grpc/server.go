@@ -316,10 +316,6 @@ func idempotencyStreamInterceptor(srv any, stream grpc.ServerStream, info *grpc.
 	return handler(srv, &contextServerStream{ServerStream: stream, ctx: idempotency.WithContext(stream.Context(), values[0])})
 }
 
-func authStreamInterceptor(service *auth.Service, cfg config.Auth) grpc.StreamServerInterceptor {
-	return optionalAuthStreamInterceptor(service, cfg)
-}
-
 func optionalAuthStreamInterceptor(service *auth.Service, cfg config.Auth) grpc.StreamServerInterceptor {
 	return func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx, err := authenticateGRPCOptional(stream.Context(), service, cfg)

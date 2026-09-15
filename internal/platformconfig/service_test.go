@@ -3,6 +3,7 @@ package platformconfig
 import (
 	"context"
 	"encoding/json"
+	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -14,7 +15,6 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestValidate(t *testing.T) {

@@ -31,5 +31,8 @@ CREATE TABLE operation_logs (
     deleted_by text NULL,
     KEY operation_logs_tenant_occurred_idx (tenant_id(128), occurred_at, id),
     KEY operation_logs_actor_occurred_idx (actor_id(128), occurred_at),
+    KEY operation_logs_tenant_operation_idx (tenant_id(96), operation(96), occurred_at),
+    KEY operation_logs_tenant_resource_idx (tenant_id(64), resource_type(64), resource_id(64), occurred_at),
+    KEY operation_logs_tenant_application_idx (tenant_id(96), application_id(96), occurred_at),
     KEY operation_logs_request_id_idx (request_id(128))
 );

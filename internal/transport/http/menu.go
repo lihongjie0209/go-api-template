@@ -3,11 +3,12 @@ package httptransport
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/menu"
-	"log/slog"
-	"time"
 )
 
 type MenuHandler struct {

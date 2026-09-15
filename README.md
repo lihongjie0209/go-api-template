@@ -205,6 +205,8 @@ Before enqueueing, nested fields whose names contain password, secret, token, au
 
 Authenticated frontends can use `POST /api/v1/operation-logs/frontend/record` for `menu_view` and `button_click` events. The API accepts the event name, application/resource IDs, page route, duration, result, error details and an `extension` object. Identity, tenant, client IP, user agent, Request ID and Trace ID are derived server-side. The extension is recursively redacted, size-limited, transported through the same JetStream event, and stored as PostgreSQL/Kingbase `jsonb` (MySQL `json`).
 
+Authorized administrators use `POST /api/v1/operation-logs/get` and `POST /api/v1/operation-logs/page`. Tenant principals are constrained by a SQL `tenant_id` predicate; platform principals may apply an explicit tenant filter. Paging supports bounded ID/application/actor/operation/resource/source/protocol/request-ID sets, success state, keyword search, and a half-open occurrence-time range with stable newest-first ordering. Because request summaries, IP and user-agent data are sensitive, successful reads enqueue their own operation event.
+
 ## Security logs
 
 Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Supported event types are `login`, `token_refresh`, `logout` and `forced_logout`. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON metadata.

@@ -12,6 +12,8 @@ const routeNamespace = "afc952de-95c3-455a-bc5c-89fb3c2a5da5"
 
 var routeSegment = regexp.MustCompile(`^[a-z0-9_.-]+$`)
 
+const escapedRouteSegmentPrefix = "x-"
+
 type Route struct {
 	ID            string
 	Protocol      string
@@ -38,6 +40,13 @@ func NewRoute(protocol, method, path, serviceName, sourceVersion string) (Route,
 		segment = strings.ToLower(segment)
 		if segment == "" || !routeSegment.MatchString(segment) {
 			return Route{}, fmt.Errorf("%w: unsupported route segment %q", ErrInvalid, segment)
+		}
+		// Stable-ID canonical segments must begin with an alphanumeric byte.
+		// Escape both leading dots and the escape marker itself so the mapping
+		// remains injective (for example, .well-known cannot collide with
+		// x-.well-known).
+		if strings.HasPrefix(segment, ".") || strings.HasPrefix(segment, escapedRouteSegmentPrefix) {
+			segment = escapedRouteSegmentPrefix + segment
 		}
 		segments = append(segments, segment)
 	}

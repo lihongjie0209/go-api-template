@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -428,5 +427,3 @@ func (s *DepartmentService) withDepartmentLock(ctx context.Context, tenantID, su
 	}
 	return nil
 }
-
-func sortDepartmentIDs(values []string) []string { sort.Strings(values); return values }

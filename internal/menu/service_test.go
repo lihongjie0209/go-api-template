@@ -3,6 +3,7 @@ package menu
 import (
 	"context"
 	"encoding/json"
+	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -13,7 +14,6 @@ import (
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestValidate(t *testing.T) {

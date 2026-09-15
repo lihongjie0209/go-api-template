@@ -141,6 +141,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	api.POST("/route-policies/page", routePolicyHandler.Page)
 	api.POST("/route-policies/set", routePolicyHandler.Set)
 	api.POST("/operation-logs/frontend/record", operationLogHandler.RecordFrontend)
+	api.POST("/operation-logs/get", operationLogHandler.Get)
+	api.POST("/operation-logs/page", operationLogHandler.Page)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
 	policyContext, stopPolicies := context.WithCancel(context.Background())

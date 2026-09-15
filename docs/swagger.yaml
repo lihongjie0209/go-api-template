@@ -583,6 +583,68 @@ definitions:
           type: string
         type: array
     type: object
+  httptransport.OperationLogIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.OperationLogPageRequest:
+    properties:
+      actor_ids:
+        items:
+          type: string
+        type: array
+      application_ids:
+        items:
+          type: string
+        type: array
+      ids:
+        items:
+          type: string
+        type: array
+      keyword:
+        type: string
+      occurred_at_from:
+        type: string
+      occurred_at_to:
+        type: string
+      operations:
+        items:
+          type: string
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      protocols:
+        items:
+          type: string
+        type: array
+      request_ids:
+        items:
+          type: string
+        type: array
+      resource_ids:
+        items:
+          type: string
+        type: array
+      resource_types:
+        items:
+          type: string
+        type: array
+      sources:
+        items:
+          type: string
+        type: array
+      succeeded:
+        type: boolean
+      tenant_ids:
+        items:
+          type: string
+        type: array
+    type: object
   httptransport.PageTenantRequest:
     properties:
       created_at_from:
@@ -1297,6 +1359,78 @@ definitions:
         type: integer
       visible:
         type: boolean
+    type: object
+  operationlog.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/operationlog.Record'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  operationlog.Record:
+    properties:
+      actor_id:
+        type: string
+      actor_type:
+        type: string
+      application_id:
+        type: string
+      client_ip:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      duration_ms:
+        type: integer
+      error_code:
+        type: string
+      error_message:
+        type: string
+      extension:
+        type: object
+      id:
+        type: string
+      method:
+        type: string
+      occurred_at:
+        type: string
+      operation:
+        type: string
+      protocol:
+        type: string
+      request_id:
+        type: string
+      request_payload:
+        type: string
+      resource_id:
+        type: string
+      resource_type:
+        type: string
+      route:
+        type: string
+      source:
+        type: string
+      succeeded:
+        type: boolean
+      tenant_id:
+        type: string
+      trace_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      user_agent:
+        type: string
+      version:
+        type: integer
     type: object
   permission.Record:
     properties:
@@ -2304,6 +2438,74 @@ paths:
       security:
       - Bearer: []
       summary: Enqueue a frontend menu or button event
+      tags:
+      - operation-logs
+  /api/v1/operation-logs/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Operation log
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.OperationLogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/operationlog.Record'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get an operation log within the caller's tenant scope
+      tags:
+      - operation-logs
+  /api/v1/operation-logs/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.OperationLogPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/operationlog.Page'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page operation logs within the caller's tenant scope
       tags:
       - operation-logs
   /api/v1/permissions/create:

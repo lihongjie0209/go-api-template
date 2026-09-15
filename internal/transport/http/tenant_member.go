@@ -2,14 +2,15 @@ package httptransport
 
 import (
 	"errors"
+	"log/slog"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
-	"log/slog"
-	"time"
 )
 
 type TenantMemberHandler struct {

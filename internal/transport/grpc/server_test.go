@@ -88,7 +88,6 @@ func TestAuthenticateGRPC_PSKWildcard(t *testing.T) {
 
 func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	t.Parallel()
-	const key = "01234567890123456789012345678901"
 	jwtConfig, keyErr := testutil.JWTConfig()
 	if keyErr != nil {
 		t.Fatal(keyErr)
