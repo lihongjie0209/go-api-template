@@ -53,7 +53,7 @@ CI run alone is insufficient.
 
 | Service | Status | Current evidence or next gap |
 | --- | --- | --- |
-| application-service | in_progress | Shared renewable locks and the audited Outbox worker are integrated. All six domain/outbox tables now carry logical-delete fields and database-owned actor/time/version maintenance; business tables reject physical deletion while Outbox retains bounded cleanup. Local unit/race/vet/lint/Swagger and integration-compilation gates pass; PostgreSQL/MySQL Testcontainers run `35021395183` is pending. Remaining gaps include standard page filters and durable operation/security records. |
+| application-service | in_progress | Shared renewable locks and the audited Outbox worker are integrated. All six domain/outbox tables now carry logical-delete fields and database-owned actor/time/version maintenance; business tables reject physical deletion while Outbox retains bounded cleanup. PostgreSQL/MySQL run `35021395183` exposed a joined soft-delete predicate missing from the count query; commit `e84a1d0` fixes it and adds a focused SQL unit regression, with replacement run `35022048846` pending. Remaining gaps include standard page filters and durable operation/security records. |
 | audit-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
 | authorization-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
 | billing-service | pending | Repository and service-local CI exist; full SOP evidence has not yet been inspected. |
