@@ -170,7 +170,7 @@ func (s *Service) insert(ctx context.Context, tx *sqlx.Tx, id string, value even
 		query = "INSERT IGNORE" + strings.TrimPrefix(query, "INSERT")
 	} else {
 		query = strings.Replace(query, "CAST(? AS JSON)", "CAST(? AS jsonb)", 1)
-		query += " ON CONFLICT (id) DO NOTHING"
+		query += " ON CONFLICT (id, occurred_at) DO NOTHING"
 	}
 	query = tx.Rebind(query)
 	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, value.ActorType, value.ApplicationID, value.Source, value.Operation, value.ResourceType, value.ResourceID, value.Protocol, value.Method, value.Route, value.RequestPayload, value.DurationMS, value.Succeeded, value.ErrorCode, truncate(value.ErrorMessage, 2048), value.RequestID, value.TraceID, value.ClientIP, truncate(value.UserAgent, 1024), string(value.Extension), value.OccurredAt, now, value.ActorID, now, value.ActorID, 1)

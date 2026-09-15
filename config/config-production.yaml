@@ -44,6 +44,14 @@ auth:
 authorization:
   enabled: true
   policy_refresh_interval: 30s
+data_lifecycle:
+  enabled: true
+  interval: 1h
+  premake_months: 6
+  purge_batch_size: 1000
+  operation_log_retention_months: 12
+  security_log_retention_months: 24
+  archive_schema: go_api_template_archive
 outbound:
   grpc:
     authorization:

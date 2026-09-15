@@ -181,7 +181,7 @@ func insert(ctx context.Context, tx *sqlx.Tx, id string, value payload, auditAct
 	if tx.DriverName() == "mysql" {
 		query = "INSERT IGNORE" + strings.TrimPrefix(query, "INSERT")
 	} else {
-		query = strings.Replace(query, "CAST(? AS JSON)", "CAST(? AS jsonb)", 1) + " ON CONFLICT (id) DO NOTHING"
+		query = strings.Replace(query, "CAST(? AS JSON)", "CAST(? AS jsonb)", 1) + " ON CONFLICT (id, occurred_at) DO NOTHING"
 	}
 	query = tx.Rebind(query)
 	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, value.ActorType, value.SubjectID, value.SubjectType, value.EventType, value.Succeeded, value.Reason, value.ErrorCode, value.ErrorMessage, value.IdentifierHash, value.TokenIDHash, value.SessionID, value.RequestID, value.TraceID, value.ClientIP, value.UserAgent, string(value.Metadata), value.OccurredAt, now, auditActor, now, auditActor, 1)

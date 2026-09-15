@@ -1,5 +1,5 @@
 CREATE TABLE operation_logs (
-    id text PRIMARY KEY,
+    id text NOT NULL,
     tenant_id text NOT NULL,
     actor_id text NOT NULL,
     actor_type text NOT NULL,
@@ -28,8 +28,9 @@ CREATE TABLE operation_logs (
     updated_by text NOT NULL,
     version bigint NOT NULL CHECK (version > 0),
     deleted_at timestamptz,
-    deleted_by text
-);
+    deleted_by text,
+    PRIMARY KEY (id, occurred_at)
+) PARTITION BY RANGE (occurred_at);
 CREATE INDEX operation_logs_tenant_occurred_idx ON operation_logs (tenant_id, occurred_at DESC, id);
 CREATE INDEX operation_logs_actor_occurred_idx ON operation_logs (actor_id, occurred_at DESC);
 CREATE INDEX operation_logs_tenant_operation_idx ON operation_logs (tenant_id, operation, occurred_at DESC);
@@ -37,3 +38,20 @@ CREATE INDEX operation_logs_tenant_resource_idx ON operation_logs (tenant_id, re
 CREATE INDEX operation_logs_tenant_application_idx ON operation_logs (tenant_id, application_id, occurred_at DESC) WHERE application_id <> '';
 CREATE INDEX operation_logs_request_id_idx ON operation_logs (request_id);
 SELECT app_enable_audit('operation_logs');
+
+DO $partition$
+DECLARE
+    offset_month integer;
+    range_start timestamptz;
+    range_end timestamptz;
+    partition_name text;
+BEGIN
+    FOR offset_month IN -12..6 LOOP
+        range_start := (date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai') + offset_month * interval '1 month') AT TIME ZONE 'Asia/Shanghai';
+        range_end := range_start + interval '1 month';
+        partition_name := 'operation_logs_y' || to_char(range_start AT TIME ZONE 'Asia/Shanghai', 'YYYY') || 'm' || to_char(range_start AT TIME ZONE 'Asia/Shanghai', 'MM');
+        EXECUTE format('CREATE TABLE %I PARTITION OF operation_logs FOR VALUES FROM (%L) TO (%L)', partition_name, range_start, range_end);
+    END LOOP;
+END
+$partition$;
+CREATE TABLE operation_logs_default PARTITION OF operation_logs DEFAULT;

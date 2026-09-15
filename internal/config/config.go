@@ -44,6 +44,7 @@ type Config struct {
 	Files          Files          `mapstructure:"files"`
 	OperationLog   OperationLog   `mapstructure:"operation_log"`
 	SecurityLog    SecurityLog    `mapstructure:"security_log"`
+	DataLifecycle  DataLifecycle  `mapstructure:"data_lifecycle"`
 }
 
 type Runtime struct {
@@ -275,6 +276,15 @@ type SecurityLog struct {
 	MaxPayloadBytes int    `mapstructure:"max_payload_bytes"`
 	FailClosed      bool   `mapstructure:"fail_closed"`
 	HashKey         string `mapstructure:"hash_key"`
+}
+type DataLifecycle struct {
+	Enabled                     bool          `mapstructure:"enabled"`
+	Interval                    time.Duration `mapstructure:"interval"`
+	PremakeMonths               int           `mapstructure:"premake_months"`
+	PurgeBatchSize              int           `mapstructure:"purge_batch_size"`
+	OperationLogRetentionMonths int           `mapstructure:"operation_log_retention_months"`
+	SecurityLogRetentionMonths  int           `mapstructure:"security_log_retention_months"`
+	ArchiveSchema               string        `mapstructure:"archive_schema"`
 }
 type Outbound struct {
 	HTTP map[string]HTTPUpstream `mapstructure:"http"`
@@ -574,6 +584,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("security_log.max_payload_bytes", 4096)
 	v.SetDefault("security_log.fail_closed", true)
 	v.SetDefault("security_log.hash_key", "")
+	v.SetDefault("data_lifecycle.enabled", false)
+	v.SetDefault("data_lifecycle.interval", "1h")
+	v.SetDefault("data_lifecycle.premake_months", 6)
+	v.SetDefault("data_lifecycle.purge_batch_size", 1000)
+	v.SetDefault("data_lifecycle.operation_log_retention_months", 12)
+	v.SetDefault("data_lifecycle.security_log_retention_months", 24)
+	v.SetDefault("data_lifecycle.archive_schema", "")
 	v.SetDefault("outbound.http", map[string]any{})
 	v.SetDefault("outbound.grpc", map[string]any{})
 }
@@ -718,6 +735,20 @@ func (c Config) Validate() error {
 	}
 	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || c.SecurityLog.Durable == "" || c.SecurityLog.MaxPayloadBytes <= 0 || len(c.SecurityLog.HashKey) < 32) {
 		return errors.New("enabled security_log requires database, event_bus, subject, durable, positive payload limit, and a hash_key of at least 32 bytes")
+	}
+	if c.DataLifecycle.Enabled {
+		if !c.Database.Enabled {
+			return errors.New("data_lifecycle requires an enabled database")
+		}
+		if c.DataLifecycle.Interval <= 0 || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 {
+			return errors.New("data_lifecycle requires a positive interval and retention months, premake_months between 1 and 24, and purge_batch_size between 1 and 10000")
+		}
+		if c.DataLifecycle.ArchiveSchema != "" && !validMigrationTable.MatchString(c.DataLifecycle.ArchiveSchema) {
+			return errors.New("data_lifecycle.archive_schema must contain lowercase letters, digits, or underscores and be at most 63 characters")
+		}
+		if c.Database.Type == "mysql" && c.DataLifecycle.ArchiveSchema != "" {
+			return errors.New("mysql data_lifecycle requires an empty archive_schema and uses bounded purge batches")
+		}
 	}
 	for name, upstream := range c.Outbound.HTTP {
 		if upstream.BaseURL == "" || upstream.Timeout <= 0 {

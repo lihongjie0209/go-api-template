@@ -12,6 +12,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/datalifecycle"
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/files"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
@@ -45,6 +46,7 @@ func New(cfg config.Config) *fx.App {
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger { return &fxevent.SlogLogger{Logger: logger} }),
 		MigrationModule,
 		DatabaseModule,
+		datalifecycle.Module,
 		CacheModule,
 		ObjectStorageModule,
 		fx.Provide(files.New),

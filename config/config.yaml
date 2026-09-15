@@ -186,6 +186,18 @@ event_bus:
   dispatch_lease: 30s
   dispatch_retry_delay: 2s
 
+# PostgreSQL/Kingbase native monthly partitions for append-only audit tables.
+# Keep disabled unless the database role can create/detach partitions. An empty
+# archive_schema permanently drops expired partitions; production should archive.
+data_lifecycle:
+  enabled: false
+  interval: 1h
+  premake_months: 6
+  purge_batch_size: 1000
+  operation_log_retention_months: 12
+  security_log_retention_months: 24
+  archive_schema: ""
+
 # Named outbound clients. Put environment-specific endpoints and credentials in
 # config-{env}.yaml or APP_ variables.
 outbound:

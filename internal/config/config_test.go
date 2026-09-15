@@ -208,3 +208,43 @@ func TestConfig_ValidateAutoMigration(t *testing.T) {
 		t.Fatal("Validate() error = nil, want auto migration dependency error")
 	}
 }
+
+func TestLoad_ValidatesDataLifecycleDatabaseAndBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name: "mysql archive unsupported",
+			content: "database:\n  enabled: true\n  type: mysql\n  dsn: app:app@tcp(localhost:3306)/app\n" +
+				"data_lifecycle:\n  enabled: true\n  archive_schema: audit_archive\n",
+			want: "bounded purge batches",
+		},
+		{
+			name: "premake unbounded",
+			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
+				"data_lifecycle:\n  enabled: true\n  premake_months: 25\n",
+			want: "premake_months",
+		},
+		{
+			name: "unsafe archive schema",
+			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
+				"data_lifecycle:\n  enabled: true\n  archive_schema: archive-invalid!\n",
+			want: "archive_schema",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load() error=%v, want substring %q", err, test.want)
+			}
+		})
+	}
+}

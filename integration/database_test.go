@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	appdb "github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/datalifecycle"
 	"github.com/lihongjie0209/go-api-template/internal/files"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/menu"
@@ -96,6 +98,9 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
 			if databaseType == "postgres" {
 				testPostgresAuditInfrastructure(t, ctx, db)
+				testPostgresLogPartitions(t, ctx, db)
+			} else {
+				testMySQLLogRetention(t, ctx, db)
 			}
 			testTenantLifecycle(t, ctx, db)
 			testIdentityUserLifecycle(t, ctx, db)
@@ -112,6 +117,101 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testMySQLLogRetention(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	old := time.Now().AddDate(-3, 0, 0)
+	now := time.Now()
+	operationInsert := db.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,source,operation,protocol,duration_ms,succeeded,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if _, err := db.ExecContext(ctx, operationInsert, "expired-operation", "tenant-retention", "actor", "system", "backend", "retention.test", "service", 1, true, old, now, "retention-test", now, "retention-test", 1); err != nil {
+		t.Fatal(err)
+	}
+	securityInsert := db.Rebind(`INSERT INTO security_logs(id,event_type,succeeded,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?)`)
+	if _, err := db.ExecContext(ctx, securityInsert, "expired-security", "login", true, old, now, "retention-test", now, "retention-test", 1); err != nil {
+		t.Fatal(err)
+	}
+	manager := datalifecycle.New(db, config.Config{Database: config.Database{Type: "mysql"}, DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, PremakeMonths: 6, PurgeBatchSize: 100,
+		OperationLogRetentionMonths: 12, SecurityLogRetentionMonths: 24,
+	}}, slog.Default(), nil)
+	if err := manager.Maintain(ctx); err != nil {
+		t.Fatalf("maintain mysql log retention: %v", err)
+	}
+	for _, record := range []struct{ table, id string }{{"operation_logs", "expired-operation"}, {"security_logs", "expired-security"}} {
+		var count int
+		if err := db.GetContext(ctx, &count, db.Rebind(`SELECT count(*) FROM `+record.table+` WHERE id=?`), record.id); err != nil || count != 0 {
+			t.Fatalf("expired %s count=%d err=%v", record.table, count, err)
+		}
+	}
+}
+
+func testPostgresLogPartitions(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	for _, table := range []string{"operation_logs", "security_logs"} {
+		var partitioned bool
+		query := `SELECT EXISTS (
+			SELECT 1 FROM pg_partitioned_table p
+			JOIN pg_class c ON c.oid=p.partrelid
+			JOIN pg_namespace n ON n.oid=c.relnamespace
+			WHERE n.nspname=current_schema() AND c.relname=$1
+		)`
+		if err := db.GetContext(ctx, &partitioned, query, table); err != nil || !partitioned {
+			t.Fatalf("table %s partitioned=%v err=%v", table, partitioned, err)
+		}
+	}
+
+	actorCtx := platformprincipal.SystemContext(ctx, "log-partition-integration")
+	occurredAt := time.Now().UTC().Truncate(time.Microsecond)
+	err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		operationInsert := `INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,source,operation,protocol,duration_ms,succeeded,occurred_at,created_at,created_by,updated_at,updated_by,version)
+			VALUES($1,'tenant-partition','actor','system','backend','partition.test','service',1,true,$2,now(),'ignored',now(),'ignored',99)
+			ON CONFLICT(id,occurred_at) DO NOTHING`
+		if _, execErr := tx.ExecContext(actorCtx, operationInsert, "partition-operation", occurredAt); execErr != nil {
+			return execErr
+		}
+		if _, execErr := tx.ExecContext(actorCtx, operationInsert, "partition-operation", occurredAt); execErr != nil {
+			return execErr
+		}
+		securityInsert := `INSERT INTO security_logs(id,event_type,succeeded,occurred_at,created_at,created_by,updated_at,updated_by,version)
+			VALUES($1,'login',true,$2,now(),'ignored',now(),'ignored',99)
+			ON CONFLICT(id,occurred_at) DO NOTHING`
+		if _, execErr := tx.ExecContext(actorCtx, securityInsert, "partition-security", occurredAt); execErr != nil {
+			return execErr
+		}
+		_, execErr := tx.ExecContext(actorCtx, securityInsert, "partition-security", occurredAt)
+		return execErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range []struct{ table, id string }{{"operation_logs", "partition-operation"}, {"security_logs", "partition-security"}} {
+		var partition string
+		query := fmt.Sprintf(`SELECT tableoid::regclass::text FROM %s WHERE id=$1 AND occurred_at=$2`, record.table)
+		if err := db.GetContext(ctx, &partition, query, record.id, occurredAt); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasSuffix(partition, "_default") {
+			t.Fatalf("current %s row routed to default partition %q", record.table, partition)
+		}
+		var count int
+		if err := db.GetContext(ctx, &count, fmt.Sprintf(`SELECT count(*) FROM %s WHERE id=$1 AND occurred_at=$2`, record.table), record.id, occurredAt); err != nil || count != 1 {
+			t.Fatalf("%s duplicate count=%d err=%v", record.table, count, err)
+		}
+	}
+	manager := datalifecycle.New(db, config.Config{DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, PremakeMonths: 7,
+		OperationLogRetentionMonths: 120, SecurityLogRetentionMonths: 120,
+	}}, slog.Default(), nil)
+	if err := manager.Maintain(ctx); err != nil {
+		t.Fatalf("maintain log partitions: %v", err)
+	}
+	future := time.Now().UTC().AddDate(0, 7, 0)
+	partition := fmt.Sprintf("operation_logs_y%04dm%02d", future.Year(), int(future.Month()))
+	var exists bool
+	if err := db.GetContext(ctx, &exists, `SELECT to_regclass(current_schema() || '.' || $1) IS NOT NULL`, partition); err != nil || !exists {
+		t.Fatalf("future partition %s exists=%v err=%v", partition, exists, err)
 	}
 }
 
