@@ -31,6 +31,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
 	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -97,6 +98,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			}
 			testTenantLifecycle(t, ctx, db)
 			testIdentityUserLifecycle(t, ctx, db)
+			testServiceAccountLifecycle(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
 			testMenuLifecycle(t, ctx, db, permissionID)
 			testPlatformConfigLifecycle(t, ctx, db)
@@ -108,6 +110,50 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	service := serviceaccount.New(db, appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, config.Config{Authentication: config.Authentication{MaxFailedAttempts: 5, LockDuration: time.Minute}})
+	actorCtx := platformprincipal.SystemContext(ctx, "service-account-integration")
+	created, err := service.Create(actorCtx, serviceaccount.CreateInput{ClientID: "integration-worker", Name: "Integration Worker", Description: "database compatibility test"})
+	if err != nil || created.Secret == "" || created.Account.Version != 1 {
+		t.Fatalf("created service account=%+v err=%v", created, err)
+	}
+	if _, err := service.Authenticate(ctx, "INTEGRATION-WORKER", created.Secret); err != nil {
+		t.Fatalf("authenticate created service account: %v", err)
+	}
+	current, err := service.Get(actorCtx, created.Account.ID)
+	if err != nil || current.Version != 2 || current.LastUsedAt == nil {
+		t.Fatalf("service account after authentication=%+v err=%v", current, err)
+	}
+	updated, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: current.ID, Name: "Updated Worker", Description: current.Description, Status: serviceaccount.StatusActive, Version: current.Version})
+	if err != nil || updated.Version != 3 {
+		t.Fatalf("updated service account=%+v err=%v", updated, err)
+	}
+	if _, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: current.ID, Name: "Stale", Status: serviceaccount.StatusActive, Version: current.Version}); !errors.Is(err, serviceaccount.ErrConflict) {
+		t.Fatalf("stale service account update error=%v", err)
+	}
+	rotated, err := service.RotateSecret(actorCtx, updated.ID, updated.Version)
+	if err != nil || rotated.Secret == "" || rotated.Secret == created.Secret || rotated.Account.Version != 4 {
+		t.Fatalf("rotated service account=%+v err=%v", rotated, err)
+	}
+	if _, err := service.Authenticate(ctx, created.Account.ClientID, created.Secret); !errors.Is(err, serviceaccount.ErrInvalidCredentials) {
+		t.Fatalf("old service account secret error=%v", err)
+	}
+	if _, err := service.Authenticate(ctx, created.Account.ClientID, rotated.Secret); err != nil {
+		t.Fatalf("rotated service account secret: %v", err)
+	}
+	current, err = service.Get(actorCtx, created.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(actorCtx, current.ID, current.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(ctx, created.Account.ClientID, rotated.Secret); !errors.Is(err, serviceaccount.ErrInvalidCredentials) {
+		t.Fatalf("deleted service account authentication error=%v", err)
 	}
 }
 

@@ -13,7 +13,7 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "template")
-	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.25.0\n")
+	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.25.13\n")
 	writeFixture(t, source, "main.go", "package main\nimport x \""+templateModule+"/internal/example\"\nvar _ = x.Name\nconst service = \""+templateName+"\"\n")
 	writeFixture(t, source, "deployments/app.yaml", "namespace: "+templateNamespace+"\nimage: "+templateImage+"\ntable: "+templateMigrationTable+"\ndatabase: "+templateDatabaseName+"\nschema: "+templateDatabaseSchema+"\n")
 	profileConfig := "app:\n  name: " + templateName + "\ndatabase:\n  name: " + templateDatabaseName + "\n  schema: " + templateDatabaseSchema + "\nmigration:\n  table: " + templateMigrationTable + "\n"

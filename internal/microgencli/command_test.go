@@ -51,7 +51,7 @@ func TestNewCommand_FlagOverridesEnvironmentAndConfig(t *testing.T) {
 	if err := os.MkdirAll(source, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module github.com/lihongjie0209/go-api-template\n\ngo 1.25.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module github.com/lihongjie0209/go-api-template\n\ngo 1.25.13\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	config := "name: config-service\nmodule: github.com/acme/config-service\n"

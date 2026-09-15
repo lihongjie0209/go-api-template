@@ -21,6 +21,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
+	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -28,7 +29,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, platformConfigHandler *PlatformConfigHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, routePolicyHandler *RoutePolicyHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, authorizer platformauthz.Authorizer, routePolicies *routepolicy.Manager, routeRepository *routepolicy.Repository, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, platformConfigHandler *PlatformConfigHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, routePolicyHandler *RoutePolicyHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, authorizer platformauthz.Authorizer, routePolicies *routepolicy.Manager, routeRepository *routepolicy.Repository, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -88,6 +89,12 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	api.POST("/users/page", userHandler.Page)
 	api.POST("/users/update", userHandler.Update)
 	api.POST("/users/delete", userHandler.Delete)
+	api.POST("/service-accounts/create", serviceAccountHandler.Create)
+	api.POST("/service-accounts/get", serviceAccountHandler.Get)
+	api.POST("/service-accounts/page", serviceAccountHandler.Page)
+	api.POST("/service-accounts/update", serviceAccountHandler.Update)
+	api.POST("/service-accounts/secret/rotate", serviceAccountHandler.RotateSecret)
+	api.POST("/service-accounts/delete", serviceAccountHandler.Delete)
 	api.POST("/tenants/create", tenantHandler.Create)
 	api.POST("/tenants/get", tenantHandler.Get)
 	api.POST("/tenants/page", tenantHandler.Page)
@@ -223,4 +230,4 @@ func discoveredBusinessRoutes(router *gin.Engine, serviceName string) ([]routepo
 	return routes, nil
 }
 
-var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, NewHandler, NewFileHandler, NewUserHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewPlatformConfigHandler, NewMenuHandler, NewPermissionHandler, NewRoutePolicyHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewPlatformConfigHandler, NewMenuHandler, NewPermissionHandler, NewRoutePolicyHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))

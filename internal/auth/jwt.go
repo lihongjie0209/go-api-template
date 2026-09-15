@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -35,14 +34,13 @@ type signingKey struct {
 	private, public any
 }
 type Service struct {
-	issuer, audience       string
-	ttl                    time.Duration
-	clientID, clientSecret string
-	active                 *signingKey
-	verification           map[string]signingKey
-	verifier               *authn.JWKSVerifier
-	initErr                error
-	db                     *sqlx.DB
+	issuer, audience string
+	ttl              time.Duration
+	active           *signingKey
+	verification     map[string]signingKey
+	verifier         *authn.JWKSVerifier
+	initErr          error
+	db               *sqlx.DB
 }
 type JWK struct {
 	KTY string `json:"kty"`
@@ -77,7 +75,7 @@ func NewRuntime(lifecycle fx.Lifecycle, cfg config.Config, db *sqlx.DB) (*Servic
 	return service, nil
 }
 func New(cfg config.Config) *Service {
-	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, clientID: cfg.Auth.ClientID, clientSecret: cfg.Auth.ClientSecret, verification: map[string]signingKey{}}
+	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, verification: map[string]signingKey{}}
 	if cfg.JWT.KeyID == "" || (cfg.JWT.PrivateKey == "" && cfg.JWT.PrivateKeyFile == "") {
 		return s
 	}
@@ -137,9 +135,6 @@ func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Pri
 	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, nil
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
-func (s *Service) Authenticate(clientID, clientSecret string) bool {
-	return s.Enabled() && s.clientID != "" && s.clientSecret != "" && subtle.ConstantTimeCompare([]byte(clientID), []byte(s.clientID)) == 1 && subtle.ConstantTimeCompare([]byte(clientSecret), []byte(s.clientSecret)) == 1
-}
 func (s *Service) Issue(subject string) (string, error) {
 	return s.IssuePrincipal(platformprincipal.Principal{ID: subject, Type: platformprincipal.TypeServiceAccount})
 }

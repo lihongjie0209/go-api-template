@@ -48,6 +48,7 @@ const (
 	EventMenuChanged           EventType = "platform_menu_changed"
 	EventPlatformConfigChanged EventType = "platform_config_changed"
 	EventSecurityLogAccess     EventType = "security_log_accessed"
+	EventServiceAccountChanged EventType = "service_account_changed"
 )
 
 const envelopeType = "platform.security-log.recorded.v1"
@@ -203,7 +204,7 @@ func (s *Service) hashIdentifier(value string) string {
 	return s.hash(strings.ToLower(strings.TrimSpace(value)))
 }
 func validEvent(value EventType) bool {
-	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventRoutePolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess
+	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventRoutePolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess || value == EventServiceAccountChanged
 }
 func safeMetadata(value any, limit int) (json.RawMessage, error) {
 	if value == nil {

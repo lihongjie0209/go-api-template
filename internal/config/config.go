@@ -167,12 +167,10 @@ type JWTVerificationKey struct {
 	PublicKeyFile string `mapstructure:"public_key_file"`
 }
 type Auth struct {
-	ClientID     string `mapstructure:"client_id"`
-	ClientSecret string `mapstructure:"client_secret"`
-	JWKSURL      string `mapstructure:"jwks_url"`
-	Issuer       string `mapstructure:"issuer"`
-	Audience     string `mapstructure:"audience"`
-	PSK          PSK    `mapstructure:"psk"`
+	JWKSURL  string `mapstructure:"jwks_url"`
+	Issuer   string `mapstructure:"issuer"`
+	Audience string `mapstructure:"audience"`
+	PSK      PSK    `mapstructure:"psk"`
 }
 type Authorization struct {
 	Enabled               bool          `mapstructure:"enabled"`
@@ -503,8 +501,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("jwt.private_key_file", "")
 	v.SetDefault("jwt.public_keys", []JWTVerificationKey{})
 	v.SetDefault("jwt.ttl", "2h")
-	v.SetDefault("auth.client_id", "")
-	v.SetDefault("auth.client_secret", "")
 	v.SetDefault("auth.jwks_url", "")
 	v.SetDefault("auth.issuer", "identity-service")
 	v.SetDefault("auth.audience", "go-api-template")
@@ -658,8 +654,9 @@ func (c Config) Validate() error {
 			return errors.New("authorization.policy_refresh_interval must be positive")
 		}
 	}
-	if (c.Auth.ClientID != "" || c.Auth.ClientSecret != "") && (c.JWT.KeyID == "" || (c.JWT.PrivateKey == "" && c.JWT.PrivateKeyFile == "")) {
-		return errors.New("jwt.key_id and an asymmetric private key are required when token issuing is enabled")
+	hasSigningKey := c.JWT.PrivateKey != "" || c.JWT.PrivateKeyFile != ""
+	if (c.JWT.KeyID != "") != hasSigningKey {
+		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
 	}
 	if c.JWT.Algorithm != "" && c.JWT.Algorithm != "RS256" && c.JWT.Algorithm != "ES256" {
 		return errors.New("jwt.algorithm must be RS256 or ES256")

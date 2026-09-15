@@ -33,8 +33,6 @@ cp config/config.yaml config/config.local.yaml
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/go-api-template-jwt.pem
 export APP_JWT_KEY_ID='local-development'
 export APP_JWT_PRIVATE_KEY_FILE='/tmp/go-api-template-jwt.pem'
-export APP_AUTH_CLIENT_ID='local-client'
-export APP_AUTH_CLIENT_SECRET='local-secret'
 go run ./cmd/api -config config/config.local.yaml
 ```
 
@@ -76,8 +74,7 @@ kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
   --from-literal=APP_JWT_KEY_ID='production-2026-01' \
   --from-file=APP_JWT_PRIVATE_KEY='/secure/path/jwt-private.pem' \
-  --from-literal=APP_AUTH_CLIENT_ID='replace-me' \
-  --from-literal=APP_AUTH_CLIENT_SECRET='replace-me'
+  --from-literal=APP_AUTH_JWKS_URL='https://identity.example.com/.well-known/jwks.json'
 kubectl apply -f deployments/migrate-job.yaml
 kubectl wait --namespace microservices --for=condition=complete job/go-api-template-migrate --timeout=5m
 kubectl apply -f deployments/kubernetes.yaml
@@ -122,11 +119,12 @@ migration-table: orders_service_schema_migrations
 
 Environment profiles work like Spring Boot: load `config.yaml`, then an optional sibling `config-{env}.yaml`, then apply environment variables. Select the profile with `-env production` or `APP_ENV=production`; the flag has the highest priority. The active profile and loaded file list are available through `config.Config.Runtime`, while the profile is also placed in HTTP/gRPC contexts through `environment.FromContext` and attached to every structured log entry.
 
-```bash
-curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"client_id":"local-client","client_secret":"local-secret"}'
-```
+Service-to-service client credentials are database-owned service accounts, not
+static configuration. A platform administrator creates an account through
+`POST /api/v1/service-accounts/create`; its random secret is returned exactly
+once. Store that value in the deployment secret manager, then exchange the
+`client_id` and secret at `POST /api/v1/auth/login`. Rotation returns a new
+secret once and invalidates the old secret immediately.
 
 Business endpoints use POST with JSON; operational probes also expose GET for Docker/Kubernetes. Responses always use:
 

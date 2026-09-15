@@ -273,6 +273,20 @@ definitions:
     - status
     - value
     type: object
+  httptransport.CreateServiceAccountRequest:
+    properties:
+      client_id:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      name:
+        type: string
+    required:
+    - client_id
+    - name
+    type: object
   httptransport.CreateTenantRequest:
     properties:
       code:
@@ -480,6 +494,13 @@ definitions:
     - event_type
     - succeeded
     type: object
+  httptransport.GetServiceAccountRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
   httptransport.GetTenantRequest:
     properties:
       id:
@@ -583,6 +604,16 @@ definitions:
           type: string
         type: array
     type: object
+  httptransport.MutateServiceAccountSecretRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
   httptransport.OperationLogIDRequest:
     properties:
       id:
@@ -643,6 +674,38 @@ definitions:
       tenant_ids:
         items:
           type: string
+        type: array
+    type: object
+  httptransport.PageServiceAccountsRequest:
+    properties:
+      client_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      expires_at_from:
+        type: string
+      expires_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          $ref: '#/definitions/serviceaccount.Status'
+        maxItems: 20
         type: array
     type: object
   httptransport.PageTenantRequest:
@@ -1082,6 +1145,30 @@ definitions:
     - name
     - status
     - value
+    - version
+    type: object
+  httptransport.UpdateServiceAccountRequest:
+    properties:
+      description:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/serviceaccount.Status'
+        enum:
+        - active
+        - disabled
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - status
     - version
     type: object
   httptransport.UpdateTenantMemberStatusRequest:
@@ -1732,6 +1819,7 @@ definitions:
     - platform_menu_changed
     - platform_config_changed
     - security_log_accessed
+    - service_account_changed
     type: string
     x-enum-varnames:
     - EventLogin
@@ -1754,6 +1842,7 @@ definitions:
     - EventMenuChanged
     - EventPlatformConfigChanged
     - EventSecurityLogAccess
+    - EventServiceAccountChanged
   securitylog.Page:
     properties:
       items:
@@ -1818,6 +1907,52 @@ definitions:
       version:
         type: integer
     type: object
+  serviceaccount.Account:
+    properties:
+      client_id:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      failed_attempts:
+        type: integer
+      id:
+        type: string
+      last_used_at:
+        type: string
+      locked_until:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/serviceaccount.Status'
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  serviceaccount.Created:
+    properties:
+      account:
+        $ref: '#/definitions/serviceaccount.Account'
+      secret:
+        type: string
+    type: object
+  serviceaccount.Status:
+    enum:
+    - active
+    - disabled
+    type: string
+    x-enum-varnames:
+    - StatusActive
+    - StatusDisabled
   tenant.AvailableTenant:
     properties:
       is_administrator:
@@ -3169,6 +3304,164 @@ paths:
       summary: Page security logs within the caller's tenant scope
       tags:
       - security-logs
+  /api/v1/service-accounts/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/serviceaccount.Created'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a service account and return its secret once
+      tags:
+      - service-accounts
+  /api/v1/service-accounts/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MutateServiceAccountSecretRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Disable and logically delete a service account
+      tags:
+      - service-accounts
+  /api/v1/service-accounts/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/serviceaccount.Account'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get service account metadata without its secret hash
+      tags:
+      - service-accounts
+  /api/v1/service-accounts/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PageServiceAccountsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Search service accounts by identity, status, and time ranges
+      tags:
+      - service-accounts
+  /api/v1/service-accounts/secret/rotate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MutateServiceAccountSecretRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/serviceaccount.Created'
+              type: object
+      security:
+      - Bearer: []
+      summary: Rotate a service account secret and return it once
+      tags:
+      - service-accounts
+  /api/v1/service-accounts/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/serviceaccount.Account'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a service account using optimistic locking
+      tags:
+      - service-accounts
   /api/v1/tenant-authorization/administrators/set:
     post:
       consumes:

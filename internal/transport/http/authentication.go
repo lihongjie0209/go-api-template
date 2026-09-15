@@ -7,17 +7,19 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 type AuthenticationHandler struct {
 	auth     *auth.Service
+	accounts *serviceaccount.Service
 	security securitylog.Recorder
 	logger   *slog.Logger
 }
 
-func NewAuthenticationHandler(authService *auth.Service, securityRecorder securitylog.Recorder, logger *slog.Logger) *AuthenticationHandler {
-	return &AuthenticationHandler{auth: authService, security: securityRecorder, logger: logger}
+func NewAuthenticationHandler(authService *auth.Service, accounts *serviceaccount.Service, securityRecorder securitylog.Recorder, logger *slog.Logger) *AuthenticationHandler {
+	return &AuthenticationHandler{auth: authService, accounts: accounts, security: securityRecorder, logger: logger}
 }
 
 type LoginRequest struct {
@@ -48,7 +50,8 @@ func (h *AuthenticationHandler) Login(c *gin.Context) {
 		return
 	}
 	entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: request.ClientID, SubjectType: string(platformprincipal.TypeServiceAccount), ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent()}
-	if !h.auth.Authenticate(request.ClientID, request.ClientSecret) {
+	account, authenticateErr := h.accounts.Authenticate(c.Request.Context(), request.ClientID, request.ClientSecret)
+	if authenticateErr != nil {
 		entry.Succeeded = false
 		entry.Reason = "invalid_credentials"
 		entry.ErrorCode = "invalid_credentials"
@@ -58,7 +61,7 @@ func (h *AuthenticationHandler) Login(c *gin.Context) {
 		Fail(c, h.logger, apperror.Unauthorized("invalid credentials"))
 		return
 	}
-	token, err := h.auth.Issue(request.ClientID)
+	token, err := h.auth.Issue(account.ID)
 	if err != nil {
 		Fail(c, h.logger, apperror.Internal(err))
 		return
@@ -68,7 +71,7 @@ func (h *AuthenticationHandler) Login(c *gin.Context) {
 		Fail(c, h.logger, apperror.Internal(err))
 		return
 	}
-	entry.SubjectID = request.ClientID
+	entry.SubjectID = account.ID
 	entry.TokenID = claims.ID
 	entry.Succeeded = true
 	if err := h.security.Record(c.Request.Context(), entry); err != nil {

@@ -22,8 +22,6 @@ x-app-env: &app-env
   APP_MIGRATION_TABLE: go_api_template_schema_migrations
   APP_JWT_KEY_ID: compose-development
   APP_JWT_PRIVATE_KEY_FILE: /tmp/go-api-template-compose-jwt.pem
-  APP_AUTH_CLIENT_ID: local-client
-  APP_AUTH_CLIENT_SECRET: local-secret
 
 x-app-build: &app-build
   context: .

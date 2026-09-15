@@ -1,6 +1,6 @@
 module github.com/lihongjie0209/go-api-template
 
-go 1.25.0
+go 1.25.13
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2

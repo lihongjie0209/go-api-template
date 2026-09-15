@@ -81,7 +81,7 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		Health:        config.Health{DatabaseTimeout: 2 * time.Second, RedisTimeout: 2 * time.Second},
 		Observability: config.Observability{MetricsEnabled: true},
 		JWT:           jwtConfig,
-		Auth:          config.Auth{ClientID: "client", ClientSecret: "secret", PSK: config.PSK{Enabled: true, Key: secret}},
+		Auth:          config.Auth{PSK: config.PSK{Enabled: true, Key: secret}},
 		Authorization: config.Authorization{Enabled: true, PolicyRefreshInterval: 100 * time.Millisecond},
 		Cron:          config.Cron{Enabled: false, Timezone: "UTC"},
 		User:          config.User{CacheTTL: time.Minute, LockTTL: 10 * time.Second, LockRetryDelay: 20 * time.Millisecond},

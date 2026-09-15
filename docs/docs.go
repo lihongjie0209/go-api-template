@@ -2075,6 +2075,282 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/service-accounts/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Create a service account and return its secret once",
+                "parameters": [
+                    {
+                        "description": "Service account",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CreateServiceAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/serviceaccount.Created"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/service-accounts/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Disable and logically delete a service account",
+                "parameters": [
+                    {
+                        "description": "Service account and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.MutateServiceAccountSecretRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/service-accounts/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Get service account metadata without its secret hash",
+                "parameters": [
+                    {
+                        "description": "Service account ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetServiceAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/serviceaccount.Account"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/service-accounts/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Search service accounts by identity, status, and time ranges",
+                "parameters": [
+                    {
+                        "description": "Service account filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PageServiceAccountsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/service-accounts/secret/rotate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Rotate a service account secret and return it once",
+                "parameters": [
+                    {
+                        "description": "Service account and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.MutateServiceAccountSecretRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/serviceaccount.Created"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/service-accounts/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Update a service account using optimistic locking",
+                "parameters": [
+                    {
+                        "description": "Service account and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.UpdateServiceAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/serviceaccount.Account"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-authorization/administrators/set": {
             "post": {
                 "security": [
@@ -4209,6 +4485,27 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.CreateServiceAccountRequest": {
+            "type": "object",
+            "required": [
+                "client_id",
+                "name"
+            ],
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "httptransport.CreateTenantRequest": {
             "type": "object",
             "required": [
@@ -4514,6 +4811,17 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.GetServiceAccountRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
         "httptransport.GetTenantRequest": {
             "type": "object",
             "required": [
@@ -4670,6 +4978,21 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.MutateServiceAccountSecretRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "version"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.OperationLogIDRequest": {
             "type": "object",
             "required": [
@@ -4760,6 +5083,53 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                }
+            }
+        },
+        "httptransport.PageServiceAccountsRequest": {
+            "type": "object",
+            "properties": {
+                "client_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "expires_at_from": {
+                    "type": "string"
+                },
+                "expires_at_to": {
+                    "type": "string"
+                },
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                        "$ref": "#/definitions/serviceaccount.Status"
                     }
                 }
             }
@@ -5414,6 +5784,43 @@ const docTemplate = `{
                 },
                 "value": {
                     "type": "object"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.UpdateServiceAccountRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "name",
+                "status",
+                "version"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/serviceaccount.Status"
+                        }
+                    ]
                 },
                 "version": {
                     "type": "integer"
@@ -6383,7 +6790,8 @@ const docTemplate = `{
                 "tenant_authorization_changed",
                 "platform_menu_changed",
                 "platform_config_changed",
-                "security_log_accessed"
+                "security_log_accessed",
+                "service_account_changed"
             ],
             "x-enum-varnames": [
                 "EventLogin",
@@ -6405,7 +6813,8 @@ const docTemplate = `{
                 "EventTenantAuthorization",
                 "EventMenuChanged",
                 "EventPlatformConfigChanged",
-                "EventSecurityLogAccess"
+                "EventSecurityLogAccess",
+                "EventServiceAccountChanged"
             ]
         },
         "securitylog.Page": {
@@ -6504,6 +6913,75 @@ const docTemplate = `{
                     "type": "integer"
                 }
             }
+        },
+        "serviceaccount.Account": {
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "failed_attempts": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "locked_until": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/serviceaccount.Status"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "serviceaccount.Created": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "$ref": "#/definitions/serviceaccount.Account"
+                },
+                "secret": {
+                    "type": "string"
+                }
+            }
+        },
+        "serviceaccount.Status": {
+            "type": "string",
+            "enum": [
+                "active",
+                "disabled"
+            ],
+            "x-enum-varnames": [
+                "StatusActive",
+                "StatusDisabled"
+            ]
         },
         "tenant.AvailableTenant": {
             "type": "object",

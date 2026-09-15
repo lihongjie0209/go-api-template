@@ -26,7 +26,7 @@ func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	if keyErr != nil {
 		t.Fatal(keyErr)
 	}
-	authService := auth.New(config.Config{JWT: jwtConfig, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
+	authService := auth.New(config.Config{JWT: jwtConfig})
 	token, err := authService.Issue("client")
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	if keyErr != nil {
 		t.Fatal(keyErr)
 	}
-	service := auth.New(config.Config{JWT: jwtConfig, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
+	service := auth.New(config.Config{JWT: jwtConfig})
 	token, err := service.Issue("user-1")
 	if err != nil {
 		t.Fatal(err)

@@ -113,7 +113,7 @@ func TestService_IssueAndParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := New(config.Config{JWT: jwtConfig, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
+	service := New(config.Config{JWT: jwtConfig})
 	token, err := service.Issue("client")
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
@@ -124,20 +124,5 @@ func TestService_IssueAndParse(t *testing.T) {
 	}
 	if claims.Subject != "client" {
 		t.Fatalf("Subject = %q, want client", claims.Subject)
-	}
-}
-
-func TestService_Authenticate(t *testing.T) {
-	t.Parallel()
-	jwtConfig, err := testutil.JWTConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := New(config.Config{JWT: jwtConfig, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
-	if !service.Authenticate("client", "secret") {
-		t.Fatal("Authenticate() = false, want true")
-	}
-	if service.Authenticate("client", "wrong") {
-		t.Fatal("Authenticate() = true, want false")
 	}
 }
