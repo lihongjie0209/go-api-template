@@ -100,6 +100,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				testPostgresAuditInfrastructure(t, ctx, db)
 				testPostgresLogPartitions(t, ctx, db)
 			} else {
+				testMySQLAuditInfrastructure(t, ctx, db)
 				testMySQLLogRetention(t, ctx, db)
 			}
 			testTenantLifecycle(t, ctx, db)
@@ -795,6 +796,53 @@ func testPostgresAuditInfrastructure(t *testing.T, ctx context.Context, db *sqlx
 	}
 	if _, err := db.ExecContext(ctx, "DROP TABLE audit_contract_records"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func testMySQLAuditInfrastructure(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "mysql-auditor", Type: platformprincipal.TypeSystem})
+	transactor := appdb.NewTransactor(db)
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, `INSERT INTO permissions (id,parent_id,permission_key,name,node_type,resource,action,description,sort_order,status,is_system,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP(6),'ignored',CURRENT_TIMESTAMP(6),'ignored',99)`, "mysql-audit-record", nil, "test.mysql-audit", "audit", "leaf", "test", "audit", "", 0, "active", false)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		CreatedBy string `db:"created_by"`
+		UpdatedBy string `db:"updated_by"`
+		Version   int64  `db:"version"`
+	}
+	if err := db.GetContext(ctx, &created, `SELECT created_by,updated_by,version FROM permissions WHERE id=?`, "mysql-audit-record"); err != nil {
+		t.Fatal(err)
+	}
+	if created.CreatedBy != "mysql-auditor" || created.UpdatedBy != "mysql-auditor" || created.Version != 1 {
+		t.Fatalf("created audit = %+v", created)
+	}
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, `UPDATE permissions SET deleted_at=CURRENT_TIMESTAMP(6),deleted_by='ignored',version=99 WHERE id=? AND version=1`, "mysql-audit-record")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var deleted struct {
+		UpdatedBy string     `db:"updated_by"`
+		DeletedBy string     `db:"deleted_by"`
+		Version   int64      `db:"version"`
+		DeletedAt *time.Time `db:"deleted_at"`
+	}
+	if err := db.GetContext(ctx, &deleted, `SELECT updated_by,deleted_by,version,deleted_at FROM permissions WHERE id=?`, "mysql-audit-record"); err != nil {
+		t.Fatal(err)
+	}
+	if deleted.DeletedAt == nil || deleted.DeletedBy != "mysql-auditor" || deleted.UpdatedBy != "mysql-auditor" || deleted.Version != 2 {
+		t.Fatalf("deleted audit = %+v", deleted)
+	}
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, `DELETE FROM permissions WHERE id=?`, "mysql-audit-record")
+		return err
+	}); err == nil {
+		t.Fatal("physical DELETE unexpectedly succeeded")
 	}
 }
 

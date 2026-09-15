@@ -19,6 +19,7 @@ func TestMigrationTablesFollowAuditContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var allDDL strings.Builder
 			for _, file := range files {
 				content, err := os.ReadFile(file)
 				if err != nil {
@@ -27,9 +28,29 @@ func TestMigrationTablesFollowAuditContract(t *testing.T) {
 				if err := validateAuditDDL(string(content), dialect); err != nil {
 					t.Errorf("%s: %v", file, err)
 				}
+				allDDL.Write(content)
+				allDDL.WriteByte('\n')
+			}
+			if dialect == "mysql" {
+				if err := validateMySQLAuditTriggers(allDDL.String()); err != nil {
+					t.Error(err)
+				}
 			}
 		})
 	}
+}
+
+func validateMySQLAuditTriggers(sql string) error {
+	lower := strings.ToLower(sql)
+	for _, match := range createTablePattern.FindAllStringSubmatch(sql, -1) {
+		table := strings.ToLower(strings.Trim(match[1], "\"`"))
+		for _, suffix := range []string{"_audit_bi before insert", "_audit_bu before update", "_audit_bd before delete"} {
+			if !strings.Contains(lower, "create trigger "+table+suffix) {
+				return fmt.Errorf("table %s is missing mysql trigger %s", table, suffix)
+			}
+		}
+	}
+	return nil
 }
 
 func TestValidateAuditDDL(t *testing.T) {

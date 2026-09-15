@@ -48,6 +48,12 @@ func setAuditActor(ctx context.Context, tx *sqlx.Tx, driver string) error {
 	if !ok || strings.TrimSpace(actor.ID) == "" {
 		return ErrMissingAuditActor
 	}
+	if driver == "mysql" {
+		if _, err := tx.ExecContext(ctx, "SET @app_actor_id = ?", actor.ID); err != nil {
+			return fmt.Errorf("set transaction audit actor: %w", err)
+		}
+		return nil
+	}
 	if driver != "pgx" && driver != "postgres" {
 		return nil
 	}

@@ -49,3 +49,23 @@ func TestTransactor_WithinRejectsMissingAuditActor(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTransactor_WithinSetsMySQLAuditActor(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\\\?").WithArgs("user-42").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
+	if err := NewTransactor(db).Within(ctx, nil, func(*sqlx.Tx) error { return nil }); err != nil {
+		t.Fatalf("Within() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
