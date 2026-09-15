@@ -64,7 +64,7 @@ type DeleteTenantRequest struct {
 // @Security Bearer
 // @Param request body CreateTenantRequest true "Tenant"
 // @Success 200 {object} Response{body=tenant.View}
-// @Router /api/v1/tenants/create [post]
+// @Router /api/v1/platform/tenants/create [post]
 func (h *TenantHandler) Create(c *gin.Context) {
 	var request CreateTenantRequest
 	if !h.bind(c, &request) {
@@ -162,6 +162,96 @@ func (h *TenantHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err := h.service.Delete(c.Request.Context(), request.ID, request.Version); err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, gin.H{})
+}
+
+// AdminGetTenant godoc
+// @Summary Get any tenant from platform context
+// @Tags platform-tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetTenantRequest true "Tenant ID"
+// @Success 200 {object} Response{body=tenant.View}
+// @Router /api/v1/platform/tenants/get [post]
+func (h *TenantHandler) AdminGet(c *gin.Context) {
+	var request GetTenantRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	view, err := h.service.AdminGet(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, view)
+}
+
+// AdminPageTenants godoc
+// @Summary Page all tenants from platform context
+// @Tags platform-tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PageTenantRequest true "Pagination and filters"
+// @Success 200 {object} Response{body=PageTenantResponse}
+// @Router /api/v1/platform/tenants/page [post]
+func (h *TenantHandler) AdminPage(c *gin.Context) {
+	var request PageTenantRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.AdminPage(c.Request.Context(), tenant.PageInput{
+		Request: pagination.Request{Page: request.Page, PageSize: request.PageSize, Keyword: request.Keyword},
+		IDs:     request.IDs, Statuses: request.Statuses, CreatedAtFrom: request.CreatedAtFrom, CreatedAtTo: request.CreatedAtTo,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, result)
+}
+
+// AdminUpdateTenant godoc
+// @Summary Update any tenant from platform context using optimistic locking
+// @Tags platform-tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body UpdateTenantRequest true "Tenant and version"
+// @Success 200 {object} Response{body=tenant.View}
+// @Router /api/v1/platform/tenants/update [post]
+func (h *TenantHandler) AdminUpdate(c *gin.Context) {
+	var request UpdateTenantRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	view, err := h.service.AdminUpdate(c.Request.Context(), tenant.UpdateInput{ID: request.ID, Name: request.Name, Description: request.Description, Status: request.Status, Version: request.Version})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, view)
+}
+
+// AdminDeleteTenant godoc
+// @Summary Logically delete any tenant from platform context using optimistic locking
+// @Tags platform-tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DeleteTenantRequest true "Tenant and version"
+// @Success 200 {object} Response
+// @Router /api/v1/platform/tenants/delete [post]
+func (h *TenantHandler) AdminDelete(c *gin.Context) {
+	var request DeleteTenantRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	if err := h.service.AdminDelete(c.Request.Context(), request.ID, request.Version); err != nil {
 		h.fail(c, err)
 		return
 	}

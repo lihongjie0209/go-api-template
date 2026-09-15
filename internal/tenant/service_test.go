@@ -52,6 +52,32 @@ func TestServiceCreateResolvesAuthoritativeOwner(t *testing.T) {
 	}
 }
 
+func TestPlatformTenantOperationsRejectTenantContext(t *testing.T) {
+	t.Parallel()
+	service := New(&Repository{}, &database.Transactor{}, nil, nil, nil, &ownerResolverStub{}, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "tenant-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a"})
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{name: "create", call: func() error {
+			_, err := service.Create(ctx, CreateInput{Code: "tenant-b", Name: "Tenant B", OwnerUsername: "owner"})
+			return err
+		}},
+		{name: "get", call: func() error { _, err := service.AdminGet(ctx, "tenant-b"); return err }},
+		{name: "page", call: func() error { _, err := service.AdminPage(ctx, PageInput{}); return err }},
+		{name: "update", call: func() error { _, err := service.AdminUpdate(ctx, UpdateInput{}); return err }},
+		{name: "delete", call: func() error { return service.AdminDelete(ctx, "tenant-b", 1) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.call(); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("error=%v, want ErrForbidden", err)
+			}
+		})
+	}
+}
+
 type ownerResolverStub struct {
 	username string
 	err      error

@@ -518,15 +518,27 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if created.Version != 1 || created.Owner.ID != "owner-1" || created.Owner.Name != "Owner One" {
 		t.Fatalf("created tenant = %+v", created)
 	}
+	adminView, err := service.AdminGet(createCtx, created.ID)
+	if err != nil || adminView.ID != created.ID {
+		t.Fatalf("admin tenant get=%+v err=%v", adminView, err)
+	}
+	adminPage, err := service.AdminPage(createCtx, tenant.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, IDs: []string{created.ID}, Statuses: []tenant.Status{tenant.StatusActive}})
+	if err != nil || adminPage.Total != 1 || len(adminPage.Items) != 1 {
+		t.Fatalf("admin tenant page=%+v err=%v", adminPage, err)
+	}
 	tenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID})
-	updated, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Integration Updated", Status: tenant.StatusActive, Version: created.Version})
+	adminUpdated, err := service.AdminUpdate(createCtx, tenant.UpdateInput{ID: created.ID, Name: "Platform Updated", Status: tenant.StatusActive, Version: created.Version})
+	if err != nil || adminUpdated.Version != 2 {
+		t.Fatalf("admin updated tenant=%+v err=%v", adminUpdated, err)
+	}
+	updated, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Integration Updated", Status: tenant.StatusActive, Version: adminUpdated.Version})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Version != 2 {
+	if updated.Version != 3 {
 		t.Fatalf("updated version = %d", updated.Version)
 	}
-	if _, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Stale", Status: tenant.StatusActive, Version: created.Version}); !errors.Is(err, tenant.ErrConflict) {
+	if _, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Stale", Status: tenant.StatusActive, Version: adminUpdated.Version}); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("stale update error = %v", err)
 	}
 	var membershipID string
@@ -562,7 +574,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := departments.Delete(departmentCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Delete(tenantCtx, created.ID, updated.Version); err != nil {
+	if err := service.AdminDelete(createCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Get(tenantCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {

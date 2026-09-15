@@ -3090,6 +3090,142 @@ paths:
       summary: Update a platform configuration
       tags:
       - platform-configs
+  /api/v1/platform/tenants/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a tenant and its owner membership
+      tags:
+      - tenants
+  /api/v1/platform/tenants/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Logically delete any tenant from platform context using optimistic
+        locking
+      tags:
+      - platform-tenants
+  /api/v1/platform/tenants/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get any tenant from platform context
+      tags:
+      - platform-tenants
+  /api/v1/platform/tenants/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Pagination and filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PageTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.PageTenantResponse'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page all tenants from platform context
+      tags:
+      - platform-tenants
+  /api/v1/platform/tenants/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update any tenant from platform context using optimistic locking
+      tags:
+      - platform-tenants
   /api/v1/public/platform-configs/get:
     post:
       consumes:
@@ -4113,34 +4249,6 @@ paths:
       summary: Update a tenant role
       tags:
       - tenant-authorization
-  /api/v1/tenants/create:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Tenant
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/httptransport.CreateTenantRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/httptransport.Response'
-            - properties:
-                body:
-                  $ref: '#/definitions/tenant.View'
-              type: object
-      security:
-      - Bearer: []
-      summary: Create a tenant and its owner membership
-      tags:
-      - tenants
   /api/v1/tenants/delete:
     post:
       consumes:

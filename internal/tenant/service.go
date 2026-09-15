@@ -53,7 +53,7 @@ func New(repository *Repository, transactor *database.Transactor, store cache.St
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
-	actor, err := requireActor(ctx)
+	actor, err := requirePlatformActor(ctx)
 	if err != nil {
 		return View{}, err
 	}
@@ -85,6 +85,44 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
 	created, err := s.repository.AdminGet(ctx, record.ID)
 	view := toView(created)
 	return view, err
+}
+
+// AdminGet reads a tenant outside a tenant context. It is intentionally
+// separate from Get so an empty tenant ID can never widen a tenant-scoped read.
+func (s *Service) AdminGet(ctx context.Context, id string) (View, error) {
+	if _, err := requirePlatformActor(ctx); err != nil {
+		return View{}, err
+	}
+	if strings.TrimSpace(id) == "" {
+		return View{}, fmt.Errorf("%w: id is required", ErrInvalid)
+	}
+	record, err := s.repository.AdminGet(ctx, id)
+	if err != nil {
+		return View{}, err
+	}
+	return toView(record), nil
+}
+
+// AdminPage is the only service operation allowed to list tenants without a
+// tenant predicate. Database route policy must additionally grant its platform
+// permission before the handler is entered.
+func (s *Service) AdminPage(ctx context.Context, input PageInput) (pagination.Result[View], error) {
+	if _, err := requirePlatformActor(ctx); err != nil {
+		return pagination.Result[View]{}, err
+	}
+	request, err := normalizePageInput(&input)
+	if err != nil {
+		return pagination.Result[View]{}, err
+	}
+	records, total, err := s.repository.Page(ctx, "", input, request.PageSize, pagination.Offset(request))
+	if err != nil {
+		return pagination.Result[View]{}, err
+	}
+	items := make([]View, len(records))
+	for i := range records {
+		items[i] = toView(records[i])
+	}
+	return pagination.Result[View]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (View, error) {
@@ -139,20 +177,10 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 	if actor.TenantID == "" {
 		return pagination.Result[View]{}, ErrForbidden
 	}
-	request, err := pagination.Normalize(input.Request)
+	request, err := normalizePageInput(&input)
 	if err != nil {
-		return pagination.Result[View]{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+		return pagination.Result[View]{}, err
 	}
-	if len(input.IDs) > 200 || len(input.Statuses) > 20 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
-		return pagination.Result[View]{}, fmt.Errorf("%w: invalid tenant filters", ErrInvalid)
-	}
-	for _, status := range input.Statuses {
-		if status != StatusActive && status != StatusDisabled {
-			return pagination.Result[View]{}, fmt.Errorf("%w: invalid tenant status", ErrInvalid)
-		}
-	}
-	input.Request = request
-	input.Keyword = strings.TrimSpace(input.Keyword)
 	records, total, err := s.repository.Page(ctx, actor.TenantID, input, request.PageSize, pagination.Offset(request))
 	if err != nil {
 		return pagination.Result[View]{}, err
@@ -162,6 +190,39 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 		items[i] = toView(records[i])
 	}
 	return pagination.Result[View]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, error) {
+	actor, err := requirePlatformActor(ctx)
+	if err != nil {
+		return View{}, err
+	}
+	if input.ID == "" || strings.TrimSpace(input.Name) == "" || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
+		return View{}, ErrInvalid
+	}
+	err = s.mutate(ctx, "platform.tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
+		return updateTenant(ctx, tx, input.ID, strings.TrimSpace(input.Name), input.Description, input.Status, input.Version, actor.ID)
+	})
+	s.invalidate(ctx, input.ID)
+	if err != nil {
+		return View{}, err
+	}
+	return s.AdminGet(ctx, input.ID)
+}
+
+func (s *Service) AdminDelete(ctx context.Context, id string, version int64) error {
+	actor, err := requirePlatformActor(ctx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(id) == "" || version <= 0 {
+		return ErrInvalid
+	}
+	err = s.mutate(ctx, "platform.tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
+		return deleteTenant(ctx, tx, id, version, actor.ID)
+	})
+	s.invalidate(ctx, id)
+	return err
 }
 
 func (s *Service) Update(ctx context.Context, input UpdateInput) (View, error) {
@@ -211,6 +272,35 @@ func requireActor(ctx context.Context) (platformprincipal.Principal, error) {
 		return actor, platformprincipal.ErrMissing
 	}
 	return actor, nil
+}
+
+func requirePlatformActor(ctx context.Context) (platformprincipal.Principal, error) {
+	actor, err := requireActor(ctx)
+	if err != nil {
+		return actor, err
+	}
+	if actor.TenantID != "" {
+		return actor, ErrForbidden
+	}
+	return actor, nil
+}
+
+func normalizePageInput(input *PageInput) (pagination.Request, error) {
+	request, err := pagination.Normalize(input.Request)
+	if err != nil {
+		return pagination.Request{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	if len(input.IDs) > 200 || len(input.Statuses) > 20 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+		return pagination.Request{}, fmt.Errorf("%w: invalid tenant filters", ErrInvalid)
+	}
+	for _, status := range input.Statuses {
+		if status != StatusActive && status != StatusDisabled {
+			return pagination.Request{}, fmt.Errorf("%w: invalid tenant status", ErrInvalid)
+		}
+	}
+	input.Request = request
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	return request, nil
 }
 func authorizeTenant(actor platformprincipal.Principal, tenantID string) error {
 	if actor.TenantID == "" || actor.TenantID != tenantID {
