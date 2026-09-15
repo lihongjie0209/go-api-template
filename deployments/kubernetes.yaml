@@ -24,6 +24,7 @@ data:
   APP_DATABASE_NAME: go_api_template_db
   APP_DATABASE_SCHEMA: go_api_template
   APP_REDIS_ENABLED: "true"
+  APP_EVENT_BUS_URLS: nats://nats:4222
   APP_RATE_LIMIT_ENABLED: "true"
   APP_IDEMPOTENCY_ENABLED: "true"
   APP_OBSERVABILITY_METRICS_ENABLED: "true"
@@ -214,5 +215,6 @@ spec:
         - {port: 3306, protocol: TCP}
         - {port: 5432, protocol: TCP}
         - {port: 6379, protocol: TCP}
+        - {port: 4222, protocol: TCP}
         - {port: 4318, protocol: TCP}
         - {port: 443, protocol: TCP}

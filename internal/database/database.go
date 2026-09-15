@@ -43,9 +43,6 @@ func Open(ctx context.Context, cfg config.Database) (*sqlx.DB, error) {
 			return nil, fmt.Errorf("create mysql connector: %w", connectorErr)
 		}
 		db = sqlx.NewDb(otelsql.OpenDB(connector), driver)
-		if err != nil {
-			return nil, fmt.Errorf("open database: %w", err)
-		}
 	default:
 		db, err = sqlx.Open(driver, cfg.DSN)
 		if err != nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"go.uber.org/fx"
@@ -204,19 +205,16 @@ func start(lifecycle fx.Lifecycle, manager *Manager) {
 	if !manager.cfg.Enabled || manager.db == nil {
 		return
 	}
-	workerCtx, cancel := context.WithCancel(context.Background())
+	worker := background.New(manager.run)
 	lifecycle.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			if err := manager.Maintain(ctx); err != nil {
 				return err
 			}
-			go manager.run(workerCtx)
+			worker.Start()
 			return nil
 		},
-		OnStop: func(context.Context) error {
-			cancel()
-			return nil
-		},
+		OnStop: worker.Stop,
 	})
 }
 

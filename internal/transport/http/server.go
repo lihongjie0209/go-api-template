@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	docs "github.com/lihongjie0209/go-api-template/docs"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
+	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/health"
@@ -158,7 +159,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	api.POST("/security-logs/page", securityLogHandler.Page)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
-	policyContext, stopPolicies := context.WithCancel(context.Background())
+	policyWorker := background.New(routePolicies.Run)
 	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
 		if cfg.Authorization.Enabled {
 			routes, err := discoveredBusinessRoutes(router, cfg.App.Name)
@@ -174,12 +175,14 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 			if err := routePolicies.ValidateRoutes(ctx, cfg.App.Name); err != nil {
 				logger.Warn("one or more HTTP routes have no active database policy; affected requests will be denied", "error", err)
 			}
-			go routePolicies.Run(policyContext)
 		}
 		var err error
 		listener, err = net.Listen("tcp", server.Addr)
 		if err != nil {
 			return fmt.Errorf("listen http: %w", err)
+		}
+		if cfg.Authorization.Enabled {
+			policyWorker.Start()
 		}
 		go func() {
 			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
@@ -189,8 +192,9 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		logger.Info("http server started", "address", server.Addr)
 		return nil
 	}, OnStop: func(ctx context.Context) error {
-		stopPolicies()
-		return server.Shutdown(ctx)
+		policyErr := policyWorker.Stop(ctx)
+		shutdownErr := server.Shutdown(ctx)
+		return errors.Join(policyErr, shutdownErr)
 	}})
 	return server, nil
 }

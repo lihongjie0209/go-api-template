@@ -396,6 +396,8 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	}
 	cfg.Migration.Schema = cfg.Database.Schema
 	cfg.Migration.DatabaseName = cfg.Database.Name
+	cfg.Log.Level = strings.ToLower(strings.TrimSpace(cfg.Log.Level))
+	cfg.Log.Format = strings.ToLower(strings.TrimSpace(cfg.Log.Format))
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -605,6 +607,15 @@ func (c Config) Validate() error {
 	if c.HTTP.Address == "" {
 		return errors.New("http.address is required")
 	}
+	if c.Log.Level != "debug" && c.Log.Level != "info" && c.Log.Level != "warn" && c.Log.Level != "error" {
+		return errors.New("log.level must be debug, info, warn, or error")
+	}
+	if c.Log.Format != "json" && c.Log.Format != "text" {
+		return errors.New("log.format must be json or text")
+	}
+	if strings.TrimSpace(c.Log.File) == "" || c.Log.MaxSizeMB <= 0 || c.Log.MaxSizeMB > 10240 || c.Log.MaxBackups <= 0 || c.Log.MaxBackups > 1000 || c.Log.MaxAgeDays <= 0 || c.Log.MaxAgeDays > 3650 {
+		return errors.New("log requires a file and bounded positive rotation settings")
+	}
 	if c.GRPC.Enabled && (c.GRPC.Address == "" || c.GRPC.MaxReceiveBytes <= 0) {
 		return errors.New("enabled grpc requires address and positive max_receive_bytes")
 	}
@@ -619,6 +630,9 @@ func (c Config) Validate() error {
 	}
 	if c.Database.Enabled && (c.Database.DSN == "" || !isDBType(c.Database.Type)) {
 		return errors.New("enabled database requires dsn and type mysql, postgres, or kingbase")
+	}
+	if c.Database.Enabled && (c.Database.MaxOpenConns <= 0 || c.Database.MaxIdleConns < 0 || c.Database.MaxIdleConns > c.Database.MaxOpenConns || c.Database.ConnMaxLifetime <= 0 || c.Database.ConnMaxIdleTime <= 0 || c.Database.PingTimeout <= 0) {
+		return errors.New("enabled database requires bounded pool sizes and positive connection and ping timeouts")
 	}
 	if c.Migration.AutoUp && (!c.Database.Enabled || c.Migration.Path == "" || c.Migration.DatabaseURL == "" || !validMigrationTable.MatchString(c.Migration.Table)) {
 		return errors.New("migration.auto_up requires enabled database, path, database_url, and a valid service-specific table")
@@ -674,6 +688,9 @@ func (c Config) Validate() error {
 	hasSigningKey := c.JWT.PrivateKey != "" || c.JWT.PrivateKeyFile != ""
 	if (c.JWT.KeyID != "") != hasSigningKey {
 		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
+	}
+	if c.App.Env == "production" && !hasSigningKey {
+		return errors.New("production authentication requires an asymmetric JWT signing key")
 	}
 	if c.JWT.Algorithm != "" && c.JWT.Algorithm != "RS256" && c.JWT.Algorithm != "ES256" {
 		return errors.New("jwt.algorithm must be RS256 or ES256")
@@ -735,6 +752,9 @@ func (c Config) Validate() error {
 	}
 	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || c.SecurityLog.Durable == "" || c.SecurityLog.MaxPayloadBytes <= 0 || len(c.SecurityLog.HashKey) < 32) {
 		return errors.New("enabled security_log requires database, event_bus, subject, durable, positive payload limit, and a hash_key of at least 32 bytes")
+	}
+	if c.App.Env == "production" && (!c.EventBus.Enabled || !c.OperationLog.Enabled || !c.SecurityLog.Enabled) {
+		return errors.New("production authentication requires event_bus, operation_log, and security_log")
 	}
 	if c.DataLifecycle.Enabled {
 		if !c.Database.Enabled {

@@ -9,6 +9,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
+	"github.com/lihongjie0209/go-api-template/internal/background"
+	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
@@ -76,16 +78,13 @@ func New(cfg config.Config) *fx.App {
 }
 
 func registerFileDeletionWorker(lc fx.Lifecycle, service *files.Service) {
-	workerCtx, cancel := context.WithCancel(context.Background())
+	worker := background.New(service.RunDeletionWorker)
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
-			go service.RunDeletionWorker(workerCtx)
+			worker.Start()
 			return nil
 		},
-		OnStop: func(context.Context) error {
-			cancel()
-			return nil
-		},
+		OnStop: worker.Stop,
 	})
 }
 
@@ -108,7 +107,13 @@ func newLogger(lc fx.Lifecycle, cfg config.Config) (*slog.Logger, error) {
 		return nil, err
 	}
 	lc.Append(fx.StopHook(func() error { return closer.Close() }))
-	return logger.With("service", cfg.App.Name, "environment", cfg.Runtime.ActiveProfile), nil
+	return logger.With(
+		"service", cfg.App.Name,
+		"environment", cfg.Runtime.ActiveProfile,
+		"version", buildinfo.Version,
+		"commit", buildinfo.Commit,
+		"build_time", buildinfo.BuildTime,
+	), nil
 }
 
 func newDatabase(lc fx.Lifecycle, cfg config.Config) (*sqlx.DB, error) {

@@ -3,10 +3,20 @@ package migration
 import (
 	"database/sql"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 )
+
+func TestRunRejectsUnknownDirectionBeforeOpeningDatabase(t *testing.T) {
+	t.Parallel()
+	err := Run(config.Migration{}, "sideways", 0)
+	if err == nil || !strings.Contains(err.Error(), "unsupported migration direction") {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
 
 func TestWithMigrationTable(t *testing.T) {
 	t.Parallel()

@@ -60,6 +60,7 @@ func TestTransactor_WithinSetsMySQLAuditActor(t *testing.T) {
 	db := sqlx.NewDb(raw, "mysql")
 	mock.ExpectBegin()
 	mock.ExpectExec("SET @app_actor_id = \\\\?").WithArgs("user-42").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
 	if err := NewTransactor(db).Within(ctx, nil, func(*sqlx.Tx) error { return nil }); err != nil {
@@ -68,4 +69,50 @@ func TestTransactor_WithinSetsMySQLAuditActor(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestTransactor_WithinClearsMySQLAuditActorBeforeRollback(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\\\?").WithArgs("user-42").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
+	wantErr := errors.New("business failure")
+	if err := NewTransactor(db).Within(ctx, nil, func(*sqlx.Tx) error { return wantErr }); !errors.Is(err, wantErr) {
+		t.Fatalf("Within() error = %v, want business failure", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTransactor_WithinClearsMySQLAuditActorOnPanic(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\\\?").WithArgs("user-42").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
+	defer func() {
+		if recovered := recover(); recovered != "boom" {
+			t.Fatalf("recover() = %v", recovered)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	_ = NewTransactor(db).Within(ctx, nil, func(*sqlx.Tx) error { panic("boom") })
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -28,6 +29,27 @@ type fakeIdempotencyManager struct {
 	failed       *idempotency.Failure
 	leaseStarted bool
 	aborted      bool
+}
+
+func TestEnvironmentInjectsActiveProfile(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(Environment("test"))
+	router.POST("/test", func(c *gin.Context) {
+		profile, ok := environment.FromContext(c.Request.Context())
+		if !ok || profile != "test" {
+			t.Fatalf("environment = %q, %v", profile, ok)
+		}
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", response.Code)
+	}
 }
 
 func (*fakeIdempotencyManager) Enabled() bool { return true }

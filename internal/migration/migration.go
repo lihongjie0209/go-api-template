@@ -17,6 +17,9 @@ import (
 )
 
 func Run(cfg config.Migration, direction string, steps int) (runErr error) {
+	if direction != "up" && direction != "down" {
+		return fmt.Errorf("unsupported migration direction %q", direction)
+	}
 	if cfg.DatabaseURL == "" {
 		return errors.New("migration.database_url is required")
 	}

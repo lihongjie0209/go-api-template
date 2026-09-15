@@ -35,21 +35,24 @@ func New(cfg config.Log) (*slog.Logger, io.Closer, error) {
 	return slog.New(contextHandler{next: handler}), rotator, nil
 }
 
-type contextHandler struct{ next slog.Handler }
+type contextHandler struct {
+	next      slog.Handler
+	boundKeys map[string]struct{}
+}
 
 func (h contextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.next.Enabled(ctx, level)
 }
 
 func (h contextHandler) Handle(ctx context.Context, record slog.Record) error {
-	if id, ok := requestid.FromContext(ctx); ok && !recordHasKey(record, "request_id") {
+	if id, ok := requestid.FromContext(ctx); ok && !h.hasKey(record, "request_id") {
 		record.AddAttrs(slog.String("request_id", id))
 	}
 	if span := trace.SpanContextFromContext(ctx); span.IsValid() {
-		if !recordHasKey(record, "trace_id") {
+		if !h.hasKey(record, "trace_id") {
 			record.AddAttrs(slog.String("trace_id", span.TraceID().String()))
 		}
-		if !recordHasKey(record, "span_id") {
+		if !h.hasKey(record, "span_id") {
 			record.AddAttrs(slog.String("span_id", span.SpanID().String()))
 		}
 	}
@@ -68,10 +71,22 @@ func recordHasKey(record slog.Record, key string) bool {
 	return found
 }
 
+func (h contextHandler) hasKey(record slog.Record, key string) bool {
+	_, bound := h.boundKeys[key]
+	return bound || recordHasKey(record, key)
+}
+
 func (h contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return contextHandler{next: h.next.WithAttrs(attrs)}
+	keys := make(map[string]struct{}, len(h.boundKeys)+len(attrs))
+	for key := range h.boundKeys {
+		keys[key] = struct{}{}
+	}
+	for _, attr := range attrs {
+		keys[attr.Key] = struct{}{}
+	}
+	return contextHandler{next: h.next.WithAttrs(attrs), boundKeys: keys}
 }
 
 func (h contextHandler) WithGroup(name string) slog.Handler {
-	return contextHandler{next: h.next.WithGroup(name)}
+	return contextHandler{next: h.next.WithGroup(name), boundKeys: h.boundKeys}
 }

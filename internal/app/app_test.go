@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,5 +21,13 @@ func TestNew_DependencyGraph(t *testing.T) {
 	application := New(cfg)
 	if err := application.Err(); err != nil {
 		t.Fatalf("New() dependency graph error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := application.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := application.Stop(ctx); err != nil {
+		t.Fatalf("Stop() error = %v", err)
 	}
 }

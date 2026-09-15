@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -19,7 +20,7 @@ func NewTransactor(db *sqlx.DB) *Transactor { return &Transactor{db: db} }
 
 func (t *Transactor) Available() bool { return t.db != nil }
 
-func (t *Transactor) Within(ctx context.Context, opts *sql.TxOptions, fn func(*sqlx.Tx) error) error {
+func (t *Transactor) Within(ctx context.Context, opts *sql.TxOptions, fn func(*sqlx.Tx) error) (runErr error) {
 	if t.db == nil {
 		return fmt.Errorf("begin transaction: database is disabled")
 	}
@@ -27,19 +28,39 @@ func (t *Transactor) Within(ctx context.Context, opts *sql.TxOptions, fn func(*s
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
+	committed := false
+	mysqlActorSet := false
+	defer func() {
+		if mysqlActorSet {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			if _, clearErr := tx.ExecContext(cleanupCtx, "SET @app_actor_id = NULL"); clearErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("clear transaction audit actor: %w", clearErr))
+			}
+			cancel()
+		}
+		if !committed {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				runErr = errors.Join(runErr, fmt.Errorf("rollback transaction: %w", rollbackErr))
+			}
+		}
+	}()
 	if err := setAuditActor(ctx, tx, t.db.DriverName()); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
+	mysqlActorSet = t.db.DriverName() == "mysql"
 	if err := fn(tx); err != nil {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			return fmt.Errorf("rollback transaction after %v: %w", err, rollbackErr)
-		}
 		return err
+	}
+	if mysqlActorSet {
+		if _, err := tx.ExecContext(ctx, "SET @app_actor_id = NULL"); err != nil {
+			return fmt.Errorf("clear transaction audit actor: %w", err)
+		}
+		mysqlActorSet = false
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
+	committed = true
 	return nil
 }
 

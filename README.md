@@ -74,7 +74,8 @@ kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
   --from-literal=APP_JWT_KEY_ID='production-2026-01' \
   --from-file=APP_JWT_PRIVATE_KEY='/secure/path/jwt-private.pem' \
-  --from-literal=APP_AUTH_JWKS_URL='https://identity.example.com/.well-known/jwks.json'
+  --from-literal=APP_AUTH_JWKS_URL='https://identity.example.com/.well-known/jwks.json' \
+  --from-literal=APP_SECURITY_LOG_HASH_KEY='replace-with-at-least-32-random-bytes'
 kubectl apply -f deployments/migrate-job.yaml
 kubectl wait --namespace microservices --for=condition=complete job/go-api-template-migrate --timeout=5m
 kubectl apply -f deployments/kubernetes.yaml

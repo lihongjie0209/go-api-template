@@ -9,6 +9,7 @@ import (
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -52,6 +53,40 @@ func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	}
 	if got := header.Get("x-request-id"); len(got) != 1 || got[0] != "grpc-test-1" {
 		t.Fatalf("x-request-id = %v", got)
+	}
+}
+
+func TestEnvironmentInterceptorInjectsActiveProfile(t *testing.T) {
+	t.Parallel()
+	interceptor := environmentInterceptor("test")
+	_, err := interceptor(t.Context(), nil, &grpc.UnaryServerInfo{FullMethod: hellov1.HelloService_Ping_FullMethodName}, func(ctx context.Context, _ any) (any, error) {
+		profile, ok := environment.FromContext(ctx)
+		if !ok || profile != "test" {
+			t.Fatalf("environment = %q, %v", profile, ok)
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+type environmentTestStream struct{ grpc.ServerStream }
+
+func (s environmentTestStream) Context() context.Context { return context.Background() }
+
+func TestEnvironmentStreamInterceptorInjectsActiveProfile(t *testing.T) {
+	t.Parallel()
+	interceptor := environmentStreamInterceptor("test")
+	err := interceptor(nil, environmentTestStream{}, &grpc.StreamServerInfo{FullMethod: "/test.Service/Watch"}, func(_ any, stream grpc.ServerStream) error {
+		profile, ok := environment.FromContext(stream.Context())
+		if !ok || profile != "test" {
+			t.Fatalf("environment = %q, %v", profile, ok)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

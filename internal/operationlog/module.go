@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	platformeventbus "github.com/lihongjie0209/microservice-platform-go/eventbus"
 	"go.uber.org/fx"
 )
@@ -12,19 +13,8 @@ func start(lifecycle fx.Lifecycle, service *Service, logger *slog.Logger) {
 	if !service.enabled {
 		return
 	}
-	var cancel context.CancelFunc
-	lifecycle.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			consumerCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
-			cancel = stop
-			return service.bus.ConsumeWithOptions(consumerCtx, consumerOptions(service, logger))
-		},
-		OnStop: func(context.Context) error {
-			if cancel != nil {
-				cancel()
-			}
-			return nil
-		},
+	eventbus.RegisterConsumer(lifecycle, "operation-log", logger, func(ctx context.Context) error {
+		return service.bus.ConsumeWithOptions(ctx, consumerOptions(service, logger))
 	})
 }
 

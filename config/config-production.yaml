@@ -44,6 +44,12 @@ auth:
 authorization:
   enabled: true
   policy_refresh_interval: 30s
+event_bus:
+  enabled: true
+operation_log:
+  enabled: true
+security_log:
+  enabled: true
 data_lifecycle:
   enabled: true
   interval: 1h
