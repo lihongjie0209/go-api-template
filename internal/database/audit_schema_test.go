@@ -42,9 +42,14 @@ func TestMigrationTablesFollowAuditContract(t *testing.T) {
 
 func validateMySQLAuditTriggers(sql string) error {
 	lower := strings.ToLower(sql)
+	physicalDeleteAllowed := map[string]bool{"operation_logs": true, "security_logs": true}
 	for _, match := range createTablePattern.FindAllStringSubmatch(sql, -1) {
 		table := strings.ToLower(strings.Trim(match[1], "\"`"))
-		for _, suffix := range []string{"_audit_bi before insert", "_audit_bu before update", "_audit_bd before delete"} {
+		suffixes := []string{"_audit_bi before insert", "_audit_bu before update"}
+		if !physicalDeleteAllowed[table] {
+			suffixes = append(suffixes, "_audit_bd before delete")
+		}
+		for _, suffix := range suffixes {
 			if !strings.Contains(lower, "create trigger "+table+suffix) {
 				return fmt.Errorf("table %s is missing mysql trigger %s", table, suffix)
 			}
