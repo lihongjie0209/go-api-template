@@ -166,8 +166,13 @@ func (s *healthServer) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckR
 	}
 	return &grpc_health_v1.HealthCheckResponse{Status: serving}, nil
 }
-func (s *healthServer) List(context.Context, *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
-	return &grpc_health_v1.HealthListResponse{Statuses: map[string]*grpc_health_v1.HealthCheckResponse{"": {Status: grpc_health_v1.HealthCheckResponse_SERVING}}}, nil
+func (s *healthServer) List(ctx context.Context, _ *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
+	_, ready := s.health.Ready(ctx)
+	serving := grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	if ready {
+		serving = grpc_health_v1.HealthCheckResponse_SERVING
+	}
+	return &grpc_health_v1.HealthListResponse{Statuses: map[string]*grpc_health_v1.HealthCheckResponse{"": {Status: serving}}}, nil
 }
 
 func requestIDInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
