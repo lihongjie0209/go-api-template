@@ -24,31 +24,19 @@ func TestLoad_EnvironmentOverridesFile(t *testing.T) {
 	}
 }
 
-func TestLoad_EnvironmentStringSlicesAcceptBracketedLists(t *testing.T) {
+func TestLoad_AuthorizationRefreshIntervalCanBeOverridden(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte("http:\n  address: 127.0.0.1:8080\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(
-		"APP_AUTH_PSK_GRPC_METHODS",
-		"[/platform.export.v1.ExportProviderService/*, /platform.import.v1.ImportProviderService/*]",
-	)
+	t.Setenv("APP_AUTHORIZATION_POLICY_REFRESH_INTERVAL", "5s")
 	cfg, err := Load(configPath)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	want := []string{
-		"/platform.export.v1.ExportProviderService/*",
-		"/platform.import.v1.ImportProviderService/*",
-	}
-	if len(cfg.Auth.PSK.GRPCMethods) != len(want) {
-		t.Fatalf("GRPCMethods = %#v", cfg.Auth.PSK.GRPCMethods)
-	}
-	for index := range want {
-		if cfg.Auth.PSK.GRPCMethods[index] != want[index] {
-			t.Fatalf("GRPCMethods[%d] = %q, want %q", index, cfg.Auth.PSK.GRPCMethods[index], want[index])
-		}
+	if cfg.Authorization.PolicyRefreshInterval != 5*time.Second {
+		t.Fatalf("PolicyRefreshInterval = %v", cfg.Authorization.PolicyRefreshInterval)
 	}
 }
 
@@ -90,9 +78,9 @@ func TestLoad_UsesCanonicalPlatformEventStreamDefaults(t *testing.T) {
 	}
 }
 
-func TestConfig_ValidateJWTSecret(t *testing.T) {
+func TestConfig_ValidateJWTAsymmetricKey(t *testing.T) {
 	t.Parallel()
-	cfg := Config{HTTP: HTTP{Address: "127.0.0.1:8080"}, Auth: Auth{ClientID: "client", ClientSecret: "secret"}, JWT: JWT{Secret: "short"}}
+	cfg := Config{HTTP: HTTP{Address: "127.0.0.1:8080"}, Auth: Auth{ClientID: "client", ClientSecret: "secret"}, JWT: JWT{Algorithm: "RS256"}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() error = nil, want error")
 	}
@@ -153,11 +141,11 @@ func TestLoadWithProfile_MergesProfileThenEnvironment(t *testing.T) {
 	}
 }
 
-func TestConfig_ValidateAuthSkipPattern(t *testing.T) {
+func TestConfig_ValidatePSKLength(t *testing.T) {
 	t.Parallel()
-	cfg := Config{HTTP: HTTP{Address: "127.0.0.1:8080", RequestTimeout: time.Second}, Health: Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}, User: User{CacheTTL: time.Second, LockTTL: time.Second, LockRetryDelay: time.Millisecond}, Auth: Auth{SkipHTTPPaths: []string{"/api/v1/[broken"}}}
+	cfg := Config{HTTP: HTTP{Address: "127.0.0.1:8080", RequestTimeout: time.Second}, Health: Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}, User: User{CacheTTL: time.Second, LockTTL: time.Second, LockRetryDelay: time.Millisecond}, Auth: Auth{PSK: PSK{Enabled: true, Key: "short"}}}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() error = nil, want invalid wildcard error")
+		t.Fatal("Validate() error = nil, want short psk error")
 	}
 }
 

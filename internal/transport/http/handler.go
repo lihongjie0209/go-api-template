@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
+	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/health"
 )
@@ -12,10 +13,11 @@ import (
 type Handler struct {
 	logger *slog.Logger
 	health *health.Service
+	auth   *auth.Service
 }
 
-func NewHandler(healthService *health.Service, logger *slog.Logger) *Handler {
-	return &Handler{health: healthService, logger: logger}
+func NewHandler(healthService *health.Service, authService *auth.Service, logger *slog.Logger) *Handler {
+	return &Handler{health: healthService, auth: authService, logger: logger}
 }
 
 type MeResponseBody struct {
@@ -31,17 +33,6 @@ type PingResponseBody struct {
 	Version string `json:"version"`
 }
 
-// Login godoc
-// @Summary Issue a JWT access token
-// @Tags authentication
-// @Accept json
-// @Produce json
-// @Param request body LoginRequest true "Client credentials"
-// @Success 200 {object} Response{body=LoginResponseBody}
-// @Failure 400 {object} Response "Code 10001: invalid request"
-// @Failure 401 {object} Response "Code 20001: invalid credentials"
-// @Failure 429 {object} Response "Code 10029: rate limited"
-
 // Live godoc
 // @Summary Check process liveness
 // @Tags operations
@@ -49,6 +40,14 @@ type PingResponseBody struct {
 // @Success 200 {object} Response{body=health.Status}
 // @Router /live [post]
 func (h *Handler) Live(c *gin.Context) { OK(c, h.health.Live()) }
+
+// JWKS godoc
+// @Summary Publish JWT verification keys
+// @Tags authentication
+// @Produce json
+// @Success 200 {object} auth.JWKS
+// @Router /api/v1/.well-known/jwks.json [post]
+func (h *Handler) JWKS(c *gin.Context) { c.JSON(200, h.auth.JWKS()) }
 
 // Ready godoc
 // @Summary Check database and Redis readiness

@@ -1,0 +1,20 @@
+CREATE TABLE files (
+    id text NOT NULL,
+    tenant_id text NOT NULL,
+    object_key text NOT NULL,
+    original_name text NOT NULL,
+    content_type text NOT NULL,
+    size_bytes bigint NOT NULL,
+    etag text NOT NULL,
+    checksum_sha256 text NOT NULL,
+    created_at timestamp(6) NOT NULL,
+    created_by text NOT NULL,
+    updated_at timestamp(6) NOT NULL,
+    updated_by text NOT NULL,
+    version bigint NOT NULL,
+    deleted_at timestamp(6) NULL,
+    deleted_by text NULL,
+    PRIMARY KEY (id(191)),
+    UNIQUE KEY files_object_key_unique (object_key(191)),
+    KEY files_tenant_created_idx (tenant_id(128), created_at, id(128))
+);

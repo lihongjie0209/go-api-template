@@ -16,26 +16,34 @@ import (
 )
 
 type Config struct {
-	Runtime       Runtime       `mapstructure:"-"`
-	App           App           `mapstructure:"app"`
-	HTTP          HTTP          `mapstructure:"http"`
-	GRPC          GRPC          `mapstructure:"grpc"`
-	Log           Log           `mapstructure:"log"`
-	Database      Database      `mapstructure:"database"`
-	Redis         Redis         `mapstructure:"redis"`
-	Health        Health        `mapstructure:"health"`
-	RateLimit     RateLimit     `mapstructure:"rate_limit"`
-	Observability Observability `mapstructure:"observability"`
-	Swagger       Swagger       `mapstructure:"swagger"`
-	JWT           JWT           `mapstructure:"jwt"`
-	Auth          Auth          `mapstructure:"auth"`
-	Authorization Authorization `mapstructure:"authorization"`
-	Cron          Cron          `mapstructure:"cron"`
-	Migration     Migration     `mapstructure:"migration"`
-	User          User          `mapstructure:"user"`
-	Idempotency   Idempotency   `mapstructure:"idempotency"`
-	Outbound      Outbound      `mapstructure:"outbound"`
-	EventBus      EventBus      `mapstructure:"event_bus"`
+	Runtime        Runtime        `mapstructure:"-"`
+	App            App            `mapstructure:"app"`
+	HTTP           HTTP           `mapstructure:"http"`
+	GRPC           GRPC           `mapstructure:"grpc"`
+	Log            Log            `mapstructure:"log"`
+	Database       Database       `mapstructure:"database"`
+	Redis          Redis          `mapstructure:"redis"`
+	Health         Health         `mapstructure:"health"`
+	RateLimit      RateLimit      `mapstructure:"rate_limit"`
+	Observability  Observability  `mapstructure:"observability"`
+	Swagger        Swagger        `mapstructure:"swagger"`
+	JWT            JWT            `mapstructure:"jwt"`
+	Auth           Auth           `mapstructure:"auth"`
+	Authentication Authentication `mapstructure:"authentication"`
+	Authorization  Authorization  `mapstructure:"authorization"`
+	Cron           Cron           `mapstructure:"cron"`
+	Migration      Migration      `mapstructure:"migration"`
+	User           User           `mapstructure:"user"`
+	Tenant         Tenant         `mapstructure:"tenant"`
+	Menu           Menu           `mapstructure:"menu"`
+	PlatformConfig PlatformConfig `mapstructure:"platform_config"`
+	Idempotency    Idempotency    `mapstructure:"idempotency"`
+	Outbound       Outbound       `mapstructure:"outbound"`
+	EventBus       EventBus       `mapstructure:"event_bus"`
+	ObjectStorage  ObjectStorage  `mapstructure:"object_storage"`
+	Files          Files          `mapstructure:"files"`
+	OperationLog   OperationLog   `mapstructure:"operation_log"`
+	SecurityLog    SecurityLog    `mapstructure:"security_log"`
 }
 
 type Runtime struct {
@@ -103,6 +111,7 @@ type Database struct {
 }
 type Redis struct {
 	Enabled      bool          `mapstructure:"enabled"`
+	KeyPrefix    string        `mapstructure:"key_prefix"`
 	Address      string        `mapstructure:"address"`
 	Username     string        `mapstructure:"username"`
 	Password     string        `mapstructure:"password"`
@@ -142,28 +151,41 @@ type Swagger struct {
 	RequireAuth bool `mapstructure:"require_auth"`
 }
 type JWT struct {
-	Issuer string        `mapstructure:"issuer"`
-	Secret string        `mapstructure:"secret"`
-	TTL    time.Duration `mapstructure:"ttl"`
+	Issuer         string               `mapstructure:"issuer"`
+	Audience       string               `mapstructure:"audience"`
+	Algorithm      string               `mapstructure:"algorithm"`
+	KeyID          string               `mapstructure:"key_id"`
+	PrivateKey     string               `mapstructure:"private_key"`
+	PrivateKeyFile string               `mapstructure:"private_key_file"`
+	PublicKeys     []JWTVerificationKey `mapstructure:"public_keys"`
+	TTL            time.Duration        `mapstructure:"ttl"`
+}
+type JWTVerificationKey struct {
+	KeyID         string `mapstructure:"key_id"`
+	Algorithm     string `mapstructure:"algorithm"`
+	PublicKey     string `mapstructure:"public_key"`
+	PublicKeyFile string `mapstructure:"public_key_file"`
 }
 type Auth struct {
-	ClientID        string   `mapstructure:"client_id"`
-	ClientSecret    string   `mapstructure:"client_secret"`
-	JWKSURL         string   `mapstructure:"jwks_url"`
-	Issuer          string   `mapstructure:"issuer"`
-	Audience        string   `mapstructure:"audience"`
-	SkipHTTPPaths   []string `mapstructure:"skip_http_paths"`
-	SkipGRPCMethods []string `mapstructure:"skip_grpc_methods"`
-	PSK             PSK      `mapstructure:"psk"`
+	ClientID     string `mapstructure:"client_id"`
+	ClientSecret string `mapstructure:"client_secret"`
+	JWKSURL      string `mapstructure:"jwks_url"`
+	Issuer       string `mapstructure:"issuer"`
+	Audience     string `mapstructure:"audience"`
+	PSK          PSK    `mapstructure:"psk"`
 }
 type Authorization struct {
-	Enabled bool `mapstructure:"enabled"`
+	Enabled               bool          `mapstructure:"enabled"`
+	PolicyRefreshInterval time.Duration `mapstructure:"policy_refresh_interval"`
+}
+type Authentication struct {
+	RefreshTTL        time.Duration `mapstructure:"refresh_ttl"`
+	MaxFailedAttempts int64         `mapstructure:"max_failed_attempts"`
+	LockDuration      time.Duration `mapstructure:"lock_duration"`
 }
 type PSK struct {
-	Enabled     bool     `mapstructure:"enabled"`
-	Key         string   `mapstructure:"key"`
-	HTTPPaths   []string `mapstructure:"http_paths"`
-	GRPCMethods []string `mapstructure:"grpc_methods"`
+	Enabled bool   `mapstructure:"enabled"`
+	Key     string `mapstructure:"key"`
 }
 type Cron struct {
 	Enabled    bool   `mapstructure:"enabled"`
@@ -184,13 +206,24 @@ type User struct {
 	LockTTL        time.Duration `mapstructure:"lock_ttl"`
 	LockRetryDelay time.Duration `mapstructure:"lock_retry_delay"`
 }
+type Tenant struct {
+	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+}
+type Menu struct {
+	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+	MaxNodes int           `mapstructure:"max_nodes"`
+}
+type PlatformConfig struct {
+	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+}
 type Idempotency struct {
-	Enabled       bool          `mapstructure:"enabled"`
-	HTTPPaths     []string      `mapstructure:"http_paths"`
-	GRPCMethods   []string      `mapstructure:"grpc_methods"`
-	ProcessingTTL time.Duration `mapstructure:"processing_ttl"`
-	ResultTTL     time.Duration `mapstructure:"result_ttl"`
-	FailureTTL    time.Duration `mapstructure:"failure_ttl"`
+	Enabled          bool          `mapstructure:"enabled"`
+	HTTPPaths        []string      `mapstructure:"http_paths"`
+	GRPCMethods      []string      `mapstructure:"grpc_methods"`
+	ProcessingTTL    time.Duration `mapstructure:"processing_ttl"`
+	ResultTTL        time.Duration `mapstructure:"result_ttl"`
+	FailureTTL       time.Duration `mapstructure:"failure_ttl"`
+	MaxResponseBytes int           `mapstructure:"max_response_bytes"`
 }
 type EventBus struct {
 	Enabled            bool          `mapstructure:"enabled"`
@@ -209,6 +242,41 @@ type EventBus struct {
 	DispatchBatchSize  int           `mapstructure:"dispatch_batch_size"`
 	DispatchLease      time.Duration `mapstructure:"dispatch_lease"`
 	DispatchRetryDelay time.Duration `mapstructure:"dispatch_retry_delay"`
+}
+type ObjectStorage struct {
+	Enabled         bool          `mapstructure:"enabled"`
+	Provider        string        `mapstructure:"provider"`
+	Bucket          string        `mapstructure:"bucket"`
+	Region          string        `mapstructure:"region"`
+	Endpoint        string        `mapstructure:"endpoint"`
+	AccessKeyID     string        `mapstructure:"access_key_id"`
+	AccessKeySecret string        `mapstructure:"access_key_secret"`
+	SessionToken    string        `mapstructure:"session_token"`
+	UsePathStyle    bool          `mapstructure:"use_path_style"`
+	UseCName        bool          `mapstructure:"use_cname"`
+	PresignTTL      time.Duration `mapstructure:"presign_ttl"`
+}
+type Files struct {
+	Enabled            bool          `mapstructure:"enabled"`
+	MaxSizeBytes       int64         `mapstructure:"max_size_bytes"`
+	AllowedTypes       []string      `mapstructure:"allowed_types"`
+	DeletionInterval   time.Duration `mapstructure:"deletion_interval"`
+	DeletionRetryDelay time.Duration `mapstructure:"deletion_retry_delay"`
+	DeletionBatchSize  int           `mapstructure:"deletion_batch_size"`
+}
+type OperationLog struct {
+	Enabled         bool   `mapstructure:"enabled"`
+	Subject         string `mapstructure:"subject"`
+	Durable         string `mapstructure:"durable"`
+	MaxPayloadBytes int    `mapstructure:"max_payload_bytes"`
+}
+type SecurityLog struct {
+	Enabled         bool   `mapstructure:"enabled"`
+	Subject         string `mapstructure:"subject"`
+	Durable         string `mapstructure:"durable"`
+	MaxPayloadBytes int    `mapstructure:"max_payload_bytes"`
+	FailClosed      bool   `mapstructure:"fail_closed"`
+	HashKey         string `mapstructure:"hash_key"`
 }
 type Outbound struct {
 	HTTP map[string]HTTPUpstream `mapstructure:"http"`
@@ -338,6 +406,7 @@ func stringToStringSliceHook() mapstructure.DecodeHookFuncType {
 
 var validProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 var validMigrationTable = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+var validRedisPrefix = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,127}:$`)
 
 func profileConfigPath(path, profile string) string {
 	extension := filepath.Ext(path)
@@ -354,7 +423,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("http.write_timeout", "15s")
 	v.SetDefault("http.idle_timeout", "60s")
 	v.SetDefault("http.request_timeout", "10s")
-	v.SetDefault("http.max_body_bytes", 1<<20)
+	v.SetDefault("http.max_body_bytes", 16<<20)
 	v.SetDefault("http.trusted_proxies", []string{})
 	v.SetDefault("http.cors.enabled", false)
 	v.SetDefault("http.cors.allowed_origins", []string{})
@@ -391,6 +460,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.read_timeout", "3s")
 	v.SetDefault("redis.write_timeout", "3s")
 	v.SetDefault("redis.enabled", false)
+	v.SetDefault("redis.key_prefix", "")
 	v.SetDefault("redis.username", "")
 	v.SetDefault("redis.password", "")
 	v.SetDefault("redis.db", 0)
@@ -411,20 +481,24 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("swagger.enabled", true)
 	v.SetDefault("swagger.require_auth", false)
 	v.SetDefault("jwt.issuer", "go-api-template")
-	v.SetDefault("jwt.secret", "")
+	v.SetDefault("jwt.audience", "go-api-template")
+	v.SetDefault("jwt.algorithm", "RS256")
+	v.SetDefault("jwt.key_id", "")
+	v.SetDefault("jwt.private_key", "")
+	v.SetDefault("jwt.private_key_file", "")
+	v.SetDefault("jwt.public_keys", []JWTVerificationKey{})
 	v.SetDefault("jwt.ttl", "2h")
 	v.SetDefault("auth.client_id", "")
 	v.SetDefault("auth.client_secret", "")
 	v.SetDefault("auth.jwks_url", "")
 	v.SetDefault("auth.issuer", "identity-service")
 	v.SetDefault("auth.audience", "go-api-template")
-	v.SetDefault("auth.skip_http_paths", []string{"/api/v1/version"})
-	v.SetDefault("auth.skip_grpc_methods", []string{"/grpc.health.v1.Health/*"})
 	v.SetDefault("auth.psk.enabled", false)
 	v.SetDefault("auth.psk.key", "")
-	v.SetDefault("auth.psk.http_paths", []string{})
-	v.SetDefault("auth.psk.grpc_methods", []string{})
 	v.SetDefault("authorization.enabled", false)
+	v.SetDefault("authentication.refresh_ttl", "720h")
+	v.SetDefault("authentication.max_failed_attempts", 5)
+	v.SetDefault("authentication.lock_duration", "15m")
 	v.SetDefault("cron.enabled", true)
 	v.SetDefault("cron.timezone", "Asia/Shanghai")
 	v.SetDefault("cron.sample_spec", "0 */5 * * * *")
@@ -433,13 +507,19 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("migration.auto_up", false)
 	v.SetDefault("migration.create_schema", false)
 	v.SetDefault("migration.table", "go_api_template_schema_migrations")
+	v.SetDefault("authorization.policy_refresh_interval", 30*time.Second)
 	v.SetDefault("user.cache_ttl", "5m")
 	v.SetDefault("user.lock_ttl", "10s")
 	v.SetDefault("user.lock_retry_delay", "100ms")
+	v.SetDefault("tenant.cache_ttl", "5m")
+	v.SetDefault("menu.cache_ttl", "5m")
+	v.SetDefault("menu.max_nodes", 10000)
+	v.SetDefault("platform_config.cache_ttl", "5m")
 	v.SetDefault("idempotency.enabled", false)
 	v.SetDefault("idempotency.processing_ttl", "30s")
 	v.SetDefault("idempotency.result_ttl", "24h")
 	v.SetDefault("idempotency.failure_ttl", "5m")
+	v.SetDefault("idempotency.max_response_bytes", 1048576)
 	v.SetDefault("event_bus.enabled", false)
 	v.SetDefault("event_bus.urls", []string{"nats://127.0.0.1:4222"})
 	v.SetDefault("event_bus.stream_name", "PLATFORM_EVENTS")
@@ -456,6 +536,33 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("event_bus.dispatch_batch_size", 100)
 	v.SetDefault("event_bus.dispatch_lease", "30s")
 	v.SetDefault("event_bus.dispatch_retry_delay", "2s")
+	v.SetDefault("object_storage.enabled", false)
+	v.SetDefault("object_storage.provider", "s3")
+	v.SetDefault("object_storage.bucket", "")
+	v.SetDefault("object_storage.region", "")
+	v.SetDefault("object_storage.endpoint", "")
+	v.SetDefault("object_storage.access_key_id", "")
+	v.SetDefault("object_storage.access_key_secret", "")
+	v.SetDefault("object_storage.session_token", "")
+	v.SetDefault("object_storage.use_path_style", false)
+	v.SetDefault("object_storage.use_cname", false)
+	v.SetDefault("object_storage.presign_ttl", "15m")
+	v.SetDefault("files.enabled", false)
+	v.SetDefault("files.max_size_bytes", 10<<20)
+	v.SetDefault("files.allowed_types", []string{})
+	v.SetDefault("files.deletion_interval", "30s")
+	v.SetDefault("files.deletion_retry_delay", "1m")
+	v.SetDefault("files.deletion_batch_size", 100)
+	v.SetDefault("operation_log.enabled", false)
+	v.SetDefault("operation_log.subject", "platform.operation-log.v1")
+	v.SetDefault("operation_log.durable", "go-api-template-operation-log")
+	v.SetDefault("operation_log.max_payload_bytes", 8192)
+	v.SetDefault("security_log.enabled", false)
+	v.SetDefault("security_log.subject", "platform.security-log.v1")
+	v.SetDefault("security_log.durable", "go-api-template-security-log")
+	v.SetDefault("security_log.max_payload_bytes", 4096)
+	v.SetDefault("security_log.fail_closed", true)
+	v.SetDefault("security_log.hash_key", "")
 	v.SetDefault("outbound.http", map[string]any{})
 	v.SetDefault("outbound.grpc", map[string]any{})
 }
@@ -490,6 +597,9 @@ func (c Config) Validate() error {
 	}
 	if c.Redis.Enabled && c.Redis.Address == "" {
 		return errors.New("enabled redis requires address")
+	}
+	if c.Redis.KeyPrefix != "" && !validRedisPrefix.MatchString(c.Redis.KeyPrefix) {
+		return errors.New("redis.key_prefix must be a bounded namespace ending in ':'")
 	}
 	if c.HTTP.RequestTimeout <= 0 || c.Health.DatabaseTimeout <= 0 || c.Health.RedisTimeout <= 0 {
 		return errors.New("http and health timeouts must be positive")
@@ -529,50 +639,36 @@ func (c Config) Validate() error {
 		if _, ok := c.Outbound.GRPC["authorization"]; !ok {
 			return errors.New("enabled authorization requires outbound.grpc.authorization")
 		}
-	}
-	if (c.Auth.ClientID != "" || c.Auth.ClientSecret != "") && len(c.JWT.Secret) < 32 {
-		return errors.New("jwt.secret must contain at least 32 bytes when auth is enabled")
-	}
-	for _, pattern := range c.Auth.SkipHTTPPaths {
-		if !strings.HasPrefix(pattern, "/api/") {
-			return fmt.Errorf("auth.skip_http_paths contains path outside /api %q", pattern)
-		}
-		if _, err := path.Match(pattern, "/validation/target"); err != nil {
-			return fmt.Errorf("auth.skip_http_paths contains invalid pattern %q: %w", pattern, err)
+		if c.Authorization.PolicyRefreshInterval <= 0 {
+			return errors.New("authorization.policy_refresh_interval must be positive")
 		}
 	}
-	for _, method := range c.Auth.SkipGRPCMethods {
-		if !strings.HasPrefix(method, "/") || strings.Count(method, "/") != 2 {
-			return fmt.Errorf("auth.skip_grpc_methods contains invalid method pattern %q", method)
-		}
-		if _, err := path.Match(method, "/validation/target"); err != nil {
-			return fmt.Errorf("auth.skip_grpc_methods contains invalid pattern %q: %w", method, err)
-		}
+	if (c.Auth.ClientID != "" || c.Auth.ClientSecret != "") && (c.JWT.KeyID == "" || (c.JWT.PrivateKey == "" && c.JWT.PrivateKeyFile == "")) {
+		return errors.New("jwt.key_id and an asymmetric private key are required when token issuing is enabled")
 	}
-	if c.Auth.PSK.Enabled && (len(c.Auth.PSK.Key) < 32 || len(c.Auth.PSK.HTTPPaths)+len(c.Auth.PSK.GRPCMethods) == 0) {
-		return errors.New("enabled auth.psk requires a key of at least 32 bytes and at least one route pattern")
+	if c.JWT.Algorithm != "" && c.JWT.Algorithm != "RS256" && c.JWT.Algorithm != "ES256" {
+		return errors.New("jwt.algorithm must be RS256 or ES256")
 	}
-	for _, pattern := range c.Auth.PSK.HTTPPaths {
-		if !strings.HasPrefix(pattern, "/api/") {
-			return fmt.Errorf("auth.psk.http_paths contains path outside /api %q", pattern)
-		}
-		if _, err := path.Match(pattern, "/validation/target"); err != nil {
-			return fmt.Errorf("auth.psk.http_paths contains invalid pattern %q: %w", pattern, err)
-		}
-	}
-	for _, pattern := range c.Auth.PSK.GRPCMethods {
-		if !strings.HasPrefix(pattern, "/") || strings.Count(pattern, "/") != 2 {
-			return fmt.Errorf("auth.psk.grpc_methods contains invalid method pattern %q", pattern)
-		}
-		if _, err := path.Match(pattern, "/validation/target"); err != nil {
-			return fmt.Errorf("auth.psk.grpc_methods contains invalid pattern %q: %w", pattern, err)
-		}
+	if c.Auth.PSK.Enabled && len(c.Auth.PSK.Key) < 32 {
+		return errors.New("enabled auth.psk requires a key of at least 32 bytes")
 	}
 	if c.User.CacheTTL <= 0 || c.User.LockTTL <= 0 || c.User.LockRetryDelay <= 0 {
 		return errors.New("user cache and lock durations must be positive")
 	}
-	if c.Idempotency.Enabled && (!c.Redis.Enabled || (len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0) {
-		return errors.New("enabled idempotency requires redis, at least one route pattern, and positive TTL values")
+	if c.Tenant.CacheTTL <= 0 {
+		return errors.New("tenant cache duration must be positive")
+	}
+	if c.Menu.CacheTTL <= 0 || c.Menu.MaxNodes <= 0 || c.Menu.MaxNodes > 100000 {
+		return errors.New("menu cache duration and max_nodes must be valid")
+	}
+	if c.PlatformConfig.CacheTTL <= 0 {
+		return errors.New("platform config cache duration must be positive")
+	}
+	if c.Authentication.RefreshTTL <= 0 || c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
+		return errors.New("authentication refresh, failure, and lock settings must be positive")
+	}
+	if c.Idempotency.Enabled && (!c.Redis.Enabled || (len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0 || c.Idempotency.MaxResponseBytes <= 0 || c.Idempotency.MaxResponseBytes > 16<<20) {
+		return errors.New("enabled idempotency requires redis, at least one route pattern, positive TTL values, and max_response_bytes no greater than 16 MiB")
 	}
 	for _, pattern := range c.Idempotency.HTTPPaths {
 		if !strings.HasPrefix(pattern, "/api/") {
@@ -592,6 +688,24 @@ func (c Config) Validate() error {
 	}
 	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.DispatchInterval <= 0 || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchLease <= 0 || c.EventBus.DispatchRetryDelay <= 0) {
 		return errors.New("enabled event_bus requires URLs, stream, canonical platform.> subjects, valid storage, positive timeouts, delivery, and dispatch settings")
+	}
+	if c.ObjectStorage.Enabled && ((c.ObjectStorage.Provider != "s3" && c.ObjectStorage.Provider != "oss") || c.ObjectStorage.Bucket == "" || c.ObjectStorage.Region == "" || c.ObjectStorage.PresignTTL <= 0 || c.ObjectStorage.PresignTTL > 24*time.Hour) {
+		return errors.New("enabled object_storage requires provider s3 or oss, bucket, region, and presign_ttl no greater than 24h")
+	}
+	if (c.ObjectStorage.AccessKeyID == "") != (c.ObjectStorage.AccessKeySecret == "") {
+		return errors.New("object_storage access_key_id and access_key_secret must be configured together")
+	}
+	if c.Files.Enabled && (!c.Database.Enabled || !c.ObjectStorage.Enabled || c.Files.MaxSizeBytes <= 0 || c.Files.MaxSizeBytes > c.HTTP.MaxBodyBytes) {
+		return errors.New("enabled files requires database, object_storage, and positive max_size_bytes not exceeding http.max_body_bytes")
+	}
+	if c.Files.Enabled && (c.Files.DeletionInterval <= 0 || c.Files.DeletionRetryDelay <= 0 || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000) {
+		return errors.New("enabled files requires valid deletion retry settings")
+	}
+	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.OperationLog.Subject == "" || c.OperationLog.Durable == "" || c.OperationLog.MaxPayloadBytes <= 0) {
+		return errors.New("enabled operation_log requires database, event_bus, subject, durable, and positive payload limit")
+	}
+	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || c.SecurityLog.Durable == "" || c.SecurityLog.MaxPayloadBytes <= 0 || len(c.SecurityLog.HashKey) < 32) {
+		return errors.New("enabled security_log requires database, event_bus, subject, durable, positive payload limit, and a hash_key of at least 32 bytes")
 	}
 	for name, upstream := range c.Outbound.HTTP {
 		if upstream.BaseURL == "" || upstream.Timeout <= 0 {

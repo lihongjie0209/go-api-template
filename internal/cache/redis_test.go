@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,40 @@ func TestLock_Extend(t *testing.T) {
 	}
 }
 
+func TestLockReportsOwnershipLoss(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	locker := NewLocker(client)
+	lock, acquired, err := locker.TryLock(t.Context(), "lost", time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("TryLock acquired=%v err=%v", acquired, err)
+	}
+	server.Del("lock:lost")
+	if err := lock.Extend(t.Context()); !errors.Is(err, ErrLockLost) {
+		t.Fatalf("Extend error=%v, want ErrLockLost", err)
+	}
+}
+
+func TestLocker_KeyPrefix(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	locker := NewLocker(client, WithLockKeyPrefix("billing:lock:"))
+
+	lock, acquired, err := locker.TryLock(t.Context(), "invoice:1", time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("TryLock() = (_, %v, %v), want acquired", acquired, err)
+	}
+	if !server.Exists("billing:lock:invoice:1") {
+		t.Fatal("TryLock() did not use the configured namespace")
+	}
+	if err := lock.Unlock(t.Context()); err != nil {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+}
+
 func TestLocker_Validation(t *testing.T) {
 	t.Parallel()
 	locker, closeRedis := newTestLocker(t)
@@ -82,7 +117,7 @@ func TestLocker_Validation(t *testing.T) {
 	}
 }
 
-func newTestLocker(t *testing.T) (*Locker, func()) {
+func newTestLocker(t *testing.T) (Locker, func()) {
 	t.Helper()
 	server, err := miniredis.Run()
 	if err != nil {

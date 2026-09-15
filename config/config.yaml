@@ -8,7 +8,7 @@ http:
   write_timeout: 15s
   idle_timeout: 60s
   request_timeout: 10s
-  max_body_bytes: 1048576
+  max_body_bytes: 16777216
   trusted_proxies: []
   cors:
     enabled: false
@@ -47,6 +47,8 @@ database:
   ping_timeout: 5s
 redis:
   enabled: false
+  # Empty uses "<app.name>:" to isolate services sharing Redis.
+  key_prefix: ""
   address: 127.0.0.1:6379
   username: ""
   password: ""
@@ -54,6 +56,37 @@ redis:
   dial_timeout: 5s
   read_timeout: 3s
   write_timeout: 3s
+object_storage:
+  enabled: false
+  provider: s3 # s3 or oss
+  bucket: ""
+  region: ""
+  endpoint: ""
+  access_key_id: "" # inject with APP_OBJECT_STORAGE_ACCESS_KEY_ID
+  access_key_secret: "" # inject with APP_OBJECT_STORAGE_ACCESS_KEY_SECRET
+  session_token: ""
+  use_path_style: false
+  use_cname: false
+  presign_ttl: 15m
+files:
+  enabled: false
+  max_size_bytes: 10485760
+  allowed_types: [] # Empty allows all detected MIME types.
+  deletion_interval: 30s
+  deletion_retry_delay: 1m
+  deletion_batch_size: 100
+operation_log:
+  enabled: false
+  subject: platform.operation-log.v1
+  durable: go-api-template-operation-log
+  max_payload_bytes: 8192
+security_log:
+  enabled: false
+  subject: platform.security-log.v1
+  durable: go-api-template-security-log
+  max_payload_bytes: 4096
+  fail_closed: true
+  hash_key: "" # Inject APP_SECURITY_LOG_HASH_KEY with at least 32 random bytes.
 health:
   database_timeout: 2s
   redis_timeout: 2s
@@ -76,7 +109,14 @@ swagger:
   require_auth: false
 jwt:
   issuer: go-api-template
-  secret: ""
+  audience: go-api-template
+  algorithm: RS256
+  key_id: ""
+  # Inject PEM with APP_JWT_PRIVATE_KEY or mount a secret file.
+  private_key: ""
+  private_key_file: ""
+  # Retain old public keys until every token signed by them has expired.
+  public_keys: []
   ttl: 2h
 auth:
   client_id: ""
@@ -84,18 +124,17 @@ auth:
   jwks_url: ""
   issuer: identity-service
   audience: go-api-template
-  # Supports path.Match wildcards; '*' never crosses '/'.
-  skip_http_paths: [/api/v1/version]
-  skip_grpc_methods:
-    - /grpc.health.v1.Health/*
   psk:
     enabled: false
     # Inject with APP_AUTH_PSK_KEY; never commit a real key.
     key: ""
-    http_paths: []
-    grpc_methods: []
 authorization:
   enabled: false
+  policy_refresh_interval: 30s
+authentication:
+  refresh_ttl: 720h
+  max_failed_attempts: 5
+  lock_duration: 15m
 cron:
   enabled: true
   timezone: Asia/Shanghai
@@ -112,13 +151,24 @@ user:
   lock_ttl: 10s
   lock_retry_delay: 100ms
 
+tenant:
+  cache_ttl: 5m
+
+menu:
+  cache_ttl: 5m
+  max_nodes: 10000
+
+platform_config:
+  cache_ttl: 5m
+
 idempotency:
   enabled: false
-  http_paths: [/api/v1/example/ping]
+  http_paths: [/api/v1/example/ping, /api/v1/users/create, /api/v1/users/update, /api/v1/users/delete, /api/v1/tenants/create, /api/v1/tenants/update, /api/v1/tenants/delete, /api/v1/permissions/create, /api/v1/permissions/update, /api/v1/permissions/delete]
   grpc_methods: [/hello.v1.HelloService/Ping]
   processing_ttl: 30s
   result_ttl: 24h
   failure_ttl: 5m
+  max_response_bytes: 1048576
 
 event_bus:
   enabled: false

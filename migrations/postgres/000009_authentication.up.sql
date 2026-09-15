@@ -1,0 +1,18 @@
+CREATE TABLE identity_user_credentials (
+    id text PRIMARY KEY, user_id text NOT NULL REFERENCES identity_users(id), password_hash text NOT NULL,
+    failed_attempts bigint NOT NULL DEFAULT 0, locked_until timestamptz, password_changed_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL, created_by text NOT NULL, updated_at timestamptz NOT NULL, updated_by text NOT NULL,
+    version bigint NOT NULL CHECK(version>0), deleted_at timestamptz, deleted_by text
+);
+CREATE UNIQUE INDEX identity_user_credentials_user_unique ON identity_user_credentials(user_id) WHERE deleted_at IS NULL;
+SELECT app_enable_audit('identity_user_credentials');
+CREATE TABLE identity_sessions (
+    id text PRIMARY KEY, user_id text NOT NULL REFERENCES identity_users(id), refresh_token_hash text NOT NULL, previous_refresh_token_hash text NOT NULL DEFAULT '',
+    expires_at timestamptz NOT NULL, last_seen_at timestamptz NOT NULL, revoked_at timestamptz, revoke_reason text NOT NULL DEFAULT '',
+    client_ip text NOT NULL DEFAULT '', user_agent text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL, created_by text NOT NULL, updated_at timestamptz NOT NULL, updated_by text NOT NULL,
+    version bigint NOT NULL CHECK(version>0), deleted_at timestamptz, deleted_by text
+);
+CREATE UNIQUE INDEX identity_sessions_refresh_unique ON identity_sessions(refresh_token_hash) WHERE deleted_at IS NULL;
+CREATE INDEX identity_sessions_user_idx ON identity_sessions(user_id,expires_at) WHERE deleted_at IS NULL AND revoked_at IS NULL;
+SELECT app_enable_audit('identity_sessions');

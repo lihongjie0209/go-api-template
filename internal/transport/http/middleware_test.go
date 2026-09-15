@@ -12,19 +12,21 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
-	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 type fakeIdempotencyManager struct {
-	decision    idempotency.Decision
-	beginKey    string
-	fingerprint string
-	completed   *Response
-	failed      *idempotency.Failure
+	decision     idempotency.Decision
+	beginKey     string
+	fingerprint  string
+	completed    *Response
+	failed       *idempotency.Failure
+	leaseStarted bool
+	aborted      bool
 }
 
 func (*fakeIdempotencyManager) Enabled() bool { return true }
@@ -44,6 +46,14 @@ func (m *fakeIdempotencyManager) Fail(_ context.Context, _, _ string, failure id
 	m.failed = &failure
 	return nil
 }
+func (m *fakeIdempotencyManager) Abort(context.Context, string, string) error {
+	m.aborted = true
+	return nil
+}
+func (m *fakeIdempotencyManager) StartLease(ctx context.Context, _, _ string) (context.Context, func() error, error) {
+	m.leaseStarted = true
+	return ctx, func() error { return nil }, nil
+}
 
 func idempotencyTestRouter(t *testing.T, manager idempotencyManager, calls *int) *gin.Engine {
 	t.Helper()
@@ -52,7 +62,8 @@ func idempotencyTestRouter(t *testing.T, manager idempotencyManager, calls *int)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	router.Use(RequestID(), func(c *gin.Context) {
 		c.Set("subject", "user-1")
-		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+		ctx := platformprincipal.WithContext(c.Request.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+		c.Request = c.Request.WithContext(idempotency.WithContext(ctx, "operation-1"))
 		c.Next()
 	}, IdempotencyExecution(manager, []string{"/test"}, logger))
 	router.POST("/test", func(c *gin.Context) {
@@ -67,6 +78,46 @@ func idempotencyTestRouter(t *testing.T, manager idempotencyManager, calls *int)
 	return router
 }
 
+func TestIdempotencyFingerprintIncludesTenantContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	fingerprint := func(tenantID string) string {
+		request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"name":"demo"}`))
+		ctx := platformprincipal.WithContext(request.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: "member-1"})
+		request = request.WithContext(ctx)
+		ginContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ginContext.Request = request
+		ginContext.Params = gin.Params{}
+		value, err := idempotencyFingerprint(ginContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	if fingerprint("tenant-1") == fingerprint("tenant-2") {
+		t.Fatal("fingerprints for different tenant contexts must differ")
+	}
+}
+
+func TestIdempotencyFingerprintCanonicalizesJSON(t *testing.T) {
+	t.Parallel()
+	fingerprint := func(body string) string {
+		request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
+		ctx := platformprincipal.WithContext(request.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+		request = request.WithContext(ctx)
+		ginContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ginContext.Request = request
+		value, err := idempotencyFingerprint(ginContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	if fingerprint(`{"name":"demo","count":1}`) != fingerprint("{\n  \"count\": 1, \"name\": \"demo\"\n}") {
+		t.Fatal("semantically equivalent JSON requests must have the same fingerprint")
+	}
+}
+
 func TestIdempotencyExecutionCompletesUnifiedResponse(t *testing.T) {
 	t.Parallel()
 	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
@@ -76,7 +127,7 @@ func TestIdempotencyExecutionCompletesUnifiedResponse(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
-	if calls != 1 || manager.beginKey != "operation-1" || manager.fingerprint == "" {
+	if calls != 1 || manager.beginKey != "operation-1" || manager.fingerprint == "" || !manager.leaseStarted {
 		t.Fatalf("calls=%d key=%q fingerprint=%q", calls, manager.beginKey, manager.fingerprint)
 	}
 	if manager.completed == nil || manager.completed.RequestID != "" || manager.completed.Code != 0 {
@@ -154,6 +205,28 @@ func TestIdempotencyExecutionBypassesUnconfiguredRoute(t *testing.T) {
 	}
 }
 
+func TestIdempotencyExecutionAbortsRetryableFailure(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		ctx := idempotency.WithContext(c.Request.Context(), "operation-1")
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, logger))
+	router.POST("/test", func(c *gin.Context) {
+		Fail(c, logger, apperror.Unavailable("temporary failure", nil))
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`))
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || !manager.aborted || manager.failed != nil {
+		t.Fatalf("status=%d aborted=%v failed=%+v", recorder.Code, manager.aborted, manager.failed)
+	}
+}
+
 func TestRequestID(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -176,38 +249,27 @@ func TestRequestID(t *testing.T) {
 	}
 }
 
-func TestExampleHTTPRequirementProtectsBusinessRoute(t *testing.T) {
-	t.Parallel()
-	requirement, ok := exampleHTTPRequirement("/api/v1/example/ping")
-	if !ok || requirement.Resource != "example.hello" || requirement.Action != "ping" || requirement.Scope != platformauthz.ScopePrincipal {
-		t.Fatalf("requirement = %+v, %v", requirement, ok)
-	}
-}
-
-func TestAuthentication_PSKPrecedesSkipAndJWT(t *testing.T) {
+func TestDatabaseAuthenticationVerifiesSuppliedCredentials(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 	const key = "01234567890123456789012345678901"
-	service := auth.New(config.Config{JWT: config.JWT{Issuer: "test", Secret: key, TTL: time.Hour}})
+	service := auth.New(config.Config{})
 	for _, test := range []struct {
 		name   string
 		header string
 		status int
 	}{
 		{name: "valid PSK", header: "PSK " + key, status: http.StatusOK},
-		{name: "PSK route does not become public", status: http.StatusUnauthorized},
+		{name: "missing credential remains anonymous", status: http.StatusOK},
 		{name: "bearer cannot access PSK route", header: "Bearer invalid", status: http.StatusUnauthorized},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			router := gin.New()
-			router.Use(RequestID(), Authentication(service, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Auth{
-				SkipHTTPPaths: []string{"/api/v1/external/*"},
-				PSK:           config.PSK{Enabled: true, Key: key, HTTPPaths: []string{"/api/v1/external/*"}},
-			}))
+			router.Use(RequestID(), DatabaseAuthentication(service, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Auth{PSK: config.PSK{Enabled: true, Key: key}}))
 			router.POST("/api/v1/external/callback", func(c *gin.Context) {
 				value, ok := platformprincipal.FromContext(c.Request.Context())
-				if test.status == http.StatusOK && (!ok || value.ID != "go-api-template:psk" || value.Type != platformprincipal.TypeServiceAccount) {
+				if strings.HasPrefix(test.header, "PSK ") && (!ok || value.ID != "go-api-template:psk" || value.Type != platformprincipal.TypeServiceAccount) {
 					c.AbortWithStatus(http.StatusInternalServerError)
 					return
 				}

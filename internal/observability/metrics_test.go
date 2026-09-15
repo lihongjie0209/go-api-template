@@ -13,11 +13,12 @@ func TestMetrics_Collect(t *testing.T) {
 	metrics.HTTPRequests.WithLabelValues("POST", "/test", "200").Inc()
 	metrics.HTTPDuration.WithLabelValues("POST", "/test").Observe(0.01)
 	metrics.ObserveCron("sample", "success", time.Now())
+	metrics.ObserveInfrastructure("cache", "redis", "get", "hit", time.Now())
 	families, err := metrics.registry.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"http_requests_total": false, "http_request_duration_seconds": false, "cron_runs_total": false}
+	want := map[string]bool{"http_requests_total": false, "http_request_duration_seconds": false, "cron_runs_total": false, "infrastructure_operations_total": false}
 	for _, family := range families {
 		if _, ok := want[family.GetName()]; ok {
 			want[family.GetName()] = true

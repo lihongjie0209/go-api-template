@@ -1,5 +1,142 @@
 basePath: /
 definitions:
+  auth.JWK:
+    properties:
+      alg:
+        type: string
+      crv:
+        type: string
+      e:
+        type: string
+      kid:
+        type: string
+      kty:
+        type: string
+      "n":
+        type: string
+      use:
+        type: string
+      x:
+        type: string
+      "y":
+        type: string
+    type: object
+  auth.JWKS:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/auth.JWK'
+        type: array
+    type: object
+  authentication.SessionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authentication.SessionView'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  authentication.SessionView:
+    properties:
+      client_ip:
+        type: string
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_seen_at:
+        type: string
+      revoke_reason:
+        type: string
+      revoked_at:
+        type: string
+      user_agent:
+        type: string
+      user_id:
+        type: string
+      version:
+        type: integer
+    type: object
+  authentication.Tokens:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      session_id:
+        type: string
+      token_type:
+        type: string
+    type: object
+  authorization.MemberRoleView:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  authorization.PermissionView:
+    properties:
+      action:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+    type: object
+  authorization.TenantRole:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.TenantRolePage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.TenantRole'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
   buildinfo.Info:
     properties:
       build_time:
@@ -12,6 +149,55 @@ definitions:
         type: string
       version:
         type: string
+    type: object
+  files.Download:
+    properties:
+      expires_at:
+        type: string
+      file:
+        $ref: '#/definitions/files.Record'
+      url:
+        type: string
+    type: object
+  files.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/files.Record'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  files.Record:
+    properties:
+      checksum_sha256:
+        type: string
+      content_type:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      etag:
+        type: string
+      id:
+        type: string
+      original_name:
+        type: string
+      size_bytes:
+        type: integer
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
     type: object
   health.Dependency:
     properties:
@@ -29,10 +215,501 @@ definitions:
       status:
         type: string
     type: object
+  httptransport.AddTenantMemberRequest:
+    properties:
+      username:
+        maxLength: 256
+        type: string
+    required:
+    - username
+    type: object
+  httptransport.ChangePasswordRequest:
+    properties:
+      new_password:
+        maxLength: 4096
+        type: string
+      old_password:
+        maxLength: 4096
+        type: string
+    required:
+    - new_password
+    - old_password
+    type: object
+  httptransport.CreateDepartmentRequest:
+    properties:
+      code:
+        maxLength: 63
+        type: string
+      name:
+        maxLength: 512
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+    required:
+    - code
+    - name
+    type: object
+  httptransport.CreatePlatformConfigRequest:
+    properties:
+      category:
+        type: string
+      description:
+        type: string
+      is_public:
+        type: boolean
+      key:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      value:
+        type: object
+    required:
+    - key
+    - name
+    - status
+    - value
+    type: object
+  httptransport.CreateTenantRequest:
+    properties:
+      code:
+        maxLength: 63
+        type: string
+      description:
+        type: string
+      name:
+        maxLength: 512
+        type: string
+      owner_username:
+        maxLength: 64
+        type: string
+    required:
+    - code
+    - name
+    - owner_username
+    type: object
+  httptransport.CreateUserRequest:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      phone:
+        type: string
+      username:
+        type: string
+    required:
+    - display_name
+    - username
+    type: object
+  httptransport.DeleteDepartmentRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeleteFileRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeleteMenuRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeletePermissionRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeletePlatformConfigRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeleteTenantRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeleteTenantRoleRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeleteUserRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DepartmentIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.DepartmentTreeRequest:
+    properties:
+      keyword:
+        maxLength: 256
+        type: string
+    type: object
+  httptransport.FileIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.FilePageRequest:
+    properties:
+      content_types:
+        items:
+          type: string
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      created_by_ids:
+        items:
+          type: string
+        type: array
+      ids:
+        items:
+          type: string
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      size_from:
+        type: integer
+      size_to:
+        type: integer
+    type: object
+  httptransport.ForceLogoutAllRequest:
+    properties:
+      user_id:
+        type: string
+    required:
+    - user_id
+    type: object
+  httptransport.FrontendEventRequest:
+    properties:
+      application_id:
+        maxLength: 128
+        type: string
+      duration_ms:
+        maximum: 86400000
+        minimum: 0
+        type: integer
+      error_code:
+        maxLength: 128
+        type: string
+      error_message:
+        maxLength: 2048
+        type: string
+      event_name:
+        maxLength: 256
+        type: string
+      event_type:
+        enum:
+        - menu_view
+        - button_click
+        type: string
+      extension:
+        additionalProperties: {}
+        type: object
+      page_route:
+        maxLength: 1024
+        type: string
+      resource_id:
+        maxLength: 256
+        type: string
+      succeeded:
+        type: boolean
+    required:
+    - event_name
+    - event_type
+    - succeeded
+    type: object
+  httptransport.GetTenantRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.GetUserRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.LoginRequest:
+    properties:
+      client_id:
+        maxLength: 256
+        type: string
+      client_secret:
+        maxLength: 4096
+        type: string
+    required:
+    - client_id
+    - client_secret
+    type: object
+  httptransport.LoginResponseBody:
+    properties:
+      access_token:
+        type: string
+      token_type:
+        type: string
+    type: object
   httptransport.MeResponseBody:
     properties:
       subject:
         type: string
+    type: object
+  httptransport.MenuIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.MenuMutationRequest:
+    properties:
+      component:
+        type: string
+      external_url:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      menu_key:
+        type: string
+      menu_type:
+        type: string
+      metadata:
+        type: object
+      name:
+        type: string
+      parent_id:
+        type: string
+      permission_id:
+        type: string
+      route_path:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      version:
+        type: integer
+      visible:
+        type: boolean
+    required:
+    - menu_type
+    - name
+    - status
+    type: object
+  httptransport.MenuTreeRequest:
+    properties:
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        type: array
+      keyword:
+        type: string
+      statuses:
+        items:
+          type: string
+        type: array
+      types:
+        items:
+          type: string
+        type: array
+    type: object
+  httptransport.PageTenantRequest:
+    properties:
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        maxLength: 256
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          $ref: '#/definitions/tenant.Status'
+        maxItems: 20
+        type: array
+    type: object
+  httptransport.PageTenantResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/tenant.View'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  httptransport.PageUsersRequest:
+    properties:
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      emails:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      phones:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      statuses:
+        items:
+          $ref: '#/definitions/identity.Status'
+        maxItems: 20
+        type: array
+      usernames:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+    type: object
+  httptransport.PermissionIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.PermissionMutationRequest:
+    properties:
+      action:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      node_type:
+        type: string
+      parent_id:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      version:
+        type: integer
+    required:
+    - name
+    - node_type
+    - permission_key
+    - status
+    type: object
+  httptransport.PermissionTreeRequest:
+    properties:
+      keyword:
+        maxLength: 256
+        type: string
+      node_types:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      statuses:
+        items:
+          type: string
+        maxItems: 20
+        type: array
     type: object
   httptransport.PingRequest:
     properties:
@@ -48,6 +725,74 @@ definitions:
       version:
         type: string
     type: object
+  httptransport.PlatformConfigIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.PlatformConfigKeyRequest:
+    properties:
+      key:
+        type: string
+    required:
+    - key
+    type: object
+  httptransport.PlatformConfigPageRequest:
+    properties:
+      categories:
+        items:
+          type: string
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        type: array
+      is_public:
+        type: boolean
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          type: string
+        type: array
+      value_types:
+        items:
+          type: string
+        type: array
+    type: object
+  httptransport.PublicPlatformConfigsRequest:
+    properties:
+      category:
+        type: string
+    type: object
+  httptransport.RefreshRequest:
+    properties:
+      refresh_token:
+        maxLength: 4096
+        type: string
+    required:
+    - refresh_token
+    type: object
+  httptransport.RemoveTenantMemberRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
   httptransport.Response:
     properties:
       body: {}
@@ -58,6 +803,877 @@ definitions:
       request_id:
         type: string
     type: object
+  httptransport.RevokeSessionRequest:
+    properties:
+      session_id:
+        type: string
+      version:
+        type: integer
+    required:
+    - session_id
+    - version
+    type: object
+  httptransport.SessionPageRequest:
+    properties:
+      page:
+        type: integer
+      page_size:
+        type: integer
+    type: object
+  httptransport.SetDepartmentMembersRequest:
+    properties:
+      department_id:
+        type: string
+      members:
+        items:
+          $ref: '#/definitions/tenant.DepartmentMemberAssignment'
+        maxItems: 1000
+        type: array
+    required:
+    - department_id
+    type: object
+  httptransport.SetPasswordRequest:
+    properties:
+      password:
+        maxLength: 4096
+        type: string
+      user_id:
+        type: string
+    required:
+    - password
+    - user_id
+    type: object
+  httptransport.SwitchTenantRequest:
+    properties:
+      tenant_id:
+        type: string
+    required:
+    - tenant_id
+    type: object
+  httptransport.TenantMemberIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.TenantMemberPageRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      joined_from:
+        type: string
+      joined_to:
+        type: string
+      keyword:
+        maxLength: 256
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          $ref: '#/definitions/tenant.Status'
+        maxItems: 20
+        type: array
+      user_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      usernames:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+    type: object
+  httptransport.TenantRoleIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.TenantRolePageRequest:
+    properties:
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          type: string
+        type: array
+    type: object
+  httptransport.UpdateDepartmentRequest:
+    properties:
+      id:
+        type: string
+      name:
+        maxLength: 512
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - version
+    type: object
+  httptransport.UpdatePlatformConfigRequest:
+    properties:
+      category:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_public:
+        type: boolean
+      name:
+        type: string
+      status:
+        type: string
+      value:
+        type: object
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - status
+    - value
+    - version
+    type: object
+  httptransport.UpdateTenantMemberStatusRequest:
+    properties:
+      id:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/tenant.Status'
+        enum:
+        - active
+        - disabled
+      version:
+        type: integer
+    required:
+    - id
+    - status
+    - version
+    type: object
+  httptransport.UpdateTenantRequest:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        maxLength: 512
+        type: string
+      status:
+        $ref: '#/definitions/tenant.Status'
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - status
+    - version
+    type: object
+  httptransport.UpdateTenantRoleRequest:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - status
+    - version
+    type: object
+  httptransport.UpdateUserRequest:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      phone:
+        type: string
+      status:
+        $ref: '#/definitions/identity.Status'
+      version:
+        type: integer
+    required:
+    - display_name
+    - id
+    - status
+    - version
+    type: object
+  httptransport.UserLoginRequest:
+    properties:
+      password:
+        maxLength: 4096
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  httptransport.createTenantRoleRequest:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      permission_ids:
+        items:
+          type: string
+        type: array
+    required:
+    - code
+    - name
+    type: object
+  httptransport.effectivePermissionsRequest:
+    properties:
+      membership_id:
+        type: string
+    type: object
+  httptransport.memberRolesRequest:
+    properties:
+      membership_id:
+        type: string
+    required:
+    - membership_id
+    type: object
+  httptransport.routePolicyGetRequest:
+    properties:
+      route_id:
+        type: string
+    required:
+    - route_id
+    type: object
+  httptransport.routePolicyPageRequest:
+    properties:
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      protocols:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      statuses:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+    type: object
+  httptransport.routePolicySetRequest:
+    properties:
+      description:
+        type: string
+      expression:
+        type: string
+      references:
+        items:
+          $ref: '#/definitions/routepolicy.ReferenceInput'
+        maxItems: 8
+        type: array
+      route_id:
+        type: string
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      version:
+        minimum: 0
+        type: integer
+    required:
+    - expression
+    - route_id
+    - status
+    type: object
+  httptransport.setAdministratorRequest:
+    properties:
+      enabled:
+        type: boolean
+      membership_id:
+        type: string
+      tenant_id:
+        type: string
+    required:
+    - membership_id
+    - tenant_id
+    type: object
+  httptransport.setMemberRolesRequest:
+    properties:
+      membership_id:
+        type: string
+      role_ids:
+        items:
+          type: string
+        type: array
+    required:
+    - membership_id
+    type: object
+  httptransport.setRolePermissionsRequest:
+    properties:
+      permission_ids:
+        items:
+          type: string
+        type: array
+      role_id:
+        type: string
+      version:
+        type: integer
+    required:
+    - role_id
+    - version
+    type: object
+  httptransport.setTenantPermissionsRequest:
+    properties:
+      permission_ids:
+        items:
+          type: string
+        type: array
+      tenant_id:
+        type: string
+    required:
+    - tenant_id
+    type: object
+  identity.Status:
+    enum:
+    - active
+    - disabled
+    - locked
+    - closed
+    type: string
+    x-enum-varnames:
+    - StatusActive
+    - StatusDisabled
+    - StatusLocked
+    - StatusClosed
+  identity.User:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      phone:
+        type: string
+      status:
+        $ref: '#/definitions/identity.Status'
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
+  menu.Node:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/menu.Node'
+        type: array
+      component:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      external_url:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      menu_key:
+        type: string
+      menu_type:
+        type: string
+      metadata:
+        type: object
+      name:
+        type: string
+      parent_id:
+        type: string
+      permission_id:
+        type: string
+      route_path:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+      visible:
+        type: boolean
+    type: object
+  menu.Record:
+    properties:
+      component:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      external_url:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      menu_key:
+        type: string
+      menu_type:
+        type: string
+      metadata:
+        type: object
+      name:
+        type: string
+      parent_id:
+        type: string
+      permission_id:
+        type: string
+      route_path:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+      visible:
+        type: boolean
+    type: object
+  permission.Record:
+    properties:
+      action:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_system:
+        type: boolean
+      name:
+        type: string
+      node_type:
+        type: string
+      parent_id:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  permission.TreeNode:
+    properties:
+      action:
+        type: string
+      children:
+        items:
+          $ref: '#/definitions/permission.TreeNode'
+        type: array
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_system:
+        type: boolean
+      name:
+        type: string
+      node_type:
+        type: string
+      parent_id:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  platformconfig.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/platformconfig.Record'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  platformconfig.PublicView:
+    properties:
+      category:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
+      value:
+        type: object
+      value_type:
+        type: string
+    type: object
+  platformconfig.Record:
+    properties:
+      category:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_public:
+        type: boolean
+      key:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      value:
+        type: object
+      value_type:
+        type: string
+      version:
+        type: integer
+    type: object
+  routepolicy.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/routepolicy.RouteSummary'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  routepolicy.Reference:
+    properties:
+      id:
+        type: string
+      permission_id:
+        type: string
+      permission_key:
+        type: string
+      permission_name:
+        type: string
+      scope:
+        type: string
+    type: object
+  routepolicy.ReferenceInput:
+    properties:
+      permission_id:
+        type: string
+      scope:
+        type: string
+    type: object
+  routepolicy.RouteSummary:
+    properties:
+      id:
+        type: string
+      last_discovered_at:
+        type: string
+      method:
+        type: string
+      operation:
+        type: string
+      path:
+        type: string
+      policy_expression:
+        type: string
+      policy_status:
+        type: string
+      policy_version:
+        type: integer
+      protocol:
+        type: string
+      source_version:
+        type: string
+      status:
+        type: string
+    type: object
+  routepolicy.View:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      expression:
+        type: string
+      id:
+        type: string
+      priority:
+        type: integer
+      references:
+        items:
+          $ref: '#/definitions/routepolicy.Reference'
+        type: array
+      route_id:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  tenant.AvailableTenant:
+    properties:
+      is_administrator:
+        type: boolean
+      joined_at:
+        type: string
+      membership_id:
+        type: string
+      tenant_code:
+        type: string
+      tenant_id:
+        type: string
+      tenant_name:
+        type: string
+    type: object
+  tenant.ContextToken:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      tenant:
+        $ref: '#/definitions/tenant.AvailableTenant'
+      token_type:
+        type: string
+    type: object
+  tenant.Department:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  tenant.DepartmentMemberAssignment:
+    properties:
+      is_primary:
+        type: boolean
+      membership_id:
+        type: string
+    required:
+    - membership_id
+    type: object
+  tenant.DepartmentNode:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/tenant.DepartmentNode'
+        type: array
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  tenant.Member:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: string
+      joined_at:
+        type: string
+      status:
+        $ref: '#/definitions/tenant.Status'
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      user_id:
+        type: string
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
+  tenant.Reference:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  tenant.Status:
+    enum:
+    - active
+    - disabled
+    type: string
+    x-enum-varnames:
+    - StatusActive
+    - StatusDisabled
+  tenant.View:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner:
+        $ref: '#/definitions/tenant.Reference'
+      status:
+        $ref: '#/definitions/tenant.Status'
+      status_name:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
 info:
   contact: {}
   description: 'Production-oriented Go Web API scaffold. Application error codes:
@@ -66,6 +1682,267 @@ info:
   title: Go API Template
   version: "1.0"
 paths:
+  /api/v1/.well-known/jwks.json:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.JWKS'
+      summary: Publish JWT verification keys
+      tags:
+      - authentication
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Client credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.LoginResponseBody'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      summary: Issue a JWT access token and record a security event
+      tags:
+      - authentication
+  /api/v1/auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      summary: Revoke a user session
+      tags:
+      - authentication
+  /api/v1/auth/password/change:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Passwords
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Change the current user's password and revoke all sessions
+      tags:
+      - authentication
+  /api/v1/auth/password/reset:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User and password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Provision a user's password credential
+      tags:
+      - authentication
+  /api/v1/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authentication.Tokens'
+              type: object
+      summary: Rotate a refresh token and issue new tokens
+      tags:
+      - authentication
+  /api/v1/auth/sessions/force-logout-all:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ForceLogoutAllRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Administratively revoke all sessions for a user
+      tags:
+      - sessions
+  /api/v1/auth/sessions/logout-all:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Revoke all sessions for the current user
+      tags:
+      - sessions
+  /api/v1/auth/sessions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Pagination
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SessionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authentication.SessionPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page the current user's sessions
+      tags:
+      - sessions
+  /api/v1/auth/sessions/revoke:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Session
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.RevokeSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Revoke one of the current user's sessions
+      tags:
+      - sessions
+  /api/v1/auth/user/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UserLoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authentication.Tokens'
+              type: object
+      summary: Authenticate a user with username and password
+      tags:
+      - authentication
   /api/v1/example/ping:
     post:
       consumes:
@@ -106,6 +1983,140 @@ paths:
       summary: Exercise an authenticated and authorized business endpoint
       tags:
       - example
+  /api/v1/files/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: File and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteFileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Logically delete a file using optimistic locking
+      tags:
+      - files
+  /api/v1/files/download:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: File ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.FileIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/files.Download'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a short-lived file download URL
+      tags:
+      - files
+  /api/v1/files/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: File ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.FileIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/files.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get file metadata
+      tags:
+      - files
+  /api/v1/files/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: File filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.FilePageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/files.Page'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page accessible file metadata
+      tags:
+      - files
+  /api/v1/files/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: File content
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/files.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Upload a file
+      tags:
+      - files
   /api/v1/me:
     post:
       produces:
@@ -129,6 +2140,1498 @@ paths:
       summary: Return the authenticated subject
       tags:
       - authentication
+  /api/v1/me/menus:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/menu.Node'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: Return menus visible in the current tenant context
+      tags:
+      - menus
+  /api/v1/menus/create:
+    post:
+      parameters:
+      - description: Tree filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MenuTreeRequest'
+      - description: Menu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MenuMutationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/menu.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a platform menu with a stable UUID v5 derived from menu_key
+      tags:
+      - menus
+  /api/v1/menus/delete:
+    post:
+      parameters:
+      - description: Menu and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteMenuRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a leaf platform menu
+      tags:
+      - menus
+  /api/v1/menus/get:
+    post:
+      parameters:
+      - description: Menu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MenuIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/menu.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a platform menu
+      tags:
+      - menus
+  /api/v1/menus/tree:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/menu.Node'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: Return the complete platform menu tree
+      tags:
+      - menus
+  /api/v1/menus/update:
+    post:
+      parameters:
+      - description: Menu and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MenuMutationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/menu.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update or move a platform menu
+      tags:
+      - menus
+  /api/v1/operation-logs/frontend/record:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Frontend event
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.FrontendEventRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Enqueue a frontend menu or button event
+      tags:
+      - operation-logs
+  /api/v1/permissions/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionMutationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/permission.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a permission tree node
+      tags:
+      - permissions
+  /api/v1/permissions/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeletePermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a leaf permission using optimistic locking
+      tags:
+      - permissions
+  /api/v1/permissions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/permission.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a permission by ID
+      tags:
+      - permissions
+  /api/v1/permissions/tree:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionTreeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/permission.TreeNode'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the filtered ordered permission tree (matching nodes retain ancestors)
+      tags:
+      - permissions
+  /api/v1/permissions/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionMutationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/permission.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a permission using optimistic locking
+      tags:
+      - permissions
+  /api/v1/platform-configs/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreatePlatformConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a platform configuration
+      tags:
+      - platform-configs
+  /api/v1/platform-configs/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeletePlatformConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a platform configuration
+      tags:
+      - platform-configs
+  /api/v1/platform-configs/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformConfigIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a platform configuration
+      tags:
+      - platform-configs
+  /api/v1/platform-configs/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformConfigPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.Page'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page platform configurations
+      tags:
+      - platform-configs
+  /api/v1/platform-configs/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdatePlatformConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a platform configuration
+      tags:
+      - platform-configs
+  /api/v1/public/platform-configs/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Key
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformConfigKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.PublicView'
+              type: object
+      summary: Get one explicitly public platform configuration
+      tags:
+      - public-configs
+  /api/v1/public/platform-configs/list:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filter
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PublicPlatformConfigsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/platformconfig.PublicView'
+                  type: array
+              type: object
+      summary: List explicitly public active platform configurations
+      tags:
+      - public-configs
+  /api/v1/route-policies/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Route
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.routePolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/routepolicy.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the database-owned policy for a route
+      tags:
+      - route-policies
+  /api/v1/route-policies/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.routePolicyPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/routepolicy.Page'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page discovered HTTP and gRPC routes with their policy status
+      tags:
+      - route-policies
+  /api/v1/route-policies/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.routePolicySetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/routepolicy.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create or update a database-owned route policy
+      tags:
+      - route-policies
+  /api/v1/tenant-authorization/administrators/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Administrator
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.setAdministratorRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Add or remove a tenant administrator
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-authorization/effective-permissions:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.effectivePermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    type: string
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List effective permission IDs for a tenant member
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-authorization/permissions/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant permissions
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.setTenantPermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Replace a tenant's permission ceiling
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-context/available:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/tenant.AvailableTenant'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List the current user's available tenants
+      tags:
+      - tenant-context
+  /api/v1/tenant-context/current:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.AvailableTenant'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the validated current tenant context
+      tags:
+      - tenant-context
+  /api/v1/tenant-context/switch:
+    post:
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SwitchTenantRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.ContextToken'
+              type: object
+      security:
+      - Bearer: []
+      summary: Issue an access token scoped to one tenant membership
+      tags:
+      - tenant-context
+  /api/v1/tenant-departments/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateDepartmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.Department'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a tenant department
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteDepartmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete an empty tenant department
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DepartmentIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.Department'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant department
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/members/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Assignments
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SetDepartmentMembersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Replace department members and primary-department flags
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/tree:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Search
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DepartmentTreeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/tenant.DepartmentNode'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: Return the tenant department tree
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateDepartmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.Department'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update or move a tenant department
+      tags:
+      - tenant-departments
+  /api/v1/tenant-members/add:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.AddTenantMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.Member'
+              type: object
+      security:
+      - Bearer: []
+      summary: Add a user to the current tenant
+      tags:
+      - tenant-members
+  /api/v1/tenant-members/get:
+    post:
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantMemberIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.Member'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant member
+      tags:
+      - tenant-members
+  /api/v1/tenant-members/page:
+    post:
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantMemberPageRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page current tenant members
+      tags:
+      - tenant-members
+  /api/v1/tenant-members/remove:
+    post:
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.RemoveTenantMemberRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Remove a tenant member
+      tags:
+      - tenant-members
+  /api/v1/tenant-members/roles/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.memberRolesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/authorization.MemberRoleView'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List displayable roles assigned to a tenant member
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-members/roles/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member roles
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.setMemberRolesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Replace a tenant member's roles
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-members/status/update:
+    post:
+      parameters:
+      - description: Status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateTenantMemberStatusRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.Member'
+              type: object
+      security:
+      - Bearer: []
+      summary: Enable or disable a tenant member
+      tags:
+      - tenant-members
+  /api/v1/tenant-roles/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.createTenantRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantRole'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a tenant role from the caller's effective permissions
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteTenantRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a tenant role and its assignments
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRoleIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantRole'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant role
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRolePageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantRolePage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page tenant roles
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/permissions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRoleIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/authorization.PermissionView'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List displayable permissions assigned to a tenant role
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/permissions/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role permissions
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.setRolePermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Replace role permissions with optimistic locking
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateTenantRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantRole'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a tenant role
+      tags:
+      - tenant-authorization
+  /api/v1/tenants/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a tenant and its owner membership
+      tags:
+      - tenants
+  /api/v1/tenants/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Logically delete a tenant using optimistic locking
+      tags:
+      - tenants
+  /api/v1/tenants/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant by ID
+      tags:
+      - tenants
+  /api/v1/tenants/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Pagination
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PageTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.PageTenantResponse'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page tenants visible to the caller
+      tags:
+      - tenants
+  /api/v1/tenants/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.View'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a tenant using optimistic locking
+      tags:
+      - tenants
+  /api/v1/users/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.User'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a globally identified user
+      tags:
+      - users
+  /api/v1/users/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Logically close and delete a user
+      tags:
+      - users
+  /api/v1/users/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.User'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a user by ID
+      tags:
+      - users
+  /api/v1/users/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PageUsersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Search users by username, email, phone, status, and time range
+      tags:
+      - users
+  /api/v1/users/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User and version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.User'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a user using optimistic locking
+      tags:
+      - users
   /api/v1/version:
     post:
       produces:

@@ -3,14 +3,14 @@ package grpctransport
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
-	"time"
 
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
-	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -22,7 +22,11 @@ import (
 
 func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	t.Parallel()
-	authService := auth.New(config.Config{JWT: config.JWT{Issuer: "test", Secret: "01234567890123456789012345678901", TTL: time.Hour}, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
+	jwtConfig, keyErr := testutil.JWTConfig()
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	authService := auth.New(config.Config{JWT: jwtConfig, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
 	token, err := authService.Issue("client")
 	if err != nil {
 		t.Fatal(err)
@@ -54,18 +58,15 @@ func TestHelloServer_PingThroughGRPC(t *testing.T) {
 func TestAuthenticateGRPC_PSKWildcard(t *testing.T) {
 	t.Parallel()
 	const key = "01234567890123456789012345678901"
-	authService := auth.New(config.Config{JWT: config.JWT{Issuer: "test", Secret: key, TTL: time.Hour}})
-	cfg := config.Auth{
-		SkipGRPCMethods: []string{"/hello.v1.UserService/*"},
-		PSK:             config.PSK{Enabled: true, Key: key, GRPCMethods: []string{"/hello.v1.UserService/*"}},
-	}
+	authService := auth.New(config.Config{})
+	cfg := config.Auth{PSK: config.PSK{Enabled: true, Key: key}}
 	for _, test := range []struct {
 		name   string
 		header string
 		code   codes.Code
 	}{
 		{name: "valid", header: "PSK " + key, code: codes.OK},
-		{name: "PSK precedes skip", code: codes.Unauthenticated},
+		{name: "missing credential remains anonymous", code: codes.OK},
 		{name: "bearer rejected", header: "Bearer " + key, code: codes.Unauthenticated},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -75,7 +76,7 @@ func TestAuthenticateGRPC_PSKWildcard(t *testing.T) {
 			if got := status.Code(err); got != test.code {
 				t.Fatalf("status code = %s, want %s", got, test.code)
 			}
-			if test.code == codes.OK {
+			if strings.HasPrefix(test.header, "PSK ") {
 				value, ok := platformprincipal.FromContext(authenticated)
 				if !ok || value.ID != "go-api-template:psk" || value.Type != platformprincipal.TypeServiceAccount {
 					t.Fatalf("principal = %#v, %v", value, ok)
@@ -88,7 +89,11 @@ func TestAuthenticateGRPC_PSKWildcard(t *testing.T) {
 func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	t.Parallel()
 	const key = "01234567890123456789012345678901"
-	service := auth.New(config.Config{JWT: config.JWT{Issuer: "test", Secret: key, TTL: time.Hour}, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
+	jwtConfig, keyErr := testutil.JWTConfig()
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	service := auth.New(config.Config{JWT: jwtConfig, Auth: config.Auth{ClientID: "client", ClientSecret: "secret"}})
 	token, err := service.Issue("user-1")
 	if err != nil {
 		t.Fatal(err)
@@ -104,13 +109,13 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	}
 }
 
-func TestHelloRequirementProtectsBusinessRPC(t *testing.T) {
+func TestGRPCBusinessRoutesIncludeHello(t *testing.T) {
 	t.Parallel()
-	requirement, ok := helloRequirement(true)(hellov1.HelloService_Ping_FullMethodName)
-	if !ok || requirement.Resource != "example.hello" || requirement.Action != "ping" || requirement.Scope != platformauthz.ScopePrincipal {
-		t.Fatalf("requirement = %+v, %v", requirement, ok)
+	routes, err := grpcBusinessRoutes("test-service")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := helloRequirement(false)(hellov1.HelloService_Ping_FullMethodName); ok {
-		t.Fatal("disabled authorization must not enforce")
+	if len(routes) != 4 || routes[0].Path != hellov1.HelloService_Ping_FullMethodName {
+		t.Fatalf("routes = %+v", routes)
 	}
 }

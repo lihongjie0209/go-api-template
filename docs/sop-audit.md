@@ -1,0 +1,240 @@
+# SOP compliance audit
+
+This document is the authoritative progress ledger for auditing completed
+features against `AGENTS.md`. A green unit test alone does not mark a feature as
+compliant. Each feature must have evidence for its API contract, authentication
+and authorization, logs, cache/lock decisions, optimistic locking, audit fields,
+presentation, observability, unit tests, and isolated integration tests.
+
+Status values:
+
+- `pending`: not yet reviewed against the complete SOP.
+- `in_progress`: reviewed and gaps are being corrected.
+- `verified`: every applicable row has direct code/test evidence.
+- `not_applicable`: feature is infrastructure-only and the reason is recorded.
+
+| Feature | Status | Current evidence or next gap |
+| --- | --- | --- |
+| Route discovery and database route policies | in_progress | Database source, CEL cache, HTTP/gRPC interceptors, optimistic policy writes, logs, refresh metrics and migrations exist. Route page filtering and permission display names have unit coverage. A PostgreSQL + Redis Testcontainers fail-closed/refresh/JWT/PSK test is committed but still needs a successful GitHub CI execution as evidence. |
+| Permission definition tree | in_progress | CRUD and filtered tree contracts, ancestor retention, leaf-parent rules, optimistic writes, operation/security logs, complete reference protection, route-policy cache invalidation and reverse-reference indexes are implemented. PostgreSQL/MySQL Testcontainers lifecycle coverage is committed but still needs a successful GitHub CI execution as evidence. |
+| Identity users | in_progress | Global user CRUD/page contracts, bounded fuzzy/IN/time filters, username uniqueness, optimistic writes, Redis cache invalidation, operation/security logs, deletion reference protection and session revocation are implemented. PostgreSQL/MySQL lifecycle coverage is committed but still needs successful GitHub CI evidence. |
+| Authentication, JWT, JWKS and sessions | in_progress | RS256/ES256, deployment key rotation, JWKS, password/session APIs, atomic account lockout, refresh rotation/reuse revocation, user-status/session enforcement, security logs and fail-closed login compensation are implemented. Service-account persistence and successful GitHub CI integration evidence remain open. |
+| Tenants | in_progress | Tenant-scoped CRUD/page, authoritative identity-based owner assignment, cache/error handling, optimistic writes, operation/security logs, dependent soft deletion and active-context checks are implemented. Explicit platform-wide administration contracts and successful GitHub CI evidence remain open. |
+| Tenant memberships and context | in_progress | Tenant predicates, identity-owned user snapshots, filtered paging, per-member distributed locks, optimistic writes, active-tenant checks, last-active-admin protection, operation/security logs and context-token validation are implemented. GitHub CI integration evidence remains open. |
+| Tenant departments | in_progress | Tenant-scoped CRUD/tree/member replacement, ancestor-preserving search, cycle prevention, active-reference validation, narrow distributed locks, optimistic writes and timed operation logs are implemented. GitHub CI integration execution remains open. |
+| Tenant roles and authorization | in_progress | Tenant ceilings, subset delegation, active administrator semantics, displayable role/permission reads, bounded role filters, narrow locks, optimistic role writes and independent audit/security logs are implemented. Isolated PostgreSQL/MySQL lifecycle and successful GitHub CI evidence remain open. |
+| Platform menus | in_progress | UUIDv5 identity, validated hierarchy, ancestor-preserving filters, permission-gated current tree, Redis cache/invalidation, optimistic writes and operation/security logs are implemented. PostgreSQL/MySQL lifecycle is committed but successful GitHub CI evidence remains open. |
+| Platform configuration | in_progress | Explicit public boundary, JSON value typing, bounded fuzzy/IN/time filters, Redis public-value caching, optimistic writes, operation/security logs and secret-like value rejection are implemented. PostgreSQL/MySQL lifecycle is committed but successful GitHub CI evidence remains open. |
+| Files and object storage | in_progress | S3/OSS abstraction, detected-content upload validation, tenant-scoped metadata get/page/download/delete, operation logs, storage metrics/traces and durable deletion retries are implemented. Large-table retention/partition policy and successful GitHub CI evidence remain open. |
+| Distributed cache and locks | in_progress | Public SDK v0.15.2 owns bounded Redis cache and renewable Redsync contracts; its GitHub CI is green. The template adds namespaces, metrics/traces, lease-context propagation and unit/integration competition coverage. Successful template GitHub CI execution remains open. |
+| Idempotency | in_progress | HTTP/gRPC fingerprinting includes the complete principal/tenant context and canonical payloads; owner-token state transitions, renewable processing leases, loss cancellation, bounded replay, retryable-failure release, metrics/traces and Redis competition coverage exist. Successful template GitHub CI execution remains open. |
+| Operation logs and frontend events | pending | Audit async durability, sanitization, retention/query APIs, IP/UA/request/trace data and failure policy. |
+| Security logs | pending | Audit independent durable path, unauthenticated login identity, IP/UA, sanitization, retention/query APIs and fail-closed behavior. |
+| Health checks | pending | Audit per-dependency deadlines, envelopes, probe behavior and readiness dependency list. |
+| Request middleware and rate limiting | pending | Audit request ID, cancellation, body/content type, CORS, proxy trust, security headers, Redis rate limits and brute-force policy. |
+| HTTP/gRPC outbound reliability | pending | Audit configured discovery, JWT/PSK/mTLS, retry/circuit breaker/deadline, metrics and trace propagation. |
+| Scheduler | pending | Audit job ownership, system principal, overlap locking, failure metrics, gRPC dynamic invocation and tests. |
+| Database migrations and audit triggers | pending | Audit all dialects, per-service history/schema isolation, startup ordering, up/down tests and every-table audit contract. |
+| OpenAPI/Swagger | pending | Audit every registered HTTP route, auth/error documentation, generated model consistency and CI drift check. |
+| Observability and diagnostics | pending | Audit HTTP/gRPC/DB/Redis/cron/storage/lock metrics, traces, correlated logs, protected pprof and build metadata. |
+| Configuration profiles | pending | Audit defaults/current-directory loading, environment overrides, secrets, dev/test/prod files and generated-service replacements. |
+| Scaffold CLI | pending | Audit Cobra/Viper use, AST Go replacements, formatting, service/database/schema/namespace variables, stable IDs and tests. |
+| Docker Compose and Makefile | pending | Audit required local dependencies only, migrations, profiles, command consistency and documentation. |
+| CI and release metadata | pending | Audit unit/integration separation, Testcontainers jobs, generated-doc checks, race/vet/security checks and Git build metadata. |
+
+## Route policy audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST `page`, `get`, and `set`; page defaults/max come from shared pagination. Keyword searches path, operation and description; protocol/status support bounded `IN` filters. |
+| Authentication | Anonymous, JWT and PSK are database expressions. No path allowlist remains in configuration. Infrastructure health/reflection methods are explicitly outside business policy scope. |
+| Authorization | CEL references stable permission keys backed by `route_policy_permission_refs`; each reference stores platform/tenant/principal scope. Missing or invalid policy denies. |
+| Operation/security logs | Policy writes emit an operation event and the independent `route_policy_changed` security event without recording expressions or credentials. |
+| Cache | Precompiled CEL programs live in an immutable atomic snapshot. Redis Pub/Sub invalidates immediately; database revision polling repairs lost messages. |
+| Distributed lock | Not used: a route has one policy row, database uniqueness plus required optimistic version provides the contention invariant without serializing unrelated routes. |
+| Optimistic lock | Updates require the current positive version; version zero is create-only. Zero affected rows returns a version conflict. |
+| Audit | All three tables contain mandatory audit fields. PostgreSQL/Kingbase use `app_enable_audit`; writes run in an actor-bound transaction. |
+| Presentation | Route page returns protocol/method/path/operation/version; policy get returns permission ID, stable key, display name and scope. Times use the shared JSON time representation. |
+| Tests | Compiler, fail-closed snapshot replacement, UUIDv5 golden value, repository loading, route filtering and permission presentation have unit coverage. PostgreSQL/Redis integration coverage is implemented under the integration build tag; CI execution evidence remains open. |
+| Shared capability | Uses SDK `stableid`, principal and authorization contracts; uses CEL-Go rather than a local expression parser. |
+
+## Permission definition audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST create/get/update/delete/tree. Tree accepts bounded keyword, node-type and status filters; keyword searches key, name, resource, action and description, and matching nodes retain their ancestors. A permission node is always a leaf; only groups may be parents. |
+| Authentication/authorization | Authentication and authorization are owned by the database route-policy layer. Permission-management routes have no code-level bypass. |
+| Operation/security logs | Create, update and delete emit asynchronous operation events and independent `permission_definition_changed` security events. Logged mutation payloads contain no credentials. |
+| Cache | Permission resource/action changes refresh the local compiled route-policy snapshot and publish Redis invalidation. Database revision polling includes permissions referenced by policies, so lost Pub/Sub messages self-heal. A failed best-effort refresh is logged and must not turn an already committed mutation into a false client failure. |
+| Distributed lock | Not used. Tree mutations execute in serializable database transactions, lock the target row and rely on unique keys plus optimistic versions; a global distributed lock would unnecessarily serialize unrelated branches. |
+| Optimistic lock | Update/delete require a positive current version and check `RowsAffected` errors and cardinality. System permissions cannot be deleted. |
+| Reference safety | Delete is rejected while referenced by menus, tenant grants, tenant-role grants or route policies. Key changes, disabling and conversion to a group are rejected while referenced by an active route policy, preventing stale compiled authorization. Reverse-reference indexes exist for all three dialects. |
+| Audit | Permission and relation tables contain mandatory audit/version/soft-delete fields. PostgreSQL/Kingbase mutations run under the transaction actor and audit triggers; MySQL writes explicitly maintain the fields. |
+| Stable IDs | Runtime administrator-created permission definitions use UUIDv4. Any future built-in/system definitions must be seeded with SDK UUIDv5 IDs; no built-in permission seed exists today. |
+| Presentation | Records expose display name alongside IDs/keys and use the shared JSON time encoding. Tree results return non-nil arrays. |
+| Tests | Unit tests cover validation, bounded filters, ancestor retention, parent type and active-route reference protection. PostgreSQL/MySQL migration and lifecycle coverage is under the integration build tag; CI execution evidence remains open. |
+| Shared capability | Uses shared principal/tree contracts, operation/security pipelines and the route-policy manager rather than duplicating infrastructure. |
+
+## Identity user audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST create/get/page/update/delete. Page supports fuzzy username/display-name/email/phone search, bounded ID/username/email/phone/status `IN` filters, and a validated half-open creation-time range. Empty result arrays are non-nil. |
+| Authentication/authorization | Identity users are platform-global rather than tenant-owned. Database route policies must assign platform-scoped management permissions; login-time username resolution intentionally works before a principal exists. |
+| Operation/security logs | Mutations emit asynchronous operation records and independent `identity_user_changed` security events. Password/session-specific events remain owned by authentication. |
+| Cache | Get-by-ID and login-time get-by-username share Redis-backed JSON cache entries with a configured TTL. Updates/deletes invalidate both keys even when post-commit log delivery fails; backend errors fail open to the database and are logged. |
+| Distributed lock | Not used. Global username uniqueness is a database invariant, while updates/deletes use optimistic versions. A distributed lock would not improve correctness. |
+| Optimistic lock | Update/delete require a positive current version and check both `RowsAffected` errors and cardinality. |
+| Reference safety | A user cannot be deleted while owning a tenant or having an active membership. Deletion revokes every active session in the same transaction so existing access tokens fail session validation. The owner lookup has a reverse index. |
+| Audit | Identity users, credentials and sessions contain the mandatory audit/version/soft-delete fields. PostgreSQL/Kingbase use actor-bound audit triggers; MySQL mutations maintain them explicitly. |
+| Presentation | User references expose `display_name`, username, email and phone rather than an opaque ID alone. Shared JSON time serialization is used. |
+| Tests | Unit tests cover normalization, uniqueness classification, cache key/invalidation behavior and invalid time ranges. PostgreSQL/MySQL CRUD, uniqueness, optimistic locking and authentication lifecycle run under the integration build tag; CI execution evidence remains open. |
+| Shared capability | Uses shared cache, principal, pagination, operation-log and security-log contracts. Runtime users use UUIDv4 because they are transactional business entities, not stable built-in definitions. |
+
+## Authentication audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | User login/refresh/logout, password reset/change, session page/revoke/logout-all/force-logout-all are POST+JSON and use the shared response/error envelope. The root GET JWKS endpoint intentionally returns raw RFC 7517 JSON for standards compatibility; the POST API alias remains available. |
+| Authentication/authorization | Login, refresh and logout establish or rotate credentials without an existing principal. Password and session management routes are controlled by database route policies. Self-service methods additionally bind session queries and mutations to the authenticated user. |
+| JWT/JWKS | Only RS256 (RSA >=2048) and ES256 (P-256) are accepted. Tokens require issuer, expiration, issued-at, `kid`, configured audience and algorithm/key agreement. Rotation publishes the active key plus configured former public keys, and a golden test proves old tokens remain verifiable. |
+| Passwords | Argon2id uses random salts and bounded hash parameters. Password changes lock the credential row and revoke all sessions. Administrative reset first verifies that the user exists, including on MySQL where no foreign key can be assumed. Passwords never enter operation/security payloads. |
+| Brute-force protection | Redis login rate limiting protects the IP dimension. Per-account failed attempts use one atomic database increment and set `locked_until` at the configured threshold, preventing concurrent lost updates. Successful login must win an optimistic credential reset before creating a session. |
+| Sessions/refresh | Refresh tokens are random 256-bit values and only SHA-256 hashes are stored. Rotation uses `FOR UPDATE`; reuse of the previous token revokes the session. Current and previous hash lookups are indexed. Logout and administrative actions revoke immediately. User disable/close also revokes sessions, and JWT verification joins the active user row. |
+| Security/operation logs | Every credential/session mutation emits the dedicated security event with request ID, trace ID, IP and UA. Raw refresh tokens are supplied only through the recorder's hash-only field. General operation logs are intentionally not duplicated for credential events. Successful login/refresh fail closed when configured; newly issued sessions are compensatingly revoked if security-event enqueueing fails. |
+| Cache/lock | Session validity intentionally uses the indexed primary database on every request so revocation is immediate; no stale cache window is accepted. Database row locks and atomic/optimistic updates provide the required serialization, so no distributed lock is used. |
+| Audit | Credential/session tables contain mandatory audit/version/soft-delete fields and all writes use actor-bound transactions. Session pages return a non-nil list and display client IP, UA, timestamps and revoke reason. |
+| Tests | Unit tests cover RSA/EC issue/parse, JWKS rotation, disabled-user rejection, Argon2id behavior, atomic failure tracking, user-scoped session queries, missing-user reset and session revocation. PostgreSQL integration covers login, rotation, logout and refresh-token replay; CI execution evidence remains open. |
+
+## Tenant audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST create/get/page/update/delete. Page uses shared pagination and supports bounded fuzzy code/name, ID/status `IN`, and validated half-open creation-time filters. Tenant-context get/page/update/delete cannot select another tenant. |
+| Owner/reference presentation | Creation resolves `owner_username` through the identity gRPC interface and stores the returned immutable ID plus display-name snapshot; arbitrary client-supplied owner names are no longer accepted. This respects service database ownership and keeps API responses displayable. |
+| Authentication/authorization | Route policies own permission decisions. Tenant-scoped methods additionally require `principal.tenant_id == target tenant`; current-context lookup now requires both active tenant and active membership. A separate explicit platform-administration API remains to be designed instead of weakening tenant filters. |
+| Operation/security logs | Create/update/delete use the asynchronous operation pipeline and emit independent `tenant_changed` security events. Validation failures before a business mutation are ordinary request failures and are covered by HTTP access logs. |
+| Cache | Tenant get uses a tenant-qualified shared cache key and configured TTL. Decode/backend errors fail open to the database and are logged; update/delete invalidate even if a post-commit log enqueue fails. Shared Redis makes invalidation cross-instance. |
+| Distributed lock | CRUD does not use a distributed lock: code uniqueness and optimistic versions are database invariants. Cross-row membership/department/authorization mutations are audited separately because their lock granularity differs. |
+| Optimistic lock/audit | Update/delete require versions and check affected-row errors/cardinality. Delete soft-deletes tenant-owned membership, department and authorization relations in one actor-bound transaction; retained logs/files follow their own retention lifecycle. All affected tables have audit/version/soft-delete fields. |
+| Isolation | Repository get/page predicates always include the current tenant for tenant-context calls. Context token selection binds tenant, membership and user IDs and accepts only active rows. Cross-tenant unit tests assert SQL-level scoping. |
+| Tests | Unit tests cover cross-tenant get denial, filter bounds/time ordering, authoritative owner resolution and active current-context checks. PostgreSQL/MySQL lifecycle coverage exists under the integration build tag; CI execution evidence remains open. |
+
+## Tenant membership and context audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST add/get/page/status-update/remove plus available/switch/current context APIs. Paging supports fuzzy username/display name, bounded membership/user/username/status `IN` filters and a validated half-open joined-time range. Empty lists are non-nil. |
+| Identity ownership/presentation | Member creation resolves the global username through the identity gRPC contract and persists ID, canonical username and display-name snapshots. The resolver exhausts every fuzzy-result page before declaring no exact match, avoiding first-page false negatives. No tenant query reads the identity database. |
+| Tenant isolation | Every member read/write predicate includes `tenant_id` from the principal. Mutations additionally verify the tenant is active inside the transaction. Available/switch/current bind the authenticated user, tenant and membership and require active tenant/member rows. |
+| Authorization/session invalidation | Effective-permission calculation first joins and validates the active tenant and membership. Consequently an already-issued tenant token immediately loses all authorization after tenant/member disable or removal without revoking the user's sessions in unrelated tenants. |
+| Operation/security logs | Add/status/remove use timed asynchronous operation records and membership security events. Tenant-context switch records success/failure, request/trace context, actor, session ID, IP and UA; the access token itself is never logged. Successful switches respect security-log fail-closed mode. |
+| Cache | Memberships are mutable and authorization-sensitive, so no member cache is used. Tenant selection reads indexed database rows to provide immediate state changes. Identity lookup reliability/retries/tracing are supplied by the shared outbound gRPC registry. |
+| Distributed lock | Add uses the narrow key `tenant:{tenant}:membership:{user}` to serialize duplicate concurrent membership creation. Status/removal use serializable transactions and optimistic versions. Locking is not broadened to the whole tenant. |
+| Optimistic lock/audit | Status/remove require current versions and check affected-row errors/cardinality. Related role/department/administrator links are soft-deleted in the same actor-bound transaction. All association tables carry mandatory audit/version/soft-delete fields. |
+| Administrator invariant | Disabling/removing an administrator counts only administrator links whose memberships remain active, preventing an inactive administrator record from allowing removal of the final usable administrator. |
+| Tests | Unit tests cover SQL tenant scoping, filter bounds/time ordering, inactive-membership authorization denial, active current-context validation and final-active-administrator protection. Isolated integration coverage remains assigned to GitHub CI. |
+
+## Tenant department audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract/tree | POST create/get/tree/update/delete/members-set. Tree searches code and name in memory after one bounded tenant-scoped load, retaining every ancestor of a match; empty matches return a non-nil list. Trees above 10,000 nodes fail explicitly rather than consuming unbounded memory. |
+| Tenant isolation | Every department and association query includes the principal tenant. Every mutation verifies the tenant is still active inside its transaction, and assigned memberships must be active rows from the same tenant. |
+| Cycle/reference safety | Parent creation/moves validate parent existence in the same tenant. Moves reject self-parenting, descendants and pre-existing cycles. Delete rejects child departments or member assignments instead of orphaning them. |
+| Operation/security logs | Structural and membership-replacement mutations have measured asynchronous operation logs. They do not emit security logs because departments currently organize users but do not grant authorization; if department-based authorization is introduced, this decision must change. |
+| Cache | No cache is used: department trees and primary assignments change frequently and must be immediately consistent for administration. The tenant-scoped tree query is indexed and bounded. |
+| Distributed lock | Tree creates/moves/deletes use `tenant:{tenant}:department:tree`; member replacement uses `tenant:{tenant}:department:{department}:members`. The database's unique primary-department invariant resolves cross-department contention without a tenant-global lock. |
+| Optimistic lock/audit | Update/delete require a current version and check affected-row errors/cardinality. Association replacement soft-deletes/reactivates audited rows rather than physically replacing history. All tables carry mandatory audit/version/soft-delete fields. |
+| Presentation | Department records expose parent ID, stable code, display name, ordering and audit metadata. Association requests use membership IDs already presented by the member API. |
+| Tests | Unit tests cover descendant/corrupt-cycle rejection and ancestor-preserving code search. One isolated PostgreSQL/MySQL Testcontainers lifecycle covers create/tree/member assignment/delete protection/cleanup; CI execution evidence remains open. |
+
+## Tenant role and authorization audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST role create/get/page/update/delete, role-permission get/set, member-role get/set, tenant ceiling set, administrator set and effective-permission lookup. Role paging uses shared bounds and supports fuzzy code/name/description, bounded ID/status `IN` filters and a validated half-open creation-time range. Empty collection responses are non-nil. |
+| Authentication/authorization | Database route policies own endpoint permission decisions. Service rules additionally require an active tenant membership. A caller may only create roles, assign permissions or assign roles whose effective permissions are a subset of its own; tenant administrators receive only the tenant ceiling, not platform permissions. |
+| Tenant isolation | Role, membership, grant and administrator SQL always includes `tenant_id`. Administrator checks join active membership and tenant rows. Update/delete revalidate the actor inside the transaction so an inactive tenant or membership cannot mutate data using an old token. |
+| Administrator invariant | Removing an administrator counts only active administrator memberships and refuses removal of the final usable administrator. Tenant permission changes remain platform-context only. |
+| Operation/security logs | Every grant, administrator, role and assignment mutation emits a timed operation event and an independent `tenant_authorization_changed` security event. Permission lists are not copied into security metadata. |
+| Cache | Effective authorization intentionally uses indexed database reads on every decision, avoiding a stale permission window. No authorization-result cache is introduced until an invalidation and revision-repair protocol exists. |
+| Distributed lock | Collection replacements use tenant/resource-scoped Redis locks. Database serializable transactions, unique relation constraints and row versions remain the correctness boundary; unrelated roles and members do not share a lock. |
+| Optimistic lock | Role metadata and role-permission replacement require the current role version. Shrinking a tenant ceiling soft-deletes now-invalid role permissions and increments every affected role version. Idempotent administrator/member-role collection replacements are serialized by their scoped lock and audited association versions. |
+| Audit | Roles and every authorization association contain creation/update/version/soft-delete fields. PostgreSQL/Kingbase use actor-bound audit triggers; MySQL writes explicitly maintain all fields. |
+| Presentation | Role permission reads return ID, stable key, display name, resource and action. Member-role reads return role ID, code and display name rather than opaque IDs alone. |
+| Tests | Unit tests cover subset rules, inactive-membership denial, tenant-scoped display reads, invalid page filters and role-version changes when a tenant ceiling shrinks. Isolated PostgreSQL/MySQL Testcontainers lifecycle and CI execution evidence remain open. |
+| Shared capability | Uses shared principal, pagination, operation/security logging, database transaction and distributed-lock abstractions; no local expression parser or lock implementation is introduced. |
+
+## Platform menu audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract/tree | POST create/get/tree/update/delete and current-user tree. Administrative tree filters support keyword over key/name/path/component, bounded ID/type/status sets and a validated half-open creation-time range while retaining ancestors. Tree loads are capped by configurable `menu.max_nodes`. |
+| Stable IDs/hierarchy | Menu IDs are UUIDv5 values derived from the immutable normalized business key. Directory/page/external nodes may only be children of directories; buttons require a page parent and a permission. Moves validate the complete graph and reject missing parents, self-parenting and cycles. |
+| Authentication/authorization | Database route policies own management permissions. Service entry points require a principal. Current-user trees use effective tenant permissions; a protected ancestor gates its complete subtree, preventing an unprotected child from revealing a restricted parent. Disabled/deleted permission definitions are excluded from effective permissions. |
+| Operation/security logs | Create/update/delete emit measured operation records and independent `platform_menu_changed` security events. Arbitrary metadata is sanitized and bounded by the shared operation-log pipeline; security metadata contains only the operation name. |
+| Cache | Complete and active/visible menu source lists use separate service-namespaced Redis keys with a configurable TTL. Reads fail open to the database, node limits apply to cached and database values, and every committed mutation deletes both keys across instances. |
+| Distributed lock | Structural mutations use the shared `menu:tree` lock because moves and deletes inspect multiple rows. The serializable transaction, graph validation, UUID/unique constraints and optimistic version remain the correctness boundary. |
+| Optimistic lock/audit | Update/delete require a positive current version and check both affected-row errors and cardinality. The menu table contains mandatory create/update/version/soft-delete fields and PostgreSQL/Kingbase use the common audit trigger. |
+| Presentation | Records return stable key, display name, route/component/icon, permission reference, metadata and audit information. Every tree node returns a non-nil `children` array. |
+| Tests | Unit tests cover type validation, stable UUID mapping, cycles, permission ancestors, protected-parent gating, filtered ancestor retention, filter bounds, Redis cache reuse and invalidation. An isolated PostgreSQL/MySQL lifecycle covers hierarchy, filtering, optimistic conflict, child protection and cleanup; CI execution evidence remains open. |
+| Shared capability | Uses SDK stable-ID/tree utilities and shared cache, lock, principal, transaction, operation-log and security-log abstractions. |
+
+## Platform configuration audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST create/get/page/update/delete plus anonymous get/list for explicitly public active values. Management paging uses shared bounds and supports key/name/description fuzzy search, bounded ID/category/value-type/status sets, public-state filtering and a validated half-open creation-time range. Empty lists are non-nil. |
+| Public/private boundary | Anonymous SQL always requires `is_public=true`, `status='active'` and a non-deleted row. Changing a value to private/disabled or deleting it invalidates its public cache key after the database commit. Management reads require a principal and remain controlled by database route policies. |
+| Typed values | JSON values persist an indexed type (`string`, `number`, `boolean`, `object`, `array` or `null`) derived by the service, rather than trusted from the client. The type is exposed in management and public responses and can be filtered in management pages. |
+| Sensitive-value policy | This module is explicitly not a secret store. Config keys and nested JSON field names resembling passwords, secrets, tokens, credentials, DSNs, private keys or access keys are rejected. Values are omitted from operation/security log payloads; deployment secrets belong in the platform secret manager and environment/file injection. |
+| Operation/security logs | Create/update/delete use measured operation records and independent `platform_config_changed` security events. Log payloads carry key/name/category/public/status/version plus `value_redacted=true`, never the JSON value. |
+| Cache | Public get uses a dedicated service-namespaced Redis key and configurable TTL. Cache misses/backend/decode failures fall back to the database, backend failures are logged, and committed writes invalidate even if later audit enqueueing fails. Private and management records are never cached. |
+| Distributed lock | Writes use a narrow normalized config-key lock because create and post-lookup update/delete paths coordinate cache identity. Database uniqueness and required optimistic versions remain the correctness boundary. |
+| Optimistic lock/audit | Update/delete require a positive version and check affected-row errors/cardinality. Duplicate keys use the shared cross-dialect unique-violation classifier. The table contains mandatory audit/version/soft-delete fields and PostgreSQL/Kingbase use the common audit trigger. |
+| Presentation | Public responses expose key, display name, category, derived value type and value. Management responses include description, public/status state and audit fields. Timestamps use the shared JSON representation. |
+| Tests | Unit tests cover JSON/status validation, secret-like fields, type derivation, filter bounds, typed Redis caching and log redaction. An isolated PostgreSQL/MySQL lifecycle covers public/private transitions, typed filters, optimistic conflict and deletion; CI execution evidence remains open. |
+| Shared capability | Uses shared pagination, principal, cache, distributed lock, transaction, database error classification and operation/security-log abstractions. |
+
+## File and object-storage audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | POST multipart upload plus POST+JSON metadata get/page, download-URL and delete. Paging uses shared bounds and supports filename fuzzy search, bounded file/content-type/creator sets, inclusive size limits and a validated half-open creation-time range. Empty pages are non-nil. Multipart is the intentional exception to the JSON request rule because it carries binary content; every response still uses the common envelope. |
+| Tenant isolation | Tenant principals query by both file ID and `tenant_id`; platform-context files additionally require the original creator. Cross-tenant records return not-found rather than disclosing existence. Page SQL applies the same scope before every user-controlled filter. Object keys include the tenant segment and a random file ID. |
+| Upload validation | The service, not only HTTP, bounds and reads at most declared size plus one byte, rejects declared/actual size mismatches, sanitizes filenames, detects MIME type from content rather than trusting headers, applies the allowlist to the detected type, computes SHA-256, and sends the checksum as object metadata. A failed database insert triggers bounded object cleanup. |
+| Download/security | Object keys are never serialized. Downloads return short-lived provider-signed URLs only after the scoped metadata lookup. Shared key validation rejects absolute, traversal, repeated-separator, backslash, NUL and overlong keys. Presign TTL cannot exceed 24 hours, and storage configuration validates bucket/region and credential pairs. |
+| Operation/security logs | Upload and logical delete emit measured operation records containing filename, detected MIME, size, checksum or version—not file bodies or signed URLs. They are operational data changes rather than authentication/authorization events, so no duplicate security event is emitted. A post-commit operation-log failure cannot delete an already committed uploaded object. |
+| Cache | File metadata is not cached: authorization-sensitive ownership and deletion must be visible immediately, while signed URLs are deliberately generated on demand and never cached by the service. Indexed database lookup is the consistency boundary. |
+| Locks/reliable deletion | Upload needs no lock because IDs/object keys are unique. Logical delete requires a version. Physical object deletion is idempotent and attempted immediately; failure state, attempt count and next retry time persist on the file row. The background worker uses `file:deletion:{id}` locks and bounded exponential backoff so replicas can safely repair outages. |
+| Optimistic lock/audit | Delete requires a positive version, includes the tenant/creator scope in its update and checks affected-row errors/cardinality. Worker state transitions also maintain update actor/time/version. The table contains all mandatory audit/version/soft-delete fields and PostgreSQL/Kingbase use the global trigger. |
+| Observability | S3 and OSS operations share low-cardinality operation/status metrics and OpenTelemetry spans. Disabling metrics preserves the undecorated store instead of disabling storage. Cleanup/retry failures are structured logs correlated through context; pending-row capacity/retention will be completed in the large-table audit. |
+| Presentation | Metadata exposes original filename, detected MIME type, size, ETag, checksum, audit actors/times and version while hiding provider object keys and deletion internals. |
+| Tests | Unit tests cover database-failure cleanup, SQL tenant isolation, declared-size mismatch, durable retry persistence, key validation and provider configuration. An isolated PostgreSQL/MySQL lifecycle covers upload, filtered paging, cross-tenant denial, logical/physical deletion and cleanup state; actual CI execution remains open. |
+| Shared capability | Uses the common pagination, principal, transaction, distributed-lock, operation-log, metrics and tracing abstractions; S3 and OSS implement one provider-neutral store contract. |
+
+## Distributed cache and lock audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Shared boundary | `microservice-platform-go/cache` owns the store contract, Redis adapter, typed JSON helpers and stable errors; `microservice-platform-go/distlock` owns the Redsync adapter and renewable lease lifecycle. `internal/cache` only aliases those contracts, opens the configured client and decorates calls with service metrics/traces. |
+| Key/value bounds | The configured service namespace is validated and ends in `:`. Business keys include a schema version and tenant/principal dimensions where applicable. Blank/control-character/overlong keys, negative TTLs, values over 16 MiB and deletes over 1,000 keys are rejected before Redis. Zero TTL intentionally means no expiry. |
+| Cache consistency | Redis contains only derived, reconstructable state. Owners invalidate after a successful database commit; reads fall back to the authoritative database on miss, decode failure or backend failure according to the documented feature policy. Authorization results are deliberately not cached because no stale authorization window is accepted. |
+| Lock lifecycle | `cache.WithLock` retries acquisition using the caller deadline, renews at one third of the lease TTL, cancels its callback context on ownership loss and performs a bounded ownership-safe release. Protected business paths propagate that lease context through logs, transactions, SQL, Redis and object-store calls. |
+| Correctness boundary | Lock keys use the smallest conflicting resource. Database unique constraints, serializable transactions, optimistic versions and idempotent retry behavior remain authoritative; Redis lock availability or Pub/Sub delivery is never the only protection against corrupt business state. |
+| Observability | Cache and lock adapters emit bounded operation/status metrics and OpenTelemetry spans without IDs or raw keys as labels. Backend failures remain available to structured service logs at the owning feature boundary. |
+| Tests | SDK unit tests cover cache validation, TTL/value/delete bounds, acquisition, renewal, cancellation on ownership loss and release. Template unit tests cover adapters and observability; the integration-tag Redis suite covers cache CRUD and two-client renewable-lock contention. SDK GitHub CI passed for v0.15.2; template CI execution remains open. |
+
+## Idempotency audit decisions
+
+| Concern | Decision and evidence |
+| --- | --- |
+| Contract | Only explicitly configured HTTP POST paths and unary gRPC methods participate. HTTP uses `Idempotency-Key`; gRPC uses `idempotency-key` metadata. Keys are 8–128 bounded safe ASCII characters, and unconfigured/query paths bypass the state machine. |
+| Isolation/fingerprint | HTTP JSON is decoded with `UseNumber` and re-encoded canonically; protobuf uses deterministic marshal. Fingerprints include principal ID/type, tenant, membership, session, method and registered route, so equivalent payload formatting replays while changed input or another tenant conflicts. |
+| Processing lifecycle | Redis Lua atomically creates a processing record with a random owner token. The shared SDK renews its TTL at one third of the configured lease and cancels the supplied business Context on Redis failure or owner loss. Completion and failure transitions require the same live owner. |
+| Replay/failure | Completed HTTP envelopes and protobuf payloads are replayed without executing handlers; HTTP replaces the stored Request ID with the current request's ID. Stored responses default to a 1 MiB limit and cannot exceed 16 MiB. Deterministic failures use the configured failure TTL, while HTTP 408/425/429/5xx and retryable gRPC failures atomically release the owner for a later retry. |
+| Transaction boundary | Business transactions commit before result publication. Redis cannot be atomic with the service database, so unique constraints, optimistic versions and idempotent domain commands remain mandatory protection if result persistence fails after commit. |
+| Security/privacy | Raw credentials are not part of configured idempotent routes. Stored envelopes must remain sanitized and must not contain tokens, cookies, signed URLs or secrets. Tenant/principal dimensions are hashed into fingerprints rather than exposed in metric labels. |
+| Observability | The template wrapper records bounded `begin`, `complete`, `fail`, `abort`, `lease_start` and `lease_stop` operation/status metrics and OpenTelemetry spans. Keys, fingerprints, principal IDs and tenant IDs are excluded from labels and span attributes. |
+| Tests | SDK tests cover state transitions, service namespaces, stale owners, renewal, ownership-loss cancellation, retryable gRPC release, response bounds and abort/reacquisition. HTTP tests cover completion, current-request replay IDs, processing/conflict/failure decisions, retryable release, route opt-in, tenant isolation and canonical JSON. Redis integration covers acquisition, contention, lease renewal/abort/reacquisition, changed-fingerprint conflict and replay; actual CI execution remains open. |

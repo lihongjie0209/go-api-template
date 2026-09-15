@@ -3,16 +3,37 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/auth"
+	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	appdb "github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/files"
+	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/menu"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
+	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/permission"
+	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	"github.com/lihongjie0209/go-api-template/internal/tenant"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -70,6 +91,15 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			if userTables != 0 {
 				t.Fatal("generic template migration must not create a users table")
 			}
+			if databaseType == "postgres" {
+				testPostgresAuditInfrastructure(t, ctx, db)
+			}
+			testTenantLifecycle(t, ctx, db)
+			testIdentityUserLifecycle(t, ctx, db)
+			permissionID := testPermissionLifecycle(t, ctx, db)
+			testMenuLifecycle(t, ctx, db, permissionID)
+			testPlatformConfigLifecycle(t, ctx, db)
+			testFileLifecycle(t, ctx, db)
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -77,6 +107,396 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	service := identity.New(identity.NewRepository(db), appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default(), config.Config{User: config.User{CacheTTL: time.Minute}})
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "platform-admin", Type: platformprincipal.TypeUser})
+	created, err := service.Create(actorCtx, identity.CreateInput{Username: "Alice.Smith", DisplayName: "Alice", Email: "alice@example.com", Phone: "13800000000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Username != "alice.smith" || created.Version != 1 {
+		t.Fatalf("created user=%+v", created)
+	}
+	if _, err := service.Create(actorCtx, identity.CreateInput{Username: "ALICE.SMITH", DisplayName: "Duplicate"}); !errors.Is(err, identity.ErrConflict) {
+		t.Fatalf("duplicate username error=%v", err)
+	}
+	updated, err := service.Update(actorCtx, identity.UpdateInput{ID: created.ID, DisplayName: "Alice Updated", Email: created.Email, Phone: created.Phone, Status: identity.StatusActive, Version: created.Version})
+	if err != nil || updated.Version != 2 {
+		t.Fatalf("updated=%+v err=%v", updated, err)
+	}
+	jwtConfig, keyErr := testutil.JWTConfig()
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	jwtConfig.Issuer = "identity-service"
+	authCfg := config.Config{App: config.App{Name: "identity-service"}, JWT: jwtConfig, Authentication: config.Authentication{RefreshTTL: 24 * time.Hour, MaxFailedAttempts: 5, LockDuration: time.Minute}}
+	authenticationService := userauthentication.New(db, appdb.NewTransactor(db), service, auth.New(authCfg), authCfg)
+	if err := authenticationService.SetPassword(actorCtx, created.ID, "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := authenticationService.Login(ctx, "ALICE.SMITH", "correct horse battery staple", "127.0.0.1", "integration-test")
+	if err != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" {
+		t.Fatalf("login tokens=%+v err=%v", tokens, err)
+	}
+	rotated, err := authenticationService.Refresh(ctx, tokens.RefreshToken)
+	if err != nil || rotated.RefreshToken == tokens.RefreshToken {
+		t.Fatalf("refresh tokens=%+v err=%v", rotated, err)
+	}
+	if err := authenticationService.Logout(ctx, rotated.RefreshToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authenticationService.Refresh(ctx, tokens.RefreshToken); !errors.Is(err, userauthentication.ErrRefreshReused) {
+		t.Fatalf("replayed refresh error=%v", err)
+	}
+	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type discardOperationRecorder struct{}
+
+func (discardOperationRecorder) Enabled() bool                                    { return true }
+func (discardOperationRecorder) Record(context.Context, operationlog.Entry) error { return nil }
+
+type discardSecurityRecorder struct{}
+
+func (discardSecurityRecorder) Enabled() bool                                   { return true }
+func (discardSecurityRecorder) FailClosed() bool                                { return true }
+func (discardSecurityRecorder) Record(context.Context, securitylog.Entry) error { return nil }
+
+func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) string {
+	t.Helper()
+	compiler, err := routepolicy.NewCompiler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{App: config.App{Name: "integration"}, Runtime: config.Runtime{ActiveProfile: "test"}, Authorization: config.Authorization{PolicyRefreshInterval: time.Minute}}
+	metrics := observability.NewMetrics(cfg, nil, nil)
+	manager := routepolicy.NewManager(routepolicy.NewRepository(db), compiler, nil, cfg, slog.Default(), metrics)
+	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), manager, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default())
+	actorCtx := platformprincipal.SystemContext(ctx, "permission-integration")
+	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := service.Create(actorCtx, permission.Input{ParentID: &group.ID, Key: "integration.permissions.read", Name: "查询集成权限", NodeType: "permission", Resource: "integration.permissions", Action: "read", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := service.Tree(actorCtx, permission.TreeInput{Keyword: "查询集成权限", NodeTypes: []string{"permission"}, Statuses: []string{"active"}})
+	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
+		t.Fatalf("filtered permission tree=%+v err=%v", tree, err)
+	}
+
+	now := time.Now()
+	err = appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		statements := []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO route_definitions(id,protocol,method,path,operation,description,service_name,source_version,status,last_discovered_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, []any{"integration-route", "http", "post", "/integration", "integration", "", "integration", "test", "active", now, now, "permission-integration", now, "permission-integration"}},
+			{`INSERT INTO route_policy_definitions(id,route_id,expression,description,priority,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,0,?,?,?,?,?,1)`, []any{"integration-policy", "integration-route", `permissions["integration.permissions.read"]`, "", "active", now, "permission-integration", now, "permission-integration"}},
+			{`INSERT INTO route_policy_permission_refs(id,policy_id,permission_id,scope,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`, []any{"integration-ref", "integration-policy", leaf.ID, "platform", now, "permission-integration", now, "permission-integration"}},
+		}
+		for _, statement := range statements {
+			if _, execErr := tx.ExecContext(actorCtx, tx.Rebind(statement.query), statement.args...); execErr != nil {
+				return execErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Update(actorCtx, leaf.ID, leaf.Version, permission.Input{ParentID: leaf.ParentID, Key: "integration.permissions.get", Name: leaf.Name, NodeType: leaf.NodeType, Resource: leaf.Resource, Action: leaf.Action, Status: leaf.Status})
+	if !errors.Is(err, permission.ErrInUse) {
+		t.Fatalf("referenced permission update error=%v", err)
+	}
+	return leaf.ID
+}
+
+func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
+	t.Helper()
+	cfg := config.Config{Menu: config.Menu{CacheTTL: time.Minute, MaxNodes: 10000}, User: config.User{LockTTL: time.Second, LockRetryDelay: time.Millisecond}}
+	service := menu.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default(), cfg)
+	actorCtx := platformprincipal.SystemContext(ctx, "menu-integration")
+	root, err := service.Create(actorCtx, menu.Input{Key: "integration:menu", Name: "集成菜单", Type: "directory", Visible: true, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.Create(actorCtx, menu.Input{ParentID: &root.ID, Key: "integration:menu:page", Name: "集成页面", Type: "page", RoutePath: "/integration", Component: "integration/index", Visible: true, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	button, err := service.Create(actorCtx, menu.Input{ParentID: &page.ID, Key: "integration:menu:read", Name: "读取", Type: "button", PermissionID: &permissionID, Visible: true, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := service.Tree(actorCtx, menu.TreeInput{Keyword: "集成页面", Types: []string{"page"}})
+	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
+		t.Fatalf("filtered menu tree=%+v err=%v", tree, err)
+	}
+	updated, err := service.Update(actorCtx, menu.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "集成页面更新", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Visible: page.Visible, Status: page.Status, Version: page.Version})
+	if err != nil || updated.Version != page.Version+1 {
+		t.Fatalf("updated menu=%+v err=%v", updated, err)
+	}
+	if _, err := service.Update(actorCtx, menu.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "旧版本", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Visible: page.Visible, Status: page.Status, Version: page.Version}); !errors.Is(err, menu.ErrConflict) {
+		t.Fatalf("stale menu update error=%v", err)
+	}
+	if err := service.Delete(actorCtx, page.ID, updated.Version); !errors.Is(err, menu.ErrConflict) {
+		t.Fatalf("delete menu with child error=%v", err)
+	}
+	if err := service.Delete(actorCtx, button.ID, button.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(actorCtx, page.ID, updated.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(actorCtx, root.ID, root.Version); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	service := platformconfig.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default(), config.Config{PlatformConfig: config.PlatformConfig{CacheTTL: time.Minute}})
+	actorCtx := platformprincipal.SystemContext(ctx, "config-integration")
+	created, err := service.Create(actorCtx, platformconfig.Input{Key: "integration.feature", Name: "集成功能", Category: "feature", Value: []byte(`{"enabled":true}`), IsPublic: true, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Version != 1 || created.ValueType != "object" {
+		t.Fatalf("created platform config=%+v", created)
+	}
+	public, err := service.GetPublic(ctx, "INTEGRATION.FEATURE")
+	if err != nil || public.ValueType != "object" {
+		t.Fatalf("public config=%+v err=%v", public, err)
+	}
+	page, err := service.Page(actorCtx, platformconfig.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, Categories: []string{"feature"}, ValueTypes: []string{"object"}, Statuses: []string{"active"}})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("platform config page=%+v err=%v", page, err)
+	}
+	updated, err := service.Update(actorCtx, platformconfig.UpdateInput{ID: created.ID, Name: created.Name, Category: created.Category, Value: []byte(`false`), IsPublic: false, Status: created.Status, Version: created.Version})
+	if err != nil || updated.Version != 2 || updated.ValueType != "boolean" {
+		t.Fatalf("updated platform config=%+v err=%v", updated, err)
+	}
+	if _, err := service.Update(actorCtx, platformconfig.UpdateInput{ID: created.ID, Name: created.Name, Category: created.Category, Value: []byte(`true`), Status: created.Status, Version: created.Version}); !errors.Is(err, platformconfig.ErrConflict) {
+		t.Fatalf("stale platform config update error=%v", err)
+	}
+	if _, err := service.GetPublic(ctx, created.Key); !errors.Is(err, platformconfig.ErrNotFound) {
+		t.Fatalf("private config public lookup error=%v", err)
+	}
+	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type integrationStorage struct{ deleted []string }
+
+func (s *integrationStorage) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
+	_, err := io.Copy(io.Discard, input.Body)
+	return objectstorage.Info{Key: input.Key, Size: input.Size, ContentType: input.ContentType, ETag: "integration-etag"}, err
+}
+func (*integrationStorage) Get(context.Context, string) (*objectstorage.Object, error) {
+	return nil, nil
+}
+func (*integrationStorage) Stat(context.Context, string) (objectstorage.Info, error) {
+	return objectstorage.Info{}, nil
+}
+func (s *integrationStorage) Delete(_ context.Context, key string) error {
+	s.deleted = append(s.deleted, key)
+	return nil
+}
+func (*integrationStorage) Presign(_ context.Context, _ string, _ objectstorage.Operation, ttl time.Duration) (objectstorage.SignedURL, error) {
+	return objectstorage.SignedURL{URL: "https://files.example/download", Method: "GET", ExpiresAt: time.Now().Add(ttl)}, nil
+}
+
+func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	storage := &integrationStorage{}
+	cfg := config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024, DeletionInterval: time.Minute, DeletionRetryDelay: time.Minute, DeletionBatchSize: 10}, User: config.User{LockTTL: time.Second, LockRetryDelay: time.Millisecond}}
+	service := files.New(db, appdb.NewTransactor(db), storage, nil, discardOperationRecorder{}, slog.Default(), cfg)
+	ownerCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "file-owner", Type: platformprincipal.TypeUser, TenantID: "file-tenant"})
+	created, err := service.Upload(ownerCtx, files.UploadInput{Name: "../report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
+	if err != nil || created.OriginalName != "report.txt" || created.ContentType != "text/plain; charset=utf-8" || created.Version != 1 {
+		t.Fatalf("uploaded file=%+v err=%v", created, err)
+	}
+	page, err := service.Page(ownerCtx, files.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, Keyword: "report", ContentTypes: []string{created.ContentType}})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("file page=%+v err=%v", page, err)
+	}
+	otherCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeUser, TenantID: "other-tenant"})
+	if _, err := service.Get(otherCtx, created.ID); !errors.Is(err, files.ErrNotFound) {
+		t.Fatalf("cross-tenant file get error=%v", err)
+	}
+	if err := service.Delete(ownerCtx, created.ID, created.Version); err != nil {
+		t.Fatal(err)
+	}
+	if len(storage.deleted) != 1 {
+		t.Fatalf("deleted objects=%v", storage.deleted)
+	}
+	var deletedAt *time.Time
+	if err := db.GetContext(ctx, &deletedAt, db.Rebind(`SELECT object_deleted_at FROM files WHERE id=?`), created.ID); err != nil || deletedAt == nil {
+		t.Fatalf("object_deleted_at=%v err=%v", deletedAt, err)
+	}
+}
+
+func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	service := tenant.New(tenant.NewRepository(db), appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, staticUserResolver{id: "owner-1", username: "owner.one", name: "Owner One"}, slog.Default(), config.Config{Tenant: config.Tenant{CacheTTL: time.Minute}})
+	createCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser})
+	created, err := service.Create(createCtx, tenant.CreateInput{Code: "integration", Name: "Integration Tenant", OwnerUsername: "owner.one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Version != 1 || created.Owner.ID != "owner-1" || created.Owner.Name != "Owner One" {
+		t.Fatalf("created tenant = %+v", created)
+	}
+	tenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID})
+	updated, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Integration Updated", Status: tenant.StatusActive, Version: created.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Version != 2 {
+		t.Fatalf("updated version = %d", updated.Version)
+	}
+	if _, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Stale", Status: tenant.StatusActive, Version: created.Version}); !errors.Is(err, tenant.ErrConflict) {
+		t.Fatalf("stale update error = %v", err)
+	}
+	var membershipID string
+	if err := db.GetContext(ctx, &membershipID, db.Rebind(`SELECT id FROM tenant_memberships WHERE tenant_id=? AND user_id=? AND deleted_at IS NULL`), created.ID, "owner-1"); err != nil {
+		t.Fatal(err)
+	}
+	departmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID, MembershipID: membershipID})
+	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, config.Config{})
+	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := departments.Create(departmentCtx, tenant.DepartmentInput{ParentID: &root.ID, Code: "backend", Name: "后端平台"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := departments.Tree(departmentCtx, "backend")
+	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
+		t.Fatalf("department tree=%+v err=%v", tree, err)
+	}
+	if err := departments.SetMembers(departmentCtx, child.ID, []tenant.DepartmentMemberAssignment{{MembershipID: membershipID, IsPrimary: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := departments.Delete(departmentCtx, child.ID, child.Version); !errors.Is(err, tenant.ErrConflict) {
+		t.Fatalf("delete assigned department error=%v", err)
+	}
+	if err := departments.SetMembers(departmentCtx, child.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := departments.Delete(departmentCtx, child.ID, child.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := departments.Delete(departmentCtx, root.ID, root.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(tenantCtx, created.ID, updated.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Get(tenantCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("get deleted tenant error = %v", err)
+	}
+}
+
+type staticUserResolver struct{ id, username, name string }
+
+func (r staticUserResolver) ResolveUsername(context.Context, string) (tenant.UserSnapshot, error) {
+	return tenant.UserSnapshot{ID: r.id, Username: r.username, DisplayName: r.name}, nil
+}
+
+func testPostgresAuditInfrastructure(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	_, err := db.ExecContext(ctx, `CREATE TABLE audit_contract_records (
+		id text PRIMARY KEY,
+		name text NOT NULL,
+		created_at timestamptz NOT NULL,
+		created_by text NOT NULL,
+		updated_at timestamptz NOT NULL,
+		updated_by text NOT NULL,
+		version bigint NOT NULL,
+		deleted_at timestamptz,
+		deleted_by text
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS audit_contract_records") })
+	if _, err := db.ExecContext(ctx, `SELECT app_enable_audit('audit_contract_records')`); err != nil {
+		t.Fatal(err)
+	}
+
+	transactor := appdb.NewTransactor(db)
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, `INSERT INTO audit_contract_records (id, name, created_at, created_by, updated_at, updated_by, version) VALUES ($1, $2, now(), 'ignored', now(), 'ignored', 99)`, "record-1", "first")
+		return execErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		CreatedBy string `db:"created_by"`
+		UpdatedBy string `db:"updated_by"`
+		Version   int64  `db:"version"`
+	}
+	if err := db.GetContext(ctx, &created, `SELECT created_by, updated_by, version FROM audit_contract_records WHERE id = $1`, "record-1"); err != nil {
+		t.Fatal(err)
+	}
+	if created.CreatedBy != "user-42" || created.UpdatedBy != "user-42" || created.Version != 1 {
+		t.Fatalf("created audit = %+v", created)
+	}
+
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		result, execErr := tx.ExecContext(actorCtx, `UPDATE audit_contract_records SET name = $1 WHERE id = $2 AND version = $3 AND deleted_at IS NULL`, "second", "record-1", 1)
+		if execErr != nil {
+			return execErr
+		}
+		rows, execErr := result.RowsAffected()
+		if execErr != nil {
+			return execErr
+		}
+		if rows != 1 {
+			return fmt.Errorf("optimistic update affected %d rows", rows)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, `UPDATE audit_contract_records SET deleted_at = now() WHERE id = $1 AND version = $2`, "record-1", 2)
+		return execErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var deleted struct {
+		UpdatedBy string     `db:"updated_by"`
+		DeletedBy string     `db:"deleted_by"`
+		Version   int64      `db:"version"`
+		DeletedAt *time.Time `db:"deleted_at"`
+	}
+	if err := db.GetContext(ctx, &deleted, `SELECT updated_by, deleted_by, version, deleted_at FROM audit_contract_records WHERE id = $1`, "record-1"); err != nil {
+		t.Fatal(err)
+	}
+	if deleted.DeletedAt == nil || deleted.DeletedBy != "user-42" || deleted.UpdatedBy != "user-42" || deleted.Version != 3 {
+		t.Fatalf("deleted audit = %+v", deleted)
+	}
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, `DELETE FROM audit_contract_records WHERE id = $1`, "record-1")
+		return execErr
+	}); err == nil {
+		t.Fatal("physical DELETE unexpectedly succeeded")
+	}
+	if _, err := db.ExecContext(ctx, "DROP TABLE audit_contract_records"); err != nil {
+		t.Fatal(err)
 	}
 }
 

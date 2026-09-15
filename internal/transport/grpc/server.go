@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -18,11 +19,14 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
+	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformidempotency "github.com/lihongjie0209/microservice-platform-go/idempotency"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/trace"
@@ -42,12 +46,12 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, authorizer platformauthz.Authorizer, healthService *apphealth.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, authorizer platformauthz.Authorizer, policies *routepolicy.Manager, routeRepository *routepolicy.Repository, healthService *apphealth.Service, identityService *identity.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	options := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(cfg.GRPC.MaxReceiveBytes),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), authInterceptor(authService, cfg.Auth), platformauthz.UnaryServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), platformidempotency.UnaryServerInterceptor(idempotencyManager, cfg.Idempotency.GRPCMethods, logger), metricsInterceptor(metrics, logger)),
-		grpc.ChainStreamInterceptor(environmentStreamInterceptor(cfg.Runtime.ActiveProfile), requestIDStreamInterceptor, idempotencyStreamInterceptor, recoveryStreamInterceptor(logger), authStreamInterceptor(authService, cfg.Auth), platformauthz.StreamServerInterceptor(authorizer, helloRequirement(cfg.Authorization.Enabled)), metricsStreamInterceptor(metrics, logger)),
+		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), optionalAuthInterceptor(authService, cfg.Auth), routePolicyInterceptor(cfg.Authorization.Enabled, cfg.App.Name, policies, authorizer), platformidempotency.UnaryServerInterceptor(idempotencyManager, cfg.Idempotency.GRPCMethods, logger), metricsInterceptor(metrics, logger)),
+		grpc.ChainStreamInterceptor(environmentStreamInterceptor(cfg.Runtime.ActiveProfile), requestIDStreamInterceptor, idempotencyStreamInterceptor, recoveryStreamInterceptor(logger), optionalAuthStreamInterceptor(authService, cfg.Auth), routePolicyStreamInterceptor(cfg.Authorization.Enabled, cfg.App.Name, policies, authorizer), metricsStreamInterceptor(metrics, logger)),
 	}
 	if cfg.GRPC.TLS.Enabled {
 		creds, err := serverCredentials(cfg.GRPC.TLS)
@@ -58,22 +62,50 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, au
 	}
 	grpcServer := grpc.NewServer(options...)
 	hellov1.RegisterHelloServiceServer(grpcServer, &helloServer{})
+	identityv1.RegisterIdentityServiceServer(grpcServer, &identityServer{service: identityService})
 	grpc_health_v1.RegisterHealthServer(grpcServer, &healthServer{health: healthService})
 	if cfg.GRPC.ReflectionEnabled {
 		reflection.Register(grpcServer)
 	}
 	server := &Server{server: grpcServer, address: cfg.GRPC.Address, logger: logger}
-	lc.Append(fx.Hook{OnStart: server.start(cfg.GRPC.Enabled), OnStop: server.stop})
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		if cfg.GRPC.Enabled && cfg.Authorization.Enabled {
+			routes, err := grpcBusinessRoutes(cfg.App.Name)
+			if err != nil {
+				return err
+			}
+			if err := routeRepository.SyncRoutes(ctx, routes, cfg.App.Name+":route-discovery"); err != nil {
+				return fmt.Errorf("sync grpc route definitions: %w", err)
+			}
+			if err := policies.Refresh(ctx); err != nil {
+				return fmt.Errorf("load grpc route policies: %w", err)
+			}
+			if err := policies.ValidateRoutes(ctx, cfg.App.Name); err != nil {
+				logger.Warn("one or more gRPC methods have no active database policy; affected calls will be denied", "error", err)
+			}
+		}
+		return server.start(cfg.GRPC.Enabled)(ctx)
+	}, OnStop: server.stop})
 	return server, nil
 }
 
-func helloRequirement(enabled bool) platformauthz.GRPCResolver {
-	return func(method string) (platformauthz.Requirement, bool) {
-		if !enabled || method != hellov1.HelloService_Ping_FullMethodName {
-			return platformauthz.Requirement{}, false
-		}
-		return platformauthz.Requirement{Resource: "example.hello", Action: "ping", Scope: platformauthz.ScopePrincipal}, true
+func grpcBusinessRoutes(serviceName string) ([]routepolicy.Route, error) {
+	methods := []string{
+		hellov1.HelloService_Ping_FullMethodName,
+		identityv1.IdentityService_GetUser_FullMethodName,
+		identityv1.IdentityService_BatchGetUsers_FullMethodName,
+		identityv1.IdentityService_ListUsers_FullMethodName,
 	}
+	routes := make([]routepolicy.Route, 0, len(methods))
+	for _, method := range methods {
+		route, err := routepolicy.NewRoute("grpc", "call", method, serviceName, buildinfo.Version)
+		if err != nil {
+			return nil, fmt.Errorf("describe grpc route %s: %w", method, err)
+		}
+		route.Operation = method
+		routes = append(routes, route)
+	}
+	return routes, nil
 }
 
 func (s *Server) start(enabled bool) func(context.Context) error {
@@ -167,38 +199,82 @@ func environmentInterceptor(profile string) grpc.UnaryServerInterceptor {
 	}
 }
 func authInterceptor(service *auth.Service, cfg config.Auth) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		authCtx, err := authenticateGRPC(ctx, info.FullMethod, service, cfg)
+	return optionalAuthInterceptor(service, cfg)
+}
+
+func optionalAuthInterceptor(service *auth.Service, cfg config.Auth) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		authenticated, err := authenticateGRPCOptional(ctx, service, cfg)
 		if err != nil {
 			return nil, err
 		}
-		return handler(authCtx, req)
+		return handler(authenticated, req)
 	}
 }
 
-func authenticateGRPC(ctx context.Context, method string, service *auth.Service, cfg config.Auth) (context.Context, error) {
+func authenticateGRPCOptional(ctx context.Context, service *auth.Service, cfg config.Auth) (context.Context, error) {
 	values := metadata.ValueFromIncomingContext(ctx, "authorization")
-	if cfg.PSK.Enabled && auth.MatchesAny(method, cfg.PSK.GRPCMethods) {
-		if len(values) == 0 || !auth.VerifyPSK(values[0], cfg.PSK.Key) {
-			return nil, status.Error(codes.Unauthenticated, "missing or invalid PSK")
-		}
-		return platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount}), nil
-	}
-	if auth.MatchesAny(method, cfg.SkipGRPCMethods) {
+	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
 		return ctx, nil
 	}
-	if len(values) == 0 {
-		return nil, status.Error(codes.Unauthenticated, "missing bearer token")
+	header := strings.TrimSpace(values[0])
+	scheme, raw, ok := strings.Cut(header, " ")
+	if !ok || raw == "" {
+		return nil, status.Error(codes.Unauthenticated, "invalid authorization credential")
 	}
-	scheme, raw, ok := strings.Cut(values[0], " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
+	var identity platformprincipal.Principal
+	switch {
+	case strings.EqualFold(scheme, "Bearer"):
+		verified, err := service.Verify(ctx, raw)
+		if err != nil {
+			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
+		}
+		identity = verified
+	case strings.EqualFold(scheme, "PSK"):
+		if !cfg.PSK.Enabled || !auth.VerifyPSK(header, cfg.PSK.Key) {
+			return nil, status.Error(codes.Unauthenticated, "invalid PSK")
+		}
+		identity = platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount}
+	default:
+		return nil, status.Error(codes.Unauthenticated, "unsupported authorization scheme")
 	}
-	identity, err := service.Verify(ctx, raw)
-	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
+	authenticated := platformprincipal.WithContext(ctx, identity)
+	return platformauthz.WithCallerCredential(authenticated, header), nil
+}
+
+func routePolicyInterceptor(enabled bool, serviceName string, policies *routepolicy.Manager, authorizer platformauthz.Authorizer) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if !enabled || isInfrastructureMethod(info.FullMethod) {
+			return handler(ctx, req)
+		}
+		if err := evaluateGRPCPolicy(ctx, info.FullMethod, serviceName, policies, authorizer); err != nil {
+			return nil, err
+		}
+		return handler(ctx, req)
 	}
-	return platformprincipal.WithContext(ctx, identity), nil
+}
+
+func evaluateGRPCPolicy(ctx context.Context, method, serviceName string, policies *routepolicy.Manager, authorizer platformauthz.Authorizer) error {
+	if err := policies.EvaluateRoute(ctx, "grpc", "call", method, serviceName, authorizer); err != nil {
+		switch {
+		case errors.Is(err, routepolicy.ErrMissing):
+			return status.Error(codes.Internal, "authorization policy is not configured")
+		case errors.Is(err, platformauthz.ErrDecisionUnavailable):
+			return status.Error(codes.Unavailable, "authorization decision is unavailable")
+		default:
+			return status.Error(codes.PermissionDenied, "permission denied")
+		}
+	}
+	return nil
+}
+
+func isInfrastructureMethod(method string) bool {
+	return strings.HasPrefix(method, "/grpc.health.v1.Health/") || strings.HasPrefix(method, "/grpc.reflection.")
+}
+
+func authenticateGRPC(ctx context.Context, method string, service *auth.Service, cfg config.Auth) (context.Context, error) {
+	_ = method
+	return authenticateGRPCOptional(ctx, service, cfg)
 }
 
 type contextServerStream struct {
@@ -241,12 +317,30 @@ func idempotencyStreamInterceptor(srv any, stream grpc.ServerStream, info *grpc.
 }
 
 func authStreamInterceptor(service *auth.Service, cfg config.Auth) grpc.StreamServerInterceptor {
-	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		ctx, err := authenticateGRPC(stream.Context(), info.FullMethod, service, cfg)
+	return optionalAuthStreamInterceptor(service, cfg)
+}
+
+func optionalAuthStreamInterceptor(service *auth.Service, cfg config.Auth) grpc.StreamServerInterceptor {
+	return func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		ctx, err := authenticateGRPCOptional(stream.Context(), service, cfg)
 		if err != nil {
 			return err
 		}
 		return handler(srv, &contextServerStream{ServerStream: stream, ctx: ctx})
+	}
+}
+
+func routePolicyStreamInterceptor(enabled bool, serviceName string, policies *routepolicy.Manager, authorizer platformauthz.Authorizer) grpc.StreamServerInterceptor {
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if !enabled && isInfrastructureMethod(info.FullMethod) {
+			return handler(srv, stream)
+		}
+		if enabled && !isInfrastructureMethod(info.FullMethod) {
+			if err := evaluateGRPCPolicy(stream.Context(), info.FullMethod, serviceName, policies, authorizer); err != nil {
+				return err
+			}
+		}
+		return handler(srv, stream)
 	}
 }
 

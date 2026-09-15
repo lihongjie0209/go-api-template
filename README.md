@@ -103,6 +103,10 @@ Never reuse deleted field numbers or names: mark them `reserved`. Introduce brea
 
 All nested config keys can be overridden with `APP_` environment variables: `database.name` becomes `APP_DATABASE_NAME` and `database.dsn` becomes `APP_DATABASE_DSN`. Environment values override the YAML file. Keep secrets out of YAML and source control.
 
+The database-backed platform configuration module is for feature flags, UI settings, and other non-secret runtime values. It deliberately rejects secret-like keys such as passwords, tokens, credentials, DSNs, and private/access keys, including nested JSON field names. Store secrets in Kubernetes Secrets or the deployment secret manager and inject them through environment variables or mounted files instead.
+
+File deletion is durable: the metadata row is logically deleted first, object deletion is attempted immediately, and failures remain queryable as retry state on the row. A background worker retries with exponential backoff and a per-file distributed lock, so an object-store outage does not create permanently forgotten objects.
+
 `microgen` optionally reads `.microgen.yaml` (preferred) or `microgen.yaml` from the current directory. Values in that file act as defaults; `MICROGEN_*` environment variables and explicit flags override them. For example:
 
 ```yaml
@@ -149,11 +153,77 @@ Set `APP_DATABASE_ENABLED=true`, `APP_DATABASE_TYPE`, and `APP_DATABASE_DSN`.
 
 The official Kingbase documentation describes Gokb as a pure-Go `database/sql` driver registered as `kingbase`, but distribution commonly accompanies the product rather than a stable public Go module.
 
-## Redis lock and scheduled jobs
+Every business table, including pure association tables, must contain `created_at`, `created_by`, `updated_at`, `updated_by`, `version`, `deleted_at`, and `deleted_by`. PostgreSQL and Kingbase migrations must call `app_enable_audit('<table>')` immediately after creating a table. The trigger owns timestamps, actor IDs, version increments and soft-delete metadata, preserves creation metadata, and rejects physical `DELETE`.
 
-Distributed locking is implemented with [`go-redsync/redsync/v4`](https://github.com/go-redsync/redsync). The local `cache.Locker` adapter provides non-blocking `TryLock`, context-aware retrying `Lock`, ownership-safe `Unlock`, explicit `Extend`, and the lock validity deadline through `Until`. The sample six-field cron job demonstrates cross-instance locking.
+Repositories must execute writes through `database.Transactor.Within`. It copies the authenticated principal ID from `context.Context` into the transaction-local PostgreSQL setting `app.actor_id`; missing actors fail before business SQL executes, and transaction-local scope prevents identity leaking through the connection pool. Background jobs must explicitly use `principal.SystemContext`. Updates and soft deletes must still include `WHERE id = $1 AND version = $2` for optimistic concurrency. A migration contract unit test fails CI when any new table omits an audit column or PostgreSQL/Kingbase trigger registration.
 
-Redsync does not start a hidden renewal goroutine. Long-running jobs must call `Extend` before `Until`, or stop work when extension fails. This keeps goroutine ownership and lock-loss behavior explicit.
+Canonical PostgreSQL column definitions:
+
+```sql
+created_at timestamptz NOT NULL,
+created_by text NOT NULL,
+updated_at timestamptz NOT NULL,
+updated_by text NOT NULL,
+version bigint NOT NULL,
+deleted_at timestamptz,
+deleted_by text
+```
+
+## Object storage
+
+`internal/objectstorage.Store` provides a provider-neutral streaming API for upload, download, metadata lookup, delete, and GET/PUT presigned URLs. The first adapters use the official AWS SDK for Go v2 and Alibaba Cloud OSS SDK v2. Select `s3` or `oss` with `object_storage.provider`; credentials should be injected through `APP_OBJECT_STORAGE_ACCESS_KEY_ID` and `APP_OBJECT_STORAGE_ACCESS_KEY_SECRET`, or omitted to use the SDK's workload/environment credential chain. S3 custom endpoints and path-style addressing are supported for compatible services.
+
+Enable `files.enabled` together with the database and object storage to expose the unified file API:
+
+- `POST /api/v1/files/upload`: streaming `multipart/form-data` upload using field `file`
+- `POST /api/v1/files/get`: query metadata with JSON `{"id":"..."}`
+- `POST /api/v1/files/download`: return a short-lived signed download URL
+- `POST /api/v1/files/delete`: logical delete with JSON `{"id":"...","version":1}`
+
+Object keys use generated UUIDs rather than trusting client filenames. The `files` table records tenant, original name, MIME type, byte size, ETag, SHA-256 and all mandatory audit fields. Access is tenant-scoped, uploads compensate by deleting the object when the metadata transaction fails, and deletion uses optimistic locking. Configure the upload ceiling with `files.max_size_bytes`; it must not exceed `http.max_body_bytes`. An optional exact MIME allowlist is available through `files.allowed_types`.
+
+## Operation logs
+
+Enable `operation_log.enabled` together with the database and NATS JetStream. Business services constructor-inject `operationlog.Recorder` and call `Record`, or use `operationlog.Do` to measure a function automatically. Recording publishes `platform.operation-log.recorded.v1` to the configured JetStream subject; a durable consumer persists it to `operation_logs` outside the request transaction.
+
+Records include tenant and actor identity, application, operation and resource, protocol/method/route, sanitized request payload, duration, success, error code/message, Request ID, Trace ID, client IP, user agent and occurrence time. The table also contains the mandatory audit, version and logical-delete fields. Event IDs are database idempotency keys, so JetStream redelivery does not duplicate records.
+
+```go
+err := operationlog.Do(ctx, recorder, operationlog.Entry{
+    Operation:    "order.approve",
+    ResourceType: "order",
+    ResourceID:   orderID,
+    Protocol:     "grpc",
+    Method:       "/orders.v1.OrderService/Approve",
+    Request:      request,
+}, func() error {
+    return service.Approve(ctx, request)
+})
+```
+
+Before enqueueing, nested fields whose names contain password, secret, token, authorization or cookie are replaced with `[REDACTED]`; payload and error text are bounded. Queue and database persistence expose low-cardinality Prometheus metrics and OpenTelemetry spans. Do not treat operation logs as the only security audit trail until JetStream replication, retention, export and access-control policies have been configured for the target environment.
+
+Authenticated frontends can use `POST /api/v1/operation-logs/frontend/record` for `menu_view` and `button_click` events. The API accepts the event name, application/resource IDs, page route, duration, result, error details and an `extension` object. Identity, tenant, client IP, user agent, Request ID and Trace ID are derived server-side. The extension is recursively redacted, size-limited, transported through the same JetStream event, and stored as PostgreSQL/Kingbase `jsonb` (MySQL `json`).
+
+## Security logs
+
+Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Supported event types are `login`, `token_refresh`, `logout` and `forced_logout`. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON metadata.
+
+Login has no authenticated principal yet, so `POST /api/v1/auth/login` records the attempted identifier using a keyed HMAC-SHA256 digest and fills the subject only after successful authentication. Token and refresh-token bodies are never accepted as metadata; callers may provide a JTI through `TokenID`, which is also stored only as a keyed digest. Inject an independent `APP_SECURITY_LOG_HASH_KEY` of at least 32 random bytes.
+
+Successful authentication defaults to fail-closed when the security event cannot be enqueued, while failed attempts still return unauthorized and report queue failures to the service log. Set `security_log.fail_closed=false` only when availability requirements explicitly outweigh audit completeness. Login uses the dedicated brute-force rate-limit rule and derives IP through the configured trusted-proxy policy.
+
+## Distributed cache, lock and scheduled jobs
+
+The public platform SDK owns the backend-independent cache and lock contracts; `internal/cache` only adapts configuration and adds this service's metrics/traces. The Redis cache adapter supports `Get`, `Set`, atomic `SetIfAbsent`, bounded batched `Delete`, `Exists`, the stable `cache.ErrMiss` sentinel, and typed `GetJSON`/`SetJSON` helpers. It validates keys, TTLs and value sizes. All calls accept the caller's context so request cancellation and deadlines propagate to Redis.
+
+Distributed locking is implemented with the mature [`go-redsync/redsync/v4`](https://github.com/go-redsync/redsync) component. The `cache.Locker` interface provides non-blocking `TryLock`, context-aware retrying `Lock`, ownership-safe `Unlock`, explicit `Extend`, and the lock validity deadline through `Until`. The sample six-field cron job demonstrates cross-instance locking.
+
+Both abstractions are registered in Fx and should be constructor-injected into services as `cache.Store` or `cache.Locker`, rather than depending on `*redis.Client`. Keys default to the `<app.name>:` namespace; override it with `redis.key_prefix` or `APP_REDIS_KEY_PREFIX` when required. Lock keys use `<namespace>lock:`. A zero cache TTL means no expiration; negative TTLs and blank keys are rejected.
+
+Protected work uses `cache.WithLock`. It renews the Redsync lease at a bounded interval, cancels the callback context when ownership is lost, and always attempts an ownership-safe release. The callback must pass that supplied context to database, Redis and upstream operations; using the original request context would ignore lease loss. Direct `Lock`/`Extend` use is reserved for code that explicitly owns and tests the complete lease lifecycle.
+
+Distributed locks are advisory coordination, not a substitute for database constraints or optimistic version checks. Keep lock keys scoped to the smallest conflicting resource and make protected operations idempotent.
 
 ## HTTP operations and security
 
@@ -170,7 +240,7 @@ Redis-backed GCRA limits are configurable for IP, API route, authenticated user 
 
 Configure `http.trusted_proxies` explicitly before trusting forwarding headers. CORS is deny-by-default, JSON bodies require `application/json`, and baseline browser security headers are enabled globally.
 
-JWT bypass and PSK policies are configuration-driven. `auth.skip_http_paths` and `auth.skip_grpc_methods` bypass authentication; `auth.psk.http_paths` and `auth.psk.grpc_methods` require `Authorization: PSK <key>` and take precedence over bypass/JWT rules. Patterns use Go `path.Match`: `*` and `?` are supported but do not cross `/`. Enable PSK with `APP_AUTH_PSK_ENABLED=true` and inject a key of at least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML.
+Anonymous, JWT, and PSK access are controlled only by database-owned route policies. Enable PSK verification with `APP_AUTH_PSK_ENABLED=true` and inject a key of at least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML. A route grants PSK callers by evaluating `authenticated && principal_type == "service_account"` or a stricter permission expression.
 
 Authenticated JWT and PSK callers are injected into the request `context.Context` through `internal/principal`; application and repository code should read this principal when constructing explicit audit fields. NATS JetStream is available through `internal/eventbus` and is disabled by default. Domain writes that publish events must first persist them in the same database transaction through a service-owned outbox; the bus publisher must only dispatch committed rows. Consumers use durable names, explicit acknowledgements, redelivery, and idempotent processing.
 
@@ -249,9 +319,11 @@ Use a `mysql://` URL for MySQL and `postgres://` for PostgreSQL/Kingbase. The sa
 
 Enable Redis-backed idempotency and explicitly list protected mutation routes with `idempotency.http_paths` and `idempotency.grpc_methods`; both lists support the same `*` wildcard syntax as authentication rules and can be overridden with bracketed environment lists. Enabling the feature without Redis, positive TTLs, or at least one protected route fails startup. Query/list POST endpoints must not be included.
 
-Clients send an `Idempotency-Key` containing 8–128 safe ASCII characters on HTTP or `idempotency-key` metadata on unary gRPC. The fingerprint includes the authenticated principal, method, route, and deterministic request payload. The same key and request replays the original unified JSON or protobuf result, concurrent execution returns the request-in-progress error, and reusing a key with different input returns a conflict. HTTP replay uses the current Request ID rather than leaking the original request context.
+`idempotency.max_response_bytes` defaults to 1 MiB and may not exceed 16 MiB. Responses larger than the configured bound are not retained. Deterministic client/domain failures use `failure_ttl`; HTTP 408/425/429/5xx and retryable gRPC transport/server codes atomically release the processing owner instead of poisoning the key with a transient failure.
 
-Redis keys include the service name so independently deployed services can safely share one Redis database. State transitions use Lua plus an owner token, so an expired worker cannot overwrite a newer owner. The database transaction commits before the completed result is published; unique database constraints remain the final integrity boundary.
+Clients send an `Idempotency-Key` containing 8–128 safe ASCII characters on HTTP or `idempotency-key` metadata on unary gRPC. The fingerprint includes principal type, user/service ID, tenant, membership, session, method, route, and a canonical JSON or deterministic protobuf payload. The same key and request replays the original unified JSON or protobuf result, concurrent execution returns the request-in-progress error, and reusing a key with different input returns a conflict. This prevents a key reused across tenant contexts from replaying another tenant's response. HTTP replay uses the current Request ID rather than leaking the original request context.
+
+Redis keys include the service name so independently deployed services can safely share one Redis database. State transitions use Lua plus an owner token, so an expired worker cannot overwrite a newer owner. While work is running, a shared lease lifecycle renews the processing TTL; Redis failure or ownership loss cancels the Context supplied to HTTP/gRPC business work. The database transaction commits before the completed result is published; unique database constraints remain the final integrity boundary.
 
 ## Outbound clients
 

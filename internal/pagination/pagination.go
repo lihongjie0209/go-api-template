@@ -1,0 +1,36 @@
+package pagination
+
+import "errors"
+
+const (
+	DefaultPageSize = 20
+	MaxPageSize     = 200
+)
+
+type Request struct {
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+	Keyword  string `json:"keyword,omitempty"`
+}
+
+type Result[T any] struct {
+	Items    []T   `json:"items"`
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Total    int64 `json:"total"`
+}
+
+func Normalize(request Request) (Request, error) {
+	if request.Page == 0 {
+		request.Page = 1
+	}
+	if request.PageSize == 0 {
+		request.PageSize = DefaultPageSize
+	}
+	if request.Page < 1 || request.PageSize < 1 || request.PageSize > MaxPageSize {
+		return Request{}, errors.New("invalid pagination")
+	}
+	return request, nil
+}
+
+func Offset(request Request) int { return (request.Page - 1) * request.PageSize }

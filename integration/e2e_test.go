@@ -14,10 +14,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/app"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	appdb "github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -59,6 +64,11 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	httpAddress := freeAddress(t)
 	grpcAddress := freeAddress(t)
 	const secret = "01234567890123456789012345678901"
+	jwtConfig, keyErr := testutil.JWTConfig()
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	jwtConfig.Issuer = "integration"
 	cfg := config.Config{
 		Runtime:       config.Runtime{ActiveProfile: "integration"},
 		App:           config.App{Name: "integration", Env: "integration", ShutdownTimeout: 10 * time.Second},
@@ -70,8 +80,9 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		Redis:         config.Redis{Enabled: true, Address: redisOptions.Addr, DB: redisOptions.DB, DialTimeout: 5 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second},
 		Health:        config.Health{DatabaseTimeout: 2 * time.Second, RedisTimeout: 2 * time.Second},
 		Observability: config.Observability{MetricsEnabled: true},
-		JWT:           config.JWT{Issuer: "integration", Secret: secret, TTL: time.Hour},
-		Auth:          config.Auth{ClientID: "client", ClientSecret: "secret", SkipHTTPPaths: []string{"/api/v1/version"}, SkipGRPCMethods: []string{"/grpc.health.v1.Health/*"}, PSK: config.PSK{Enabled: true, Key: secret, GRPCMethods: []string{"/hello.v1.HelloService/*"}}},
+		JWT:           jwtConfig,
+		Auth:          config.Auth{ClientID: "client", ClientSecret: "secret", PSK: config.PSK{Enabled: true, Key: secret}},
+		Authorization: config.Authorization{Enabled: true, PolicyRefreshInterval: 100 * time.Millisecond},
 		Cron:          config.Cron{Enabled: false, Timezone: "UTC"},
 		User:          config.User{CacheTTL: time.Minute, LockTTL: 10 * time.Second, LockRetryDelay: 20 * time.Millisecond},
 		Idempotency:   config.Idempotency{Enabled: true, ProcessingTTL: 30 * time.Second, ResultTTL: time.Hour, FailureTTL: time.Minute},
@@ -91,6 +102,16 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	}
 
 	baseURL := "http://" + httpAddress
+	if status := postJSON(t, baseURL+"/api/v1/version", "", "", `{}`); status != http.StatusInternalServerError {
+		t.Fatalf("missing policy status = %d", status)
+	}
+	seedRoutePolicies(t, ctx, cfg, dsn)
+	redisClient := goredis.NewClient(redisOptions)
+	t.Cleanup(func() { _ = redisClient.Close() })
+	if err := redisClient.Publish(ctx, "integration:integration:route-policy:changed", "refresh").Err(); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, baseURL+"/api/v1/version", http.StatusOK)
 	if status := postJSON(t, baseURL+"/api/v1/version", "", "", `{}`); status != http.StatusOK {
 		t.Fatalf("public version status = %d", status)
 	}
@@ -111,6 +132,52 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	if _, err := hellov1.NewHelloServiceClient(connection).Ping(pskCtx, &hellov1.PingRequest{Message: "hello"}); err != nil {
 		t.Fatalf("PSK Ping: %v", err)
 	}
+}
+
+func seedRoutePolicies(t *testing.T, ctx context.Context, cfg config.Config, dsn string) {
+	t.Helper()
+	db, err := appdb.Open(ctx, config.Database{Type: "postgres", DSN: dsn, MaxOpenConns: 2, MaxIdleConns: 1, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "integration-policy-bootstrap", Type: platformprincipal.TypeServiceAccount})
+	routes := []struct {
+		protocol, method, path, expression string
+	}{
+		{protocol: "http", method: http.MethodPost, path: "/api/v1/version", expression: "anonymous"},
+		{protocol: "http", method: http.MethodPost, path: "/api/v1/me", expression: "authenticated"},
+		{protocol: "grpc", method: "call", path: hellov1.HelloService_Ping_FullMethodName, expression: `authenticated && principal_type == "service_account"`},
+	}
+	transactor := appdb.NewTransactor(db)
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		for _, item := range routes {
+			route, routeErr := routepolicy.NewRoute(item.protocol, item.method, item.path, cfg.App.Name, "")
+			if routeErr != nil {
+				return routeErr
+			}
+			now := time.Now()
+			query := tx.Rebind(`INSERT INTO route_policy_definitions(id,route_id,expression,description,priority,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,0,'active',?,?,?,?,1)`)
+			if _, routeErr = tx.ExecContext(actorCtx, query, route.ID, route.ID, item.expression, "integration policy", now, "ignored", now, "ignored"); routeErr != nil {
+				return routeErr
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForStatus(t *testing.T, target string, expected int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if status := postJSON(t, target, "", "", `{}`); status == expected {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("%s did not reach status %d", target, expected)
 }
 
 func freeAddress(t *testing.T) string {

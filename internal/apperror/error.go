@@ -1,6 +1,10 @@
 package apperror
 
-import "net/http"
+import (
+	"net/http"
+
+	platformcode "github.com/lihongjie0209/microservice-platform-go/errorcode"
+)
 
 type Error struct {
 	Code       int    `json:"code"`
@@ -18,17 +22,19 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 const (
-	CodeOK                    = 0
-	CodeInvalidArgument       = 10001
-	CodeNotFound              = 10004
-	CodeRequestTimeout        = 10008
-	CodeTooManyRequests       = 10029
-	CodeUnauthorized          = 20001
-	CodeForbidden             = 20003
-	CodeConflict              = 30009
-	CodeRequestInProgress     = 30010
-	CodeInternal              = 50000
-	CodeDependencyUnavailable = 50003
+	CodeOK                       = 0
+	CodeInvalidArgument          = 10001
+	CodeNotFound                 = 10004
+	CodeRequestTimeout           = 10008
+	CodeTooManyRequests          = 10029
+	CodeUnauthorized             = 20001
+	CodeForbidden                = 20003
+	CodeConflict                 = 30009
+	CodeRequestInProgress        = 30010
+	CodeInternal                 = 50000
+	CodeDependencyUnavailable    = 50003
+	CodeAuthorizationUnavailable = int(platformcode.AuthorizationUnavailable)
+	CodePermissionPolicyMissing  = int(platformcode.PermissionPolicyMissing)
 )
 
 func New(code int, message string, status int, err error) *Error {
@@ -63,4 +69,10 @@ func Unavailable(message string, err error) *Error {
 }
 func Internal(err error) *Error {
 	return New(CodeInternal, "internal server error", http.StatusInternalServerError, err)
+}
+func AuthorizationUnavailable(err error) *Error {
+	return New(CodeAuthorizationUnavailable, "authorization decision is unavailable", http.StatusServiceUnavailable, err)
+}
+func PermissionPolicyMissing(err error) *Error {
+	return New(CodePermissionPolicyMissing, "authorization policy is not configured", http.StatusInternalServerError, err)
 }

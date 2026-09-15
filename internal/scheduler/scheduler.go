@@ -12,7 +12,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func New(lc fx.Lifecycle, cfg config.Config, locker *cache.Locker, metrics *observability.Metrics, logger *slog.Logger) (*cron.Cron, error) {
+func New(lc fx.Lifecycle, cfg config.Config, locker cache.Locker, metrics *observability.Metrics, logger *slog.Logger) (*cron.Cron, error) {
 	location, err := time.LoadLocation(cfg.Cron.Timezone)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func New(lc fx.Lifecycle, cfg config.Config, locker *cache.Locker, metrics *obse
 	return runner, nil
 }
 
-func runSample(locker *cache.Locker, logger *slog.Logger) error {
+func runSample(locker cache.Locker, logger *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if locker == nil {

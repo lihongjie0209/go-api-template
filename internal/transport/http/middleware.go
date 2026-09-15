@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -25,6 +24,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"go.opentelemetry.io/otel/trace"
@@ -75,6 +75,8 @@ type idempotencyManager interface {
 	Begin(context.Context, string, string) (idempotency.Decision, error)
 	Complete(context.Context, string, string, any) error
 	Fail(context.Context, string, string, idempotency.Failure) error
+	Abort(context.Context, string, string) error
+	StartLease(context.Context, string, string) (context.Context, func() error, error)
 }
 
 type responseCapture struct {
@@ -134,10 +136,20 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			Fail(c, logger, apperror.Unavailable("idempotency state is invalid", nil))
 			return
 		}
+		leaseCtx, stopLease, err := manager.StartLease(c.Request.Context(), key, decision.Owner)
+		if err != nil {
+			Fail(c, logger, apperror.Unavailable("idempotency lease is unavailable", err))
+			return
+		}
+		c.Request = c.Request.WithContext(leaseCtx)
 
 		capture := &responseCapture{ResponseWriter: c.Writer}
 		c.Writer = capture
 		c.Next()
+		if leaseErr := stopLease(); leaseErr != nil {
+			logger.ErrorContext(c.Request.Context(), "idempotency lease lost", "error", leaseErr, "request_id", requestID(c))
+			return
+		}
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
 		defer cancel()
 		var response Response
@@ -146,7 +158,9 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			return
 		}
 		response.RequestID = ""
-		if c.Writer.Status() >= http.StatusBadRequest {
+		if retryableHTTPStatus(c.Writer.Status()) {
+			err = manager.Abort(persistCtx, key, decision.Owner)
+		} else if c.Writer.Status() >= http.StatusBadRequest {
 			err = manager.Fail(persistCtx, key, decision.Owner, idempotency.Failure{Code: response.Code, Message: response.Message, HTTPStatus: c.Writer.Status()})
 		} else {
 			err = manager.Complete(persistCtx, key, decision.Owner, response)
@@ -157,18 +171,46 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 	}
 }
 
+func retryableHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooEarly || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
 func idempotencyFingerprint(c *gin.Context) (string, error) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		return "", err
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-	subject, _ := c.Get("subject")
+	canonicalBody, err := canonicalJSON(body)
+	if err != nil {
+		return "", err
+	}
+	caller, _ := platformprincipal.FromContext(c.Request.Context())
 	hash := sha256.New()
-	_, _ = io.WriteString(hash, fmt.Sprint(subject))
+	_, _ = io.WriteString(hash, caller.ID)
+	_, _ = io.WriteString(hash, "\x00"+string(caller.Type))
+	_, _ = io.WriteString(hash, "\x00"+caller.TenantID)
+	_, _ = io.WriteString(hash, "\x00"+caller.MembershipID)
+	_, _ = io.WriteString(hash, "\x00"+caller.SessionID)
 	_, _ = io.WriteString(hash, "\x00"+c.Request.Method+"\x00"+c.FullPath()+"\x00")
-	_, _ = hash.Write(body)
+	_, _ = hash.Write(canonicalBody)
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func canonicalJSON(body []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("request contains multiple JSON values")
+		}
+		return nil, err
+	}
+	return json.Marshal(value)
 }
 
 func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
@@ -223,8 +265,9 @@ func RequireJSON() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodPost && c.Request.ContentLength != 0 {
 			mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-			if err != nil || mediaType != "application/json" {
-				c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, Response{Code: apperror.CodeInvalidArgument, Message: "content type must be application/json", Body: nil, RequestID: requestID(c)})
+			allowed := mediaType == "application/json" || (c.Request.URL.Path == "/api/v1/files/upload" && mediaType == "multipart/form-data")
+			if err != nil || !allowed {
+				c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, Response{Code: apperror.CodeInvalidArgument, Message: "unsupported content type", Body: nil, RequestID: requestID(c)})
 				return
 			}
 		}
@@ -334,52 +377,65 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-func Authentication(service *auth.Service, logger *slog.Logger, cfg config.Auth) gin.HandlerFunc {
-	authenticate := JWT(service, logger)
+// DatabaseAuthentication verifies credentials when supplied. Whether an
+// anonymous principal may proceed is decided by the database-owned policy.
+func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg config.Auth) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if cfg.PSK.Enabled && auth.MatchesAny(c.FullPath(), cfg.PSK.HTTPPaths) {
-			if !auth.VerifyPSK(c.GetHeader("Authorization"), cfg.PSK.Key) {
-				Fail(c, logger, apperror.Unauthorized("missing or invalid PSK"))
+		header := strings.TrimSpace(c.GetHeader("Authorization"))
+		if header == "" {
+			c.Next()
+			return
+		}
+		scheme, raw, ok := strings.Cut(header, " ")
+		if !ok || raw == "" {
+			Fail(c, logger, apperror.Unauthorized("invalid authorization credential"))
+			return
+		}
+		var identity platformprincipal.Principal
+		switch {
+		case strings.EqualFold(scheme, "Bearer"):
+			verified, err := service.Verify(c.Request.Context(), raw)
+			if err != nil {
+				Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
 				return
 			}
-			c.Set("subject", "psk")
-			ctx := platformprincipal.WithContext(c.Request.Context(), platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount})
-			c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, c.GetHeader("Authorization")))
-			c.Next()
-			return
-		}
-		if auth.MatchesAny(c.FullPath(), cfg.SkipHTTPPaths) {
-			c.Next()
-			return
-		}
-		authenticate(c)
-	}
-}
-
-func Authorization(enabled bool, authorizer platformauthz.Authorizer, logger *slog.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requirement, protected := exampleHTTPRequirement(c.FullPath())
-		if !enabled || !protected {
-			c.Next()
-			return
-		}
-		if err := platformauthz.Enforce(c.Request.Context(), authorizer, requirement); err != nil {
-			if errors.Is(err, platformauthz.ErrDecisionUnavailable) {
-				Fail(c, logger, apperror.Unavailable("authorization decision is unavailable", err))
+			identity = verified
+		case strings.EqualFold(scheme, "PSK"):
+			if !cfg.PSK.Enabled || !auth.VerifyPSK(header, cfg.PSK.Key) {
+				Fail(c, logger, apperror.Unauthorized("invalid PSK"))
 				return
 			}
-			Fail(c, logger, apperror.Forbidden("permission denied"))
+			identity = platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount}
+		default:
+			Fail(c, logger, apperror.Unauthorized("unsupported authorization scheme"))
 			return
 		}
+		c.Set("subject", identity.ID)
+		ctx := platformprincipal.WithContext(c.Request.Context(), identity)
+		c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, header))
 		c.Next()
 	}
 }
 
-func exampleHTTPRequirement(route string) (platformauthz.Requirement, bool) {
-	if route != "/api/v1/example/ping" {
-		return platformauthz.Requirement{}, false
+func DatabaseAuthorization(enabled bool, serviceName string, authorizer platformauthz.Authorizer, policies *routepolicy.Manager, logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !enabled {
+			c.Next()
+			return
+		}
+		if err := policies.EvaluateRoute(c.Request.Context(), "http", c.Request.Method, c.FullPath(), serviceName, authorizer); err != nil {
+			switch {
+			case errors.Is(err, routepolicy.ErrMissing):
+				Fail(c, logger, apperror.PermissionPolicyMissing(err))
+			case errors.Is(err, platformauthz.ErrDecisionUnavailable):
+				Fail(c, logger, apperror.AuthorizationUnavailable(err))
+			default:
+				Fail(c, logger, apperror.Forbidden("permission denied"))
+			}
+			return
+		}
+		c.Next()
 	}
-	return platformauthz.Requirement{Resource: "example.hello", Action: "ping", Scope: platformauthz.ScopePrincipal}, true
 }
 
 func requestID(c *gin.Context) string {
