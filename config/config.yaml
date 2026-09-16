@@ -130,6 +130,7 @@ cron:
   enabled: false
   timezone: Asia/Shanghai
   sample_spec: "0 */5 * * * *"
+  job_timeout: 30s
 migration:
   auto_up: false
   create_schema: false
@@ -225,8 +226,10 @@ event_bus:
 data_lifecycle:
   enabled: false
   interval: 1h
+  timeout: 5m
   premake_months: 6
   purge_batch_size: 1000
+  purge_max_batches: 10
   operation_log_retention_months: 12
   security_log_retention_months: 24
   archive_schema: ""

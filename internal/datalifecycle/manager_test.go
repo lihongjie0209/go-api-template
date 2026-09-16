@@ -1,15 +1,32 @@
 package datalifecycle
 
 import (
+	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
+
+type lifecycleLockerStub struct {
+	try func(context.Context, string, time.Duration) (cache.Lock, bool, error)
+}
+
+func (l lifecycleLockerStub) TryLock(ctx context.Context, key string, ttl time.Duration) (cache.Lock, bool, error) {
+	return l.try(ctx, key, ttl)
+}
+func (l lifecycleLockerStub) Lock(context.Context, string, time.Duration, time.Duration) (cache.Lock, error) {
+	return nil, errors.New("unexpected blocking lock")
+}
 
 func TestPartitionNameRoundTrip(t *testing.T) {
 	t.Parallel()
@@ -35,17 +52,60 @@ func TestMaintainMySQLPurgesBoundedBatches(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM `operation_logs` WHERE occurred_at < ? ORDER BY occurred_at,id LIMIT ?")).
 		WithArgs(time.Date(2025, time.September, 1, 0, 0, 0, 0, platformLocation), 250).
 		WillReturnResult(sqlmock.NewResult(0, 250))
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM `operation_logs` WHERE occurred_at < ? ORDER BY occurred_at,id LIMIT ?")).
+		WithArgs(time.Date(2025, time.September, 1, 0, 0, 0, 0, platformLocation), 250).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM `security_logs` WHERE occurred_at < ? ORDER BY occurred_at,id LIMIT ?")).
 		WithArgs(time.Date(2024, time.September, 1, 0, 0, 0, 0, platformLocation), 250).
 		WillReturnResult(sqlmock.NewResult(0, 10))
 	manager := &Manager{db: db, dialect: "mysql", cfg: config.DataLifecycle{
-		PurgeBatchSize: 250, OperationLogRetentionMonths: 12, SecurityLogRetentionMonths: 24,
+		PurgeBatchSize: 250, PurgeMaxBatches: 2, OperationLogRetentionMonths: 12, SecurityLogRetentionMonths: 24,
 	}}
 	if err := manager.maintainMySQL(t.Context(), now); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMaintainUsesBoundedSystemContextAndSkipsContention(t *testing.T) {
+	t.Parallel()
+	raw, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	lockCalled := false
+	manager := &Manager{
+		db:      sqlx.NewDb(raw, "mysql"),
+		dialect: "mysql",
+		cfg: config.DataLifecycle{
+			Enabled: true, Timeout: time.Second, PurgeMaxBatches: 1,
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		locker: lifecycleLockerStub{try: func(ctx context.Context, key string, ttl time.Duration) (cache.Lock, bool, error) {
+			lockCalled = true
+			principal, ok := platformprincipal.FromContext(ctx)
+			if !ok || principal.ID != "orders:data-lifecycle" || principal.Type != platformprincipal.TypeSystem {
+				t.Fatalf("principal = %+v, %t", principal, ok)
+			}
+			if id, ok := requestid.FromContext(ctx); !ok || id == "" {
+				t.Fatalf("request ID = %q, %t", id, ok)
+			}
+			if _, ok := ctx.Deadline(); !ok || key != "data-lifecycle:maintenance" || ttl != time.Second {
+				t.Fatalf("lock context/key/ttl = %t/%q/%s", ok, key, ttl)
+			}
+			return nil, false, nil
+		}},
+		appName: "orders",
+		lockTTL: time.Second,
+	}
+	if err := manager.Maintain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !lockCalled {
+		t.Fatal("distributed lock was not attempted")
 	}
 }
 

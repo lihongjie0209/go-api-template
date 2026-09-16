@@ -209,9 +209,10 @@ type PSK struct {
 	Key     string `mapstructure:"key"`
 }
 type Cron struct {
-	Enabled    bool   `mapstructure:"enabled"`
-	Timezone   string `mapstructure:"timezone"`
-	SampleSpec string `mapstructure:"sample_spec"`
+	Enabled    bool          `mapstructure:"enabled"`
+	Timezone   string        `mapstructure:"timezone"`
+	SampleSpec string        `mapstructure:"sample_spec"`
+	JobTimeout time.Duration `mapstructure:"job_timeout"`
 }
 type Migration struct {
 	AutoUp       bool   `mapstructure:"auto_up"`
@@ -305,8 +306,10 @@ type SecurityLog struct {
 type DataLifecycle struct {
 	Enabled                     bool          `mapstructure:"enabled"`
 	Interval                    time.Duration `mapstructure:"interval"`
+	Timeout                     time.Duration `mapstructure:"timeout"`
 	PremakeMonths               int           `mapstructure:"premake_months"`
 	PurgeBatchSize              int           `mapstructure:"purge_batch_size"`
+	PurgeMaxBatches             int           `mapstructure:"purge_max_batches"`
 	OperationLogRetentionMonths int           `mapstructure:"operation_log_retention_months"`
 	SecurityLogRetentionMonths  int           `mapstructure:"security_log_retention_months"`
 	ArchiveSchema               string        `mapstructure:"archive_schema"`
@@ -550,6 +553,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("cron.enabled", false)
 	v.SetDefault("cron.timezone", "Asia/Shanghai")
 	v.SetDefault("cron.sample_spec", "0 */5 * * * *")
+	v.SetDefault("cron.job_timeout", "30s")
 	v.SetDefault("migration.path", "migrations/postgres")
 	v.SetDefault("migration.database_url", "")
 	v.SetDefault("migration.auto_up", false)
@@ -614,8 +618,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("security_log.hash_key", "")
 	v.SetDefault("data_lifecycle.enabled", false)
 	v.SetDefault("data_lifecycle.interval", "1h")
+	v.SetDefault("data_lifecycle.timeout", "5m")
 	v.SetDefault("data_lifecycle.premake_months", 6)
 	v.SetDefault("data_lifecycle.purge_batch_size", 1000)
+	v.SetDefault("data_lifecycle.purge_max_batches", 10)
 	v.SetDefault("data_lifecycle.operation_log_retention_months", 12)
 	v.SetDefault("data_lifecycle.security_log_retention_months", 24)
 	v.SetDefault("data_lifecycle.archive_schema", "")
@@ -737,6 +743,9 @@ func (c Config) Validate() error {
 	if c.DistributedLock.TTL < 300*time.Millisecond || c.DistributedLock.TTL > 5*time.Minute || c.DistributedLock.RetryDelay < 10*time.Millisecond || c.DistributedLock.RetryDelay > 5*time.Second || c.DistributedLock.RetryDelay >= c.DistributedLock.TTL {
 		return errors.New("distributed_lock.ttl must be between 300ms and 5m and retry_delay between 10ms and 5s and less than ttl")
 	}
+	if strings.TrimSpace(c.Cron.Timezone) == "" || len(c.Cron.Timezone) > 100 || len(c.Cron.SampleSpec) > 256 || c.Cron.JobTimeout < time.Second || c.Cron.JobTimeout > time.Hour {
+		return errors.New("cron requires a bounded timezone, schedule, and job_timeout between one second and one hour")
+	}
 	if c.Tenant.CacheTTL <= 0 || c.Tenant.CacheTTL > maxCacheTTL {
 		return errors.New("tenant cache duration must be positive and no greater than 24h")
 	}
@@ -824,8 +833,8 @@ func (c Config) Validate() error {
 		if !c.Database.Enabled {
 			return errors.New("data_lifecycle requires an enabled database")
 		}
-		if c.DataLifecycle.Interval <= 0 || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 {
-			return errors.New("data_lifecycle requires a positive interval and retention months, premake_months between 1 and 24, and purge_batch_size between 1 and 10000")
+		if c.DataLifecycle.Interval < time.Minute || c.DataLifecycle.Interval > 24*time.Hour || c.DataLifecycle.Timeout < time.Second || c.DataLifecycle.Timeout > 30*time.Minute || c.DataLifecycle.Timeout >= c.DataLifecycle.Interval || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.PurgeMaxBatches < 1 || c.DataLifecycle.PurgeMaxBatches > 100 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 {
+			return errors.New("data_lifecycle requires interval between 1m and 24h, timeout between 1s and 30m below interval, positive retention, premake_months 1-24, purge_batch_size 1-10000, and purge_max_batches 1-100")
 		}
 		if c.DataLifecycle.ArchiveSchema != "" && !validMigrationTable.MatchString(c.DataLifecycle.ArchiveSchema) {
 			return errors.New("data_lifecycle.archive_schema must contain lowercase letters, digits, or underscores and be at most 63 characters")

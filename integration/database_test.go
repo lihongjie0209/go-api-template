@@ -19,6 +19,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	appdb "github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/datalifecycle"
@@ -42,6 +43,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
+
+type integrationLifecycleLocker struct{}
+
+func (integrationLifecycleLocker) TryLock(context.Context, string, time.Duration) (cache.Lock, bool, error) {
+	return integrationLifecycleLock{}, true, nil
+}
+func (integrationLifecycleLocker) Lock(context.Context, string, time.Duration, time.Duration) (cache.Lock, error) {
+	return integrationLifecycleLock{}, nil
+}
+
+type integrationLifecycleLock struct{}
+
+func (integrationLifecycleLock) Extend(context.Context) error { return nil }
+func (integrationLifecycleLock) Unlock(context.Context) error { return nil }
+func (integrationLifecycleLock) Until() time.Time             { return time.Now().Add(time.Minute) }
 
 func TestRepositoryAndMigrations(t *testing.T) {
 	for _, databaseType := range []string{"postgres", "mysql"} {
@@ -166,10 +182,10 @@ func testMySQLLogRetention(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	manager := datalifecycle.New(db, config.Config{Database: config.Database{Type: "mysql"}, DataLifecycle: config.DataLifecycle{
-		Enabled: true, Interval: time.Hour, PremakeMonths: 6, PurgeBatchSize: 100,
+	manager := datalifecycle.New(db, config.Config{App: config.App{Name: "integration"}, Database: config.Database{Type: "mysql"}, DistributedLock: config.DistributedLock{TTL: time.Second}, DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PremakeMonths: 6, PurgeBatchSize: 100, PurgeMaxBatches: 10,
 		OperationLogRetentionMonths: 12, SecurityLogRetentionMonths: 24,
-	}}, slog.Default(), nil)
+	}}, slog.Default(), nil, integrationLifecycleLocker{})
 	if err := manager.Maintain(ctx); err != nil {
 		t.Fatalf("maintain mysql log retention: %v", err)
 	}
@@ -234,10 +250,10 @@ func testPostgresLogPartitions(t *testing.T, ctx context.Context, db *sqlx.DB) {
 			t.Fatalf("%s duplicate count=%d err=%v", record.table, count, err)
 		}
 	}
-	manager := datalifecycle.New(db, config.Config{DataLifecycle: config.DataLifecycle{
-		Enabled: true, Interval: time.Hour, PremakeMonths: 7,
+	manager := datalifecycle.New(db, config.Config{App: config.App{Name: "integration"}, Database: config.Database{Type: "postgres", Name: "app", Schema: "public"}, DistributedLock: config.DistributedLock{TTL: time.Second}, DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PremakeMonths: 7, PurgeMaxBatches: 10,
 		OperationLogRetentionMonths: 120, SecurityLogRetentionMonths: 120,
-	}}, slog.Default(), nil)
+	}}, slog.Default(), nil, integrationLifecycleLocker{})
 	if err := manager.Maintain(ctx); err != nil {
 		t.Fatalf("maintain log partitions: %v", err)
 	}

@@ -12,8 +12,11 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/background"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"go.uber.org/fx"
 )
 
@@ -23,15 +26,19 @@ var platformLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 var ErrDefaultPartitionOccupied = errors.New("default partition contains rows for a partition that must be created")
 
 type Manager struct {
-	db      *sqlx.DB
-	dialect string
-	cfg     config.DataLifecycle
-	logger  *slog.Logger
-	metrics *observability.Metrics
+	db              *sqlx.DB
+	dialect         string
+	cfg             config.DataLifecycle
+	logger          *slog.Logger
+	metrics         *observability.Metrics
+	locker          cache.Locker
+	appName         string
+	lockTTL         time.Duration
+	advisoryLockKey string
 }
 
-func New(db *sqlx.DB, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics) *Manager {
-	return &Manager{db: db, dialect: cfg.Database.Type, cfg: cfg.DataLifecycle, logger: logger, metrics: metrics}
+func New(db *sqlx.DB, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics, locker cache.Locker) *Manager {
+	return &Manager{db: db, dialect: cfg.Database.Type, cfg: cfg.DataLifecycle, logger: logger, metrics: metrics, locker: locker, appName: cfg.App.Name, lockTTL: cfg.DistributedLock.TTL, advisoryLockKey: cfg.App.Name + ":" + cfg.Database.Name + ":" + cfg.Database.Schema + ":data-lifecycle"}
 }
 
 func (m *Manager) Maintain(ctx context.Context) error {
@@ -39,15 +46,24 @@ func (m *Manager) Maintain(ctx context.Context) error {
 		return nil
 	}
 	started := time.Now()
-	var err error
-	if m.dialect == "mysql" {
-		err = m.maintainMySQL(ctx, time.Now())
-	} else {
-		err = m.maintain(ctx, time.Now())
-	}
+	actorID := m.appName + ":data-lifecycle"
+	ctx = requestid.WithContext(platformprincipal.SystemContext(ctx, actorID), requestid.Generate())
+	ctx, cancel := context.WithTimeout(ctx, m.cfg.Timeout)
+	defer cancel()
+	acquired, err := cache.TryWithLock(ctx, m.locker, "data-lifecycle:maintenance", m.lockTTL, func(leaseCtx context.Context) error {
+		if m.dialect == "mysql" {
+			return m.maintainMySQL(leaseCtx, time.Now())
+		}
+		return m.maintain(leaseCtx, time.Now())
+	})
 	status := "success"
-	if err != nil {
+	if !acquired && err == nil {
+		status = "skipped"
+		m.logger.InfoContext(ctx, "data lifecycle maintenance skipped", "reason", "lock held")
+	} else if err != nil {
 		status = "error"
+	} else {
+		m.logger.InfoContext(ctx, "data lifecycle maintenance completed", "duration", time.Since(started))
 	}
 	if m.metrics != nil {
 		m.metrics.ObserveInfrastructure("data_lifecycle", "database", "maintain", status, started)
@@ -66,8 +82,18 @@ func (m *Manager) maintainMySQL(ctx context.Context, now time.Time) error {
 	} {
 		cutoff := month.AddDate(0, -policy.retentionMonths, 0)
 		query := `DELETE FROM ` + quoteMySQLIdentifier(policy.table) + ` WHERE occurred_at < ? ORDER BY occurred_at,id LIMIT ?`
-		if _, err := m.db.ExecContext(ctx, query, cutoff, m.cfg.PurgeBatchSize); err != nil {
-			return fmt.Errorf("purge expired rows from %s: %w", policy.table, err)
+		for range m.cfg.PurgeMaxBatches {
+			result, err := m.db.ExecContext(ctx, query, cutoff, m.cfg.PurgeBatchSize)
+			if err != nil {
+				return fmt.Errorf("purge expired rows from %s: %w", policy.table, err)
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("read purged row count from %s: %w", policy.table, err)
+			}
+			if rows < int64(m.cfg.PurgeBatchSize) {
+				break
+			}
 		}
 	}
 	return nil
@@ -79,7 +105,7 @@ func (m *Manager) maintain(ctx context.Context, now time.Time) error {
 		return fmt.Errorf("begin partition maintenance: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "go-api-template:data-lifecycle"); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, m.advisoryLockKey); err != nil {
 		return fmt.Errorf("lock partition maintenance: %w", err)
 	}
 	if m.cfg.ArchiveSchema != "" {

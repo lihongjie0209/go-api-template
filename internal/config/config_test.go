@@ -244,6 +244,18 @@ func TestLoad_ValidatesDataLifecycleDatabaseAndBounds(t *testing.T) {
 				"data_lifecycle:\n  enabled: true\n  archive_schema: archive-invalid!\n",
 			want: "archive_schema",
 		},
+		{
+			name: "timeout reaches interval",
+			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
+				"data_lifecycle:\n  enabled: true\n  interval: 5m\n  timeout: 5m\n",
+			want: "timeout",
+		},
+		{
+			name: "unbounded purge batches",
+			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
+				"data_lifecycle:\n  enabled: true\n  purge_max_batches: 101\n",
+			want: "purge_max_batches",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -256,6 +268,21 @@ func TestLoad_ValidatesDataLifecycleDatabaseAndBounds(t *testing.T) {
 				t.Fatalf("Load() error=%v, want substring %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestConfigRejectsUnsafeCronBounds(t *testing.T) {
+	t.Parallel()
+	for _, mutate := range []func(*Cron){
+		func(cron *Cron) { cron.Timezone = strings.Repeat("x", 101) },
+		func(cron *Cron) { cron.SampleSpec = strings.Repeat("*", 257) },
+		func(cron *Cron) { cron.JobTimeout = time.Hour + time.Second },
+	} {
+		cfg := validDevelopmentConfig(t)
+		mutate(&cfg.Cron)
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "cron requires") {
+			t.Fatalf("Validate() error = %v", err)
+		}
 	}
 }
 

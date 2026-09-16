@@ -166,6 +166,12 @@ Every business table, including pure association tables, must contain `created_a
 
 Repositories must execute writes through `database.Transactor.Within`. It copies the authenticated principal ID from `context.Context` into the transaction-local PostgreSQL setting `app.actor_id`; missing actors fail before business SQL executes, and transaction-local scope prevents identity leaking through the connection pool. Background jobs must explicitly use `principal.SystemContext`. Updates and soft deletes must still include `WHERE id = $1 AND version = $2` for optimistic concurrency. A migration contract unit test fails CI when any new table omits an audit column or PostgreSQL/Kingbase trigger registration.
 
+## Scheduler and data lifecycle
+
+The scheduler uses robfig/cron with six-field specifications and `Asia/Shanghai` by default. Every job receives a generated Request ID, bounded timeout, service system principal, OpenTelemetry span and Prometheus result/latency metrics. Local overlap is skipped and replicas coordinate through the renewable Redis lock using the configured distributed-lock TTL. Lock/Redis failure fails closed; lease loss or application shutdown cancels the exact Context passed to job SQL, Redis and upstream calls. Add jobs through the shared `runJob` lifecycle instead of starting unmanaged goroutines.
+
+`data_lifecycle` maintains the high-volume operation/security log tables. PostgreSQL and Kingbase pre-create monthly partitions, serialize DDL with both the shared Redis lease and a service/database/schema-scoped advisory transaction lock, and detach expired partitions into the configured archive schema (or permanently drop them only when that schema is deliberately empty). The default partition is never silently moved: maintenance fails when it contains rows belonging to a partition that must be created. MySQL purges in ordered batches, bounded by both `purge_batch_size` and `purge_max_batches` per run. Every run has its own timeout shorter than its interval, service system identity, Request ID, metrics and structured result log. Production partition/archive maintenance requires a deliberately provisioned database role with the necessary DDL privileges.
+
 Canonical PostgreSQL column definitions:
 
 ```sql

@@ -51,8 +51,10 @@ security_log:
 data_lifecycle:
   enabled: true
   interval: 1h
+  timeout: 5m
   premake_months: 6
   purge_batch_size: 1000
+  purge_max_batches: 10
   operation_log_retention_months: 12
   security_log_retention_months: 24
   archive_schema: go_api_template_archive
