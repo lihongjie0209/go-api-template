@@ -21,37 +21,39 @@ func NewTenantAuthorizationHandler(service *authorization.TenantAuthorizationSer
 }
 
 type setTenantPermissionsRequest struct {
-	TenantID      string   `json:"tenant_id" binding:"required"`
-	PermissionIDs []string `json:"permission_ids"`
+	TenantID      string   `json:"tenant_id" binding:"required,max=128"`
+	Version       int64    `json:"version" binding:"required,gt=0"`
+	PermissionIDs []string `json:"permission_ids" binding:"max=1000,dive,required,max=128"`
 }
 type setAdministratorRequest struct {
-	TenantID     string `json:"tenant_id" binding:"required"`
-	MembershipID string `json:"membership_id" binding:"required"`
+	TenantID     string `json:"tenant_id" binding:"required,max=128"`
+	MembershipID string `json:"membership_id" binding:"required,max=128"`
 	Enabled      bool   `json:"enabled"`
 }
 type createTenantRoleRequest struct {
-	Code          string   `json:"code" binding:"required"`
-	Name          string   `json:"name" binding:"required"`
-	Description   string   `json:"description"`
-	PermissionIDs []string `json:"permission_ids"`
+	Code          string   `json:"code" binding:"required,max=63"`
+	Name          string   `json:"name" binding:"required,max=256"`
+	Description   string   `json:"description" binding:"max=4096"`
+	PermissionIDs []string `json:"permission_ids" binding:"max=1000,dive,required,max=128"`
 }
 type setRolePermissionsRequest struct {
-	RoleID        string   `json:"role_id" binding:"required"`
+	RoleID        string   `json:"role_id" binding:"required,max=128"`
 	Version       int64    `json:"version" binding:"required,gt=0"`
-	PermissionIDs []string `json:"permission_ids"`
+	PermissionIDs []string `json:"permission_ids" binding:"max=1000,dive,required,max=128"`
 }
 type setMemberRolesRequest struct {
-	MembershipID string   `json:"membership_id" binding:"required"`
-	RoleIDs      []string `json:"role_ids"`
+	MembershipID string   `json:"membership_id" binding:"required,max=128"`
+	Version      int64    `json:"version" binding:"required,gt=0"`
+	RoleIDs      []string `json:"role_ids" binding:"max=1000,dive,required,max=128"`
 }
 type memberRolesRequest struct {
-	MembershipID string `json:"membership_id" binding:"required"`
+	MembershipID string `json:"membership_id" binding:"required,max=128"`
 }
 type effectivePermissionsRequest struct {
-	MembershipID string `json:"membership_id"`
+	MembershipID string `json:"membership_id" binding:"omitempty,max=128"`
 }
 type TenantRoleIDRequest struct {
-	ID string `json:"id" binding:"required"`
+	ID string `json:"id" binding:"required,max=128"`
 }
 type TenantRolePageRequest struct {
 	pagination.Request
@@ -62,14 +64,14 @@ type TenantRolePageRequest struct {
 	CreatedAtTo   *time.Time `json:"created_at_to"`
 }
 type UpdateTenantRoleRequest struct {
-	ID          string `json:"id" binding:"required"`
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	ID          string `json:"id" binding:"required,max=128"`
+	Name        string `json:"name" binding:"required,max=256"`
+	Description string `json:"description" binding:"max=4096"`
 	Status      string `json:"status" binding:"required"`
 	Version     int64  `json:"version" binding:"required,gt=0"`
 }
 type DeleteTenantRoleRequest struct {
-	ID      string `json:"id" binding:"required"`
+	ID      string `json:"id" binding:"required,max=128"`
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
 
@@ -87,7 +89,7 @@ func (h *TenantAuthorizationHandler) SetTenantPermissions(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	h.respond(c, h.service.SetTenantPermissions(c.Request.Context(), request.TenantID, request.PermissionIDs))
+	h.respond(c, h.service.SetTenantPermissions(c.Request.Context(), request.TenantID, request.Version, request.PermissionIDs))
 }
 
 // SetAdministrator godoc
@@ -294,7 +296,7 @@ func (h *TenantAuthorizationHandler) SetMemberRoles(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	h.respond(c, h.service.SetMemberRoles(c.Request.Context(), request.MembershipID, request.RoleIDs))
+	h.respond(c, h.service.SetMemberRoles(c.Request.Context(), request.MembershipID, request.Version, request.RoleIDs))
 }
 
 // EffectivePermissions godoc

@@ -382,6 +382,7 @@ definitions:
   httptransport.DeleteTenantRoleRequest:
     properties:
       id:
+        maxLength: 128
         type: string
       version:
         type: integer
@@ -1079,6 +1080,7 @@ definitions:
   httptransport.TenantRoleIDRequest:
     properties:
       id:
+        maxLength: 128
         type: string
     required:
     - id
@@ -1210,10 +1212,13 @@ definitions:
   httptransport.UpdateTenantRoleRequest:
     properties:
       description:
+        maxLength: 4096
         type: string
       id:
+        maxLength: 128
         type: string
       name:
+        maxLength: 256
         type: string
       status:
         type: string
@@ -1259,27 +1264,34 @@ definitions:
   httptransport.createTenantRoleRequest:
     properties:
       code:
+        maxLength: 63
         type: string
       description:
+        maxLength: 4096
         type: string
       name:
+        maxLength: 256
         type: string
       permission_ids:
         items:
           type: string
+        maxItems: 1000
         type: array
     required:
     - code
     - name
+    - permission_ids
     type: object
   httptransport.effectivePermissionsRequest:
     properties:
       membership_id:
+        maxLength: 128
         type: string
     type: object
   httptransport.memberRolesRequest:
     properties:
       membership_id:
+        maxLength: 128
         type: string
     required:
     - membership_id
@@ -1341,8 +1353,10 @@ definitions:
       enabled:
         type: boolean
       membership_id:
+        maxLength: 128
         type: string
       tenant_id:
+        maxLength: 128
         type: string
     required:
     - membership_id
@@ -1351,25 +1365,34 @@ definitions:
   httptransport.setMemberRolesRequest:
     properties:
       membership_id:
+        maxLength: 128
         type: string
       role_ids:
         items:
           type: string
+        maxItems: 1000
         type: array
+      version:
+        type: integer
     required:
     - membership_id
+    - role_ids
+    - version
     type: object
   httptransport.setRolePermissionsRequest:
     properties:
       permission_ids:
         items:
           type: string
+        maxItems: 1000
         type: array
       role_id:
+        maxLength: 128
         type: string
       version:
         type: integer
     required:
+    - permission_ids
     - role_id
     - version
     type: object
@@ -1378,11 +1401,17 @@ definitions:
       permission_ids:
         items:
           type: string
+        maxItems: 1000
         type: array
       tenant_id:
+        maxLength: 128
         type: string
+      version:
+        type: integer
     required:
+    - permission_ids
     - tenant_id
+    - version
     type: object
   identity.Status:
     enum:

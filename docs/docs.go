@@ -4838,7 +4838,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "version": {
                     "type": "integer"
@@ -5880,7 +5881,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -6079,13 +6081,16 @@ const docTemplate = `{
             ],
             "properties": {
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "status": {
                     "type": "string"
@@ -6144,20 +6149,25 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "code",
-                "name"
+                "name",
+                "permission_ids"
             ],
             "properties": {
                 "code": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 63
                 },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "permission_ids": {
                     "type": "array",
+                    "maxItems": 1000,
                     "items": {
                         "type": "string"
                     }
@@ -6168,7 +6178,8 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "membership_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -6179,7 +6190,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "membership_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -6270,45 +6282,57 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "membership_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "tenant_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
         "httptransport.setMemberRolesRequest": {
             "type": "object",
             "required": [
-                "membership_id"
+                "membership_id",
+                "role_ids",
+                "version"
             ],
             "properties": {
                 "membership_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "role_ids": {
                     "type": "array",
+                    "maxItems": 1000,
                     "items": {
                         "type": "string"
                     }
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
         "httptransport.setRolePermissionsRequest": {
             "type": "object",
             "required": [
+                "permission_ids",
                 "role_id",
                 "version"
             ],
             "properties": {
                 "permission_ids": {
                     "type": "array",
+                    "maxItems": 1000,
                     "items": {
                         "type": "string"
                     }
                 },
                 "role_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "version": {
                     "type": "integer"
@@ -6318,17 +6342,24 @@ const docTemplate = `{
         "httptransport.setTenantPermissionsRequest": {
             "type": "object",
             "required": [
-                "tenant_id"
+                "permission_ids",
+                "tenant_id",
+                "version"
             ],
             "properties": {
                 "permission_ids": {
                     "type": "array",
+                    "maxItems": 1000,
                     "items": {
                         "type": "string"
                     }
                 },
                 "tenant_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },

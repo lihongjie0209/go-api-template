@@ -305,11 +305,17 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 
 	cfg := config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
 	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, cfg)
-	if err := service.SetTenantPermissions(actorCtx, tenantID, []string{permissionID}); err != nil {
+	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); err != nil {
 		t.Fatalf("set tenant permission ceiling: %v", err)
+	}
+	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+		t.Fatalf("stale tenant permission ceiling error=%v", err)
 	}
 	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true); err != nil {
 		t.Fatalf("set tenant administrator: %v", err)
+	}
+	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+		t.Fatalf("remove final tenant administrator error=%v", err)
 	}
 	adminCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: adminMemberID})
 	role, err := service.CreateRole(adminCtx, "auditor", "审计员", "integration role", []string{permissionID})
@@ -320,8 +326,11 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err != nil || len(permissions) != 1 || permissions[0].ID != permissionID || permissions[0].Name == "" {
 		t.Fatalf("role permissions=%+v err=%v", permissions, err)
 	}
-	if err := service.SetMemberRoles(adminCtx, targetMemberID, []string{role.ID}); err != nil {
+	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); err != nil {
 		t.Fatalf("set member roles: %v", err)
+	}
+	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+		t.Fatalf("stale member roles error=%v", err)
 	}
 	memberRoles, err := service.MemberRoles(adminCtx, targetMemberID)
 	if err != nil || len(memberRoles) != 1 || memberRoles[0].Name != "审计员" {
