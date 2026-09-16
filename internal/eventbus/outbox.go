@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,6 +50,7 @@ type outboxRecord struct {
 const maxOutboxEnvelopeBytes = 1 << 20
 
 var outboxTracer = otel.Tracer("go-api-template/infrastructure/eventbus")
+var publishSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
 
 func NewOutbox(cfg config.Config, bus *Bus, transactor *database.Transactor, metrics *observability.Metrics, logger *slog.Logger) *Outbox {
 	return &Outbox{
@@ -69,7 +71,7 @@ func (o *Outbox) Store(ctx context.Context, tx *sqlx.Tx, subject string, envelop
 	if o == nil || !o.cfg.Enabled || o.bus == nil {
 		return errors.New("transactional outbox is unavailable")
 	}
-	if tx == nil || strings.TrimSpace(subject) == "" || len(subject) > 256 || envelope == nil || envelope.EventId == "" {
+	if tx == nil || !publishSubjectPattern.MatchString(subject) || len(subject) > 256 || envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 {
 		return errors.New("transaction, subject and event envelope are required")
 	}
 	data, err := proto.Marshal(envelope)
@@ -228,9 +230,7 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 			if cause != nil {
 				message = cause.Error()
 			}
-			if len(message) > 2048 {
-				message = message[:2048]
-			}
+			message = boundedError(message, 2048)
 			if attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
 				query = `UPDATE event_outbox SET attempts=attempts+1,dead_at=?,locked_by='',locked_until=NULL,last_error=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND locked_by=? AND published_at IS NULL AND deleted_at IS NULL`
 				args = []any{now, message, now, actorID, id, o.workerID}
@@ -252,4 +252,12 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 		}
 		return nil
 	})
+}
+
+func boundedError(value string, limit int) string {
+	runes := []rune(strings.ToValidUTF8(value, "�"))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit])
 }

@@ -3,6 +3,7 @@ package eventbus
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,33 @@ func TestOutboxStoreRejectsUnavailableDispatcher(t *testing.T) {
 	outbox := &Outbox{}
 	err := outbox.Store(t.Context(), nil, "subject", &commonv1.EventEnvelope{EventId: "event-1"})
 	require.ErrorContains(t, err, "unavailable")
+}
+
+func TestOutboxStoreRejectsInvalidIdentityAndSubject(t *testing.T) {
+	t.Parallel()
+	outbox := &Outbox{cfg: config.EventBus{Enabled: true}, bus: &Bus{}}
+	for _, test := range []struct {
+		name    string
+		subject string
+		id      string
+	}{
+		{name: "wildcard", subject: "platform.>", id: "event-1"},
+		{name: "empty token", subject: "platform..event", id: "event-1"},
+		{name: "whitespace", subject: "platform.bad event", id: "event-1"},
+		{name: "oversized id", subject: "platform.event.v1", id: strings.Repeat("e", 65)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := outbox.Store(platformprincipal.SystemContext(t.Context(), "actor"), &sqlx.Tx{}, test.subject, &commonv1.EventEnvelope{EventId: test.id})
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestBoundedErrorPreservesUTF8(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "错误", boundedError("错误消息", 2))
+	require.Equal(t, "a�b", boundedError("a\xffb", 3))
 }
 
 func TestOutboxReleaseMovesExhaustedEventToDeadState(t *testing.T) {
