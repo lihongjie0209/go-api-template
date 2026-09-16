@@ -69,7 +69,11 @@ func TestDeleteRejectsTenantOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	service := &Service{repository: NewRepository(sqlxDB), transactor: database.NewTransactor(sqlxDB), operations: operationStub{}, security: securityStub{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	store := &memoryStore{values: map[string][]byte{
+		"identity:user:v1:id:user-1":      []byte(`{"id":"user-1"}`),
+		"identity:user:v1:username:alice": []byte(`{"id":"user-1"}`),
+	}}
+	service := &Service{repository: NewRepository(sqlxDB), transactor: database.NewTransactor(sqlxDB), cache: store, operations: operationStub{}, security: securityStub{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	now := time.Now()
 	row := []driver.Value{"user-1", "alice", "Alice", "alice@example.com", "13800000000", StatusActive, now, "admin", now, "admin", int64(3)}
 	mock.ExpectQuery(`SELECT id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version FROM identity_users`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow(row...))
@@ -84,6 +88,12 @@ func TestDeleteRejectsTenantOwner(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.Get(t.Context(), "identity:user:v1:id:user-1"); err != nil {
+		t.Fatalf("failed mutation invalidated ID cache: %v", err)
+	}
+	if _, err := store.Get(t.Context(), "identity:user:v1:username:alice"); err != nil {
+		t.Fatalf("failed mutation invalidated username cache: %v", err)
 	}
 	_ = db.Close()
 }

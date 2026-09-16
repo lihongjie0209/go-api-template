@@ -379,8 +379,10 @@ func (s *Service) mutate(ctx context.Context, operation, id, key string, request
 			return businessErr
 		})
 		if committed && s.cache != nil {
-			if cacheErr := s.cache.Delete(context.WithoutCancel(runCtx), "platform-config:public:v1:"+key); cacheErr != nil && s.logger != nil {
-				s.logger.WarnContext(runCtx, "invalidate public platform config cache", "key", key, "error", cacheErr)
+			cacheCtx, cancel := cache.AfterCommitContext(runCtx)
+			defer cancel()
+			if cacheErr := s.cache.Delete(cacheCtx, "platform-config:public:v1:"+key); cacheErr != nil && s.logger != nil {
+				s.logger.WarnContext(cacheCtx, "invalidate public platform config cache", "key", key, "error", cacheErr)
 			}
 		}
 		if s.security == nil {

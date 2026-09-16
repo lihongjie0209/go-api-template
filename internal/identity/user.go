@@ -163,6 +163,17 @@ func (s *Service) ResolveUsername(ctx context.Context, username string) (User, e
 	}
 	return s.cached(ctx, "username:"+username, func() (User, error) { return s.repository.ResolveUsername(ctx, username) })
 }
+
+// ResolveUsernameAuthoritative bypasses the disposable cache for security
+// decisions such as login eligibility. A stale cached status must never allow
+// a disabled or deleted user to authenticate.
+func (s *Service) ResolveUsernameAuthoritative(ctx context.Context, username string) (User, error) {
+	username = normalizeUsername(username)
+	if username == "" {
+		return User{}, ErrInvalid
+	}
+	return s.repository.ResolveUsername(ctx, username)
+}
 func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	a, e := actor(ctx)
 	input.Username = normalizeUsername(input.Username)
@@ -246,10 +257,10 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (User, error) {
 		}
 		return nil
 	})
-	s.invalidate(ctx, existing)
 	if e != nil {
 		return User{}, e
 	}
+	s.invalidate(ctx, existing)
 	user, e := s.repository.Get(ctx, input.ID)
 	if e == nil {
 		s.cacheUser(ctx, user)
@@ -299,7 +310,9 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		}
 		return nil
 	})
-	s.invalidate(ctx, existing)
+	if e == nil {
+		s.invalidate(ctx, existing)
+	}
 	return e
 }
 
@@ -310,7 +323,7 @@ func (s *Service) cached(ctx context.Context, key string, loader func() (User, e
 			return value, nil
 		}
 		if !errors.Is(err, cache.ErrMiss) {
-			s.logger.Warn("read identity user cache", "key", key, "error", err)
+			s.logger.WarnContext(ctx, "read identity user cache", "error", err)
 		}
 	}
 	value, err := loader()
@@ -326,7 +339,7 @@ func (s *Service) cacheUser(ctx context.Context, user User) {
 	}
 	for _, key := range []string{"identity:user:v1:id:" + user.ID, "identity:user:v1:username:" + normalizeUsername(user.Username)} {
 		if err := cache.SetJSON(ctx, s.cache, key, user, s.cacheTTL); err != nil {
-			s.logger.Warn("write identity user cache", "key", key, "error", err)
+			s.logger.WarnContext(ctx, "write identity user cache", "user_id", user.ID, "error", err)
 		}
 	}
 }
@@ -334,8 +347,10 @@ func (s *Service) invalidate(ctx context.Context, user User) {
 	if s.cache == nil {
 		return
 	}
-	if err := s.cache.Delete(ctx, "identity:user:v1:id:"+user.ID, "identity:user:v1:username:"+normalizeUsername(user.Username)); err != nil {
-		s.logger.Warn("invalidate identity user cache", "user_id", user.ID, "error", err)
+	cacheCtx, cancel := cache.AfterCommitContext(ctx)
+	defer cancel()
+	if err := s.cache.Delete(cacheCtx, "identity:user:v1:id:"+user.ID, "identity:user:v1:username:"+normalizeUsername(user.Username)); err != nil {
+		s.logger.WarnContext(cacheCtx, "invalidate identity user cache", "user_id", user.ID, "error", err)
 	}
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {

@@ -147,10 +147,7 @@ func newRedis(lc fx.Lifecycle, cfg config.Config, tracing *observability.Tracing
 }
 
 func redisKeyPrefix(cfg config.Config) string {
-	if cfg.Redis.KeyPrefix != "" {
-		return cfg.Redis.KeyPrefix
-	}
-	return cfg.App.Name + ":"
+	return cfg.RedisKeyPrefix()
 }
 
 func newCacheStore(client *redis.Client, cfg config.Config, metrics *observability.Metrics) cache.Store {

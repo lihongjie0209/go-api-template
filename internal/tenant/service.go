@@ -203,10 +203,10 @@ func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, err
 	err = s.mutate(ctx, "platform.tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
 		return updateTenant(ctx, tx, input.ID, strings.TrimSpace(input.Name), input.Description, input.Status, input.Version, actor.ID)
 	})
-	s.invalidate(ctx, input.ID)
 	if err != nil {
 		return View{}, err
 	}
+	s.invalidate(ctx, input.ID)
 	return s.AdminGet(ctx, input.ID)
 }
 
@@ -221,7 +221,9 @@ func (s *Service) AdminDelete(ctx context.Context, id string, version int64) err
 	err = s.mutate(ctx, "platform.tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
 		return deleteTenant(ctx, tx, id, version, actor.ID)
 	})
-	s.invalidate(ctx, id)
+	if err == nil {
+		s.invalidate(ctx, id)
+	}
 	return err
 }
 
@@ -239,10 +241,10 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (View, error) {
 	err = s.mutate(ctx, "tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
 		return updateTenant(ctx, tx, input.ID, strings.TrimSpace(input.Name), input.Description, input.Status, input.Version, actor.ID)
 	})
-	s.invalidate(ctx, input.ID)
 	if err != nil {
 		return View{}, err
 	}
+	s.invalidate(ctx, input.ID)
 	view, err := s.Get(ctx, input.ID)
 	return view, err
 }
@@ -259,7 +261,9 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		return ErrInvalid
 	}
 	err = s.mutate(ctx, "tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error { return deleteTenant(ctx, tx, id, version, actor.ID) })
-	s.invalidate(ctx, id)
+	if err == nil {
+		s.invalidate(ctx, id)
+	}
 	return err
 }
 
@@ -310,8 +314,10 @@ func authorizeTenant(actor platformprincipal.Principal, tenantID string) error {
 }
 func (s *Service) invalidate(ctx context.Context, id string) {
 	if s.cache != nil {
-		if err := s.cache.Delete(ctx, "tenant:v1:"+id+":"+id); err != nil && s.logger != nil {
-			s.logger.WarnContext(ctx, "invalidate tenant cache", "tenant_id", id, "error", err)
+		cacheCtx, cancel := cache.AfterCommitContext(ctx)
+		defer cancel()
+		if err := s.cache.Delete(cacheCtx, "tenant:v1:"+id+":"+id); err != nil && s.logger != nil {
+			s.logger.WarnContext(cacheCtx, "invalidate tenant cache", "tenant_id", id, "error", err)
 		}
 	}
 }

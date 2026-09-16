@@ -365,6 +365,69 @@ func TestConfig_RejectsUnsafeOutboxBounds(t *testing.T) {
 	}
 }
 
+func TestConfig_RejectsUnsafeRateLimitBounds(t *testing.T) {
+	t.Parallel()
+	for _, rule := range []RateLimitRule{
+		{Rate: 1_000_001, Burst: 1, Period: time.Minute},
+		{Rate: 1, Burst: 1_000_001, Period: time.Minute},
+		{Rate: 1, Burst: 1, Period: time.Millisecond},
+		{Rate: 1, Burst: 1, Period: 25 * time.Hour},
+	} {
+		cfg := validDevelopmentConfig(t)
+		cfg.RateLimit.Enabled = true
+		cfg.Redis.Enabled = true
+		cfg.RateLimit.IP = rule
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "bounded and positive") {
+			t.Fatalf("rule %+v Validate() error = %v", rule, err)
+		}
+	}
+}
+
+func TestConfig_RejectsUnsafeRedisTimeouts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*Redis)
+	}{
+		{name: "dial timeout", mutate: func(redis *Redis) { redis.DialTimeout = 0 }},
+		{name: "read timeout", mutate: func(redis *Redis) { redis.ReadTimeout = 0 }},
+		{name: "write timeout", mutate: func(redis *Redis) { redis.WriteTimeout = 0 }},
+		{name: "unbounded timeout", mutate: func(redis *Redis) { redis.ReadTimeout = time.Minute + time.Second }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.Redis.Enabled = true
+			test.mutate(&cfg.Redis)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "positive timeouts") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_RejectsUnboundedCacheTTLs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "user", mutate: func(cfg *Config) { cfg.User.CacheTTL = 24*time.Hour + time.Second }},
+		{name: "tenant", mutate: func(cfg *Config) { cfg.Tenant.CacheTTL = 24*time.Hour + time.Second }},
+		{name: "menu", mutate: func(cfg *Config) { cfg.Menu.CacheTTL = 24*time.Hour + time.Second }},
+		{name: "platform config", mutate: func(cfg *Config) { cfg.PlatformConfig.CacheTTL = 24*time.Hour + time.Second }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "24h") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestDefaultCORSAllowsIdempotencyKey(t *testing.T) {
 	t.Parallel()
 	cfg := validDevelopmentConfig(t)
@@ -469,4 +532,36 @@ func validDevelopmentConfig(t *testing.T) Config {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+func TestConfig_RedisKeyPrefixAlwaysIncludesActiveEnvironment(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "default service namespace",
+			cfg:  Config{App: App{Name: "orders", Env: "development"}},
+			want: "development:orders:",
+		},
+		{
+			name: "runtime profile takes precedence",
+			cfg:  Config{Runtime: Runtime{ActiveProfile: "test"}, App: App{Name: "orders", Env: "development"}},
+			want: "test:orders:",
+		},
+		{
+			name: "explicit namespace retains environment",
+			cfg:  Config{App: App{Env: "production"}, Redis: Redis{KeyPrefix: "payments:"}},
+			want: "production:payments:",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.cfg.RedisKeyPrefix(); got != test.want {
+				t.Fatalf("RedisKeyPrefix() = %q, want %q", got, test.want)
+			}
+		})
+	}
 }

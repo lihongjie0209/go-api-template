@@ -352,7 +352,7 @@ func TestLoginRateLimitNeverFailsOpen(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	limiter := appLimit.New(nil, config.Config{RateLimit: config.RateLimit{Enabled: true, FailOpen: true}})
+	limiter := appLimit.New(nil, config.Config{RateLimit: config.RateLimit{Enabled: true, FailOpen: true}}, nil)
 	rule := config.RateLimitRule{Rate: 1, Burst: 1, Period: time.Minute}
 	for _, test := range []struct {
 		name      string

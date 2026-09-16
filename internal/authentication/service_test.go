@@ -89,6 +89,32 @@ func TestService_RecordFailureUsesAtomicIncrement(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestService_LoginReadsAuthoritativeUserStatus(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	users := identity.New(
+		identity.NewRepository(sqlxDB),
+		database.NewTransactor(sqlxDB),
+		nil,
+		nil,
+		nil,
+		nil,
+		config.Config{},
+	)
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), users, nil, config.Config{})
+	now := time.Now()
+	mock.ExpectQuery(`SELECT id,username,display_name,email,phone,status`).WithArgs("alice").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("user-1", "alice", "Alice", "", "", identity.StatusDisabled, now, "admin", now, "admin", 2))
+
+	_, err = service.Login(t.Context(), " Alice ", "irrelevant password", "127.0.0.1", "test")
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestService_RecordFailureRollsBackWhenSecurityEventCannotBeStored(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

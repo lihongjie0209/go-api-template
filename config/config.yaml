@@ -47,7 +47,8 @@ database:
   ping_timeout: 5s
 redis:
   enabled: false
-  # Empty uses "<app.name>:" to isolate services sharing Redis.
+  # Effective namespace is "<environment>:<key_prefix>". Empty key_prefix
+  # uses "<environment>:<app.name>:" to isolate services and environments.
   key_prefix: ""
   address: 127.0.0.1:6379
   username: ""

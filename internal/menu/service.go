@@ -562,8 +562,10 @@ func (s *Service) invalidateCache(ctx context.Context) {
 	if s.cache == nil {
 		return
 	}
-	if err := s.cache.Delete(context.WithoutCancel(ctx), menuCacheAll, menuCacheVisible); err != nil && s.logger != nil {
-		s.logger.WarnContext(ctx, "invalidate menu cache", "error", err)
+	cacheCtx, cancel := cache.AfterCommitContext(ctx)
+	defer cancel()
+	if err := s.cache.Delete(cacheCtx, menuCacheAll, menuCacheVisible); err != nil && s.logger != nil {
+		s.logger.WarnContext(cacheCtx, "invalidate menu cache", "error", err)
 	}
 }
 func clean(value *string) *string {

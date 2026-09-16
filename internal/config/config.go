@@ -122,6 +122,25 @@ type Redis struct {
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 }
 
+// RedisKeyPrefix returns the mandatory environment and service scoped Redis
+// namespace. An explicit key_prefix replaces only the service portion; the
+// active environment is always retained so deployments sharing Redis cannot
+// affect one another.
+func (c Config) RedisKeyPrefix() string {
+	profile := strings.ToLower(strings.TrimSpace(c.Runtime.ActiveProfile))
+	if profile == "" {
+		profile = strings.ToLower(strings.TrimSpace(c.App.Env))
+	}
+	if profile == "" {
+		profile = "development"
+	}
+	namespace := c.Redis.KeyPrefix
+	if namespace == "" {
+		namespace = strings.TrimSpace(c.App.Name) + ":"
+	}
+	return profile + ":" + namespace
+}
+
 type Health struct {
 	DatabaseTimeout time.Duration `mapstructure:"database_timeout"`
 	RedisTimeout    time.Duration `mapstructure:"redis_timeout"`
@@ -640,8 +659,8 @@ func (c Config) Validate() error {
 	if c.Migration.AutoUp && (!c.Database.Enabled || c.Migration.Path == "" || c.Migration.DatabaseURL == "" || !validMigrationTable.MatchString(c.Migration.Table)) {
 		return errors.New("migration.auto_up requires enabled database, path, database_url, and a valid service-specific table")
 	}
-	if c.Redis.Enabled && c.Redis.Address == "" {
-		return errors.New("enabled redis requires address")
+	if c.Redis.Enabled && (c.Redis.Address == "" || c.Redis.DialTimeout <= 0 || c.Redis.DialTimeout > time.Minute || c.Redis.ReadTimeout <= 0 || c.Redis.ReadTimeout > time.Minute || c.Redis.WriteTimeout <= 0 || c.Redis.WriteTimeout > time.Minute) {
+		return errors.New("enabled redis requires an address and positive timeouts no greater than one minute")
 	}
 	if c.Redis.KeyPrefix != "" && !validRedisPrefix.MatchString(c.Redis.KeyPrefix) {
 		return errors.New("redis.key_prefix must be a bounded namespace ending in ':'")
@@ -654,8 +673,8 @@ func (c Config) Validate() error {
 	}
 	if c.RateLimit.Enabled {
 		for name, rule := range map[string]RateLimitRule{"ip": c.RateLimit.IP, "api": c.RateLimit.API, "user": c.RateLimit.User, "login": c.RateLimit.Login} {
-			if rule.Rate <= 0 || rule.Burst <= 0 || rule.Period <= 0 {
-				return fmt.Errorf("rate_limit.%s values must be positive", name)
+			if rule.Rate <= 0 || rule.Rate > 1_000_000 || rule.Burst <= 0 || rule.Burst > 1_000_000 || rule.Period < time.Second || rule.Period > 24*time.Hour {
+				return fmt.Errorf("rate_limit.%s values must be bounded and positive", name)
 			}
 		}
 	}
@@ -701,17 +720,18 @@ func (c Config) Validate() error {
 	if c.Auth.PSK.Enabled && len(c.Auth.PSK.Key) < 32 {
 		return errors.New("enabled auth.psk requires a key of at least 32 bytes")
 	}
-	if c.User.CacheTTL <= 0 || c.User.LockTTL <= 0 || c.User.LockRetryDelay <= 0 {
-		return errors.New("user cache and lock durations must be positive")
+	const maxCacheTTL = 24 * time.Hour
+	if c.User.CacheTTL <= 0 || c.User.CacheTTL > maxCacheTTL || c.User.LockTTL <= 0 || c.User.LockRetryDelay <= 0 {
+		return errors.New("user cache duration must be positive and no greater than 24h; lock durations must be positive")
 	}
-	if c.Tenant.CacheTTL <= 0 {
-		return errors.New("tenant cache duration must be positive")
+	if c.Tenant.CacheTTL <= 0 || c.Tenant.CacheTTL > maxCacheTTL {
+		return errors.New("tenant cache duration must be positive and no greater than 24h")
 	}
-	if c.Menu.CacheTTL <= 0 || c.Menu.MaxNodes <= 0 || c.Menu.MaxNodes > 100000 {
-		return errors.New("menu cache duration and max_nodes must be valid")
+	if c.Menu.CacheTTL <= 0 || c.Menu.CacheTTL > maxCacheTTL || c.Menu.MaxNodes <= 0 || c.Menu.MaxNodes > 100000 {
+		return errors.New("menu cache duration must be positive and no greater than 24h; max_nodes must be valid")
 	}
-	if c.PlatformConfig.CacheTTL <= 0 {
-		return errors.New("platform config cache duration must be positive")
+	if c.PlatformConfig.CacheTTL <= 0 || c.PlatformConfig.CacheTTL > maxCacheTTL {
+		return errors.New("platform config cache duration must be positive and no greater than 24h")
 	}
 	if c.Authentication.RefreshTTL <= 0 || c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
 		return errors.New("authentication refresh, failure, and lock settings must be positive")

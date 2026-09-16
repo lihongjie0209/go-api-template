@@ -276,7 +276,7 @@ func updatePasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, credential Creden
 	return err
 }
 func (s *Service) Login(ctx context.Context, username, password, ip, ua string) (Tokens, error) {
-	user, err := s.users.ResolveUsername(ctx, username)
+	user, err := s.users.ResolveUsernameAuthoritative(ctx, username)
 	if err != nil || user.Status != identity.StatusActive {
 		return Tokens{}, ErrInvalidCredentials
 	}
