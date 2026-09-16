@@ -2145,6 +2145,8 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       id:
         type: string
       name:
@@ -2158,6 +2160,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer
@@ -2183,6 +2187,8 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       id:
         type: string
       name:
@@ -2196,6 +2202,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer

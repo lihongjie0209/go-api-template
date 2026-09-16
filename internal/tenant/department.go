@@ -15,6 +15,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	platformtree "github.com/lihongjie0209/microservice-platform-go/tree"
 )
@@ -28,17 +29,19 @@ const (
 )
 
 type Department struct {
-	ID        string    `db:"id" json:"id"`
-	TenantID  string    `db:"tenant_id" json:"tenant_id"`
-	ParentID  *string   `db:"parent_id" json:"parent_id"`
-	Code      string    `db:"code" json:"code"`
-	Name      string    `db:"name" json:"name"`
-	SortOrder int64     `db:"sort_order" json:"sort_order"`
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
-	CreatedBy string    `db:"created_by" json:"created_by"`
-	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy string    `db:"updated_by" json:"updated_by"`
-	Version   int64     `db:"version" json:"version"`
+	ID            string    `db:"id" json:"id"`
+	TenantID      string    `db:"tenant_id" json:"tenant_id"`
+	ParentID      *string   `db:"parent_id" json:"parent_id"`
+	Code          string    `db:"code" json:"code"`
+	Name          string    `db:"name" json:"name"`
+	SortOrder     int64     `db:"sort_order" json:"sort_order"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	CreatedBy     string    `db:"created_by" json:"created_by"`
+	CreatedByName string    `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string    `db:"updated_by" json:"updated_by"`
+	UpdatedByName string    `db:"-" json:"updated_by_name"`
+	Version       int64     `db:"version" json:"version"`
 }
 type DepartmentNode struct {
 	Department
@@ -65,11 +68,12 @@ type DepartmentService struct {
 	tx         *database.Transactor
 	locker     cache.Locker
 	operations operationlog.TransactionalRecorder
+	users      UserResolver
 	cfg        config.Config
 }
 
-func NewDepartmentService(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, cfg config.Config) *DepartmentService {
-	return &DepartmentService{db, tx, locker, operations, cfg}
+func NewDepartmentService(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, users UserResolver, cfg config.Config) *DepartmentService {
+	return &DepartmentService{db: db, tx: tx, locker: locker, operations: operations, users: users, cfg: cfg}
 }
 
 const departmentColumns = `id,tenant_id,parent_id,code,name,sort_order,created_at,created_by,updated_at,updated_by,version`
@@ -120,7 +124,14 @@ func (s *DepartmentService) Get(ctx context.Context, id string) (Department, err
 	if errors.Is(err, sql.ErrNoRows) {
 		return record, ErrNotFound
 	}
-	return record, err
+	if err != nil {
+		return record, err
+	}
+	records := []Department{record}
+	if err := s.presentDepartments(ctx, records); err != nil {
+		return Department{}, err
+	}
+	return records[0], nil
 }
 func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*DepartmentNode, error) {
 	actor, err := departmentActor(ctx)
@@ -141,6 +152,9 @@ func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*Depart
 		return nil, fmt.Errorf("%w: department tree exceeds %d nodes", ErrInvalid, maxDepartmentNodes)
 	}
 	records = filterDepartments(records, keyword)
+	if err := s.presentDepartments(ctx, records); err != nil {
+		return nil, err
+	}
 	forest, err := platformtree.Build(records, func(v Department) string { return v.ID }, func(v Department) (string, bool) {
 		if v.ParentID == nil {
 			return "", false
@@ -151,6 +165,30 @@ func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*Depart
 		return nil, fmt.Errorf("build department tree: %w", err)
 	}
 	return mapDepartments(forest), nil
+}
+
+func (s *DepartmentService) presentDepartments(ctx context.Context, records []Department) error {
+	ids := make([]string, 0, len(records)*2)
+	for _, record := range records {
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
+	}
+	names := stableActorNames(ids)
+	if resolver, ok := s.users.(UserDisplayResolver); ok {
+		resolved, err := resolver.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+	}
+	return nil
 }
 func filterDepartments(records []Department, keyword string) []Department {
 	keyword = strings.ToLower(strings.TrimSpace(keyword))

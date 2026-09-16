@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
@@ -49,6 +50,23 @@ func TestFilterDepartmentsRetainsAncestorsAndSearchesCode(t *testing.T) {
 	require.Empty(t, missing)
 }
 func ptr(value string) *string { return &value }
+
+func TestDepartmentPresentationUsesOneIdentityBatchAndPlatformTimezone(t *testing.T) {
+	t.Parallel()
+	client := &identityClientStub{}
+	service := &DepartmentService{users: &grpcUserResolver{client: client}}
+	instant := time.Date(2026, time.September, 16, 1, 2, 3, 0, time.UTC)
+	records := []Department{
+		{CreatedBy: "user-1", UpdatedBy: "system-1", CreatedAt: instant, UpdatedAt: instant},
+		{CreatedBy: "user-1", UpdatedBy: "user-1", CreatedAt: instant, UpdatedAt: instant},
+	}
+
+	require.NoError(t, service.presentDepartments(t.Context(), records))
+	require.Equal(t, "Alice", records[0].CreatedByName)
+	require.Equal(t, "system-1", records[0].UpdatedByName)
+	require.Equal(t, "2026-09-16T09:02:03+08:00", records[0].CreatedAt.Format(time.RFC3339))
+	require.Len(t, client.batchRequest.GetUserIds(), 2)
+}
 
 func TestDepartmentServiceRejectsUnboundedInputBeforeDatabase(t *testing.T) {
 	t.Parallel()

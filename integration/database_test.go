@@ -852,7 +852,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := members.Remove(departmentCtx, addedMember.ID, disabledMember.Version); err != nil {
 		t.Fatalf("remove tenant member: %v", err)
 	}
-	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, config.Config{})
+	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{})
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
 	if err != nil {
 		t.Fatal(err)

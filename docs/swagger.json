@@ -7416,6 +7416,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -7435,6 +7438,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {
@@ -7474,6 +7480,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -7493,6 +7502,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {
