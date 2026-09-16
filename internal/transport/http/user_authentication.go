@@ -3,11 +3,13 @@ package httptransport
 import (
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -38,8 +40,14 @@ type ChangePasswordRequest struct {
 	NewPassword string `json:"new_password" binding:"required,max=1024"`
 }
 type SessionPageRequest struct {
-	Page     int `json:"page"`
-	PageSize int `json:"page_size"`
+	pagination.Request
+	IDs            []string                       `json:"ids"`
+	Statuses       []authentication.SessionStatus `json:"statuses"`
+	ClientIPs      []string                       `json:"client_ips"`
+	CreatedAtFrom  *time.Time                     `json:"created_at_from"`
+	CreatedAtTo    *time.Time                     `json:"created_at_to"`
+	LastSeenAtFrom *time.Time                     `json:"last_seen_at_from"`
+	LastSeenAtTo   *time.Time                     `json:"last_seen_at_to"`
 }
 type RevokeSessionRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
@@ -194,7 +202,10 @@ func (h *UserAuthenticationHandler) Sessions(c *gin.Context) {
 		Fail(c, h.logger, apperror.Invalid("invalid session request", e))
 		return
 	}
-	page, e := h.service.Sessions(c.Request.Context(), r.Page, r.PageSize)
+	page, e := h.service.Sessions(c.Request.Context(), authentication.SessionPageInput{
+		Request: r.Request, IDs: r.IDs, Statuses: r.Statuses, ClientIPs: r.ClientIPs,
+		CreatedAtFrom: r.CreatedAtFrom, CreatedAtTo: r.CreatedAtTo, LastSeenAtFrom: r.LastSeenAtFrom, LastSeenAtTo: r.LastSeenAtTo,
+	})
 	if e != nil {
 		h.fail(c, e)
 		return

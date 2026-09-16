@@ -4324,6 +4324,19 @@ const docTemplate = `{
                 }
             }
         },
+        "authentication.SessionStatus": {
+            "type": "string",
+            "enum": [
+                "active",
+                "expired",
+                "revoked"
+            ],
+            "x-enum-varnames": [
+                "SessionStatusActive",
+                "SessionStatusExpired",
+                "SessionStatusRevoked"
+            ]
+        },
         "authentication.SessionView": {
             "type": "object",
             "properties": {
@@ -4346,6 +4359,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "revoked_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/authentication.SessionStatus"
+                },
+                "status_name": {
                     "type": "string"
                 },
                 "user_agent": {
@@ -5825,11 +5844,44 @@ const docTemplate = `{
         "httptransport.SessionPageRequest": {
             "type": "object",
             "properties": {
+                "client_ips": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "last_seen_at_from": {
+                    "type": "string"
+                },
+                "last_seen_at_to": {
+                    "type": "string"
+                },
                 "page": {
                     "type": "integer"
                 },
                 "page_size": {
                     "type": "integer"
+                },
+                "statuses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authentication.SessionStatus"
+                    }
                 }
             }
         },

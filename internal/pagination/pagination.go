@@ -5,6 +5,7 @@ import "errors"
 const (
 	DefaultPageSize = 20
 	MaxPageSize     = 200
+	MaxPage         = 1_000_000
 )
 
 type Request struct {
@@ -27,7 +28,7 @@ func Normalize(request Request) (Request, error) {
 	if request.PageSize == 0 {
 		request.PageSize = DefaultPageSize
 	}
-	if request.Page < 1 || request.PageSize < 1 || request.PageSize > MaxPageSize {
+	if request.Page < 1 || request.Page > MaxPage || request.PageSize < 1 || request.PageSize > MaxPageSize {
 		return Request{}, errors.New("invalid pagination")
 	}
 	return request, nil

@@ -13,6 +13,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -73,11 +74,95 @@ func TestService_SessionsAlwaysScopesQueryToCurrentUser(t *testing.T) {
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions WHERE user_id=`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`SELECT id,user_id,expires_at`).WithArgs("user-1", 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "expires_at", "last_seen_at", "revoked_at", "revoke_reason", "client_ip", "user_agent", "created_at", "version"}))
-	page, err := service.Sessions(ctx, 1, 20)
+	page, err := service.Sessions(ctx, SessionPageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
 	require.NoError(t, err)
 	require.Zero(t, page.Total)
 	require.NotNil(t, page.Items)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SessionsAppliesBoundedFiltersWithinCurrentUser(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	from := time.Now().Add(-time.Hour)
+	to := time.Now()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions WHERE user_id=.*LOWER\(client_ip\).*id IN.*client_ip IN.*revoked_at IS NULL AND expires_at>.*created_at>=.*created_at<`).
+		WithArgs("user-1", "%browser%", "%browser%", "session-1", "203.0.113.10", sqlmock.AnyArg(), from, to).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT id,user_id,expires_at.*WHERE user_id=.*ORDER BY last_seen_at DESC,id LIMIT`).
+		WithArgs("user-1", "%browser%", "%browser%", "session-1", "203.0.113.10", sqlmock.AnyArg(), from, to, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "expires_at", "last_seen_at", "revoked_at", "revoke_reason", "client_ip", "user_agent", "created_at", "version"}))
+
+	page, err := service.Sessions(ctx, SessionPageInput{
+		Request:       pagination.Request{Page: 1, PageSize: 20, Keyword: " Browser "},
+		IDs:           []string{"session-1"},
+		Statuses:      []SessionStatus{SessionStatusActive},
+		ClientIPs:     []string{"203.0.113.10"},
+		CreatedAtFrom: &from,
+		CreatedAtTo:   &to,
+	})
+	require.NoError(t, err)
+	require.Zero(t, page.Total)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SessionsRejectsInvalidFilters(t *testing.T) {
+	service := New(nil, &database.Transactor{}, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+
+	_, err := service.Sessions(ctx, SessionPageInput{
+		Request:  pagination.Request{Page: 1, PageSize: 20},
+		Statuses: []SessionStatus{"unknown"},
+	})
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestClassifySession(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	revoked := now.Add(-time.Minute)
+	tests := []struct {
+		name string
+		view SessionView
+		want SessionStatus
+	}{
+		{name: "active", view: SessionView{ExpiresAt: now.Add(time.Minute)}, want: SessionStatusActive},
+		{name: "expired", view: SessionView{ExpiresAt: now.Add(-time.Minute)}, want: SessionStatusExpired},
+		{name: "revoked", view: SessionView{ExpiresAt: now.Add(time.Minute), RevokedAt: &revoked}, want: SessionStatusRevoked},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, name := classifySession(test.view, now)
+			require.Equal(t, test.want, got)
+			require.NotEmpty(t, name)
+		})
+	}
+}
+
+func TestPresentSessionUsesPlatformTimezone(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.September, 16, 5, 0, 0, 0, time.UTC)
+	view := presentSession(SessionView{ExpiresAt: now, LastSeenAt: now, CreatedAt: now, RevokedAt: &now})
+	for name, value := range map[string]time.Time{
+		"expires_at": view.ExpiresAt, "last_seen_at": view.LastSeenAt, "created_at": view.CreatedAt, "revoked_at": *view.RevokedAt,
+	} {
+		_, offset := value.Zone()
+		require.Equal(t, 8*60*60, offset, name)
+		require.Equal(t, "Asia/Shanghai", value.Location().String(), name)
+	}
+}
+
+func TestBoundedSessionText(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "ab", boundedSessionText("abc", 2))
+	require.Equal(t, "用户", boundedSessionText("用户端", 2))
+	require.Equal(t, "a�b", boundedSessionText("a\xffb", 3))
 }
 
 func TestService_RecordFailureUsesAtomicIncrement(t *testing.T) {

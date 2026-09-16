@@ -41,6 +41,16 @@ definitions:
       total:
         type: integer
     type: object
+  authentication.SessionStatus:
+    enum:
+    - active
+    - expired
+    - revoked
+    type: string
+    x-enum-varnames:
+    - SessionStatusActive
+    - SessionStatusExpired
+    - SessionStatusRevoked
   authentication.SessionView:
     properties:
       client_ip:
@@ -56,6 +66,10 @@ definitions:
       revoke_reason:
         type: string
       revoked_at:
+        type: string
+      status:
+        $ref: '#/definitions/authentication.SessionStatus'
+      status_name:
         type: string
       user_agent:
         type: string
@@ -1058,10 +1072,32 @@ definitions:
     type: object
   httptransport.SessionPageRequest:
     properties:
+      client_ips:
+        items:
+          type: string
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        type: array
+      keyword:
+        type: string
+      last_seen_at_from:
+        type: string
+      last_seen_at_to:
+        type: string
       page:
         type: integer
       page_size:
         type: integer
+      statuses:
+        items:
+          $ref: '#/definitions/authentication.SessionStatus'
+        type: array
     type: object
   httptransport.SetDepartmentMembersRequest:
     properties:

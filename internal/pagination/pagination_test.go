@@ -11,4 +11,7 @@ func TestNormalize(t *testing.T) {
 	if _, err := Normalize(Request{Page: 1, PageSize: MaxPageSize + 1}); err == nil {
 		t.Fatal("oversized page passed")
 	}
+	if _, err := Normalize(Request{Page: MaxPage + 1, PageSize: 1}); err == nil {
+		t.Fatal("oversized page number passed")
+	}
 }

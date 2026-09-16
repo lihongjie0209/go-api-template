@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -59,22 +61,48 @@ type session struct {
 	Version                  int64      `db:"version"`
 }
 type SessionView struct {
-	ID           string     `db:"id" json:"id"`
-	UserID       string     `db:"user_id" json:"user_id"`
-	ExpiresAt    time.Time  `db:"expires_at" json:"expires_at"`
-	LastSeenAt   time.Time  `db:"last_seen_at" json:"last_seen_at"`
-	RevokedAt    *time.Time `db:"revoked_at" json:"revoked_at,omitempty"`
-	RevokeReason string     `db:"revoke_reason" json:"revoke_reason"`
-	ClientIP     string     `db:"client_ip" json:"client_ip"`
-	UserAgent    string     `db:"user_agent" json:"user_agent"`
-	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
-	Version      int64      `db:"version" json:"version"`
+	ID           string        `db:"id" json:"id"`
+	UserID       string        `db:"user_id" json:"user_id"`
+	ExpiresAt    time.Time     `db:"expires_at" json:"expires_at"`
+	LastSeenAt   time.Time     `db:"last_seen_at" json:"last_seen_at"`
+	RevokedAt    *time.Time    `db:"revoked_at" json:"revoked_at,omitempty"`
+	RevokeReason string        `db:"revoke_reason" json:"revoke_reason"`
+	ClientIP     string        `db:"client_ip" json:"client_ip"`
+	UserAgent    string        `db:"user_agent" json:"user_agent"`
+	CreatedAt    time.Time     `db:"created_at" json:"created_at"`
+	Version      int64         `db:"version" json:"version"`
+	Status       SessionStatus `db:"-" json:"status"`
+	StatusName   string        `db:"-" json:"status_name"`
 }
 type SessionPage struct {
 	Items    []SessionView `json:"items"`
 	Page     int           `json:"page"`
 	PageSize int           `json:"page_size"`
 	Total    int64         `json:"total"`
+}
+
+type SessionStatus string
+
+const (
+	SessionStatusActive  SessionStatus = "active"
+	SessionStatusExpired SessionStatus = "expired"
+	SessionStatusRevoked SessionStatus = "revoked"
+
+	maxSessionFilterValues = 200
+	maxSessionKeyword      = 256
+	maxSessionID           = 256
+	maxSessionClientIP     = 256
+)
+
+type SessionPageInput struct {
+	pagination.Request
+	IDs            []string
+	Statuses       []SessionStatus
+	ClientIPs      []string
+	CreatedAtFrom  *time.Time
+	CreatedAtTo    *time.Time
+	LastSeenAtFrom *time.Time
+	LastSeenAtTo   *time.Time
 }
 type Service struct {
 	db       *sqlx.DB
@@ -87,6 +115,8 @@ type Service struct {
 }
 
 const identitySessionInsertSQL = `INSERT INTO identity_sessions (id,user_id,refresh_token_hash,previous_refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?, '',?,?, '',?,?,?,?,?,?,1)`
+
+var presentationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 func New(db *sqlx.DB, tx *database.Transactor, users *identity.Service, jwt *auth.Service, cfg config.Config) *Service {
 	return &Service{db: db, tx: tx, users: users, jwt: jwt, hasher: auth.NewPasswordHasher(), cfg: cfg}
@@ -159,30 +189,127 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 	})
 }
 
-func (s *Service) Sessions(ctx context.Context, page, pageSize int) (SessionPage, error) {
+func (s *Service) Sessions(ctx context.Context, input SessionPageInput) (SessionPage, error) {
 	actor, err := platformprincipal.Require(ctx)
 	if err != nil || actor.Type != platformprincipal.TypeUser {
 		return SessionPage{}, ErrForbidden
 	}
-	if page < 1 {
-		page = 1
+	request, err := pagination.Normalize(input.Request)
+	if err != nil || request.PageSize > 100 || len(input.Keyword) > maxSessionKeyword || len(input.IDs) > maxSessionFilterValues || len(input.Statuses) > 3 || len(input.ClientIPs) > maxSessionFilterValues || !validSessionValues(input.IDs, maxSessionID) || !validSessionValues(input.ClientIPs, maxSessionClientIP) || invalidTimeRange(input.CreatedAtFrom, input.CreatedAtTo) || invalidTimeRange(input.LastSeenAtFrom, input.LastSeenAtTo) {
+		return SessionPage{}, ErrInvalid
 	}
-	if pageSize < 1 {
-		pageSize = 20
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	for _, status := range input.Statuses {
+		if status != SessionStatusActive && status != SessionStatusExpired && status != SessionStatusRevoked {
+			return SessionPage{}, ErrInvalid
+		}
 	}
-	if pageSize > 100 {
-		pageSize = 100
+	where := "user_id=? AND deleted_at IS NULL"
+	args := []any{actor.ID}
+	if input.Keyword != "" {
+		pattern := "%" + strings.ToLower(input.Keyword) + "%"
+		where += " AND (LOWER(client_ip) LIKE ? OR LOWER(user_agent) LIKE ?)"
+		args = append(args, pattern, pattern)
 	}
+	for _, filter := range []struct {
+		column string
+		values []string
+	}{
+		{column: "id", values: input.IDs},
+		{column: "client_ip", values: input.ClientIPs},
+	} {
+		if len(filter.values) != 0 {
+			where += " AND " + filter.column + " IN (" + sessionPlaceholders(len(filter.values)) + ")"
+			for _, value := range filter.values {
+				args = append(args, strings.TrimSpace(value))
+			}
+		}
+	}
+	if len(input.Statuses) != 0 {
+		conditions := make([]string, 0, len(input.Statuses))
+		now := time.Now()
+		for _, status := range input.Statuses {
+			switch status {
+			case SessionStatusActive:
+				conditions = append(conditions, "(revoked_at IS NULL AND expires_at>?)")
+				args = append(args, now)
+			case SessionStatusExpired:
+				conditions = append(conditions, "(revoked_at IS NULL AND expires_at<=?)")
+				args = append(args, now)
+			case SessionStatusRevoked:
+				conditions = append(conditions, "revoked_at IS NOT NULL")
+			}
+		}
+		where += " AND (" + strings.Join(conditions, " OR ") + ")"
+	}
+	where, args = addSessionTimeRange(where, args, "created_at", input.CreatedAtFrom, input.CreatedAtTo)
+	where, args = addSessionTimeRange(where, args, "last_seen_at", input.LastSeenAtFrom, input.LastSeenAtTo)
 	var total int64
-	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM identity_sessions WHERE user_id=? AND deleted_at IS NULL`), actor.ID); err != nil {
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM identity_sessions WHERE `+where), args...); err != nil {
 		return SessionPage{}, err
 	}
 	items := []SessionView{}
-	q := s.db.Rebind(`SELECT id,user_id,expires_at,last_seen_at,revoked_at,revoke_reason,client_ip,user_agent,created_at,version FROM identity_sessions WHERE user_id=? AND deleted_at IS NULL ORDER BY last_seen_at DESC,id LIMIT ? OFFSET ?`)
-	if err := s.db.SelectContext(ctx, &items, q, actor.ID, pageSize, (page-1)*pageSize); err != nil {
+	q := s.db.Rebind(`SELECT id,user_id,expires_at,last_seen_at,revoked_at,revoke_reason,client_ip,user_agent,created_at,version FROM identity_sessions WHERE ` + where + ` ORDER BY last_seen_at DESC,id LIMIT ? OFFSET ?`)
+	pageArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
+	if err := s.db.SelectContext(ctx, &items, q, pageArgs...); err != nil {
 		return SessionPage{}, err
 	}
-	return SessionPage{Items: items, Page: page, PageSize: pageSize, Total: total}, nil
+	now := time.Now()
+	for index := range items {
+		items[index].Status, items[index].StatusName = classifySession(items[index], now)
+		items[index] = presentSession(items[index])
+	}
+	return SessionPage{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func validSessionValues(values []string, limit int) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len(value) > limit {
+			return false
+		}
+	}
+	return true
+}
+
+func invalidTimeRange(from, to *time.Time) bool {
+	return from != nil && to != nil && !from.Before(*to)
+}
+
+func addSessionTimeRange(where string, args []any, column string, from, to *time.Time) (string, []any) {
+	if from != nil {
+		where += " AND " + column + ">=?"
+		args = append(args, *from)
+	}
+	if to != nil {
+		where += " AND " + column + "<?"
+		args = append(args, *to)
+	}
+	return where, args
+}
+
+func sessionPlaceholders(count int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
+}
+
+func classifySession(value SessionView, now time.Time) (SessionStatus, string) {
+	if value.RevokedAt != nil {
+		return SessionStatusRevoked, "Revoked"
+	}
+	if !value.ExpiresAt.After(now) {
+		return SessionStatusExpired, "Expired"
+	}
+	return SessionStatusActive, "Active"
+}
+
+func presentSession(value SessionView) SessionView {
+	value.ExpiresAt = value.ExpiresAt.In(presentationLocation)
+	value.LastSeenAt = value.LastSeenAt.In(presentationLocation)
+	value.CreatedAt = value.CreatedAt.In(presentationLocation)
+	if value.RevokedAt != nil {
+		revokedAt := value.RevokedAt.In(presentationLocation)
+		value.RevokedAt = &revokedAt
+	}
+	return value
 }
 
 func (s *Service) RevokeSession(ctx context.Context, sessionID string, version int64) error {
@@ -276,6 +403,8 @@ func updatePasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, credential Creden
 	return err
 }
 func (s *Service) Login(ctx context.Context, username, password, ip, ua string) (Tokens, error) {
+	ip = boundedSessionText(ip, maxSessionClientIP)
+	ua = boundedSessionText(ua, 1024)
 	user, err := s.users.ResolveUsernameAuthoritative(ctx, username)
 	if err != nil || user.Status != identity.StatusActive {
 		return Tokens{}, ErrInvalidCredentials
@@ -329,6 +458,14 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		return Tokens{}, err
 	}
 	return Tokens{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: sessionID, UserID: user.ID}, nil
+}
+
+func boundedSessionText(value string, limit int) string {
+	runes := []rune(strings.ToValidUTF8(value, "�"))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit])
 }
 func (s *Service) recordFailure(ctx context.Context, c Credential, identifier, ip, userAgent string) error {
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:login")
