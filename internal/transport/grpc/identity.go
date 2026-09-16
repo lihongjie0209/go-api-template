@@ -3,6 +3,7 @@ package grpctransport
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
@@ -40,6 +41,16 @@ func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchG
 	return &identityv1.BatchGetUsersResponse{Users: users}, nil
 }
 func (s *identityServer) ListUsers(ctx context.Context, r *identityv1.ListUsersRequest) (*identityv1.ListUsersResponse, error) {
+	if username, exact := strings.CutPrefix(strings.TrimSpace(r.GetKeyword()), "="); exact {
+		u, e := s.service.ResolveUsername(ctx, username)
+		if errors.Is(e, identity.ErrNotFound) || e == nil && r.GetStatus() != identityv1.UserStatus_USER_STATUS_UNSPECIFIED && toProtoStatus(u.Status) != r.GetStatus() {
+			return &identityv1.ListUsersResponse{Users: []*identityv1.User{}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 0}}, nil
+		}
+		if e != nil {
+			return nil, identityError(e)
+		}
+		return &identityv1.ListUsersResponse{Users: []*identityv1.User{toProtoUser(u)}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
+	}
 	page, pageSize := 1, 20
 	if r.GetPage() != nil {
 		page = int(r.GetPage().GetPage())

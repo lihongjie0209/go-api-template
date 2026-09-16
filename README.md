@@ -131,6 +131,12 @@ once. Store that value in the deployment secret manager, then exchange the
 `client_id` and secret at `POST /api/v1/auth/login`. Rotation returns a new
 secret once and invalidates the old secret immediately.
 
+Tenant membership creation resolves a user through the Identity gRPC API. The
+existing `ListUsers` request reserves a keyword beginning with `=` for an exact
+normalized username lookup (for example, `=alice`); this mode uses the unique
+username index and returns at most one active user. Ordinary keywords retain
+their bounded fuzzy-search behavior.
+
 Business endpoints use POST with JSON; operational probes also expose GET for Docker/Kubernetes. Responses always use:
 
 ```json

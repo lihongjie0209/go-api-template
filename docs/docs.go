@@ -7512,6 +7512,9 @@ const docTemplate = `{
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "display_name": {
                     "type": "string"
                 },
@@ -7531,6 +7534,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "user_id": {
@@ -7578,6 +7584,9 @@ const docTemplate = `{
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -7600,6 +7609,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {

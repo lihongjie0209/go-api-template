@@ -26,7 +26,7 @@ func TestS3AdapterAgainstMinIO(t *testing.T) {
 	const accessKey, secretKey, bucket = "integration-access", "integration-secret-key", "integration-bucket"
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "minio/minio:RELEASE.2025-04-22T22-12-26Z",
+			Image:        "quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
 			ExposedPorts: []string{"9000/tcp"},
 			Env:          map[string]string{"MINIO_ROOT_USER": accessKey, "MINIO_ROOT_PASSWORD": secretKey},
 			Cmd:          []string{"server", "/data", "--address", ":9000"},

@@ -91,8 +91,14 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
 		return View{}, err
 	}
 	created, err := s.repository.AdminGet(ctx, record.ID)
-	view := toView(created)
-	return view, err
+	if err != nil {
+		return View{}, err
+	}
+	views, err := s.present(ctx, []Record{created})
+	if err != nil {
+		return View{}, err
+	}
+	return views[0], nil
 }
 
 // AdminGet reads a tenant outside a tenant context. It is intentionally
@@ -109,7 +115,11 @@ func (s *Service) AdminGet(ctx context.Context, id string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	return toView(record), nil
+	views, err := s.present(ctx, []Record{record})
+	if err != nil {
+		return View{}, err
+	}
+	return views[0], nil
 }
 
 // AdminPage is the only service operation allowed to list tenants without a
@@ -127,9 +137,9 @@ func (s *Service) AdminPage(ctx context.Context, input PageInput) (pagination.Re
 	if err != nil {
 		return pagination.Result[View]{}, err
 	}
-	items := make([]View, len(records))
-	for i := range records {
-		items[i] = toView(records[i])
+	items, err := s.present(ctx, records)
+	if err != nil {
+		return pagination.Result[View]{}, err
 	}
 	return pagination.Result[View]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
@@ -154,7 +164,11 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 				if err := authorizeTenant(actor, record.ID); err != nil {
 					return View{}, err
 				}
-				return toView(record), nil
+				views, presentErr := s.present(ctx, []Record{record})
+				if presentErr != nil {
+					return View{}, presentErr
+				}
+				return views[0], nil
 			} else if s.logger != nil {
 				s.logger.WarnContext(ctx, "decode tenant cache", "tenant_id", id, "error", decodeErr)
 			}
@@ -176,7 +190,11 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 			}
 		}
 	}
-	return toView(record), nil
+	views, err := s.present(ctx, []Record{record})
+	if err != nil {
+		return View{}, err
+	}
+	return views[0], nil
 }
 
 func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[View], error) {
@@ -195,11 +213,35 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 	if err != nil {
 		return pagination.Result[View]{}, err
 	}
-	items := make([]View, len(records))
-	for i := range records {
-		items[i] = toView(records[i])
+	items, err := s.present(ctx, records)
+	if err != nil {
+		return pagination.Result[View]{}, err
 	}
 	return pagination.Result[View]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func (s *Service) present(ctx context.Context, records []Record) ([]View, error) {
+	ids := make([]string, 0, len(records)*2)
+	for _, record := range records {
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
+	}
+	names := stableActorNames(ids)
+	if resolver, ok := s.users.(UserDisplayResolver); ok {
+		resolved, err := resolver.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	views := make([]View, len(records))
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		views[index] = toView(records[index])
+	}
+	return views, nil
 }
 
 func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, error) {

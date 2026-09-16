@@ -16,6 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/outbound"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
@@ -26,6 +27,9 @@ var ErrIdentityUnavailable = errors.New("identity service unavailable")
 type UserSnapshot struct{ ID, Username, DisplayName string }
 type UserResolver interface {
 	ResolveUsername(context.Context, string) (UserSnapshot, error)
+}
+type UserDisplayResolver interface {
+	ResolveUserIDs(context.Context, []string) (map[string]string, error)
 }
 type grpcUserResolver struct {
 	client identityv1.IdentityServiceClient
@@ -42,40 +46,70 @@ func (r *grpcUserResolver) ResolveUsername(ctx context.Context, username string)
 	if r.client == nil {
 		return UserSnapshot{}, ErrIdentityUnavailable
 	}
-	for page := uint32(1); ; page++ {
-		response, err := r.client.ListUsers(ctx, &identityv1.ListUsersRequest{Keyword: username, Page: &commonv1.PageRequest{Page: page, PageSize: 200}})
-		if err != nil {
-			return UserSnapshot{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
-		}
-		for _, u := range response.GetUsers() {
-			if strings.EqualFold(u.GetUsername(), username) {
-				if u.GetStatus() != identityv1.UserStatus_USER_STATUS_ACTIVE {
-					return UserSnapshot{}, ErrInvalid
-				}
-				return UserSnapshot{ID: u.GetId(), Username: u.GetUsername(), DisplayName: u.GetDisplayName()}, nil
-			}
-		}
-		result := response.GetPage()
-		if result == nil || uint64(page)*uint64(result.GetPageSize()) >= result.GetTotal() {
-			break
-		}
+	response, err := r.client.ListUsers(ctx, &identityv1.ListUsersRequest{Keyword: "=" + username, Status: identityv1.UserStatus_USER_STATUS_ACTIVE, Page: &commonv1.PageRequest{Page: 1, PageSize: 1}})
+	if err != nil {
+		return UserSnapshot{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
+	}
+	if len(response.GetUsers()) == 1 && strings.EqualFold(response.GetUsers()[0].GetUsername(), username) {
+		u := response.GetUsers()[0]
+		return UserSnapshot{ID: u.GetId(), Username: u.GetUsername(), DisplayName: u.GetDisplayName()}, nil
 	}
 	return UserSnapshot{}, ErrNotFound
 }
 
+func (r *grpcUserResolver) ResolveUserIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	if r.client == nil {
+		return nil, ErrIdentityUnavailable
+	}
+	names := make(map[string]string, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if len(id) > 256 {
+			return nil, ErrInvalid
+		}
+		if _, exists := names[id]; exists {
+			continue
+		}
+		names[id] = id
+		unique = append(unique, id)
+		if len(unique) > 200 {
+			return nil, ErrInvalid
+		}
+	}
+	if len(unique) == 0 {
+		return names, nil
+	}
+	response, err := r.client.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: unique})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
+	}
+	for _, user := range response.GetUsers() {
+		if _, requested := names[user.GetId()]; requested && strings.TrimSpace(user.GetDisplayName()) != "" {
+			names[user.GetId()] = user.GetDisplayName()
+		}
+	}
+	return names, nil
+}
+
 type Member struct {
-	ID          string    `db:"id" json:"id"`
-	TenantID    string    `db:"tenant_id" json:"tenant_id"`
-	UserID      string    `db:"user_id" json:"user_id"`
-	Username    string    `db:"username" json:"username"`
-	DisplayName string    `db:"display_name" json:"display_name"`
-	Status      Status    `db:"status" json:"status"`
-	JoinedAt    time.Time `db:"joined_at" json:"joined_at"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	CreatedBy   string    `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string    `db:"updated_by" json:"updated_by"`
-	Version     int64     `db:"version" json:"version"`
+	ID            string    `db:"id" json:"id"`
+	TenantID      string    `db:"tenant_id" json:"tenant_id"`
+	UserID        string    `db:"user_id" json:"user_id"`
+	Username      string    `db:"username" json:"username"`
+	DisplayName   string    `db:"display_name" json:"display_name"`
+	Status        Status    `db:"status" json:"status"`
+	JoinedAt      time.Time `db:"joined_at" json:"joined_at"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	CreatedBy     string    `db:"created_by" json:"created_by"`
+	CreatedByName string    `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string    `db:"updated_by" json:"updated_by"`
+	UpdatedByName string    `db:"-" json:"updated_by_name"`
+	Version       int64     `db:"version" json:"version"`
 }
 type MemberPageInput struct {
 	pagination.Request
@@ -204,7 +238,7 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		if err := run(ctx); err != nil {
 			return Member{}, err
 		}
-		return created, nil
+		return s.presentMember(ctx, created)
 	}
 	lockErr := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run)
 	if businessErr != nil {
@@ -213,7 +247,7 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 	if lockErr != nil {
 		return Member{}, ErrConflict
 	}
-	return created, nil
+	return s.presentMember(ctx, created)
 }
 
 func (s *MembershipService) Get(ctx context.Context, id string) (Member, error) {
@@ -225,7 +259,11 @@ func (s *MembershipService) Get(ctx context.Context, id string) (Member, error) 
 	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength {
 		return Member{}, ErrInvalid
 	}
-	return s.repository.GetMember(ctx, actor.TenantID, id)
+	member, err := s.repository.GetMember(ctx, actor.TenantID, id)
+	if err != nil {
+		return Member{}, err
+	}
+	return s.presentMember(ctx, member)
 }
 func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status Status, version int64) (Member, error) {
 	actor, e := requireActor(ctx)
@@ -261,7 +299,11 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if e != nil {
 		return Member{}, e
 	}
-	return s.repository.GetMember(ctx, actor.TenantID, id)
+	member, e := s.repository.GetMember(ctx, actor.TenantID, id)
+	if e != nil {
+		return Member{}, e
+	}
+	return s.presentMember(ctx, member)
 }
 func (s *MembershipService) Remove(ctx context.Context, id string, version int64) error {
 	actor, e := requireActor(ctx)
@@ -388,5 +430,51 @@ func (s *MembershipService) Page(ctx context.Context, input MemberPageInput) (pa
 	}
 	input.Request = request
 	items, total, e := s.repository.PageMembers(ctx, actor.TenantID, input)
+	if e == nil {
+		e = s.presentMembers(ctx, items)
+	}
 	return pagination.Result[Member]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, e
+}
+
+func (s *MembershipService) presentMember(ctx context.Context, member Member) (Member, error) {
+	members := []Member{member}
+	if err := s.presentMembers(ctx, members); err != nil {
+		return Member{}, err
+	}
+	return members[0], nil
+}
+
+func (s *MembershipService) presentMembers(ctx context.Context, members []Member) error {
+	ids := make([]string, 0, len(members)*2)
+	for _, member := range members {
+		ids = append(ids, member.CreatedBy, member.UpdatedBy)
+	}
+	names := stableActorNames(ids)
+	if resolver, ok := s.users.(UserDisplayResolver); ok {
+		resolved, err := resolver.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	for index := range members {
+		members[index].CreatedByName = names[members[index].CreatedBy]
+		members[index].UpdatedByName = names[members[index].UpdatedBy]
+		members[index].JoinedAt = presentation.Time(members[index].JoinedAt)
+		members[index].CreatedAt = presentation.Time(members[index].CreatedAt)
+		members[index].UpdatedAt = presentation.Time(members[index].UpdatedAt)
+	}
+	return nil
+}
+
+func stableActorNames(ids []string) map[string]string {
+	names := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			names[id] = id
+		}
+	}
+	return names
 }
