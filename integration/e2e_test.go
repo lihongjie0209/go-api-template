@@ -125,6 +125,9 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	if status := postJSON(t, baseURL+"/api/v1/me", "Bearer "+token, "", `{}`); status != http.StatusOK {
 		t.Fatalf("JWT status = %d", status)
 	}
+	if status := postJSON(t, baseURL+"/api/v1/example/ping", "PSK "+secret, "", `{"message":"hello"}`); status != http.StatusOK {
+		t.Fatalf("PSK status = %d", status)
+	}
 
 	connection, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -148,6 +151,10 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	if _, err := hellov1.NewHelloServiceClient(connection).Ping(pskCtx, &hellov1.PingRequest{Message: "hello"}); err != nil {
 		t.Fatalf("PSK Ping: %v", err)
 	}
+	jwtCtx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
+	if _, err := hellov1.NewHelloServiceClient(connection).Ping(jwtCtx, &hellov1.PingRequest{Message: "hello"}); err != nil {
+		t.Fatalf("JWT Ping: %v", err)
+	}
 }
 
 func seedRoutePolicies(t *testing.T, ctx context.Context, cfg config.Config, dsn string) {
@@ -163,6 +170,7 @@ func seedRoutePolicies(t *testing.T, ctx context.Context, cfg config.Config, dsn
 	}{
 		{protocol: "http", method: http.MethodPost, path: "/api/v1/version", expression: "anonymous"},
 		{protocol: "http", method: http.MethodPost, path: "/api/v1/me", expression: "authenticated"},
+		{protocol: "http", method: http.MethodPost, path: "/api/v1/example/ping", expression: `authenticated && principal_type == "service_account"`},
 		{protocol: "grpc", method: "call", path: hellov1.HelloService_Ping_FullMethodName, expression: `authenticated && principal_type == "service_account"`},
 	}
 	transactor := appdb.NewTransactor(db)
