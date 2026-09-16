@@ -108,15 +108,15 @@ func TestService_CreateReturnsSecretOnceWithoutAuditingIt(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), "billing-worker", "Billing Worker", "settles invoices", sqlmock.AnyArg(), StatusActive, nil, 0, sqlmock.AnyArg(), "admin-1", sqlmock.AnyArg(), "admin-1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
-	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts WHERE id=\$1`).WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "updated_at", "updated_by", "version"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "settles invoices", StatusActive, nil, nil, 0, nil, now, "admin-1", now, "admin-1", 1))
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "settles invoices", StatusActive, nil, nil, 0, nil, now, "admin-1", "Administrator", now, "admin-1", "Administrator", 1))
 
 	created, err := service.Create(ctx, CreateInput{ClientID: " Billing-Worker ", Name: "Billing Worker", Description: "settles invoices"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(created.Secret) < 40 || created.Account.ClientID != "billing-worker" {
+	if len(created.Secret) < 40 || created.Account.ClientID != "billing-worker" || created.Account.CreatedByName != "Administrator" || created.Account.UpdatedByName != "Administrator" {
 		t.Fatalf("created account = %+v", created)
 	}
 	payload, err := json.Marshal(struct {
@@ -151,8 +151,8 @@ func TestService_AuthenticateRejectsInvalidSecretWithoutLastUsedWrite(t *testing
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "updated_at", "updated_by", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", now, "admin", 1, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 1, hash))
 
 	if _, err := service.Authenticate(t.Context(), "billing-worker", "wrong-secret-value"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("Authenticate() error = %v", err)
@@ -176,8 +176,8 @@ func TestService_AuthenticateAtomicallyTracksFailedAttempts(t *testing.T) {
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "updated_at", "updated_by", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", now, "admin", 2, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts\+1`).
@@ -222,8 +222,8 @@ func TestService_AuthenticateRejectsCredentialChangedAfterVerification(t *testin
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "updated_at", "updated_by", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", now, "admin", 4, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).
@@ -254,8 +254,8 @@ func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "updated_at", "updated_by", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", now, "admin", 4, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).

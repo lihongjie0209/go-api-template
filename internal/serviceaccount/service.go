@@ -56,8 +56,10 @@ type Account struct {
 	LockedUntil    *time.Time `db:"locked_until" json:"locked_until,omitempty"`
 	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
 	CreatedBy      string     `db:"created_by" json:"created_by"`
+	CreatedByName  string     `db:"created_by_name" json:"created_by_name"`
 	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
 	UpdatedBy      string     `db:"updated_by" json:"updated_by"`
+	UpdatedByName  string     `db:"updated_by_name" json:"updated_by_name"`
 	Version        int64      `db:"version" json:"version"`
 }
 
@@ -103,7 +105,10 @@ type Service struct {
 	lockDuration      time.Duration
 }
 
-const accountColumns = `id,client_id,name,description,status,expires_at,last_used_at,failed_attempts,locked_until,created_at,created_by,updated_at,updated_by,version`
+const accountColumns = `a.id,a.client_id,a.name,a.description,a.status,a.expires_at,a.last_used_at,a.failed_attempts,a.locked_until,a.created_at,a.created_by,
+COALESCE((SELECT actor.display_name FROM identity_users actor WHERE actor.id=a.created_by),(SELECT actor.name FROM identity_service_accounts actor WHERE actor.id=a.created_by),a.created_by) AS created_by_name,
+a.updated_at,a.updated_by,
+COALESCE((SELECT actor.display_name FROM identity_users actor WHERE actor.id=a.updated_by),(SELECT actor.name FROM identity_service_accounts actor WHERE actor.id=a.updated_by),a.updated_by) AS updated_by_name,a.version`
 
 func New(db *sqlx.DB, transactor *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, cfg config.Config) *Service {
 	return &Service{db: db, transactor: transactor, hasher: auth.NewPasswordHasher(), operations: operations, security: security, maxFailedAttempts: cfg.Authentication.MaxFailedAttempts, lockDuration: cfg.Authentication.LockDuration}
@@ -209,7 +214,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 	}
 	queryArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
 	items := []Account{}
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+accountColumns+` FROM identity_service_accounts WHERE `+where+` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`), queryArgs...); err != nil {
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+accountColumns+` FROM identity_service_accounts a WHERE `+where+` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`), queryArgs...); err != nil {
 		return pagination.Result[Account]{}, err
 	}
 	return pagination.Result[Account]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
@@ -298,7 +303,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
 	var value credential
-	query := s.db.Rebind(`SELECT ` + accountColumns + `,secret_hash FROM identity_service_accounts WHERE client_id=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
+	query := s.db.Rebind(`SELECT ` + accountColumns + `,a.secret_hash FROM identity_service_accounts a WHERE client_id=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
 	if err := s.db.GetContext(ctx, &value, query, clientID, StatusActive, time.Now()); err != nil {
 		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
@@ -385,7 +390,7 @@ func (s *Service) recordFailure(ctx context.Context, account Account, entry secu
 
 func (s *Service) get(ctx context.Context, predicate string, args ...any) (Account, error) {
 	var account Account
-	query := s.db.Rebind(`SELECT ` + accountColumns + ` FROM identity_service_accounts WHERE ` + predicate + ` AND deleted_at IS NULL`)
+	query := s.db.Rebind(`SELECT ` + accountColumns + ` FROM identity_service_accounts a WHERE ` + predicate + ` AND deleted_at IS NULL`)
 	if err := s.db.GetContext(ctx, &account, query, args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Account{}, ErrNotFound

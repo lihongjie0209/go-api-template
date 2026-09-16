@@ -433,6 +433,14 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if created.Username != "alice.smith" || created.Version != 1 {
 		t.Fatalf("created user=%+v", created)
 	}
+	creatorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: created.ID, Type: platformprincipal.TypeUser})
+	presented, err := service.Create(creatorCtx, identity.CreateInput{Username: "bob.smith", DisplayName: "Bob"})
+	if err != nil || presented.CreatedByName != "Alice" || presented.UpdatedByName != "Alice" {
+		t.Fatalf("presented actor names user=%+v err=%v", presented, err)
+	}
+	if err := service.Delete(creatorCtx, presented.ID, presented.Version); err != nil {
+		t.Fatalf("delete presentation fixture: %v", err)
+	}
 	if _, err := service.Create(actorCtx, identity.CreateInput{Username: "ALICE.SMITH", DisplayName: "Duplicate"}); !errors.Is(err, identity.ErrConflict) {
 		t.Fatalf("duplicate username error=%v", err)
 	}

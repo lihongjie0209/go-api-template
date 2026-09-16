@@ -48,17 +48,19 @@ const (
 )
 
 type User struct {
-	ID          string    `db:"id" json:"id"`
-	Username    string    `db:"username" json:"username"`
-	DisplayName string    `db:"display_name" json:"display_name"`
-	Email       string    `db:"email" json:"email"`
-	Phone       string    `db:"phone" json:"phone"`
-	Status      Status    `db:"status" json:"status"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	CreatedBy   string    `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string    `db:"updated_by" json:"updated_by"`
-	Version     int64     `db:"version" json:"version"`
+	ID            string    `db:"id" json:"id"`
+	Username      string    `db:"username" json:"username"`
+	DisplayName   string    `db:"display_name" json:"display_name"`
+	Email         string    `db:"email" json:"email"`
+	Phone         string    `db:"phone" json:"phone"`
+	Status        Status    `db:"status" json:"status"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	CreatedBy     string    `db:"created_by" json:"created_by"`
+	CreatedByName string    `db:"created_by_name" json:"created_by_name"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string    `db:"updated_by" json:"updated_by"`
+	UpdatedByName string    `db:"updated_by_name" json:"updated_by_name"`
+	Version       int64     `db:"version" json:"version"`
 }
 
 type CreateInput struct{ Username, DisplayName, Email, Phone string }
@@ -79,7 +81,10 @@ type Repository struct{ db *sqlx.DB }
 
 func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
-const userColumns = `id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version`
+const userColumns = `u.id,u.username,u.display_name,u.email,u.phone,u.status,u.created_at,u.created_by,
+COALESCE((SELECT actor.display_name FROM identity_users actor WHERE actor.id=u.created_by),(SELECT actor.name FROM identity_service_accounts actor WHERE actor.id=u.created_by),u.created_by) AS created_by_name,
+u.updated_at,u.updated_by,
+COALESCE((SELECT actor.display_name FROM identity_users actor WHERE actor.id=u.updated_by),(SELECT actor.name FROM identity_service_accounts actor WHERE actor.id=u.updated_by),u.updated_by) AS updated_by_name,u.version`
 
 func (r *Repository) Get(ctx context.Context, id string) (User, error) {
 	return r.get(ctx, "id = ?", id)
@@ -91,7 +96,7 @@ func (r *Repository) ResolveUsername(ctx context.Context, username string) (User
 
 func (r *Repository) get(ctx context.Context, predicate string, args ...any) (User, error) {
 	var user User
-	query := r.db.Rebind(`SELECT ` + userColumns + ` FROM identity_users WHERE ` + predicate + ` AND deleted_at IS NULL`)
+	query := r.db.Rebind(`SELECT ` + userColumns + ` FROM identity_users u WHERE ` + predicate + ` AND deleted_at IS NULL`)
 	if err := r.db.GetContext(ctx, &user, query, args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
@@ -138,7 +143,7 @@ func (r *Repository) Page(ctx context.Context, input PageInput) ([]User, int64, 
 	}
 	queryArgs := append(append([]any{}, args...), input.PageSize, pagination.Offset(input.Request))
 	users := []User{}
-	err = r.db.SelectContext(ctx, &users, r.db.Rebind(`SELECT `+userColumns+` FROM identity_users WHERE `+where+` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`), queryArgs...)
+	err = r.db.SelectContext(ctx, &users, r.db.Rebind(`SELECT `+userColumns+` FROM identity_users u WHERE `+where+` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`), queryArgs...)
 	return users, total, err
 }
 

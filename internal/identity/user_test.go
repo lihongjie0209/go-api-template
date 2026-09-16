@@ -92,8 +92,8 @@ func TestDeleteRejectsTenantOwner(t *testing.T) {
 	}}
 	service := &Service{repository: NewRepository(sqlxDB), transactor: database.NewTransactor(sqlxDB), cache: store, operations: operationStub{}, security: securityStub{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	now := time.Now()
-	row := []driver.Value{"user-1", "alice", "Alice", "alice@example.com", "13800000000", StatusActive, now, "admin", now, "admin", int64(3)}
-	mock.ExpectQuery(`SELECT id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version FROM identity_users`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow(row...))
+	row := []driver.Value{"user-1", "alice", "Alice", "alice@example.com", "13800000000", StatusActive, now, "admin", "Administrator", now, "admin", "Administrator", int64(3)}
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).AddRow(row...))
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE owner_user_id=`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectRollback()

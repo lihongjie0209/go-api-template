@@ -110,9 +110,9 @@ func TestService_LoginReadsAuthoritativeUserStatus(t *testing.T) {
 	)
 	service := New(sqlxDB, database.NewTransactor(sqlxDB), users, nil, config.Config{})
 	now := time.Now()
-	mock.ExpectQuery(`SELECT id,username,display_name,email,phone,status`).WithArgs("alice").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
-			AddRow("user-1", "alice", "Alice", "", "", identity.StatusDisabled, now, "admin", now, "admin", 2))
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("alice").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("user-1", "alice", "Alice", "", "", identity.StatusDisabled, now, "admin", "Administrator", now, "admin", "Administrator", 2))
 
 	_, err = service.Login(t.Context(), " Alice ", "irrelevant password", "127.0.0.1", "test")
 	require.ErrorIs(t, err, ErrInvalidCredentials)
