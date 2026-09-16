@@ -56,6 +56,8 @@ spec:
 
 Subject 属性来自认证 Principal、租户成员关系及服务端可信投影。Resource 属性来自 Repository 记录或服务端校验后的待创建对象。客户端提交的 `tenant_id`、`owner_id`、`department_id` 等字段不能直接作为可信权限属性。
 
+角色与部门投影仅对 `user` 主体生效，并且查询必须同时绑定 `principal.id + tenant_id + membership_id`，校验有效成员记录的 `user_id`。服务账号不能通过携带成员 ID 继承人的角色或部门；如需授权服务账号，必须使用显式 PBAC Subject type/ID 策略。
+
 首版 Subject Schema 是封闭的代码契约：`id`、`tenant_id`、`membership_id` 为 text，`role_codes`、`department_ids` 为 text list。策略发布时拒绝未知 Subject 字段、用 `==` 比较集合或用 `in` 查询标量，避免策略能够发布但在请求期才因属性拼写或类型错误持续 fail-closed。增加可信投影必须同时修改 Subject Schema、服务端解析、规范和测试，不能直接接受请求 JSON 字段。
 
 ## 4. 类型化 Predicate IR

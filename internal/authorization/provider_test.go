@@ -32,7 +32,7 @@ func TestAuthorizerResolvesTrustedTenantRoles(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	engine := authorizationTestEngine(t, pbac.SubjectMatcher{Roles: pbac.RolesMatcher{AnyOf: []string{"department_manager"}}})
 	authorizer := &Authorizer{db: sqlx.NewDb(db, "sqlmock"), engine: engine, registry: authorizationTestRegistry(t)}
-	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("department_manager"))
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("department_manager"))
 
 	err = authorizer.Authorize(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}, platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant})
 	require.NoError(t, err)
@@ -53,8 +53,8 @@ func TestAuthorizerAllowsManagedTenantRoleGrantWhenNoPolicyMatches(t *testing.T)
 	engine, err := pbac.NewEngine(registry, nil)
 	require.NoError(t, err)
 	authorizer := &Authorizer{db: sqlx.NewDb(db, "sqlmock"), engine: engine, registry: registry}
-	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("auditor"))
-	mock.ExpectQuery(`SELECT count\(\*\).*FROM permissions p`).WithArgs("tenant-1", "member-1", "tenant.member", "read").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("auditor"))
+	mock.ExpectQuery(`SELECT count\(\*\).*FROM permissions p`).WithArgs("tenant-1", "member-1", "user-1", "tenant.member", "read").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	err = authorizer.Authorize(t.Context(), tenantPrincipal(), platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant})
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestAuthorizerExplicitDenyOverridesManagedTenantGrant(t *testing.T) {
 	registry := authorizationTestRegistry(t)
 	engine := authorizationEngineWithEffect(t, registry, pbac.EffectDeny)
 	authorizer := &Authorizer{db: sqlx.NewDb(db, "sqlmock"), engine: engine, registry: registry}
-	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
 
 	err = authorizer.Authorize(t.Context(), tenantPrincipal(), platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant})
 	require.ErrorIs(t, err, platformauthz.ErrDenied)
@@ -83,7 +83,7 @@ func TestAuthorizerManagedGrantLookupFailureIsUnavailable(t *testing.T) {
 	engine, err := pbac.NewEngine(registry, nil)
 	require.NoError(t, err)
 	authorizer := &Authorizer{db: sqlx.NewDb(db, "sqlmock"), engine: engine, registry: registry}
-	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
 	mock.ExpectQuery(`SELECT count\(\*\).*FROM permissions p`).WillReturnError(context.DeadlineExceeded)
 
 	err = authorizer.Authorize(t.Context(), tenantPrincipal(), platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant})
@@ -103,6 +103,21 @@ func TestAuthorizerRejectsRequirementScopeDrift(t *testing.T) {
 	err = authorizer.Authorize(t.Context(), tenantPrincipal(), platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopeTenant})
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAuthorizerDoesNotTreatServiceAccountAsTenantMember(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	registry := authorizationTestRegistry(t)
+	engine, err := pbac.NewEngine(registry, nil)
+	require.NoError(t, err)
+	authorizer := &Authorizer{db: sqlx.NewDb(db, "sqlmock"), engine: engine, registry: registry}
+	principal := platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount, TenantID: "tenant-1", MembershipID: "member-1"}
+
+	err = authorizer.Authorize(t.Context(), principal, platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant})
+	require.ErrorIs(t, err, platformauthz.ErrDenied)
+	require.NoError(t, mock.ExpectationsWereMet(), "service accounts must not query or inherit human membership roles")
 }
 
 func TestAuthorizerAllowsPrincipalScopeWithoutTenantContext(t *testing.T) {

@@ -74,16 +74,16 @@ func (s *Service) AuthorizeObject(ctx context.Context, expectedResource string, 
 }
 
 func (s *Service) projections(ctx context.Context, principal platformprincipal.Principal) ([]string, []string, error) {
-	if principal.TenantID == "" || principal.MembershipID == "" {
+	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
 		return nil, nil, nil
 	}
 	roles, departments := []string{}, []string{}
-	roleQuery := s.db.Rebind(`SELECT DISTINCT r.code FROM tenant_member_roles mr JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL ORDER BY r.code`)
-	if err := s.db.SelectContext(ctx, &roles, roleQuery, principal.TenantID, principal.MembershipID); err != nil {
+	roleQuery := s.db.Rebind(`SELECT DISTINCT r.code FROM tenant_member_roles mr JOIN tenant_memberships m ON m.id=mr.membership_id AND m.tenant_id=mr.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL ORDER BY r.code`)
+	if err := s.db.SelectContext(ctx, &roles, roleQuery, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, nil, err
 	}
-	departmentQuery := s.db.Rebind(`SELECT DISTINCT department_id FROM tenant_department_members WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL ORDER BY department_id`)
-	if err := s.db.SelectContext(ctx, &departments, departmentQuery, principal.TenantID, principal.MembershipID); err != nil {
+	departmentQuery := s.db.Rebind(`SELECT DISTINCT dm.department_id FROM tenant_department_members dm JOIN tenant_memberships m ON m.id=dm.membership_id AND m.tenant_id=dm.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE dm.tenant_id=? AND dm.membership_id=? AND dm.deleted_at IS NULL ORDER BY dm.department_id`)
+	if err := s.db.SelectContext(ctx, &departments, departmentQuery, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, nil, err
 	}
 	return roles, departments, nil

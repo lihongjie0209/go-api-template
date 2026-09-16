@@ -135,8 +135,13 @@ func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Pri
 			return platformprincipal.Principal{}, errors.New("session validation is unavailable")
 		}
 		var count int
-		query := s.db.Rebind(`SELECT count(*) FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`)
-		if err := s.db.GetContext(ctx, &count, query, claims.SessionID, claims.Subject, time.Now()); err != nil || count != 1 {
+		query := `SELECT count(*) FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
+		args := []any{claims.SessionID, claims.Subject, time.Now()}
+		if claims.TenantID != "" {
+			query += ` AND EXISTS (SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE m.id=? AND m.tenant_id=? AND m.user_id=s.user_id AND m.status='active' AND m.deleted_at IS NULL)`
+			args = append(args, claims.MembershipID, claims.TenantID)
+		}
+		if err := s.db.GetContext(ctx, &count, s.db.Rebind(query), args...); err != nil || count != 1 {
 			return platformprincipal.Principal{}, errors.New("session is revoked or expired")
 		}
 	case platformprincipal.TypeServiceAccount:
@@ -167,6 +172,9 @@ func (s *Service) IssuePrincipal(principal platformprincipal.Principal) (string,
 	}
 	if principal.Type == platformprincipal.TypeUser && strings.TrimSpace(principal.SessionID) == "" {
 		return "", errors.New("user jwt requires a session id")
+	}
+	if principal.Type == platformprincipal.TypeUser && (strings.TrimSpace(principal.TenantID) == "") != (strings.TrimSpace(principal.MembershipID) == "") {
+		return "", errors.New("user jwt tenant and membership context must be paired")
 	}
 	now := time.Now()
 	jti, err := randomID()
@@ -209,6 +217,9 @@ func (s *Service) Parse(raw string) (*Claims, error) {
 	}
 	if claims.PrincipalType == platformprincipal.TypeUser && strings.TrimSpace(claims.SessionID) == "" {
 		return nil, errors.New("user jwt requires a session id")
+	}
+	if claims.PrincipalType == platformprincipal.TypeUser && (strings.TrimSpace(claims.TenantID) == "") != (strings.TrimSpace(claims.MembershipID) == "") {
+		return nil, errors.New("user jwt tenant and membership context must be paired")
 	}
 	return claims, nil
 }

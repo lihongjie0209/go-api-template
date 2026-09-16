@@ -40,6 +40,24 @@ func TestMigrationTablesFollowAuditContract(t *testing.T) {
 	}
 }
 
+func TestMySQLDownMigrationsDoNotDropIndexesFromRetiredRoutePolicyTables(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob(filepath.Join("..", "..", "migrations", "mysql", "*.down.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lower := strings.ToLower(string(content))
+		if regexp.MustCompile(`drop\s+index\s+\S+\s+on\s+route_policy_permission_refs`).MatchString(lower) {
+			t.Errorf("%s drops an index from a table irreversibly retired by migration 000026", file)
+		}
+	}
+}
+
 func validateMySQLAuditTriggers(sql string) error {
 	lower := strings.ToLower(sql)
 	physicalDeleteAllowed := map[string]bool{"operation_logs": true, "security_logs": true}

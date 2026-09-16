@@ -34,8 +34,8 @@ func TestServiceAuthorizesTrustedProposedObject(t *testing.T) {
 	engine, err := NewEngine(schemas, resources, []Policy{policy})
 	require.NoError(t, err)
 	service := NewService(sqlx.NewDb(raw, "sqlmock"), engine)
-	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
-	mock.ExpectQuery(`SELECT DISTINCT department_id`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"department_id"}))
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
+	mock.ExpectQuery(`SELECT DISTINCT dm.department_id`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"department_id"}))
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
 	ctx = accesscontrol.WithEndpoint(ctx, accesscontrol.Endpoint{Resource: "tenant.department", Action: "create", DataPermission: accesscontrol.DataPermissionObject})
 

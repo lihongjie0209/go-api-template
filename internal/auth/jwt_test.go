@@ -117,12 +117,43 @@ func TestService_IssueRejectsUnsafePrincipalShapes(t *testing.T) {
 	service := New(config.Config{JWT: jwtConfig})
 	for _, principal := range []platformprincipal.Principal{
 		{ID: "user-1", Type: platformprincipal.TypeUser},
+		{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1"},
+		{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", MembershipID: "member-1"},
 		{ID: "system-1", Type: platformprincipal.TypeSystem},
 		{ID: "unknown-1", Type: platformprincipal.Type("unknown")},
 	} {
 		if _, err := service.IssuePrincipal(principal); err == nil {
 			t.Fatalf("IssuePrincipal(%+v) succeeded", principal)
 		}
+	}
+}
+
+func TestServiceVerifyRevalidatesTenantMembershipOwnership(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	raw, err := service.IssuePrincipal(platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1", MembershipID: "member-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	service.db = sqlx.NewDb(db, "sqlmock")
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions s JOIN identity_users u.*EXISTS \(SELECT 1 FROM tenant_memberships m JOIN tenants t`).
+		WithArgs("session-1", "user-1", sqlmock.AnyArg(), "member-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	if _, err := service.Verify(t.Context(), raw); err == nil {
+		t.Fatal("Verify() accepted a tenant membership not owned by the token subject")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

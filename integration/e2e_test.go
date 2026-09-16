@@ -14,11 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/app"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -92,6 +95,7 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		defer stop()
 		_ = application.Stop(stopCtx)
 	})
+	seedServiceAccount(t, ctx, cfg.Database, "client")
 	token, err := auth.New(cfg).Issue("client")
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +140,28 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	jwtCtx := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
 	if _, err := hellov1.NewHelloServiceClient(connection).Ping(jwtCtx, &hellov1.PingRequest{Message: "hello"}); err != nil {
 		t.Fatalf("JWT Ping: %v", err)
+	}
+}
+
+func seedServiceAccount(t *testing.T, ctx context.Context, cfg config.Database, id string) {
+	t.Helper()
+	db, err := database.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	transactor := database.NewTransactor(db)
+	auditCtx := platformprincipal.SystemContext(ctx, "integration-test")
+	err = transactor.Within(auditCtx, nil, func(tx *sqlx.Tx) error {
+		query := tx.Rebind(`INSERT INTO identity_service_accounts
+			(id,client_id,name,description,secret_hash,status,created_at,created_by,updated_at,updated_by,version)
+			VALUES (?,?,?,?,?,'active',?,?,?,?,1)`)
+		now := time.Now()
+		_, execErr := tx.ExecContext(auditCtx, query, id, id, "Integration client", "gRPC JWT E2E fixture", "unused", now, "integration-test", now, "integration-test")
+		return execErr
+	})
+	if err != nil {
+		t.Fatalf("seed service account: %v", err)
 	}
 }
 

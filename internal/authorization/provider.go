@@ -72,13 +72,13 @@ func scopeMatches(resourceScope pbac.ResourceScope, requirementScope platformaut
 }
 
 func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) (bool, error) {
-	if principal.TenantID == "" || principal.MembershipID == "" {
+	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
 		return false, nil
 	}
 	query := a.db.Rebind(`SELECT count(*)
 		FROM permissions p
 		JOIN tenant_permission_grants g ON g.permission_id=p.id AND g.tenant_id=? AND g.deleted_at IS NULL
-		JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.status='active' AND m.deleted_at IS NULL
+		JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL
 		JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL
 		WHERE p.resource=? AND p.action=? AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
 		  AND (
@@ -91,24 +91,25 @@ func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platfo
 			)
 		)`)
 	var count int
-	if err := a.db.GetContext(ctx, &count, query, principal.TenantID, principal.MembershipID, requirement.Resource, requirement.Action); err != nil {
+	if err := a.db.GetContext(ctx, &count, query, principal.TenantID, principal.MembershipID, principal.ID, requirement.Resource, requirement.Action); err != nil {
 		return false, fmt.Errorf("resolve managed tenant grant: %w", err)
 	}
 	return count > 0, nil
 }
 
 func (a *Authorizer) roles(ctx context.Context, principal platformprincipal.Principal) ([]string, error) {
-	if principal.TenantID == "" || principal.MembershipID == "" {
+	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
 		return nil, nil
 	}
 	roles := []string{}
 	query := a.db.Rebind(`SELECT DISTINCT r.code
 		FROM tenant_member_roles mr
+		JOIN tenant_memberships m ON m.id=mr.membership_id AND m.tenant_id=mr.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL
 		JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id
 		WHERE mr.tenant_id=? AND mr.membership_id=?
 		  AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL
 		ORDER BY r.code`)
-	if err := a.db.SelectContext(ctx, &roles, query, principal.TenantID, principal.MembershipID); err != nil {
+	if err := a.db.SelectContext(ctx, &roles, query, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, fmt.Errorf("resolve pbac subject roles: %w", err)
 	}
 	return roles, nil

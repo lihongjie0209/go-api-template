@@ -2,4 +2,3 @@ DROP INDEX identity_sessions_previous_refresh_idx ON identity_sessions;
 DROP INDEX tenants_owner_user_idx ON tenants;
 DROP INDEX tenant_permission_grants_permission_idx ON tenant_permission_grants;
 DROP INDEX tenant_role_permissions_permission_idx ON tenant_role_permissions;
-DROP INDEX route_policy_permission_refs_permission_idx ON route_policy_permission_refs;
