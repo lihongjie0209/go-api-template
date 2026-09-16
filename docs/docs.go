@@ -4559,6 +4559,9 @@ const docTemplate = `{
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "etag": {
                     "type": "string"
                 },
@@ -4578,6 +4581,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {

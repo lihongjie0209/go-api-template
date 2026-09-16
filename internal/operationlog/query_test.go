@@ -36,7 +36,7 @@ func TestPresentUsesAsiaShanghaiWithoutChangingInstant(t *testing.T) {
 	t.Parallel()
 	instant := time.Date(2026, time.September, 16, 1, 2, 3, 0, time.UTC)
 	record := Record{OccurredAt: instant, CreatedAt: instant, UpdatedAt: instant}
-	present(&record)
+	record = presentRecord(record)
 	for name, value := range map[string]time.Time{"occurred_at": record.OccurredAt, "created_at": record.CreatedAt, "updated_at": record.UpdatedAt} {
 		if !value.Equal(instant) || value.Format(time.RFC3339) != "2026-09-16T09:02:03+08:00" {
 			t.Fatalf("%s = %s", name, value.Format(time.RFC3339))

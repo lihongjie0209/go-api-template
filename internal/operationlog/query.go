@@ -75,12 +75,7 @@ type Page struct {
 	Total    int64    `json:"total"`
 }
 
-const recordColumns = `l.id,l.tenant_id,l.actor_id,
-COALESCE((SELECT u.display_name FROM identity_users u WHERE u.id=l.actor_id AND u.deleted_at IS NULL),(SELECT a.name FROM identity_service_accounts a WHERE a.id=l.actor_id AND a.deleted_at IS NULL),l.actor_id) AS actor_name,
-l.actor_type,l.application_id,l.source,l.operation,l.resource_type,l.resource_id,l.protocol,l.method,l.route,l.request_payload,l.duration_ms,l.succeeded,l.error_code,l.error_message,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.extension,l.occurred_at,l.created_at,l.created_by,
-COALESCE((SELECT u.display_name FROM identity_users u WHERE u.id=l.created_by AND u.deleted_at IS NULL),(SELECT a.name FROM identity_service_accounts a WHERE a.id=l.created_by AND a.deleted_at IS NULL),l.created_by) AS created_by_name,
-l.updated_at,l.updated_by,
-COALESCE((SELECT u.display_name FROM identity_users u WHERE u.id=l.updated_by AND u.deleted_at IS NULL),(SELECT a.name FROM identity_service_accounts a WHERE a.id=l.updated_by AND a.deleted_at IS NULL),l.updated_by) AS updated_by_name,l.version`
+const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_type,l.application_id,l.source,l.operation,l.resource_type,l.resource_id,l.protocol,l.method,l.route,l.request_payload,l.duration_ms,l.succeeded,l.error_code,l.error_message,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.extension,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -103,7 +98,11 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		}
 		return Record{}, err
 	}
-	present(&record)
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, err
+	}
+	record = records[0]
 	if err := s.Record(ctx, Entry{Operation: "operation_log.get", ResourceType: "operation_log", ResourceID: id, Source: "backend", Protocol: "service", Succeeded: true}); err != nil {
 		return Record{}, err
 	}
@@ -164,8 +163,8 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+recordColumns+` FROM operation_logs l WHERE `+where+` ORDER BY l.occurred_at DESC,l.id DESC LIMIT ? OFFSET ?`), queryArgs...); err != nil {
 		return Page{}, err
 	}
-	for index := range items {
-		present(&items[index])
+	if err := s.present(ctx, items); err != nil {
+		return Page{}, err
 	}
 	audit := map[string]any{"page": request.Page, "page_size": request.PageSize, "result_count": len(items), "tenant_filter_count": len(input.TenantIDs), "actor_filter_count": len(input.ActorIDs), "operation_filter_count": len(input.Operations), "has_time_range": input.OccurredAtFrom != nil || input.OccurredAtTo != nil}
 	if err := s.Record(ctx, Entry{Operation: "operation_log.page", ResourceType: "operation_log", Source: "backend", Protocol: "service", Request: audit, Succeeded: true}); err != nil {
@@ -174,10 +173,29 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	return Page{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
-func present(record *Record) {
+func (s *Service) present(ctx context.Context, records []Record) error {
+	ids := make([]string, 0, len(records)*3)
+	for _, record := range records {
+		ids = append(ids, record.ActorID, record.CreatedBy, record.UpdatedBy)
+	}
+	names, err := presentation.ActorNames(ctx, s.db, ids...)
+	if err != nil {
+		return err
+	}
+	for index := range records {
+		records[index].ActorName = names[records[index].ActorID]
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index] = presentRecord(records[index])
+	}
+	return nil
+}
+
+func presentRecord(record Record) Record {
 	record.OccurredAt = presentation.Time(record.OccurredAt)
 	record.CreatedAt = presentation.Time(record.CreatedAt)
 	record.UpdatedAt = presentation.Time(record.UpdatedAt)
+	return record
 }
 
 func invalidPageInput(input PageInput) bool {

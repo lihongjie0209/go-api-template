@@ -35,14 +35,14 @@ func Observe(next Store, metrics *observability.Metrics, backend string) Store {
 func (s *observedStore) Put(ctx context.Context, input PutInput) (Info, error) {
 	ctx, done := s.start(ctx, "put")
 	info, err := s.next.Put(ctx, input)
-	done(err)
+	done(telemetryError(err))
 	return info, err
 }
 func (s *observedStore) Get(ctx context.Context, key string) (*Object, error) {
 	ctx, done := s.start(ctx, "get")
 	object, err := s.next.Get(ctx, key)
 	if err != nil {
-		done(err)
+		done(telemetryError(err))
 		return nil, err
 	}
 	if object == nil || object.Body == nil {
@@ -50,26 +50,33 @@ func (s *observedStore) Get(ctx context.Context, key string) (*Object, error) {
 		done(err)
 		return nil, err
 	}
-	object.Body = &observedReadCloser{ReadCloser: object.Body, done: done}
+	object.Body = &observedReadCloser{ReadCloser: object.Body, done: func(err error) { done(telemetryError(err)) }}
 	return object, err
 }
 func (s *observedStore) Stat(ctx context.Context, key string) (Info, error) {
 	ctx, done := s.start(ctx, "stat")
 	info, err := s.next.Stat(ctx, key)
-	done(err)
+	done(telemetryError(err))
 	return info, err
 }
 func (s *observedStore) Delete(ctx context.Context, key string) error {
 	ctx, done := s.start(ctx, "delete")
 	err := s.next.Delete(ctx, key)
-	done(err)
+	done(telemetryError(err))
 	return err
 }
 func (s *observedStore) Presign(ctx context.Context, key string, operation Operation, ttl time.Duration) (SignedURL, error) {
 	ctx, done := s.start(ctx, "presign_"+string(operation))
 	result, err := s.next.Presign(ctx, key, operation, ttl)
-	done(err)
+	done(telemetryError(err))
 	return result, err
+}
+
+func telemetryError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New("object storage operation failed")
 }
 func (s *observedStore) start(ctx context.Context, operation string) (context.Context, func(error)) {
 	started := time.Now()

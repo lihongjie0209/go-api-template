@@ -196,6 +196,8 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       etag:
         type: string
       id:
@@ -209,6 +211,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer

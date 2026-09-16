@@ -157,10 +157,10 @@ func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_users(id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), actorID, "log.presentation.user", "Log Presentation User", "", "", "active", now, actorID, now, actorID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,source,operation,protocol,duration_ms,succeeded,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "operation-presentation", tenantID, actorID, "user", "backend", "presentation.test", "service", 1, true, `{}`, now, now, actorID, now, actorID); err != nil {
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,application_id,source,operation,resource_type,resource_id,protocol,method,route,request_payload,duration_ms,succeeded,error_code,error_message,request_id,trace_id,client_ip,user_agent,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "operation-presentation", tenantID, actorID, "user", "", "backend", "presentation.test", "test", "resource-1", "service", "", "", "", 1, true, "", "", "", "", "", "", `{}`, now, now, actorID, now, actorID); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_type,event_type,succeeded,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "security-presentation", tenantID, actorID, "user", "login", true, `{}`, now, now, actorID, now, actorID)
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_type,subject_id,subject_type,event_type,succeeded,reason,error_code,error_message,identifier_hash,token_id_hash,session_id,request_id,trace_id,client_ip,user_agent,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "security-presentation", tenantID, actorID, "user", actorID, "user", "login", true, "", "", "", "", "", "", "", "", "", "", `{}`, now, now, actorID, now, actorID)
 		return err
 	})
 	if err != nil {

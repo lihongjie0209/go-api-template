@@ -186,6 +186,30 @@ func TestService_GetEnforcesTenant(t *testing.T) {
 	}
 }
 
+func TestServicePresentResolvesAuditNamesAndAsiaShanghaiTimes(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(`SELECT id,display_name FROM identity_users`).WithArgs("user-1", "service-1", "user-1", "service-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "display_name"}).AddRow("user-1", "Alice").AddRow("service-1", "Billing Worker"))
+	service := &Service{db: db}
+	instant := time.Date(2026, time.September, 16, 1, 2, 3, 0, time.UTC)
+	records := []Record{{CreatedBy: "user-1", UpdatedBy: "service-1", CreatedAt: instant, UpdatedAt: instant}}
+	if err := service.present(t.Context(), records); err != nil {
+		t.Fatal(err)
+	}
+	if records[0].CreatedByName != "Alice" || records[0].UpdatedByName != "Billing Worker" || records[0].CreatedAt.Format(time.RFC3339) != "2026-09-16T09:02:03+08:00" || records[0].UpdatedAt.Format(time.RFC3339) != "2026-09-16T09:02:03+08:00" {
+		t.Fatalf("record = %+v", records[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServiceDownloadFailsClosedWhenAccessLogCannotBeStored(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
@@ -200,6 +224,8 @@ func TestServiceDownloadFailsClosedWhenAccessLogCannotBeStored(t *testing.T) {
 		"file-1", "tenant-1", "files/tenant-1/file-1/report.txt", "report.txt", "text/plain", int64(5), "etag", "checksum",
 		now, "user-1", now, "user-1", int64(1), nil, nil, nil, int64(0), "", nil,
 	))
+	mock.ExpectQuery(`SELECT id,display_name FROM identity_users`).WithArgs("user-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "display_name"}).AddRow("user-1", "Alice"))
 	operations := &failingReadOperationStub{}
 	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operations, slog.Default(), config.Config{Files: config.Files{Enabled: true}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})

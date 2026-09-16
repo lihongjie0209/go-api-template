@@ -4556,6 +4556,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "etag": {
                     "type": "string"
                 },
@@ -4575,6 +4578,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {

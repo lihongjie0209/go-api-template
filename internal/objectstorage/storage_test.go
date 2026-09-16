@@ -3,6 +3,7 @@ package objectstorage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,17 @@ func TestObserveWithoutMetricsPreservesStore(t *testing.T) {
 	store := &testStore{}
 	if got := Observe(store, nil, "s3"); got != store {
 		t.Fatalf("Observe() = %T, want original store", got)
+	}
+}
+
+func TestTelemetryErrorDoesNotExposeProviderDetails(t *testing.T) {
+	t.Parallel()
+	if telemetryError(nil) != nil {
+		t.Fatal("telemetryError(nil) must remain nil")
+	}
+	err := telemetryError(errors.New("request https://bucket.example/files/tenant-secret/report.pdf failed"))
+	if err == nil || err.Error() != "object storage operation failed" {
+		t.Fatalf("telemetryError() = %v", err)
 	}
 }
 

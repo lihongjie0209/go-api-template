@@ -26,6 +26,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -50,8 +51,10 @@ type Record struct {
 	ChecksumSHA256       string     `db:"checksum_sha256" json:"checksum_sha256"`
 	CreatedAt            time.Time  `db:"created_at" json:"created_at"`
 	CreatedBy            string     `db:"created_by" json:"created_by"`
+	CreatedByName        string     `db:"created_by_name" json:"created_by_name"`
 	UpdatedAt            time.Time  `db:"updated_at" json:"updated_at"`
 	UpdatedBy            string     `db:"updated_by" json:"updated_by"`
+	UpdatedByName        string     `db:"updated_by_name" json:"updated_by_name"`
 	Version              int64      `db:"version" json:"version"`
 	DeletedAt            *time.Time `db:"deleted_at" json:"-"`
 	DeletedBy            *string    `db:"deleted_by" json:"-"`
@@ -223,6 +226,9 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), queryArgs...); err != nil {
 		return Page{}, fmt.Errorf("page files: %w", err)
 	}
+	if err := s.present(ctx, items); err != nil {
+		return Page{}, fmt.Errorf("present files: %w", err)
+	}
 	return Page{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
@@ -246,7 +252,11 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		}
 		return Record{}, fmt.Errorf("get file: %w", err)
 	}
-	return record, nil
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, fmt.Errorf("present file: %w", err)
+	}
+	return records[0], nil
 }
 
 func (s *Service) Download(ctx context.Context, id string) (Download, error) {
@@ -267,7 +277,25 @@ func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 	if err := s.operations.Record(ctx, entry); err != nil {
 		return Download{}, fmt.Errorf("record file download: %w", err)
 	}
-	return Download{File: record, URL: signed.URL, ExpiresAt: signed.ExpiresAt}, nil
+	return Download{File: record, URL: signed.URL, ExpiresAt: presentation.Time(signed.ExpiresAt)}, nil
+}
+
+func (s *Service) present(ctx context.Context, records []Record) error {
+	ids := make([]string, 0, len(records)*2)
+	for _, record := range records {
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
+	}
+	names, err := presentation.ActorNames(ctx, s.db, ids...)
+	if err != nil {
+		return err
+	}
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+	}
+	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
