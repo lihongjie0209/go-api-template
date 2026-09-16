@@ -1,6 +1,9 @@
 package scaffold
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"go/format"
 	"os"
@@ -100,6 +103,72 @@ func TestOptionsValidation(t *testing.T) {
 	}
 }
 
+func TestOptionsValidationRejectsTemplateInjection(t *testing.T) {
+	t.Parallel()
+	valid := Options{
+		Name:        "orders-service",
+		Namespace:   "commerce",
+		Module:      "github.com/acme/orders-service",
+		Output:      "out",
+		Image:       "ghcr.io/acme/orders-service",
+		BufModule:   "buf.build/acme/orders-service",
+		Ref:         "main",
+		Description: "Orders service.",
+	}
+	valid.Defaults()
+
+	tests := []struct {
+		name   string
+		mutate func(*Options)
+	}{
+		{name: "tagged image", mutate: func(options *Options) { options.Image = "ghcr.io/acme/orders-service:latest" }},
+		{name: "image newline", mutate: func(options *Options) { options.Image = "ghcr.io/acme/orders\nprivileged" }},
+		{name: "invalid buf module", mutate: func(options *Options) { options.BufModule = "buf.build/acme/orders\nmodule" }},
+		{name: "ref traversal", mutate: func(options *Options) { options.Ref = "feature/../main" }},
+		{name: "ref newline", mutate: func(options *Options) { options.Ref = "main\nnext" }},
+		{name: "description newline", mutate: func(options *Options) { options.Description = "orders\nservice" }},
+		{name: "description control", mutate: func(options *Options) { options.Description = "orders\tservice" }},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := valid
+			test.mutate(&options)
+			if err := options.Validate(); err == nil {
+				t.Fatal("Validate() error = nil")
+			}
+		})
+	}
+}
+
+func TestExtractTarGzipRejectsOversizedExpansion(t *testing.T) {
+	t.Parallel()
+	archive := makeTarGzip(t, &tar.Header{
+		Name:     "root/large.bin",
+		Mode:     0o644,
+		Size:     maxExtractedBytes + 1,
+		Typeflag: tar.TypeReg,
+	})
+
+	if err := extractTarGzip(bytes.NewReader(archive), t.TempDir()); err == nil || !strings.Contains(err.Error(), "after extraction") {
+		t.Fatalf("extractTarGzip() error = %v, want extracted-size error", err)
+	}
+}
+
+func TestExtractTarGzipRejectsSpecialEntry(t *testing.T) {
+	t.Parallel()
+	archive := makeTarGzip(t, &tar.Header{
+		Name:     "root/pipe",
+		Mode:     0o644,
+		Typeflag: tar.TypeFifo,
+	})
+
+	if err := extractTarGzip(bytes.NewReader(archive), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unsupported entry type") {
+		t.Fatalf("extractTarGzip() error = %v, want unsupported-entry error", err)
+	}
+}
+
 func TestStripTemplateOnlyRemovesIndentedMarkerLines(t *testing.T) {
 	t.Parallel()
 	input := "run: |\n  first\n  # microgen:template-only:start\n  removed\n  # microgen:template-only:end\n- name: next\n"
@@ -140,4 +209,21 @@ func assertContains(t *testing.T, path, expected string) {
 	if !strings.Contains(string(data), expected) {
 		t.Fatalf("%s does not contain %q:\n%s", path, expected, data)
 	}
+}
+
+func makeTarGzip(t *testing.T, header *tar.Header) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	gzipWriter := gzip.NewWriter(&output)
+	tarWriter := tar.NewWriter(gzipWriter)
+	if err := tarWriter.WriteHeader(header); err != nil {
+		t.Fatal(err)
+	}
+	// Oversized test entries intentionally omit their body: extraction must reject
+	// the declared size before reading or allocating it.
+	_ = tarWriter.Close()
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
 }

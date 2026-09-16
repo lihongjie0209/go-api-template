@@ -21,7 +21,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/distribution/reference"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )
@@ -37,10 +40,16 @@ const (
 	templateDatabaseSchema = "go_api_template"
 	templateDescription    = "Production-oriented starter using Gin, Uber Fx, Viper, slog + lumberjack, sqlx, Redis, JWT, robfig/cron, and golang-migrate. Fork it or change the module path before starting a separate project."
 	maxArchiveBytes        = 100 << 20
+	maxExtractedBytes      = 100 << 20
+	maxArchiveEntries      = 10_000
+	maxArchivePathBytes    = 4_096
+	maxDescriptionBytes    = 512
 )
 
 var serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
 var migrationTablePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+var refPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
+var bufModulePattern = regexp.MustCompile(`^buf\.build/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$`)
 
 type Options struct {
 	Name           string
@@ -118,11 +127,23 @@ func (o Options) Validate() error {
 	if o.Image == "" {
 		return errors.New("image is required; set --image for non-GitHub modules")
 	}
-	if !strings.HasPrefix(o.BufModule, "buf.build/") || len(strings.Split(o.BufModule, "/")) != 3 {
+	image, err := reference.ParseNormalizedNamed(o.Image)
+	if err != nil || !reference.IsNameOnly(image) {
+		return errors.New("image must be a valid container repository name without a tag or digest")
+	}
+	if !bufModulePattern.MatchString(o.BufModule) || len(o.BufModule) > 256 {
 		return errors.New("buf-module must have the form buf.build/owner/module")
 	}
-	if o.Ref == "" {
-		return errors.New("ref is required")
+	if !refPattern.MatchString(o.Ref) || strings.Contains(o.Ref, "..") || strings.Contains(o.Ref, "//") {
+		return errors.New("ref must be a branch, tag, or commit containing only letters, digits, '.', '_', '-', and single '/' separators")
+	}
+	if len(o.Description) > maxDescriptionBytes || !utf8.ValidString(o.Description) || strings.ContainsAny(o.Description, "\r\n") {
+		return fmt.Errorf("description must be a valid single-line UTF-8 string of at most %d bytes", maxDescriptionBytes)
+	}
+	for _, character := range o.Description {
+		if unicode.IsControl(character) {
+			return errors.New("description must not contain control characters")
+		}
 	}
 	return nil
 }
@@ -267,6 +288,8 @@ func extractTarGzip(source io.Reader, destination string) error {
 	}
 	defer func() { _ = gzipReader.Close() }()
 	reader := tar.NewReader(gzipReader)
+	entries := 0
+	var extractedBytes int64
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -274,6 +297,22 @@ func extractTarGzip(source io.Reader, destination string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("read template archive: %w", err)
+		}
+		entries++
+		if entries > maxArchiveEntries {
+			return fmt.Errorf("template archive exceeds %d entries", maxArchiveEntries)
+		}
+		if len(header.Name) > maxArchivePathBytes {
+			return fmt.Errorf("template archive path exceeds %d bytes", maxArchivePathBytes)
+		}
+		if header.Size < 0 {
+			return fmt.Errorf("template archive entry %q has a negative size", header.Name)
+		}
+		if header.Typeflag == tar.TypeReg {
+			if header.Size > maxExtractedBytes-extractedBytes {
+				return fmt.Errorf("template archive exceeds %d MiB after extraction", maxExtractedBytes>>20)
+			}
+			extractedBytes += header.Size
 		}
 		parts := strings.Split(strings.TrimPrefix(filepath.ToSlash(header.Name), "/"), "/")
 		if len(parts) < 2 {
@@ -300,13 +339,15 @@ func extractTarGzip(source io.Reader, destination string) error {
 			if err != nil {
 				return err
 			}
-			_, copyErr := io.Copy(file, reader)
+			_, copyErr := io.CopyN(file, reader, header.Size)
 			closeErr := file.Close()
 			if copyErr != nil || closeErr != nil {
 				return errors.Join(copyErr, closeErr)
 			}
 		case tar.TypeSymlink, tar.TypeLink:
 			return fmt.Errorf("template archive contains unsupported link %q", header.Name)
+		default:
+			return fmt.Errorf("template archive contains unsupported entry type %d for %q", header.Typeflag, header.Name)
 		}
 	}
 }
@@ -346,7 +387,7 @@ func rewriteProject(root, modulePath string, replacements []struct{ old, new str
 		if err != nil {
 			return err
 		}
-		if strings.IndexByte(string(data), 0) >= 0 {
+		if !utf8.Valid(data) || strings.IndexByte(string(data), 0) >= 0 {
 			return nil
 		}
 		updated := string(data)
