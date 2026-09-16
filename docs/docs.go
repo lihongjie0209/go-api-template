@@ -859,15 +859,6 @@ const docTemplate = `{
                 "summary": "Create a platform menu with a stable UUID v5 derived from menu_key",
                 "parameters": [
                     {
-                        "description": "Tree filters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.MenuTreeRequest"
-                        }
-                    },
-                    {
                         "description": "Menu",
                         "name": "request",
                         "in": "body",
@@ -986,6 +977,17 @@ const docTemplate = `{
                     "menus"
                 ],
                 "summary": "Return the complete platform menu tree",
+                "parameters": [
+                    {
+                        "description": "Tree filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.MenuTreeRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -4778,7 +4780,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "version": {
                     "type": "integer"
@@ -5077,7 +5080,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -5090,43 +5094,64 @@ const docTemplate = `{
             ],
             "properties": {
                 "component": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 512
                 },
                 "external_url": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 2048
                 },
                 "icon": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "menu_key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "menu_type": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "directory",
+                        "page",
+                        "button",
+                        "external"
+                    ]
                 },
                 "metadata": {
                     "type": "object"
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "permission_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "route_path": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 2048
                 },
                 "sort_order": {
-                    "type": "integer"
+                    "type": "integer",
+                    "maximum": 1000000000,
+                    "minimum": -1000000000
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
                 },
                 "version": {
                     "type": "integer"
@@ -5138,6 +5163,9 @@ const docTemplate = `{
         },
         "httptransport.MenuTreeRequest": {
             "type": "object",
+            "required": [
+                "ids"
+            ],
             "properties": {
                 "created_at_from": {
                     "type": "string"
@@ -5147,21 +5175,25 @@ const docTemplate = `{
                 },
                 "ids": {
                     "type": "array",
+                    "maxItems": 200,
                     "items": {
                         "type": "string"
                     }
                 },
                 "keyword": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "statuses": {
                     "type": "array",
+                    "maxItems": 10,
                     "items": {
                         "type": "string"
                     }
                 },
                 "types": {
                     "type": "array",
+                    "maxItems": 10,
                     "items": {
                         "type": "string"
                     }

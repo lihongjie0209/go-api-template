@@ -21,34 +21,34 @@ func NewMenuHandler(service *menu.Service, logger *slog.Logger) *MenuHandler {
 }
 
 type MenuMutationRequest struct {
-	ID           string          `json:"id"`
-	ParentID     *string         `json:"parent_id"`
-	MenuKey      string          `json:"menu_key"`
-	Name         string          `json:"name" binding:"required"`
-	MenuType     string          `json:"menu_type" binding:"required"`
-	RoutePath    string          `json:"route_path"`
-	Component    string          `json:"component"`
-	ExternalURL  string          `json:"external_url"`
-	Icon         string          `json:"icon"`
-	PermissionID *string         `json:"permission_id"`
+	ID           string          `json:"id" binding:"omitempty,max=128"`
+	ParentID     *string         `json:"parent_id" binding:"omitempty,max=128"`
+	MenuKey      string          `json:"menu_key" binding:"omitempty,max=128"`
+	Name         string          `json:"name" binding:"required,max=256"`
+	MenuType     string          `json:"menu_type" binding:"required,oneof=directory page button external"`
+	RoutePath    string          `json:"route_path" binding:"max=2048"`
+	Component    string          `json:"component" binding:"max=512"`
+	ExternalURL  string          `json:"external_url" binding:"max=2048"`
+	Icon         string          `json:"icon" binding:"max=256"`
+	PermissionID *string         `json:"permission_id" binding:"omitempty,max=128"`
 	Visible      bool            `json:"visible"`
-	Status       string          `json:"status" binding:"required"`
-	SortOrder    int64           `json:"sort_order"`
+	Status       string          `json:"status" binding:"required,oneof=active disabled"`
+	SortOrder    int64           `json:"sort_order" binding:"gte=-1000000000,lte=1000000000"`
 	Metadata     json.RawMessage `json:"metadata" swaggertype:"object"`
 	Version      int64           `json:"version"`
 }
 type MenuIDRequest struct {
-	ID string `json:"id" binding:"required"`
+	ID string `json:"id" binding:"required,max=128"`
 }
 type DeleteMenuRequest struct {
-	ID      string `json:"id" binding:"required"`
+	ID      string `json:"id" binding:"required,max=128"`
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
 type MenuTreeRequest struct {
-	Keyword       string     `json:"keyword"`
-	IDs           []string   `json:"ids"`
-	Types         []string   `json:"types"`
-	Statuses      []string   `json:"statuses"`
+	Keyword       string     `json:"keyword" binding:"omitempty,max=256"`
+	IDs           []string   `json:"ids" binding:"max=200,dive,required,max=128"`
+	Types         []string   `json:"types" binding:"max=10,dive,oneof=directory page button external"`
+	Statuses      []string   `json:"statuses" binding:"max=10,dive,oneof=active disabled"`
 	CreatedAtFrom *time.Time `json:"created_at_from"`
 	CreatedAtTo   *time.Time `json:"created_at_to"`
 }
@@ -57,7 +57,6 @@ type MenuTreeRequest struct {
 // @Summary Create a platform menu with a stable UUID v5 derived from menu_key
 // @Tags menus
 // @Security Bearer
-// @Param request body MenuTreeRequest true "Tree filters"
 // @Param request body MenuMutationRequest true "Menu"
 // @Success 200 {object} Response{body=menu.Record}
 // @Router /api/v1/menus/create [post]
@@ -98,6 +97,7 @@ func (h *MenuHandler) Get(c *gin.Context) {
 // @Summary Return the complete platform menu tree
 // @Tags menus
 // @Security Bearer
+// @Param request body MenuTreeRequest true "Tree filters"
 // @Success 200 {object} Response{body=[]menu.Node}
 // @Router /api/v1/menus/tree [post]
 func (h *MenuHandler) Tree(c *gin.Context) {

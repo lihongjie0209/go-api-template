@@ -3,6 +3,9 @@ package menu
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -11,6 +14,10 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -38,6 +45,52 @@ func TestBuildRejectsCycle(t *testing.T) {
 	a, b := "a", "b"
 	_, err := build([]Record{{ID: a, ParentID: &b}, {ID: b, ParentID: &a}})
 	require.Error(t, err)
+}
+
+func TestParentTypesRejectChangingDirectoryWithChildrenToPage(t *testing.T) {
+	t.Parallel()
+	root := "root"
+	require.False(t, validParentTypes([]Record{
+		{ID: root, Type: "page"},
+		{ID: "child", ParentID: &root, Type: "page"},
+	}))
+}
+
+func TestValidateRejectsArrayMetadataAndOversizedFields(t *testing.T) {
+	t.Parallel()
+	base := Input{Key: "menu:system", Name: "System", Type: "directory", Status: "active", Metadata: json.RawMessage(`{}`)}
+	array := base
+	array.Metadata = json.RawMessage(`[]`)
+	require.ErrorIs(t, validate(array), ErrInvalid)
+	oversized := base
+	oversized.Name = string(make([]byte, maxMenuNameLength+1))
+	require.ErrorIs(t, validate(oversized), ErrInvalid)
+	unsafeComponent := base
+	unsafeComponent.Type = "page"
+	unsafeComponent.RoutePath = "/users"
+	unsafeComponent.Component = "../secrets"
+	require.ErrorIs(t, validate(unsafeComponent), ErrInvalid)
+}
+
+func TestMutationRollsBackWhenTransactionalAuditFails(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	recorder := &failingOperationRecorder{err: errors.New("outbox unavailable")}
+	service := &Service{
+		tx: database.NewTransactor(sqlxDB), operations: recorder, security: menuSecurityRecorder{},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	err = service.mutate(platformprincipal.SystemContext(t.Context(), "actor-1"), "platform.menu.update", "menu-1", nil, func(context.Context, *sqlx.Tx) error { return nil })
+	require.ErrorContains(t, err, "outbox unavailable")
+	require.Equal(t, 1, recorder.transactionalCalls)
+	require.Equal(t, 1, recorder.failureCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 func TestMenuStableIDGoldenMapping(t *testing.T) {
 	generator, err := stableid.New(menuNamespace)
@@ -126,4 +179,31 @@ func TestInvalidateCacheRemovesBothMenuViews(t *testing.T) {
 	(&Service{cache: store}).invalidateCache(t.Context())
 	require.False(t, redisServer.Exists(menuCacheAll))
 	require.False(t, redisServer.Exists(menuCacheVisible))
+}
+
+type failingOperationRecorder struct {
+	err                error
+	transactionalCalls int
+	failureCalls       int
+}
+
+func (*failingOperationRecorder) Enabled() bool { return true }
+func (r *failingOperationRecorder) Record(_ context.Context, entry operationlog.Entry) error {
+	if !entry.Succeeded {
+		r.failureCalls++
+	}
+	return nil
+}
+func (r *failingOperationRecorder) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	r.transactionalCalls++
+	return r.err
+}
+
+type menuSecurityRecorder struct{}
+
+func (menuSecurityRecorder) Enabled() bool                                   { return true }
+func (menuSecurityRecorder) FailClosed() bool                                { return true }
+func (menuSecurityRecorder) Record(context.Context, securitylog.Entry) error { return nil }
+func (menuSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	return nil
 }

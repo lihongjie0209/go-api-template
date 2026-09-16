@@ -342,6 +342,7 @@ definitions:
   httptransport.DeleteMenuRequest:
     properties:
       id:
+        maxLength: 128
         type: string
       version:
         type: integer
@@ -544,6 +545,7 @@ definitions:
   httptransport.MenuIDRequest:
     properties:
       id:
+        maxLength: 128
         type: string
     required:
     - id
@@ -551,30 +553,49 @@ definitions:
   httptransport.MenuMutationRequest:
     properties:
       component:
+        maxLength: 512
         type: string
       external_url:
+        maxLength: 2048
         type: string
       icon:
+        maxLength: 256
         type: string
       id:
+        maxLength: 128
         type: string
       menu_key:
+        maxLength: 128
         type: string
       menu_type:
+        enum:
+        - directory
+        - page
+        - button
+        - external
         type: string
       metadata:
         type: object
       name:
+        maxLength: 256
         type: string
       parent_id:
+        maxLength: 128
         type: string
       permission_id:
+        maxLength: 128
         type: string
       route_path:
+        maxLength: 2048
         type: string
       sort_order:
+        maximum: 1000000000
+        minimum: -1000000000
         type: integer
       status:
+        enum:
+        - active
+        - disabled
         type: string
       version:
         type: integer
@@ -594,17 +615,23 @@ definitions:
       ids:
         items:
           type: string
+        maxItems: 200
         type: array
       keyword:
+        maxLength: 256
         type: string
       statuses:
         items:
           type: string
+        maxItems: 10
         type: array
       types:
         items:
           type: string
+        maxItems: 10
         type: array
+    required:
+    - ids
     type: object
   httptransport.MutateServiceAccountSecretRequest:
     properties:
@@ -2654,12 +2681,6 @@ paths:
   /api/v1/menus/create:
     post:
       parameters:
-      - description: Tree filters
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/httptransport.MenuTreeRequest'
       - description: Menu
         in: body
         name: request
@@ -2726,6 +2747,13 @@ paths:
       - menus
   /api/v1/menus/tree:
     post:
+      parameters:
+      - description: Tree filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.MenuTreeRequest'
       responses:
         "200":
           description: OK

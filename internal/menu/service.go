@@ -31,11 +31,24 @@ var (
 )
 var keyPattern = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{1,127}$`)
 
+var (
+	routePathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./:-]*$`)
+	componentPattern = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
+)
+
 const menuNamespace = "3cab5b18-f613-4b50-9c7c-4465fcbafe95"
 
 const (
-	menuCacheAll     = "menus:v1:tree-source:all"
-	menuCacheVisible = "menus:v1:tree-source:visible"
+	menuCacheAll           = "menus:v1:tree-source:all"
+	menuCacheVisible       = "menus:v1:tree-source:visible"
+	maxMenuIDLength        = 128
+	maxMenuNameLength      = 256
+	maxMenuPathLength      = 2048
+	maxMenuComponentLength = 512
+	maxMenuIconLength      = 256
+	maxMenuKeywordLength   = 256
+	maxMenuSortOrder       = 1_000_000_000
+	maxMenuMetadataBytes   = 1 << 20
 )
 
 type Record struct {
@@ -93,32 +106,35 @@ type Service struct {
 	tx            *database.Transactor
 	locker        cache.Locker
 	cache         cache.Store
-	operations    operationlog.Recorder
-	security      securitylog.Recorder
+	operations    operationlog.TransactionalRecorder
+	security      securitylog.TransactionalRecorder
 	authorization *authorization.TenantAuthorizationService
 	logger        *slog.Logger
 	cfg           config.Config
 }
 
-func New(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, store cache.Store, operations operationlog.Recorder, security securitylog.Recorder, authorizationService *authorization.TenantAuthorizationService, logger *slog.Logger, cfg config.Config) *Service {
+func New(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, store cache.Store, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, authorizationService *authorization.TenantAuthorizationService, logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{db: db, tx: tx, locker: locker, cache: store, operations: operations, security: security, authorization: authorizationService, logger: logger, cfg: cfg}
 }
 
 const columns = `id,parent_id,menu_key,name,menu_type,route_path,component,external_url,icon,permission_id,visible,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version`
 
 func validate(input Input) error {
-	input.Key = strings.TrimSpace(input.Key)
-	input.Name = strings.TrimSpace(input.Name)
-	if !keyPattern.MatchString(input.Key) || input.Name == "" || (input.Status != "active" && input.Status != "disabled") || len(input.Metadata) > 1<<20 || !json.Valid(input.Metadata) {
+	if !keyPattern.MatchString(input.Key) || input.Name == "" || len(input.Name) > maxMenuNameLength ||
+		len(input.RoutePath) > maxMenuPathLength || len(input.Component) > maxMenuComponentLength ||
+		len(input.ExternalURL) > maxMenuPathLength || len(input.Icon) > maxMenuIconLength ||
+		input.SortOrder < -maxMenuSortOrder || input.SortOrder > maxMenuSortOrder ||
+		!validMenuID(input.ParentID) || !validMenuID(input.PermissionID) ||
+		(input.Status != "active" && input.Status != "disabled") || len(input.Metadata) > maxMenuMetadataBytes || !validMetadata(input.Metadata) {
 		return ErrInvalid
 	}
 	switch input.Type {
 	case "directory":
-		if input.Component != "" || input.ExternalURL != "" {
+		if input.Component != "" || input.ExternalURL != "" || (input.RoutePath != "" && !validRoutePath(input.RoutePath)) {
 			return ErrInvalid
 		}
 	case "page":
-		if input.RoutePath == "" || input.Component == "" || input.ExternalURL != "" {
+		if !validRoutePath(input.RoutePath) || !validComponent(input.Component) || input.ExternalURL != "" {
 			return ErrInvalid
 		}
 	case "button":
@@ -127,7 +143,7 @@ func validate(input Input) error {
 		}
 	case "external":
 		parsed, err := url.ParseRequestURI(input.ExternalURL)
-		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		if input.RoutePath != "" || input.Component != "" || err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
 			return ErrInvalid
 		}
 	default:
@@ -140,9 +156,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	input.Key = strings.ToLower(strings.TrimSpace(input.Key))
-	input.ParentID = clean(input.ParentID)
-	input.PermissionID = clean(input.PermissionID)
+	input = normalizeInput(input)
 	if len(input.Metadata) == 0 {
 		input.Metadata = json.RawMessage(`{}`)
 	}
@@ -162,8 +176,20 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 			return err
 		}
 		now := time.Now()
-		_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO menus(id,parent_id,menu_key,name,menu_type,route_path,component,external_url,icon,permission_id,visible,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.ParentID, input.Key, input.Name, input.Type, input.RoutePath, input.Component, input.ExternalURL, input.Icon, input.PermissionID, input.Visible, input.Status, input.SortOrder, string(input.Metadata), now, actor.ID, now, actor.ID)
-		return err
+		var deletedAt sql.NullTime
+		findErr := tx.GetContext(lockCtx, &deletedAt, tx.Rebind(`SELECT deleted_at FROM menus WHERE id=? FOR UPDATE`), id)
+		switch {
+		case findErr == nil && !deletedAt.Valid:
+			return ErrConflict
+		case findErr == nil:
+			_, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE menus SET parent_id=?,menu_key=?,name=?,menu_type=?,route_path=?,component=?,external_url=?,icon=?,permission_id=?,visible=?,status=?,sort_order=?,metadata=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL`), input.ParentID, input.Key, input.Name, input.Type, input.RoutePath, input.Component, input.ExternalURL, input.Icon, input.PermissionID, input.Visible, input.Status, input.SortOrder, string(input.Metadata), now, actor.ID, id)
+			return err
+		case errors.Is(findErr, sql.ErrNoRows):
+			_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO menus(id,parent_id,menu_key,name,menu_type,route_path,component,external_url,icon,permission_id,visible,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.ParentID, input.Key, input.Name, input.Type, input.RoutePath, input.Component, input.ExternalURL, input.Icon, input.PermissionID, input.Visible, input.Status, input.SortOrder, string(input.Metadata), now, actor.ID, now, actor.ID)
+			return err
+		default:
+			return findErr
+		}
 	})
 	if err != nil {
 		return Record{}, err
@@ -174,7 +200,8 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return Record{}, err
 	}
-	if strings.TrimSpace(id) == "" {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxMenuIDLength {
 		return Record{}, ErrInvalid
 	}
 	var record Record
@@ -199,8 +226,13 @@ func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*Node, error) {
 }
 
 func validateTreeInput(input TreeInput) error {
-	if len(input.IDs) > 200 || len(input.Types) > 10 || len(input.Statuses) > 10 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+	if len(strings.TrimSpace(input.Keyword)) > maxMenuKeywordLength || len(input.IDs) > 200 || len(input.Types) > 10 || len(input.Statuses) > 10 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
 		return ErrInvalid
+	}
+	for _, id := range input.IDs {
+		if strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) || len(id) > maxMenuIDLength {
+			return ErrInvalid
+		}
 	}
 	for _, menuType := range input.Types {
 		if menuType != "directory" && menuType != "page" && menuType != "button" && menuType != "external" {
@@ -368,7 +400,8 @@ func (s *Service) list(ctx context.Context, visibleOnly bool) ([]Record, error) 
 		where += ` AND visible=true AND status='active'`
 	}
 	records := []Record{}
-	err := s.db.SelectContext(ctx, &records, `SELECT `+columns+` FROM menus WHERE `+where+` ORDER BY sort_order,id`)
+	query := fmt.Sprintf(`SELECT %s FROM menus WHERE %s ORDER BY sort_order,id LIMIT %d`, columns, where, s.cfg.Menu.MaxNodes+1)
+	err := s.db.SelectContext(ctx, &records, query)
 	if err != nil {
 		return nil, err
 	}
@@ -407,16 +440,17 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
+	input.ID = strings.TrimSpace(input.ID)
 	input.ParentID = clean(input.ParentID)
 	input.PermissionID = clean(input.PermissionID)
-	if input.ID == "" || input.Version <= 0 {
+	if input.ID == "" || len(input.ID) > maxMenuIDLength || input.Version <= 0 {
 		return Record{}, ErrInvalid
 	}
 	existing, err := s.Get(ctx, input.ID)
 	if err != nil {
 		return Record{}, err
 	}
-	candidate := Input{ParentID: input.ParentID, Key: existing.Key, Name: input.Name, Type: input.Type, RoutePath: input.RoutePath, Component: input.Component, ExternalURL: input.ExternalURL, Icon: input.Icon, PermissionID: input.PermissionID, Visible: input.Visible, Status: input.Status, SortOrder: input.SortOrder, Metadata: input.Metadata}
+	candidate := normalizeInput(Input{ParentID: input.ParentID, Key: existing.Key, Name: input.Name, Type: input.Type, RoutePath: input.RoutePath, Component: input.Component, ExternalURL: input.ExternalURL, Icon: input.Icon, PermissionID: input.PermissionID, Visible: input.Visible, Status: input.Status, SortOrder: input.SortOrder, Metadata: input.Metadata})
 	if len(candidate.Metadata) == 0 {
 		candidate.Metadata = json.RawMessage(`{}`)
 	}
@@ -424,10 +458,10 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 		return Record{}, err
 	}
 	err = s.mutate(ctx, "platform.menu.update", input.ID, input, func(lockCtx context.Context, tx *sqlx.Tx) error {
-		if err := s.validateReferences(lockCtx, tx, input.ID, input.Type, input.ParentID, input.PermissionID); err != nil {
+		if err := s.validateReferences(lockCtx, tx, input.ID, candidate.Type, candidate.ParentID, candidate.PermissionID); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE menus SET parent_id=?,name=?,menu_type=?,route_path=?,component=?,external_url=?,icon=?,permission_id=?,visible=?,status=?,sort_order=?,metadata=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), input.ParentID, input.Name, input.Type, input.RoutePath, input.Component, input.ExternalURL, input.Icon, input.PermissionID, input.Visible, input.Status, input.SortOrder, string(candidate.Metadata), time.Now(), actor.ID, input.ID, input.Version)
+		result, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE menus SET parent_id=?,name=?,menu_type=?,route_path=?,component=?,external_url=?,icon=?,permission_id=?,visible=?,status=?,sort_order=?,metadata=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), candidate.ParentID, candidate.Name, candidate.Type, candidate.RoutePath, candidate.Component, candidate.ExternalURL, candidate.Icon, candidate.PermissionID, candidate.Visible, candidate.Status, candidate.SortOrder, string(candidate.Metadata), time.Now(), actor.ID, input.ID, input.Version)
 		if err != nil {
 			return err
 		}
@@ -450,7 +484,8 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err != nil {
 		return err
 	}
-	if id == "" || version <= 0 {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxMenuIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	return s.mutate(ctx, "platform.menu.delete", id, map[string]any{"version": version}, func(lockCtx context.Context, tx *sqlx.Tx) error {
@@ -486,33 +521,32 @@ func (s *Service) validateReferences(ctx context.Context, tx *sqlx.Tx, id, menuT
 			return ErrInvalid
 		}
 	}
-	if parent == nil {
-		return nil
-	}
-	if *parent == id {
+	if parent != nil && *parent == id {
 		return ErrInvalid
 	}
 	var records []Record
-	if err := tx.SelectContext(ctx, &records, tx.Rebind(`SELECT `+columns+` FROM menus WHERE deleted_at IS NULL`)); err != nil {
+	query := fmt.Sprintf(`SELECT %s FROM menus WHERE deleted_at IS NULL ORDER BY sort_order,id LIMIT %d`, columns, s.cfg.Menu.MaxNodes+1)
+	if err := tx.SelectContext(ctx, &records, query); err != nil {
 		return err
 	}
-	found := false
+	if len(records) > s.cfg.Menu.MaxNodes || (id == "" && len(records) == s.cfg.Menu.MaxNodes) {
+		return ErrConflict
+	}
+	found := id == ""
 	for i := range records {
-		if records[i].ID == *parent {
-			validParent := records[i].Type == "directory"
-			if menuType == "button" {
-				validParent = records[i].Type == "page"
-			}
-			if !validParent {
-				return ErrInvalid
-			}
-			found = true
-		}
 		if records[i].ID == id {
 			records[i].ParentID = parent
+			records[i].Type = menuType
+			found = true
 		}
 	}
 	if !found {
+		return ErrNotFound
+	}
+	if id == "" {
+		records = append(records, Record{ID: "__candidate__", ParentID: parent, Type: menuType})
+	}
+	if !validParentTypes(records) {
 		return ErrInvalid
 	}
 	_, err := build(records)
@@ -522,24 +556,48 @@ func (s *Service) validateReferences(ctx context.Context, tx *sqlx.Tx, id, menuT
 	return nil
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(context.Context, *sqlx.Tx) error) error {
-	committed := false
 	run := func(runCtx context.Context) error {
-		err := operationlog.Do(runCtx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "menu", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-			businessErr := s.tx.Within(runCtx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error { return fn(runCtx, tx) })
-			committed = businessErr == nil
-			return businessErr
+		started := time.Now()
+		operationEntry := operationlog.Entry{Operation: operation, ResourceType: "menu", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+		securityEntry := securitylog.Entry{EventType: securitylog.EventMenuChanged, SubjectID: id, SubjectType: "menu", Metadata: map[string]any{"operation": operation}}
+		err := s.tx.Within(runCtx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+			if err := fn(runCtx, tx); err != nil {
+				return err
+			}
+			operationEntry.Duration = time.Since(started)
+			operationEntry.Succeeded = true
+			if s.operations != nil {
+				if err := s.operations.RecordTx(runCtx, tx, operationEntry); err != nil {
+					return err
+				}
+			}
+			securityEntry.Succeeded = true
+			if s.security != nil {
+				return s.security.RecordTx(runCtx, tx, securityEntry)
+			}
+			return nil
 		})
-		if committed {
-			s.invalidateCache(runCtx)
+		if database.IsUniqueViolation(err) {
+			err = ErrConflict
 		}
-		if s.security == nil {
+		if err != nil {
+			operationEntry.Duration = time.Since(started)
+			operationEntry.Succeeded = false
+			operationEntry.ErrorCode = "operation_failed"
+			operationEntry.ErrorMessage = "operation failed"
+			if s.operations != nil {
+				_ = s.operations.Record(runCtx, operationEntry)
+			}
+			securityEntry.Succeeded = false
+			securityEntry.ErrorCode = "operation_failed"
+			securityEntry.ErrorMessage = "operation failed"
+			if s.security != nil {
+				_ = s.security.Record(runCtx, securityEntry)
+			}
 			return err
 		}
-		securityErr := s.security.Record(runCtx, securitylog.Entry{EventType: securitylog.EventMenuChanged, SubjectID: id, SubjectType: "menu", Succeeded: committed, Metadata: map[string]any{"operation": operation}})
-		if securityErr != nil && committed && err == nil && s.security.FailClosed() {
-			return securityErr
-		}
-		return err
+		s.invalidateCache(runCtx)
+		return nil
 	}
 	if s.locker == nil {
 		return run(ctx)
@@ -556,6 +614,60 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		return ErrConflict
 	}
 	return nil
+}
+
+func validParentTypes(records []Record) bool {
+	byID := make(map[string]Record, len(records))
+	for _, record := range records {
+		byID[record.ID] = record
+	}
+	for _, record := range records {
+		if record.ParentID == nil {
+			if record.Type == "button" {
+				return false
+			}
+			continue
+		}
+		parent, ok := byID[*record.ParentID]
+		if !ok || (record.Type == "button" && parent.Type != "page") || (record.Type != "button" && parent.Type != "directory") {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeInput(input Input) Input {
+	input.Key = strings.ToLower(strings.TrimSpace(input.Key))
+	input.Name = strings.TrimSpace(input.Name)
+	input.Type = strings.TrimSpace(input.Type)
+	input.RoutePath = strings.TrimSpace(input.RoutePath)
+	input.Component = strings.TrimSpace(input.Component)
+	input.ExternalURL = strings.TrimSpace(input.ExternalURL)
+	input.Icon = strings.TrimSpace(input.Icon)
+	input.Status = strings.TrimSpace(input.Status)
+	input.ParentID = clean(input.ParentID)
+	input.PermissionID = clean(input.PermissionID)
+	return input
+}
+
+func validMenuID(value *string) bool {
+	return value == nil || (*value != "" && len(*value) <= maxMenuIDLength)
+}
+
+func validMetadata(value json.RawMessage) bool {
+	if !json.Valid(value) {
+		return false
+	}
+	var object map[string]any
+	return json.Unmarshal(value, &object) == nil && object != nil
+}
+
+func validRoutePath(value string) bool {
+	return routePathPattern.MatchString(value) && !strings.Contains(value, "//") && !strings.Contains(value, "..")
+}
+
+func validComponent(value string) bool {
+	return componentPattern.MatchString(value) && !strings.HasPrefix(value, "/") && !strings.Contains(value, "..") && !strings.Contains(value, "//")
 }
 
 func (s *Service) invalidateCache(ctx context.Context) {

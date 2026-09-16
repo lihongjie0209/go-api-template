@@ -597,6 +597,13 @@ func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissio
 	if err := service.Delete(actorCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
 	}
+	restored, err := service.Create(actorCtx, menu.Input{Key: root.Key, Name: "恢复菜单", Type: "directory", Visible: true, Status: "active"})
+	if err != nil || restored.ID != root.ID || restored.Version <= root.Version {
+		t.Fatalf("restored stable menu=%+v err=%v", restored, err)
+	}
+	if err := service.Delete(actorCtx, restored.ID, restored.Version); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
