@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
+	"github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
@@ -30,6 +32,16 @@ func (s *securityRecorderStub) FailClosed() bool { return true }
 func (s *securityRecorderStub) Record(_ context.Context, entry securitylog.Entry) error {
 	s.entry = entry
 	return nil
+}
+
+func TestAuthenticationFailureCodeDoesNotExposeTechnicalErrors(t *testing.T) {
+	t.Parallel()
+	if got := authenticationFailureCode(errors.New("postgres password=secret")); got != "internal_error" {
+		t.Fatalf("authenticationFailureCode() = %q", got)
+	}
+	if got := authenticationFailureCode(authentication.ErrAccountLocked); got != "account_locked" {
+		t.Fatalf("authenticationFailureCode(account locked) = %q", got)
+	}
 }
 
 func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *testing.T) {

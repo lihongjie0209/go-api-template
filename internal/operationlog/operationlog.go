@@ -82,7 +82,12 @@ func Do(ctx context.Context, recorder Recorder, entry Entry, fn func() error) er
 	entry.Duration = time.Since(started)
 	entry.Succeeded = err == nil
 	if err != nil {
-		entry.ErrorMessage = err.Error()
+		if entry.ErrorCode == "" {
+			entry.ErrorCode = "operation_failed"
+		}
+		if entry.ErrorMessage == "" {
+			entry.ErrorMessage = "operation failed"
+		}
 	}
 	recordErr := recorder.Record(ctx, entry)
 	if err != nil {

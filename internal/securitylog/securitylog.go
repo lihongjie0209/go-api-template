@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -106,6 +107,10 @@ type TransactionalRecorder interface {
 	RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error
 }
 
+type outboxStore interface {
+	Store(context.Context, *sqlx.Tx, string, *commonv1.EventEnvelope) error
+}
+
 type Service struct {
 	cfg        config.SecurityLog
 	appName    string
@@ -113,7 +118,7 @@ type Service struct {
 	db         *sqlx.DB
 	transactor *database.Transactor
 	metrics    *observability.Metrics
-	outbox     *eventbus.Outbox
+	outbox     outboxStore
 }
 
 func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics, outbox *eventbus.Outbox) *Service {
@@ -126,19 +131,31 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 	if !s.Enabled() {
 		return nil
 	}
+	if s.transactor == nil || s.outbox == nil {
+		return errors.New("security log outbox is unavailable")
+	}
 	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
 		return err
 	}
 	started := time.Now()
-	err = eventbus.Publish(ctx, s.bus, s.cfg.Subject, envelope)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if actor, ok := platformprincipal.FromContext(persistCtx); !ok || strings.TrimSpace(actor.ID) == "" {
+		persistCtx = platformprincipal.SystemContext(persistCtx, s.appName+":security-log-recorder")
+	}
+	err = s.transactor.Within(persistCtx, nil, func(tx *sqlx.Tx) error {
+		return s.outbox.Store(persistCtx, tx, s.cfg.Subject, envelope)
+	})
 	status := "success"
 	if err != nil {
 		status = "error"
 	}
-	s.metrics.ObserveInfrastructure("security_log", "jetstream", "enqueue", status, started)
+	if s.metrics != nil {
+		s.metrics.ObserveInfrastructure("security_log", "database", "enqueue", status, started)
+	}
 	if err != nil {
-		return fmt.Errorf("enqueue security log: %w", err)
+		return fmt.Errorf("store security log in outbox: %w", err)
 	}
 	return nil
 }
@@ -149,6 +166,9 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error {
 	if !s.Enabled() {
 		return nil
+	}
+	if tx == nil || s.outbox == nil {
+		return errors.New("security log transactional outbox is unavailable")
 	}
 	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
@@ -161,8 +181,8 @@ func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error 
 }
 
 func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnvelope, error) {
-	if !validEvent(entry.EventType) {
-		return nil, fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
+	if err := validateEntry(entry); err != nil {
+		return nil, err
 	}
 	actor, _ := platformprincipal.FromContext(ctx)
 	clientIP, userAgent := clientFromContext(ctx)
@@ -199,6 +219,9 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 	if err := json.Unmarshal(envelope.Payload, &value); err != nil {
 		return fmt.Errorf("decode security log: %w", err)
 	}
+	if err := s.validateConsumedEvent(envelope, value); err != nil {
+		return err
+	}
 	auditActor := value.ActorID
 	if auditActor == "" {
 		auditActor = s.appName + ":security-log-consumer"
@@ -210,8 +233,31 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 	if err != nil {
 		status = "error"
 	}
-	s.metrics.ObserveInfrastructure("security_log", "database", "persist", status, started)
+	if s.metrics != nil {
+		s.metrics.ObserveInfrastructure("security_log", "database", "persist", status, started)
+	}
 	return err
+}
+
+func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, value payload) error {
+	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 256 || envelope.EventType != envelopeType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
+		return fmt.Errorf("%w: invalid security log envelope", ErrInvalidEntry)
+	}
+	if err := envelope.OccurredAt.CheckValid(); err != nil || !envelope.OccurredAt.AsTime().Equal(value.OccurredAt) {
+		return fmt.Errorf("%w: inconsistent security log occurrence time", ErrInvalidEntry)
+	}
+	if envelope.TenantId != value.TenantID || envelope.Context.ActorId != value.ActorID || envelope.Context.ActorType != value.ActorType || envelope.Context.TenantId != value.TenantID || envelope.Context.RequestId != value.RequestID || envelope.Context.TraceId != value.TraceID {
+		return fmt.Errorf("%w: inconsistent security log envelope context", ErrInvalidEntry)
+	}
+	entry := Entry{EventType: value.EventType, SubjectID: value.SubjectID, SubjectType: value.SubjectType, TenantID: value.TenantID, SessionID: value.SessionID, Succeeded: value.Succeeded, Reason: value.Reason, ErrorCode: value.ErrorCode, ErrorMessage: value.ErrorMessage, ClientIP: value.ClientIP, UserAgent: value.UserAgent}
+	if err := validateEntry(entry); err != nil || len(value.ActorID) > 256 || len(value.ActorType) > 64 || len(value.IdentifierHash) > 64 || len(value.TokenIDHash) > 64 || len(value.RequestID) > 256 || len(value.TraceID) > 64 || len(value.Metadata) > s.cfg.MaxPayloadBytes || !json.Valid(value.Metadata) {
+		return fmt.Errorf("%w: invalid security log event payload", ErrInvalidEntry)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(value.Metadata, &metadata); err != nil || metadata == nil {
+		return fmt.Errorf("%w: metadata must be a JSON object", ErrInvalidEntry)
+	}
+	return nil
 }
 
 func insert(ctx context.Context, tx *sqlx.Tx, id string, value payload, auditActor string) error {
@@ -245,6 +291,29 @@ func (s *Service) hashIdentifier(value string) string {
 func validEvent(value EventType) bool {
 	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventRoutePolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess || value == EventServiceAccountChanged
 }
+
+func validateEntry(entry Entry) error {
+	if !validEvent(entry.EventType) {
+		return fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
+	}
+	for name, value := range map[string]string{
+		"subject_id": entry.SubjectID, "subject_type": entry.SubjectType, "tenant_id": entry.TenantID,
+		"identifier": entry.Identifier, "token_id": entry.TokenID, "session_id": entry.SessionID,
+		"reason": entry.Reason, "error_code": entry.ErrorCode, "error_message": entry.ErrorMessage,
+		"client_ip": entry.ClientIP, "user_agent": entry.UserAgent,
+	} {
+		if !utf8.ValidString(value) {
+			return fmt.Errorf("%w: %s must be valid UTF-8", ErrInvalidEntry, name)
+		}
+	}
+	if len(entry.SubjectID) > 256 || len(entry.SubjectType) > 64 || len(entry.TenantID) > 256 ||
+		len(entry.Identifier) > 320 || len(entry.TokenID) > 4096 || len(entry.SessionID) > 256 ||
+		len(entry.Reason) > 8192 || len(entry.ErrorCode) > 1024 || len(entry.ErrorMessage) > 8192 ||
+		len(entry.ClientIP) > 256 || len(entry.UserAgent) > 4096 {
+		return fmt.Errorf("%w: security log fields exceed their bounds", ErrInvalidEntry)
+	}
+	return nil
+}
 func safeMetadata(value any, limit int) (json.RawMessage, error) {
 	if value == nil {
 		return json.RawMessage("{}"), nil
@@ -255,6 +324,10 @@ func safeMetadata(value any, limit int) (json.RawMessage, error) {
 	}
 	if len(data) > limit {
 		return nil, fmt.Errorf("metadata exceeds %d bytes", limit)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err != nil || object == nil {
+		return nil, errors.New("metadata must be a JSON object")
 	}
 	sensitive, err := platformredact.ContainsSensitiveJSON(data)
 	if err != nil {

@@ -779,11 +779,14 @@ func (c Config) Validate() error {
 	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.OperationLog.Subject == "" || len(c.OperationLog.Subject) > 256 || c.OperationLog.Durable == "" || len(c.OperationLog.Durable) > 256 || c.OperationLog.MaxPayloadBytes < 256 || c.OperationLog.MaxPayloadBytes > 64<<10) {
 		return errors.New("enabled operation_log requires database, event_bus, subject and durable names no greater than 256 bytes, and max_payload_bytes between 256 bytes and 64 KiB")
 	}
-	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || c.SecurityLog.Durable == "" || c.SecurityLog.MaxPayloadBytes <= 0 || len(c.SecurityLog.HashKey) < 32) {
-		return errors.New("enabled security_log requires database, event_bus, subject, durable, positive payload limit, and a hash_key of at least 32 bytes")
+	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || len(c.SecurityLog.Subject) > 256 || c.SecurityLog.Durable == "" || len(c.SecurityLog.Durable) > 256 || c.SecurityLog.MaxPayloadBytes < 256 || c.SecurityLog.MaxPayloadBytes > 64<<10 || len(c.SecurityLog.HashKey) < 32 || len(c.SecurityLog.HashKey) > 4096) {
+		return errors.New("enabled security_log requires database, event_bus, subject and durable names no greater than 256 bytes, max_payload_bytes between 256 bytes and 64 KiB, and a 32-4096 byte hash_key")
 	}
 	if c.App.Env == "production" && (!c.EventBus.Enabled || !c.OperationLog.Enabled || !c.SecurityLog.Enabled) {
 		return errors.New("production authentication requires event_bus, operation_log, and security_log")
+	}
+	if c.App.Env == "production" && !c.SecurityLog.FailClosed {
+		return errors.New("production security_log must fail closed")
 	}
 	if c.DataLifecycle.Enabled {
 		if !c.Database.Enabled {

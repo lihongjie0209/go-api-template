@@ -93,7 +93,7 @@ func TestDoMeasuresResult(t *testing.T) {
 	if !errors.Is(err, want) {
 		t.Fatalf("Do() error = %v", err)
 	}
-	if recorder.entry.Succeeded || recorder.entry.Duration < 0 || recorder.entry.ErrorMessage != want.Error() {
+	if recorder.entry.Succeeded || recorder.entry.Duration < 0 || recorder.entry.ErrorCode != "operation_failed" || recorder.entry.ErrorMessage != "operation failed" {
 		t.Fatalf("recorded entry = %+v", recorder.entry)
 	}
 }

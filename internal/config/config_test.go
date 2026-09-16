@@ -643,3 +643,26 @@ func TestConfigRejectsUnboundedOperationLogPayload(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigRejectsUnsafeSecurityLogSettings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{name: "small payload", mutate: func(cfg *Config) { cfg.SecurityLog.MaxPayloadBytes = 255 }, want: "max_payload_bytes"},
+		{name: "large payload", mutate: func(cfg *Config) { cfg.SecurityLog.MaxPayloadBytes = 64<<10 + 1 }, want: "max_payload_bytes"},
+		{name: "oversized hash key", mutate: func(cfg *Config) { cfg.SecurityLog.HashKey = strings.Repeat("h", 4097) }, want: "hash_key"},
+		{name: "production fail open", mutate: func(cfg *Config) { cfg.SecurityLog.FailClosed = false }, want: "fail closed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validProductionConfig(t)
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}

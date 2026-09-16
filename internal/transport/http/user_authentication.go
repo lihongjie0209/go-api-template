@@ -276,9 +276,28 @@ func (h *UserAuthenticationHandler) recordFailure(c *gin.Context, operationErr e
 		return
 	}
 	entry.Succeeded = false
-	entry.ErrorMessage = operationErr.Error()
+	entry.ErrorCode = authenticationFailureCode(operationErr)
+	entry.ErrorMessage = operation + " failed"
 	if err := h.record(c, entry); err != nil {
 		h.logger.ErrorContext(c.Request.Context(), "record failed authentication operation", "operation", operation, "error", err, "request_id", requestID(c))
+	}
+}
+func authenticationFailureCode(err error) string {
+	switch {
+	case errors.Is(err, authentication.ErrInvalidCredentials), errors.Is(err, authentication.ErrRefreshInvalid):
+		return "invalid_credentials"
+	case errors.Is(err, authentication.ErrRefreshReused):
+		return "refresh_token_reuse"
+	case errors.Is(err, authentication.ErrAccountLocked):
+		return "account_locked"
+	case errors.Is(err, authentication.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, authentication.ErrInvalid):
+		return "invalid_request"
+	case errors.Is(err, authentication.ErrSessionNotFound):
+		return "session_not_found"
+	default:
+		return "internal_error"
 	}
 }
 func loginFailureReason(err error) string {
