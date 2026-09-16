@@ -1363,6 +1363,7 @@ definitions:
   httptransport.routePolicyGetRequest:
     properties:
       route_id:
+        maxLength: 128
         type: string
     required:
     - route_id
@@ -1370,6 +1371,7 @@ definitions:
   httptransport.routePolicyPageRequest:
     properties:
       keyword:
+        maxLength: 256
         type: string
       page:
         type: integer
@@ -1389,8 +1391,10 @@ definitions:
   httptransport.routePolicySetRequest:
     properties:
       description:
+        maxLength: 4096
         type: string
       expression:
+        maxLength: 4096
         type: string
       references:
         items:
@@ -1398,6 +1402,7 @@ definitions:
         maxItems: 8
         type: array
       route_id:
+        maxLength: 128
         type: string
       status:
         enum:

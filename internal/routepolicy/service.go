@@ -23,6 +23,12 @@ var (
 	ErrConflict = errors.New("route policy version conflict")
 )
 
+const (
+	maxRoutePolicyIDLength          = 128
+	maxRoutePolicyDescriptionLength = 4096
+	maxRoutePolicyKeywordLength     = 256
+)
+
 type ReferenceInput struct {
 	PermissionID string `json:"permission_id"`
 	Scope        string `json:"scope"`
@@ -96,16 +102,23 @@ type Service struct {
 	transactor *database.Transactor
 	compiler   *Compiler
 	manager    *Manager
-	operations operationlog.Recorder
-	security   securitylog.Recorder
+	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 	logger     *slog.Logger
 }
 
-func NewService(db *sqlx.DB, transactor *database.Transactor, compiler *Compiler, manager *Manager, operations operationlog.Recorder, security securitylog.Recorder, logger *slog.Logger) *Service {
+func NewService(db *sqlx.DB, transactor *database.Transactor, compiler *Compiler, manager *Manager, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger) *Service {
 	return &Service{db: db, transactor: transactor, compiler: compiler, manager: manager, operations: operations, security: security, logger: logger}
 }
 
 func (s *Service) Get(ctx context.Context, routeID string) (View, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return View{}, err
+	}
+	routeID = strings.TrimSpace(routeID)
+	if routeID == "" || len(routeID) > maxRoutePolicyIDLength {
+		return View{}, ErrInvalid
+	}
 	var record Record
 	query := s.db.Rebind(`SELECT id,route_id,expression,description,priority,status,created_at,created_by,updated_at,updated_by,version FROM route_policy_definitions WHERE route_id=? AND deleted_at IS NULL`)
 	if err := s.db.GetContext(ctx, &record, query, routeID); err != nil {
@@ -123,8 +136,11 @@ func (s *Service) Get(ctx context.Context, routeID string) (View, error) {
 }
 
 func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return Page{}, err
+	}
 	request, err := pagination.Normalize(input.Request)
-	if err != nil || len(input.Protocols) > 20 || len(input.Statuses) > 20 {
+	if err != nil || len(strings.TrimSpace(request.Keyword)) > maxRoutePolicyKeywordLength || len(input.Protocols) > 20 || len(input.Statuses) > 20 || !validPageFilters(input) {
 		return Page{}, ErrInvalid
 	}
 	where := []string{"r.deleted_at IS NULL"}
@@ -165,23 +181,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 }
 
 func (s *Service) Set(ctx context.Context, input SetInput) (View, error) {
-	var record View
-	err := operationlog.Do(ctx, s.operations, operationlog.Entry{
-		Operation: "route_policy.set", ResourceType: "route_policy", ResourceID: input.RouteID,
-		Source: "backend", Protocol: "http", Request: map[string]any{"status": input.Status, "version": input.Version},
-	}, func() error {
-		var setErr error
-		record, setErr = s.set(ctx, input)
-		return setErr
-	})
-	securityErr := s.security.Record(ctx, securitylog.Entry{
-		EventType: securitylog.EventRoutePolicyChanged, SubjectID: input.RouteID,
-		SubjectType: "route_policy", Succeeded: err == nil, Metadata: map[string]any{"status": input.Status, "version": input.Version},
-	})
-	if err == nil && securityErr != nil && s.security.FailClosed() {
-		return View{}, securityErr
-	}
-	return record, err
+	return s.set(ctx, input)
 }
 
 func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
@@ -189,7 +189,10 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 	if !ok || strings.TrimSpace(principal.ID) == "" {
 		return View{}, platformprincipal.ErrMissing
 	}
-	if input.RouteID == "" || (input.Status != "active" && input.Status != "disabled") || input.Version < 0 {
+	input.RouteID = strings.TrimSpace(input.RouteID)
+	input.Expression = strings.TrimSpace(input.Expression)
+	input.Description = strings.TrimSpace(input.Description)
+	if input.RouteID == "" || len(input.RouteID) > maxRoutePolicyIDLength || len(input.Description) > maxRoutePolicyDescriptionLength || len(input.References) > MaxPermissionRefs || (input.Status != "active" && input.Status != "disabled") || input.Version < 0 {
 		return View{}, ErrInvalid
 	}
 	permissions, err := s.resolvePermissions(ctx, input.References)
@@ -201,16 +204,52 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
+	started := time.Now()
+	operationEntry := operationlog.Entry{Operation: "route_policy.set", ResourceType: "route_policy", ResourceID: input.RouteID, Source: "backend", Protocol: "service", Request: map[string]any{"status": input.Status, "version": input.Version}}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventRoutePolicyChanged, SubjectID: input.RouteID, SubjectType: "route_policy", Metadata: map[string]any{"status": input.Status, "version": input.Version}}
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		if err := ensureRoute(ctx, tx, input.RouteID); err != nil {
+			return err
+		}
+		if err := ensurePermissionReferences(ctx, tx, input.References); err != nil {
 			return err
 		}
 		if err := setPolicy(ctx, tx, principal.ID, input); err != nil {
 			return err
 		}
-		return syncReferences(ctx, tx, principal.ID, input.RouteID, input.References)
+		if err := syncReferences(ctx, tx, principal.ID, input.RouteID, input.References); err != nil {
+			return err
+		}
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = true
+		if s.operations != nil {
+			if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+				return err
+			}
+		}
+		securityEntry.Succeeded = true
+		if s.security != nil {
+			return s.security.RecordTx(ctx, tx, securityEntry)
+		}
+		return nil
 	})
+	if database.IsUniqueViolation(err) {
+		err = ErrConflict
+	}
 	if err != nil {
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = false
+		operationEntry.ErrorCode = "operation_failed"
+		operationEntry.ErrorMessage = "operation failed"
+		if s.operations != nil {
+			_ = s.operations.Record(ctx, operationEntry)
+		}
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		if s.security != nil {
+			_ = s.security.Record(ctx, securityEntry)
+		}
 		return View{}, err
 	}
 	s.manager.Apply(compiledPolicy, input.Status == "active")
@@ -220,11 +259,47 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 	return s.Get(ctx, input.RouteID)
 }
 
+func validPageFilters(input PageInput) bool {
+	for _, protocol := range input.Protocols {
+		if protocol != "http" && protocol != "grpc" {
+			return false
+		}
+	}
+	for _, status := range input.Statuses {
+		if status != "active" && status != "inactive" {
+			return false
+		}
+	}
+	return true
+}
+
+func ensurePermissionReferences(ctx context.Context, tx *sqlx.Tx, refs []ReferenceInput) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ids = append(ids, ref.PermissionID)
+	}
+	query, args, err := sqlx.In(`SELECT id FROM permissions WHERE id IN (?) AND node_type='permission' AND status='active' AND deleted_at IS NULL FOR UPDATE`, ids)
+	if err != nil {
+		return fmt.Errorf("build locked permission reference query: %w", err)
+	}
+	locked := []string{}
+	if err := tx.SelectContext(ctx, &locked, tx.Rebind(query), args...); err != nil {
+		return fmt.Errorf("lock permission references: %w", err)
+	}
+	if len(locked) != len(refs) {
+		return fmt.Errorf("%w: permission reference changed or became inactive", ErrInvalid)
+	}
+	return nil
+}
+
 func (s *Service) resolvePermissions(ctx context.Context, refs []ReferenceInput) (map[string]Permission, error) {
 	permissions := make(map[string]Permission, len(refs))
 	seenIDs := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
-		if ref.PermissionID == "" {
+		if ref.PermissionID == "" || ref.PermissionID != strings.TrimSpace(ref.PermissionID) || len(ref.PermissionID) > maxRoutePolicyIDLength {
 			return nil, ErrInvalid
 		}
 		if _, err := parseScope(ref.Scope); err != nil {

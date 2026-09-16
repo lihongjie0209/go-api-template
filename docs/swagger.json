@@ -6271,7 +6271,8 @@
             ],
             "properties": {
                 "route_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -6279,7 +6280,8 @@
             "type": "object",
             "properties": {
                 "keyword": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "page": {
                     "type": "integer"
@@ -6312,10 +6314,12 @@
             ],
             "properties": {
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "expression": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "references": {
                     "type": "array",
@@ -6325,7 +6329,8 @@
                     }
                 },
                 "route_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "status": {
                     "type": "string",

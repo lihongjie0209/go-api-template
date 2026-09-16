@@ -20,13 +20,13 @@ func NewRoutePolicyHandler(service *routepolicy.Service, logger *slog.Logger) *R
 }
 
 type routePolicyGetRequest struct {
-	RouteID string `json:"route_id" binding:"required"`
+	RouteID string `json:"route_id" binding:"required,max=128"`
 }
 
 type routePolicySetRequest struct {
-	RouteID     string                       `json:"route_id" binding:"required"`
-	Expression  string                       `json:"expression" binding:"required"`
-	Description string                       `json:"description"`
+	RouteID     string                       `json:"route_id" binding:"required,max=128"`
+	Expression  string                       `json:"expression" binding:"required,max=4096"`
+	Description string                       `json:"description" binding:"max=4096"`
 	Status      string                       `json:"status" binding:"required,oneof=active disabled"`
 	Version     int64                        `json:"version" binding:"gte=0"`
 	References  []routepolicy.ReferenceInput `json:"references" binding:"max=8,dive"`
@@ -35,7 +35,7 @@ type routePolicySetRequest struct {
 type routePolicyPageRequest struct {
 	Page      int      `json:"page"`
 	PageSize  int      `json:"page_size"`
-	Keyword   string   `json:"keyword"`
+	Keyword   string   `json:"keyword" binding:"omitempty,max=256"`
 	Protocols []string `json:"protocols" binding:"max=20,dive,oneof=http grpc"`
 	Statuses  []string `json:"statuses" binding:"max=20,dive,oneof=active inactive"`
 }

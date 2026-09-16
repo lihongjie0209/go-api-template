@@ -6274,7 +6274,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "route_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -6282,7 +6283,8 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "keyword": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "page": {
                     "type": "integer"
@@ -6315,10 +6317,12 @@ const docTemplate = `{
             ],
             "properties": {
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "expression": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "references": {
                     "type": "array",
@@ -6328,7 +6332,8 @@ const docTemplate = `{
                     }
                 },
                 "route_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "status": {
                     "type": "string",
