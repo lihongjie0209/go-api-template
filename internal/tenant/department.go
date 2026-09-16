@@ -337,10 +337,6 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 		seen[assignment.MembershipID] = struct{}{}
 		ids[i] = assignment.MembershipID
 	}
-	department, err := s.Get(ctx, departmentID)
-	if err != nil {
-		return err
-	}
 	return s.withDepartmentLock(ctx, actor.TenantID, "members", func(ctx context.Context) error {
 		primaryCount := 0
 		for _, assignment := range assignments {
@@ -348,11 +344,20 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 				primaryCount++
 			}
 		}
-		request := map[string]any{"name": department.Name, "assignment_count": len(assignments), "primary_count": primaryCount}
+		request := map[string]any{"assignment_count": len(assignments), "primary_count": primaryCount}
 		return s.mutate(ctx, "tenant.department.members.set", departmentID, request, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 				return err
 			}
+			var departmentName string
+			query := tx.Rebind(`SELECT name FROM tenant_departments WHERE tenant_id=? AND id=? AND deleted_at IS NULL`)
+			if err := tx.GetContext(ctx, &departmentName, query, actor.TenantID, departmentID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrNotFound
+				}
+				return err
+			}
+			request["name"] = departmentName
 			if err := ensureDepartmentParent(ctx, tx, actor.TenantID, &departmentID); err != nil {
 				return err
 			}
@@ -408,6 +413,7 @@ func (s *DepartmentService) mutate(ctx context.Context, operation, id string, re
 		if err := fn(tx); err != nil {
 			return err
 		}
+		entry.ResourceName = departmentMutationName(request, id)
 		entry.Duration = time.Since(started)
 		entry.Succeeded = true
 		if s.operations != nil {
@@ -416,6 +422,7 @@ func (s *DepartmentService) mutate(ctx context.Context, operation, id string, re
 		return nil
 	})
 	if err != nil && s.operations != nil {
+		entry.ResourceName = departmentMutationName(request, id)
 		entry.Duration = time.Since(started)
 		entry.Succeeded = false
 		entry.ErrorCode = "operation_failed"
