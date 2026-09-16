@@ -2,7 +2,6 @@ package permission
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,6 +12,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -39,11 +39,21 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestServiceValidationRequiresRegisteredPBACResourceAction(t *testing.T) {
+	t.Parallel()
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	service := &Service{resources: resources}
+	require.NoError(t, service.validateInput(Input{Key: "platform.users.read", Name: "查询用户", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"}))
+	require.ErrorIs(t, service.validateInput(Input{Key: "platform.unknown.read", Name: "未知资源", NodeType: "permission", Resource: "unknown.resource", Action: "read", Status: "active"}), ErrInvalid)
+	require.ErrorIs(t, service.validateInput(Input{Key: "platform.users.unknown", Name: "未知操作", NodeType: "permission", Resource: "identity.user", Action: "unknown", Status: "active"}), ErrInvalid)
+}
+
 func TestPermissionSeedIDGoldenMapping(t *testing.T) {
 	t.Parallel()
-	id, err := SeedID("platform.route-policy.manage")
+	id, err := SeedID("platform.pbac-policy.manage")
 	require.NoError(t, err)
-	require.Equal(t, "f2d9d463-eea9-5cf0-95e3-f8c8b12fa039", id)
+	require.Equal(t, "a0d93b54-6f9d-5136-abb5-27897aef65ad", id)
 }
 
 type actorResolverStub struct {
@@ -125,7 +135,7 @@ func TestMutationRollsBackWhenTransactionalAuditFails(t *testing.T) {
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
 	recorder := &failingOperationRecorder{err: errors.New("outbox unavailable")}
 	service := &Service{
-		transactor: database.NewTransactor(sqlxDB), policies: &policyStub{},
+		transactor: database.NewTransactor(sqlxDB),
 		operations: recorder, security: securityRecorderStub{},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -138,40 +148,6 @@ func TestMutationRollsBackWhenTransactionalAuditFails(t *testing.T) {
 	require.Equal(t, 1, recorder.failureCalls)
 	require.NoError(t, mock.ExpectationsWereMet())
 	_ = db.Close()
-}
-
-func TestUpdateRejectsChangingKeyReferencedByActiveRoutePolicy(t *testing.T) {
-	t.Parallel()
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	service := &Service{
-		repository: &Repository{db: sqlxDB}, transactor: database.NewTransactor(sqlxDB),
-		policies: &policyStub{}, operations: operationRecorderStub{}, security: securityRecorderStub{},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	now := time.Now()
-	columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
-	row := []driver.Value{"permission-1", nil, "platform.users.read", "查询用户", "permission", "users", "read", "", int64(0), "active", false, now, "actor-1", now, "actor-1", int64(2)}
-	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id, parent_id, permission_key.*FOR UPDATE`).WithArgs("permission-1").WillReturnRows(sqlmock.NewRows(columns).AddRow(row...))
-	mock.ExpectQuery(`SELECT id, parent_id, permission_key.*ORDER BY sort_order,id`).WillReturnRows(sqlmock.NewRows(columns).AddRow(row...))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM route_policy_permission_refs`).WithArgs("permission-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectRollback()
-
-	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
-	_, err = service.Update(ctx, "permission-1", 2, Input{Key: "platform.users.get", Name: "查询用户", NodeType: "permission", Resource: "users", Action: "read", Status: "active"})
-	require.ErrorIs(t, err, ErrInUse)
-	require.NoError(t, mock.ExpectationsWereMet())
-	_ = db.Close()
-}
-
-type operationRecorderStub struct{}
-
-func (operationRecorderStub) Enabled() bool                                    { return true }
-func (operationRecorderStub) Record(context.Context, operationlog.Entry) error { return nil }
-func (operationRecorderStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
-	return nil
 }
 
 type failingOperationRecorder struct {
@@ -200,9 +176,3 @@ func (securityRecorderStub) Record(context.Context, securitylog.Entry) error { r
 func (securityRecorderStub) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
 	return nil
 }
-
-type policyStub struct{}
-
-func (*policyStub) Refresh(context.Context) error { return nil }
-func (*policyStub) Notify(context.Context) error  { return nil }
-func (*policyStub) Invalidate()                   {}

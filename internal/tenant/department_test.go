@@ -9,6 +9,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
@@ -91,13 +92,31 @@ func TestDepartmentServiceTreeBoundsDatabaseResult(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + departmentColumns + ` FROM tenant_departments WHERE tenant_id=? AND deleted_at IS NULL ORDER BY sort_order,id LIMIT 10001`)).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + departmentColumns + ` FROM tenant_departments td WHERE td.tenant_id=? AND td.deleted_at IS NULL AND (1 = 1) ORDER BY sort_order,id LIMIT 10001`)).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}))
 	service := &DepartmentService{db: db}
-	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a", MembershipID: "member-a"})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "member-a"})
 
 	tree, err := service.Tree(ctx, "")
 	require.NoError(t, err)
 	require.Empty(t, tree)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentGetAppliesTenantAndDataPermissionInOneQuery(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND (td.created_by = ?)`)).
+		WithArgs("tenant-a", "department-a", "user-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("department-a", "tenant-a", nil, "engineering", "Engineering", 0, now, "user-a", now, "user-a", 1))
+	service := &DepartmentService{db: db}
+	record, err := service.get(t.Context(), "tenant-a", "department-a", datapermission.SQLPredicate{Clause: "(td.created_by = ?)", Args: []any{"user-a"}})
+	require.NoError(t, err)
+	require.Equal(t, "department-a", record.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

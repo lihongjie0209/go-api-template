@@ -14,8 +14,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
-	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
@@ -105,25 +105,15 @@ func (r *Repository) List(ctx context.Context) ([]Record, error) {
 type Service struct {
 	repository *Repository
 	transactor *database.Transactor
-	policies   policyRefresher
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
 	actors     presentation.ActorResolver
 	logger     *slog.Logger
+	resources  *pbac.Registry
 }
 
-type policyRefresher interface {
-	Refresh(context.Context) error
-	Notify(context.Context) error
-	Invalidate()
-}
-
-func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger) *Service {
-	service := &Service{repository: repository, transactor: transactor, operations: operations, security: security, actors: actors, logger: logger}
-	if policies != nil {
-		service.policies = policies
-	}
-	return service
+func New(repository *Repository, transactor *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, resources *pbac.Registry, logger *slog.Logger) *Service {
+	return &Service{repository: repository, transactor: transactor, operations: operations, security: security, actors: actors, resources: resources, logger: logger}
 }
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	id = strings.TrimSpace(id)
@@ -301,7 +291,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 		return Record{}, e
 	}
 	input = normalize(input)
-	if e = validate(input); e != nil {
+	if e = s.validateInput(input); e != nil {
 		return Record{}, e
 	}
 	id := uuid.NewString()
@@ -327,7 +317,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		return Record{}, false, err
 	}
 	input = normalize(input)
-	if err := validate(input); err != nil {
+	if err := s.validateInput(input); err != nil {
 		return Record{}, false, err
 	}
 	id, err := SeedID(input.Key)
@@ -492,7 +482,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		return Record{}, ErrInvalid
 	}
 	input = normalize(input)
-	if e = validate(input); e != nil {
+	if e = s.validateInput(input); e != nil {
 		return Record{}, e
 	}
 	if input.ParentID != nil && *input.ParentID == id {
@@ -512,15 +502,6 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		if err := s.validateTreeTx(ctx, tx, id, input.ParentID); err != nil {
 			return err
 		}
-		if current.Key != input.Key || current.NodeType != input.NodeType || current.Resource != input.Resource || current.Action != input.Action || (current.Status == "active" && input.Status != "active") {
-			used, refErr := routePolicyReferenceCount(ctx, tx, id)
-			if refErr != nil {
-				return refErr
-			}
-			if used > 0 {
-				return ErrInUse
-			}
-		}
 		q := tx.Rebind(`UPDATE permissions SET parent_id=?,permission_key=?,name=?,node_type=?,resource=?,action=?,description=?,sort_order=?,status=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		res, err := tx.ExecContext(ctx, q, input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, time.Now(), a, id, version)
 		if err != nil {
@@ -539,6 +520,22 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		return Record{}, e
 	}
 	return s.get(ctx, id)
+}
+
+func (s *Service) validateInput(input Input) error {
+	if err := validate(input); err != nil {
+		return err
+	}
+	if input.NodeType != "permission" {
+		return nil
+	}
+	if s == nil || s.resources == nil {
+		return ErrInvalid
+	}
+	if _, _, err := s.resources.Resolve(input.Resource, input.Action); err != nil {
+		return fmt.Errorf("%w: resource/action is not registered", ErrInvalid)
+	}
+	return nil
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	id = strings.TrimSpace(id)
@@ -630,15 +627,11 @@ func referenceCount(ctx context.Context, tx *sqlx.Tx, query, id string) (int, er
 	}
 	return count, nil
 }
-func routePolicyReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int, error) {
-	return referenceCount(ctx, tx, `SELECT count(*) FROM route_policy_permission_refs r JOIN route_policy_definitions p ON p.id=r.policy_id AND p.deleted_at IS NULL AND p.status='active' WHERE r.permission_id=? AND r.deleted_at IS NULL`, id)
-}
 func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int, error) {
 	queries := []string{
 		`SELECT count(*) FROM menus WHERE permission_id=? AND deleted_at IS NULL`,
 		`SELECT count(*) FROM tenant_permission_grants WHERE permission_id=? AND deleted_at IS NULL`,
 		`SELECT count(*) FROM tenant_role_permissions WHERE permission_id=? AND deleted_at IS NULL`,
-		`SELECT count(*) FROM route_policy_permission_refs WHERE permission_id=? AND deleted_at IS NULL`,
 	}
 	for _, query := range queries {
 		count, err := referenceCount(ctx, tx, query, id)
@@ -691,17 +684,6 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 			_ = s.security.Record(ctx, securityEntry)
 		}
 		return err
-	}
-	if s.policies != nil {
-		if refreshErr := s.policies.Refresh(ctx); refreshErr != nil {
-			s.policies.Invalidate()
-			if s.logger != nil {
-				s.logger.Error("refresh route policies after permission change", "permission_id", id, "error", refreshErr)
-			}
-		}
-		if notifyErr := s.policies.Notify(ctx); notifyErr != nil && s.logger != nil {
-			s.logger.Warn("publish permission policy refresh", "permission_id", id, "error", notifyErr)
-		}
 	}
 	return nil
 }

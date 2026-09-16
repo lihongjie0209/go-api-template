@@ -24,7 +24,6 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
-	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -420,8 +419,9 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-// DatabaseAuthentication verifies credentials when supplied. Whether an
-// anonymous principal may proceed is decided by the database-owned policy.
+// DatabaseAuthentication verifies credentials when supplied. The immutable
+// endpoint descriptor decides whether an anonymous principal may proceed, and
+// protected operations are subsequently evaluated by the PBAC engine.
 func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := strings.TrimSpace(c.GetHeader("Authorization"))
@@ -456,27 +456,6 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 		c.Set("subject", identity.ID)
 		ctx := platformprincipal.WithContext(c.Request.Context(), identity)
 		c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, header))
-		c.Next()
-	}
-}
-
-func DatabaseAuthorization(enabled bool, serviceName string, authorizer platformauthz.Authorizer, policies *routepolicy.Manager, logger *slog.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !enabled {
-			c.Next()
-			return
-		}
-		if err := policies.EvaluateRoute(c.Request.Context(), "http", c.Request.Method, c.FullPath(), serviceName, authorizer); err != nil {
-			switch {
-			case errors.Is(err, routepolicy.ErrMissing):
-				Fail(c, logger, apperror.PermissionPolicyMissing(err))
-			case errors.Is(err, platformauthz.ErrDecisionUnavailable):
-				Fail(c, logger, apperror.AuthorizationUnavailable(err))
-			default:
-				Fail(c, logger, apperror.Forbidden("permission denied"))
-			}
-			return
-		}
 		c.Next()
 	}
 }

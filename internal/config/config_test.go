@@ -25,22 +25,6 @@ func TestLoad_EnvironmentOverridesFile(t *testing.T) {
 	}
 }
 
-func TestLoad_AuthorizationRefreshIntervalCanBeOverridden(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("http:\n  address: 127.0.0.1:8080\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("APP_AUTHORIZATION_POLICY_REFRESH_INTERVAL", "5s")
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Authorization.PolicyRefreshInterval != 5*time.Second {
-		t.Fatalf("PolicyRefreshInterval = %v", cfg.Authorization.PolicyRefreshInterval)
-	}
-}
-
 func TestLoad_IdempotencyRouteListsCanBeOverriddenByEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -88,28 +72,6 @@ func TestConfig_ValidateJWTAsymmetricKey(t *testing.T) {
 	cfg.JWT = JWT{Algorithm: "RS256", KeyID: "missing-private-key"}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "configured together") {
 		t.Fatalf("Validate() error = %v, want asymmetric key pairing error", err)
-	}
-}
-
-func TestConfig_ValidateAuthorizationDependency(t *testing.T) {
-	t.Parallel()
-	cfg := validDevelopmentConfig(t)
-	cfg.Authorization.Enabled = true
-	delete(cfg.Outbound.GRPC, "authorization")
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "outbound.grpc.authorization") {
-		t.Fatalf("Validate() error = %v", err)
-	}
-}
-
-func TestConfig_RejectsUnboundedAuthorizationRefresh(t *testing.T) {
-	t.Parallel()
-	for _, interval := range []time.Duration{time.Millisecond, 11 * time.Minute} {
-		cfg := validDevelopmentConfig(t)
-		cfg.Authorization.Enabled = true
-		cfg.Authorization.PolicyRefreshInterval = interval
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "between 100ms and 10m") {
-			t.Fatalf("interval %s Validate() error = %v", interval, err)
-		}
 	}
 }
 
@@ -697,7 +659,6 @@ func TestConfig_ProductionSecurityRequirementsFailClosed(t *testing.T) {
 		{name: "grpc tls", want: "grpc tls must be enabled", mutate: func(cfg *Config) { cfg.GRPC.TLS.Enabled = false }},
 		{name: "grpc reflection", want: "grpc reflection must be disabled", mutate: func(cfg *Config) { cfg.GRPC.ReflectionEnabled = true }},
 		{name: "identity verifier", want: "production authentication requires identity JWKS", mutate: func(cfg *Config) { cfg.Auth.JWKSURL = "" }},
-		{name: "authorization", want: "authorization must be enabled", mutate: func(cfg *Config) { cfg.Authorization.Enabled = false }},
 		{name: "jwt signing key", want: "asymmetric JWT signing key", mutate: func(cfg *Config) { cfg.JWT.KeyID, cfg.JWT.PrivateKey = "", "" }},
 		{name: "durable security logs", want: "event_bus, operation_log, and security_log", mutate: func(cfg *Config) { cfg.SecurityLog.Enabled = false }},
 	}
@@ -726,7 +687,6 @@ func validProductionConfig(t *testing.T) Config {
 	cfg.Auth.JWKSURL = "https://identity.example.com/.well-known/jwks.json"
 	cfg.Auth.Issuer = "identity-service"
 	cfg.Auth.Audience = "test-service"
-	cfg.Authorization.Enabled = true
 	cfg.JWT.KeyID = "production-1"
 	cfg.JWT.PrivateKey = "configured-by-secret-manager"
 	cfg.Database.Enabled = true

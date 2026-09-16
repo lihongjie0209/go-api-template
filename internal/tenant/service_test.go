@@ -148,8 +148,8 @@ func TestRepositoryGetMemberAlwaysScopesTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := sqlx.NewDb(raw, "sqlmock")
-	mock.ExpectQuery(`FROM tenant_memberships WHERE tenant_id=\? AND id=\?`).WithArgs("tenant-a", "member-b").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "user_id", "username", "display_name", "status", "joined_at", "created_at", "created_by", "updated_at", "updated_by", "version"}))
-	_, err = NewRepository(db).GetMember(t.Context(), "tenant-a", "member-b")
+	mock.ExpectQuery(`FROM tenant_memberships tm WHERE tm.tenant_id=\? AND tm.id=\?.*\(1 = 1\)`).WithArgs("tenant-a", "member-b").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "user_id", "username", "display_name", "status", "joined_at", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	_, err = NewRepository(db).GetMember(t.Context(), "tenant-a", "member-b", unrestrictedMemberScope())
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetMember() error=%v", err)
 	}

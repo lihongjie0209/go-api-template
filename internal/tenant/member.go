@@ -13,11 +13,13 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/outbound"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
 )
@@ -131,12 +133,26 @@ type MemberPageInput struct {
 
 const memberColumns = `id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version`
 
-func (r *Repository) GetMember(ctx context.Context, tenantID, id string) (Member, error) {
+func NewMemberDataPermissionSchema() *datapermission.Schema {
+	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{
+		"id":         {Column: "tm.id", Type: datapermission.ValueTypeText},
+		"owner_id":   {Column: "tm.user_id", Type: datapermission.ValueTypeText},
+		"status":     {Column: "tm.status", Type: datapermission.ValueTypeText},
+		"created_by": {Column: "tm.created_by", Type: datapermission.ValueTypeText},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return schema
+}
+
+func (r *Repository) GetMember(ctx context.Context, tenantID, id string, scope datapermission.SQLPredicate) (Member, error) {
 	if tenantID == "" {
 		return Member{}, ErrForbidden
 	}
 	var v Member
-	err := r.db.GetContext(ctx, &v, r.db.Rebind(`SELECT `+memberColumns+` FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, id)
+	args := append([]any{tenantID, id}, scope.Args...)
+	err := r.db.GetContext(ctx, &v, r.db.Rebind(`SELECT `+memberColumns+` FROM tenant_memberships tm WHERE tm.tenant_id=? AND tm.id=? AND tm.deleted_at IS NULL AND `+scope.Clause), args...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrNotFound
 	}
@@ -145,12 +161,12 @@ func (r *Repository) GetMember(ctx context.Context, tenantID, id string) (Member
 	}
 	return v, nil
 }
-func (r *Repository) PageMembers(ctx context.Context, tenantID string, input MemberPageInput) ([]Member, int64, error) {
+func (r *Repository) PageMembers(ctx context.Context, tenantID string, input MemberPageInput, scope datapermission.SQLPredicate) ([]Member, int64, error) {
 	if tenantID == "" {
 		return nil, 0, ErrForbidden
 	}
-	where := "tenant_id=? AND deleted_at IS NULL"
-	args := []any{tenantID}
+	where := "tm.tenant_id=? AND tm.deleted_at IS NULL AND " + scope.Clause
+	args := append([]any{tenantID}, scope.Args...)
 	if input.Keyword != "" {
 		where += " AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)"
 		p := "%" + strings.ToLower(input.Keyword) + "%"
@@ -181,12 +197,12 @@ func (r *Repository) PageMembers(ctx context.Context, tenantID string, input Mem
 		return nil, 0, fmt.Errorf("build member filters: %w", err)
 	}
 	var total int64
-	if err := r.db.GetContext(ctx, &total, r.db.Rebind(`SELECT count(*) FROM tenant_memberships WHERE `+where), args...); err != nil {
+	if err := r.db.GetContext(ctx, &total, r.db.Rebind(`SELECT count(*) FROM tenant_memberships tm WHERE `+where), args...); err != nil {
 		return nil, 0, err
 	}
 	qargs := append(append([]any{}, args...), input.PageSize, pagination.Offset(input.Request))
 	rows := []Member{}
-	err = r.db.SelectContext(ctx, &rows, r.db.Rebind(`SELECT `+memberColumns+` FROM tenant_memberships WHERE `+where+` ORDER BY joined_at DESC,id LIMIT ? OFFSET ?`), qargs...)
+	err = r.db.SelectContext(ctx, &rows, r.db.Rebind(`SELECT `+memberColumns+` FROM tenant_memberships tm WHERE `+where+` ORDER BY tm.joined_at DESC,tm.id LIMIT ? OFFSET ?`), qargs...)
 	return rows, total, err
 }
 func lower(v []string) []string {
@@ -205,10 +221,11 @@ type MembershipService struct {
 	cfg        config.Config
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
+	dataScopes *datapermission.Service
 }
 
-func NewMembershipService(r *Repository, t *database.Transactor, u UserResolver, l cache.Locker, c config.Config, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder) *MembershipService {
-	return &MembershipService{repository: r, transactor: t, users: u, locker: l, cfg: c, operations: operations, security: security}
+func NewMembershipService(r *Repository, t *database.Transactor, u UserResolver, l cache.Locker, c config.Config, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, dataScopes *datapermission.Service) *MembershipService {
+	return &MembershipService{repository: r, transactor: t, users: u, locker: l, cfg: c, operations: operations, security: security, dataScopes: dataScopes}
 }
 func (s *MembershipService) Add(ctx context.Context, username string) (Member, error) {
 	actor, e := requireActor(ctx)
@@ -225,6 +242,18 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 	}
 	id := uuid.NewString()
 	now := time.Now()
+	if s.dataScopes == nil {
+		if actor.Type != platformprincipal.TypeSystem {
+			return Member{}, datapermission.ErrScopeRequired
+		}
+	} else if err := s.dataScopes.AuthorizeObject(ctx, "tenant.member", datapermission.ResourceAttributes{
+		"id": id, "owner_id": user.ID, "status": string(StatusActive), "created_by": actor.ID,
+	}); err != nil {
+		if errors.Is(err, datapermission.ErrObjectDenied) {
+			return Member{}, ErrForbidden
+		}
+		return Member{}, err
+	}
 	var created Member
 	var businessErr error
 	subjectName := strings.TrimSpace(user.DisplayName)
@@ -246,7 +275,7 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		if businessErr != nil {
 			return businessErr
 		}
-		created, businessErr = s.repository.GetMember(runCtx, actor.TenantID, id)
+		created, businessErr = s.repository.GetMember(runCtx, actor.TenantID, id, unrestrictedMemberScope())
 		return businessErr
 	}
 	if s.locker == nil {
@@ -274,7 +303,11 @@ func (s *MembershipService) Get(ctx context.Context, id string) (Member, error) 
 	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength {
 		return Member{}, ErrInvalid
 	}
-	member, err := s.repository.GetMember(ctx, actor.TenantID, id)
+	scope, err := s.memberScope(ctx)
+	if err != nil {
+		return Member{}, err
+	}
+	member, err := s.repository.GetMember(ctx, actor.TenantID, id, scope)
 	if err != nil {
 		return Member{}, err
 	}
@@ -289,7 +322,11 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength || version <= 0 || (status != StatusActive && status != StatusDisabled) {
 		return Member{}, ErrInvalid
 	}
-	member, e := s.repository.GetMember(ctx, actor.TenantID, id)
+	scope, e := s.memberScope(ctx)
+	if e != nil {
+		return Member{}, e
+	}
+	member, e := s.repository.GetMember(ctx, actor.TenantID, id, scope)
 	if e != nil {
 		return Member{}, e
 	}
@@ -303,7 +340,8 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET status=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), status, time.Now(), actor.ID, actor.TenantID, id, version)
+		args := append([]any{status, time.Now(), actor.ID, actor.TenantID, id, version}, scope.Args...)
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships AS tm SET status=?,updated_at=?,updated_by=?,version=version+1 WHERE tm.tenant_id=? AND tm.id=? AND tm.version=? AND tm.deleted_at IS NULL AND `+scope.Clause), args...)
 		if err != nil {
 			return err
 		}
@@ -319,7 +357,7 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if e != nil {
 		return Member{}, e
 	}
-	member, e = s.repository.GetMember(ctx, actor.TenantID, id)
+	member, e = s.repository.GetMember(ctx, actor.TenantID, id, scope)
 	if e != nil {
 		return Member{}, e
 	}
@@ -334,7 +372,11 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	member, e := s.repository.GetMember(ctx, actor.TenantID, id)
+	scope, e := s.memberScope(ctx)
+	if e != nil {
+		return e
+	}
+	member, e := s.repository.GetMember(ctx, actor.TenantID, id, scope)
 	if e != nil {
 		return e
 	}
@@ -351,7 +393,8 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id, version)
+		args := append([]any{now, actor.ID, now, actor.ID, actor.TenantID, id, version}, scope.Args...)
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships AS tm SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tm.tenant_id=? AND tm.id=? AND tm.version=? AND tm.deleted_at IS NULL AND `+scope.Clause), args...)
 		if err != nil {
 			return err
 		}
@@ -465,11 +508,30 @@ func (s *MembershipService) Page(ctx context.Context, input MemberPageInput) (pa
 		}
 	}
 	input.Request = request
-	items, total, e := s.repository.PageMembers(ctx, actor.TenantID, input)
+	scope, e := s.memberScope(ctx)
+	if e != nil {
+		return pagination.Result[Member]{}, e
+	}
+	items, total, e := s.repository.PageMembers(ctx, actor.TenantID, input, scope)
 	if e == nil {
 		e = s.presentMembers(ctx, items)
 	}
 	return pagination.Result[Member]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, e
+}
+
+func (s *MembershipService) memberScope(ctx context.Context) (datapermission.SQLPredicate, error) {
+	if s.dataScopes == nil {
+		actor, err := platformprincipal.Require(ctx)
+		if err == nil && actor.Type == platformprincipal.TypeSystem {
+			return unrestrictedMemberScope(), nil
+		}
+		return datapermission.SQLPredicate{}, datapermission.ErrScopeRequired
+	}
+	return s.dataScopes.Compile(ctx, "tenant.member")
+}
+
+func unrestrictedMemberScope() datapermission.SQLPredicate {
+	return datapermission.SQLPredicate{Clause: "(1 = 1)", Args: []any{}}
 }
 
 func (s *MembershipService) presentMember(ctx context.Context, member Member) (Member, error) {

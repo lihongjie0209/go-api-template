@@ -151,7 +151,7 @@ Business endpoints use POST with JSON; operational probes also expose GET for Do
 | `10000-19999` | protocol/input/common | invalid argument `10001`, not found `10004`, request timeout `10008`, throttled `10029` |
 | `20000-29999` | authentication/authorization | unauthorized `20001`, forbidden `20003` |
 | `30000-39999` | business rules | conflict `30009`, idempotent request processing `30010` |
-| `50000-59999` | server/infrastructure | internal `50000`, dependency unavailable `50003`, authorization unavailable `50004`, route policy missing `50005` |
+| `50000-59999` | server/infrastructure | internal `50000`, dependency unavailable `50003`, authorization unavailable `50004`, authorization policy/endpoint metadata missing `50005` |
 
 HTTP status codes remain semantically correct; clients should use `code` for stable application behavior. Technical errors are logged and never returned to clients.
 
@@ -243,7 +243,7 @@ Authorized administrators use `POST /api/v1/operation-logs/get` and `POST /api/v
 
 ## Security logs
 
-Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Both standalone `Record` and caller-transaction `RecordTx` persist through the database outbox before asynchronous delivery. Events cover authentication/session lifecycle and security-sensitive changes to identities, tenants, authorization, route policies, menus and platform configuration. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON-object metadata. Consumer-side validation rejects unsupported versions, inconsistent envelope identities, invalid timestamps and malformed or oversized payloads before insertion.
+Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Both standalone `Record` and caller-transaction `RecordTx` persist through the database outbox before asynchronous delivery. Events cover authentication/session lifecycle and security-sensitive changes to identities, tenants, PBAC policies, menus and platform configuration. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON-object metadata. Consumer-side validation rejects unsupported versions, inconsistent envelope identities, invalid timestamps and malformed or oversized payloads before insertion.
 
 Login has no authenticated principal yet, so `POST /api/v1/auth/login` records the attempted identifier using a keyed HMAC-SHA256 digest and fills the subject only after successful authentication. Token and refresh-token bodies are never accepted as metadata; callers may provide a JTI through `TokenID`, which is also stored only as a keyed digest. Inject an independent `APP_SECURITY_LOG_HASH_KEY` of at least 32 random bytes.
 
@@ -278,22 +278,12 @@ Redis is a mandatory template dependency: startup pings it and fails before serv
 
 Configure `http.trusted_proxies` explicitly before trusting forwarding headers. CORS is deny-by-default, JSON bodies require `application/json`, and baseline browser security headers are enabled globally.
 
-Anonymous, JWT, and PSK access are controlled only by database-owned route policies. Enable PSK verification with `APP_AUTH_PSK_ENABLED=true` and inject a key of at least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML. A route grants PSK callers by evaluating `authenticated && principal_type == "service_account"` or a stricter permission expression.
-
-For a fresh database, let startup discovery register the route table, then apply
-the reviewed bootstrap manifest without opening an anonymous administration
-route or writing SQL manually:
-
-```shell
-policyctl bootstrap --env production \
-  --manifest config/route-policies.bootstrap.example.yaml \
-  --actor deployment/route-policy-bootstrap
-```
-
-The manifest seeds stable UUIDv5 permission definitions and the minimum policy
-administration routes. Database, NATS JetStream, operation logging and security
-logging are mandatory so every changed definition and its audit events commit
-atomically. See `docs/route-policies.md` before adapting the example.
+Every business HTTP route and gRPC method declares its authentication mode,
+canonical resource/action and data-permission obligation in code. Public access
+must be explicit; undeclared operations fail closed. PBAC policies remain
+database-owned and versioned, while transport paths are not policy identities.
+Enable PSK verification with `APP_AUTH_PSK_ENABLED=true` and inject a key of at
+least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML.
 
 Authenticated JWT and PSK callers are injected into the request `context.Context` through the shared principal package; application and repository code should read this principal when constructing explicit audit fields. NATS JetStream is available through `internal/eventbus` and is disabled by default. `eventbus.Outbox.Store` persists a protobuf envelope through the caller-owned database transaction; the managed dispatcher claims committed rows with a lease, publishes with the envelope event ID for JetStream de-duplication, retries with bounded delivery attempts, and moves exhausted rows to a dead state. Domain writes must use this path instead of dual-writing the database and queue. Consumers use durable names, explicit acknowledgements, redelivery, and idempotent processing.
 

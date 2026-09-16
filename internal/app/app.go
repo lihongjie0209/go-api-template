@@ -15,6 +15,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/datalifecycle"
+	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/dictionary"
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/files"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
@@ -26,10 +28,11 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/outbound"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/policysync"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
-	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
@@ -60,8 +63,12 @@ func New(cfg config.Config) *fx.App {
 		operationlog.Module,
 		securitylog.Module,
 		fx.Provide(permission.NewRepository, permission.New),
-		fx.Provide(routepolicy.NewRepository, routepolicy.NewCompiler, routepolicy.NewManager, routepolicy.NewService),
+		fx.Provide(pbac.PlatformResourceDefinitions, pbac.NewRegistryFromDefinitions, pbac.NewRepository, pbac.NewRuntimeEngine, newPBACRuntimeLoader, pbac.NewLifecycleService),
+		fx.Invoke(startPBACRuntime),
+		fx.Provide(newDataPermissionSchemas, datapermission.NewRuntimeEngine, datapermission.NewRepository, newDataPermissionRuntimeLoader, datapermission.NewLifecycleService, datapermission.NewService),
+		fx.Invoke(startDataPermissionRuntime),
 		fx.Provide(platformconfig.New),
+		fx.Provide(dictionary.New, dictionary.NewProviderRegistry),
 		fx.Provide(menu.New),
 		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), tenant.NewMembershipService, tenant.NewContextService),
 		fx.Provide(tenant.NewDepartmentService),
@@ -76,6 +83,50 @@ func New(cfg config.Config) *fx.App {
 		fx.StartTimeout(cfg.App.ShutdownTimeout),
 		fx.StopTimeout(cfg.App.ShutdownTimeout),
 	)
+}
+
+func newDataPermissionSchemas() (*datapermission.SchemaRegistry, error) {
+	return datapermission.NewSchemaRegistry(tenant.NewMemberDataPermissionSchema(), tenant.NewDepartmentDataPermissionSchema(), authorization.NewTenantRoleDataPermissionSchema())
+}
+
+func newPBACRuntimeLoader(repository *pbac.Repository, engine *pbac.Engine, client *redis.Client, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics) *pbac.RuntimeLoader {
+	loader := pbac.NewRuntimeLoader(repository, engine)
+	loader.ConfigureSync(policysync.New(client, cfg.RedisKeyPrefix()+"policy:pbac:changed", "pbac", cfg.PolicySync.PollInterval, cfg.PolicySync.Timeout, repository.Revision, loader.Refresh, logger, metrics))
+	return loader
+}
+
+func newDataPermissionRuntimeLoader(repository *datapermission.Repository, engine *datapermission.Engine, client *redis.Client, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics) *datapermission.RuntimeLoader {
+	loader := datapermission.NewRuntimeLoader(repository, engine)
+	loader.ConfigureSync(policysync.New(client, cfg.RedisKeyPrefix()+"policy:data-permission:changed", "data_permission", cfg.PolicySync.PollInterval, cfg.PolicySync.Timeout, repository.Revision, loader.Refresh, logger, metrics))
+	return loader
+}
+
+func startDataPermissionRuntime(lc fx.Lifecycle, cfg config.Config, loader *datapermission.RuntimeLoader) {
+	worker := background.New(loader.Run)
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		if !cfg.Database.Enabled {
+			return nil
+		}
+		if err := loader.Initialize(ctx); err != nil {
+			return fmt.Errorf("load published data permission policies: %w", err)
+		}
+		worker.Start()
+		return nil
+	}, OnStop: worker.Stop})
+}
+
+func startPBACRuntime(lc fx.Lifecycle, cfg config.Config, loader *pbac.RuntimeLoader) {
+	worker := background.New(loader.Run)
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		if !cfg.Database.Enabled {
+			return nil
+		}
+		if err := loader.Initialize(ctx); err != nil {
+			return fmt.Errorf("load published pbac policies: %w", err)
+		}
+		worker.Start()
+		return nil
+	}, OnStop: worker.Stop})
 }
 
 func registerFileDeletionWorker(lc fx.Lifecycle, service *files.Service) {

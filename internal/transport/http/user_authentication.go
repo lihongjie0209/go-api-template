@@ -121,6 +121,7 @@ func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 // @Tags authentication
 // @Accept json
 // @Produce json
+// @Security Bearer
 // @Param request body RefreshRequest true "Refresh token"
 // @Success 200 {object} Response
 // @Router /api/v1/auth/logout [post]

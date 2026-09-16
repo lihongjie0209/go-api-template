@@ -15,8 +15,10 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -91,10 +93,25 @@ type TenantAuthorizationService struct {
 	security   securitylog.TransactionalRecorder
 	actors     presentation.ActorResolver
 	cfg        config.Config
+	dataScopes *datapermission.Service
+	registry   *pbac.Registry
 }
 
-func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config) *TenantAuthorizationService {
-	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, actors: actors, cfg: cfg}
+func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config, dataScopes *datapermission.Service, registry *pbac.Registry) *TenantAuthorizationService {
+	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, actors: actors, cfg: cfg, dataScopes: dataScopes, registry: registry}
+}
+
+func NewTenantRoleDataPermissionSchema() *datapermission.Schema {
+	schema, err := datapermission.NewSchema("tenant.role", map[string]datapermission.Field{
+		"id":         {Column: "tr.id", Type: datapermission.ValueTypeText},
+		"code":       {Column: "tr.code", Type: datapermission.ValueTypeText},
+		"status":     {Column: "tr.status", Type: datapermission.ValueTypeText},
+		"created_by": {Column: "tr.created_by", Type: datapermission.ValueTypeText},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return schema
 }
 
 // SetTenantPermissions replaces the tenant's authorization ceiling. Platform
@@ -121,7 +138,7 @@ func (s *TenantAuthorizationService) SetTenantPermissions(ctx context.Context, t
 			if err := ensureTenant(ctx, tx, tenantID); err != nil {
 				return err
 			}
-			if err := validatePermissions(ctx, tx, permissionIDs); err != nil {
+			if err := s.validateTenantPermissions(ctx, tx, permissionIDs); err != nil {
 				return err
 			}
 			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenants SET updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), time.Now(), actor.ID, tenantID, version)
@@ -196,9 +213,21 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 		return TenantRole{}, ErrTenantAuthorizationInvalid
 	}
 	role := TenantRole{ID: uuid.NewString(), TenantID: actor.TenantID, Code: code, Name: name, Description: description, Status: "active", Version: 1}
+	if s.dataScopes == nil {
+		if actor.Type != platformprincipal.TypeSystem {
+			return TenantRole{}, datapermission.ErrScopeRequired
+		}
+	} else if err := s.dataScopes.AuthorizeObject(ctx, "tenant.role", datapermission.ResourceAttributes{
+		"id": role.ID, "code": role.Code, "status": role.Status, "created_by": actor.ID,
+	}); err != nil {
+		if errors.Is(err, datapermission.ErrObjectDenied) {
+			return TenantRole{}, ErrTenantAuthorizationForbidden
+		}
+		return TenantRole{}, err
+	}
 	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role-code:"+code, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.create", role.ID, map[string]any{"name": role.Name, "permission_ids": permissionIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-			if err := ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
+			if err := s.ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
 				return err
 			}
 			now := time.Now()
@@ -215,7 +244,7 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 	if err != nil {
 		return TenantRole{}, err
 	}
-	return s.GetRole(ctx, role.ID)
+	return s.getRole(ctx, actor.TenantID, role.ID, unrestrictedScope())
 }
 
 func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, roleID string, version int64, permissionIDs []string) error {
@@ -228,19 +257,25 @@ func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, rol
 	if err != nil {
 		return err
 	}
-	roleName, err := s.roleName(ctx, actor.TenantID, roleID)
+	scope, err := s.roleScope(ctx)
 	if err != nil {
 		return err
 	}
+	current, err := s.getRole(ctx, actor.TenantID, roleID, scope)
+	if err != nil {
+		return err
+	}
+	roleName := current.Name
 	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.permissions.set", roleID, map[string]any{"name": roleName, "permission_ids": permissionIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-			if err := ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
+			if err := s.ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
 				return err
 			}
-			if err := ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
+			if err := s.ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
 				return err
 			}
-			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles SET version=version+1,updated_at=?,updated_by=? WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), time.Now(), actor.ID, actor.TenantID, roleID, version)
+			args := append([]any{time.Now(), actor.ID, actor.TenantID, roleID, version}, scope.Args...)
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles AS tr SET version=version+1,updated_at=?,updated_by=? WHERE tr.tenant_id=? AND tr.id=? AND tr.version=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
 			if err != nil {
 				return err
 			}
@@ -266,7 +301,11 @@ func (s *TenantAuthorizationService) SetMemberRoles(ctx context.Context, members
 	if err != nil {
 		return err
 	}
-	memberName, err := s.membershipName(ctx, actor.TenantID, membershipID)
+	scope, err := s.memberScope(ctx)
+	if err != nil {
+		return err
+	}
+	memberName, err := s.scopedMembershipName(ctx, actor.TenantID, membershipID, scope)
 	if err != nil {
 		return err
 	}
@@ -275,10 +314,11 @@ func (s *TenantAuthorizationService) SetMemberRoles(ctx context.Context, members
 			if err := ensureMembership(ctx, tx, actor.TenantID, membershipID); err != nil {
 				return err
 			}
-			if err := ensureRolesAssignable(ctx, tx, actor, roleIDs); err != nil {
+			if err := s.ensureRolesAssignable(ctx, tx, actor, roleIDs); err != nil {
 				return err
 			}
-			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND status='active' AND deleted_at IS NULL`), time.Now(), actor.ID, actor.TenantID, membershipID, version)
+			args := append([]any{time.Now(), actor.ID, actor.TenantID, membershipID, version}, scope.Args...)
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships AS tm SET updated_at=?,updated_by=?,version=version+1 WHERE tm.tenant_id=? AND tm.id=? AND tm.version=? AND tm.status='active' AND tm.deleted_at IS NULL AND `+scope.Clause), args...)
 			if err != nil {
 				return err
 			}
@@ -321,8 +361,17 @@ func (s *TenantAuthorizationService) GetRole(ctx context.Context, roleID string)
 	if roleID == "" || len(roleID) > maxAuthorizationIDLength {
 		return TenantRole{}, ErrTenantAuthorizationInvalid
 	}
+	scope, err := s.roleScope(ctx)
+	if err != nil {
+		return TenantRole{}, err
+	}
+	return s.getRole(ctx, actor.TenantID, roleID, scope)
+}
+
+func (s *TenantAuthorizationService) getRole(ctx context.Context, tenantID, roleID string, scope datapermission.SQLPredicate) (TenantRole, error) {
 	var role TenantRole
-	err = s.db.GetContext(ctx, &role, s.db.Rebind(`SELECT id,tenant_id,code,name,description,status,created_at,created_by,updated_at,updated_by,version FROM tenant_roles WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), actor.TenantID, roleID)
+	args := append([]any{tenantID, roleID}, scope.Args...)
+	err := s.db.GetContext(ctx, &role, s.db.Rebind(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status,tr.created_at,tr.created_by,tr.updated_at,tr.updated_by,tr.version FROM tenant_roles tr WHERE tr.tenant_id=? AND tr.id=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return role, ErrTenantAuthorizationNotFound
 	}
@@ -351,16 +400,20 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 			return pagination.Result[TenantRole]{}, ErrTenantAuthorizationInvalid
 		}
 	}
-	where, args := `tenant_id=? AND deleted_at IS NULL`, []any{actor.TenantID}
+	scope, err := s.roleScope(ctx)
+	if err != nil {
+		return pagination.Result[TenantRole]{}, err
+	}
+	where, args := `tr.tenant_id=? AND tr.deleted_at IS NULL AND `+scope.Clause, append([]any{actor.TenantID}, scope.Args...)
 	if keyword := input.Keyword; keyword != "" {
-		where += ` AND (LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(description) LIKE ?)`
+		where += ` AND (LOWER(tr.code) LIKE ? OR LOWER(tr.name) LIKE ? OR LOWER(tr.description) LIKE ?)`
 		pattern := "%" + strings.ToLower(keyword) + "%"
 		args = append(args, pattern, pattern, pattern)
 	}
 	for _, filter := range []struct {
 		column string
 		values []string
-	}{{"id", input.IDs}, {"status", input.Statuses}} {
+	}{{"tr.id", input.IDs}, {"tr.status", input.Statuses}} {
 		column, values := filter.column, filter.values
 		if len(values) == 0 {
 			continue
@@ -373,20 +426,20 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 		args = append(args, inArgs...)
 	}
 	if input.CreatedAtFrom != nil {
-		where += ` AND created_at>=?`
+		where += ` AND tr.created_at>=?`
 		args = append(args, *input.CreatedAtFrom)
 	}
 	if input.CreatedAtTo != nil {
-		where += ` AND created_at<?`
+		where += ` AND tr.created_at<?`
 		args = append(args, *input.CreatedAtTo)
 	}
 	var total int64
-	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM tenant_roles WHERE `+where), args...); err != nil {
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM tenant_roles tr WHERE `+where), args...); err != nil {
 		return pagination.Result[TenantRole]{}, err
 	}
 	queryArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
 	items := []TenantRole{}
-	query := `SELECT id,tenant_id,code,name,description,status,created_at,created_by,updated_at,updated_by,version FROM tenant_roles WHERE ` + where + ` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`
+	query := `SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status,tr.created_at,tr.created_by,tr.updated_at,tr.updated_by,tr.version FROM tenant_roles tr WHERE ` + where + ` ORDER BY tr.created_at DESC,tr.id LIMIT ? OFFSET ?`
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), queryArgs...); err != nil {
 		return pagination.Result[TenantRole]{}, err
 	}
@@ -451,8 +504,13 @@ func (s *TenantAuthorizationService) MemberRoles(ctx context.Context, membership
 	if membershipID == "" || len(membershipID) > maxAuthorizationIDLength {
 		return nil, ErrTenantAuthorizationInvalid
 	}
+	scope, err := s.memberScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var count int
-	if err := s.db.GetContext(ctx, &count, s.db.Rebind(`SELECT count(*) FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), actor.TenantID, membershipID); err != nil {
+	args := append([]any{actor.TenantID, membershipID}, scope.Args...)
+	if err := s.db.GetContext(ctx, &count, s.db.Rebind(`SELECT count(*) FROM tenant_memberships tm WHERE tm.tenant_id=? AND tm.id=? AND tm.deleted_at IS NULL AND `+scope.Clause), args...); err != nil {
 		return nil, err
 	}
 	if count != 1 {
@@ -475,12 +533,20 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 	if roleID == "" || len(roleID) > maxAuthorizationIDLength || name == "" || len(name) > maxRoleNameLength || len(description) > maxRoleDescriptionLength || version <= 0 || (status != "active" && status != "disabled") {
 		return TenantRole{}, ErrTenantAuthorizationInvalid
 	}
+	scope, err := s.roleScope(ctx)
+	if err != nil {
+		return TenantRole{}, err
+	}
+	if _, err := s.getRole(ctx, actor.TenantID, roleID, scope); err != nil {
+		return TenantRole{}, err
+	}
 	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.update", roleID, map[string]any{"name": name, "status": status, "version": version}, actor.TenantID, nil, func(tx *sqlx.Tx) error {
-			if err := ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
+			if err := s.ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
 				return err
 			}
-			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles SET name=?,description=?,status=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), name, description, status, time.Now(), actor.ID, actor.TenantID, roleID, version)
+			args := append([]any{name, description, status, time.Now(), actor.ID, actor.TenantID, roleID, version}, scope.Args...)
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles AS tr SET name=?,description=?,status=?,updated_at=?,updated_by=?,version=version+1 WHERE tr.tenant_id=? AND tr.id=? AND tr.version=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
 			if err != nil {
 				return err
 			}
@@ -497,7 +563,7 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 	if err != nil {
 		return TenantRole{}, err
 	}
-	return s.GetRole(ctx, roleID)
+	return s.getRole(ctx, actor.TenantID, roleID, unrestrictedScope())
 }
 
 func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID string, version int64) error {
@@ -509,13 +575,18 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 	if roleID == "" || len(roleID) > maxAuthorizationIDLength || version <= 0 {
 		return ErrTenantAuthorizationInvalid
 	}
-	roleName, err := s.roleName(ctx, actor.TenantID, roleID)
+	scope, err := s.roleScope(ctx)
 	if err != nil {
 		return err
 	}
+	current, err := s.getRole(ctx, actor.TenantID, roleID, scope)
+	if err != nil {
+		return err
+	}
+	roleName := current.Name
 	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.delete", roleID, map[string]any{"name": roleName, "version": version}, actor.TenantID, nil, func(tx *sqlx.Tx) error {
-			if err := ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
+			if err := s.ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
 				return err
 			}
 			now := time.Now()
@@ -524,7 +595,8 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 					return err
 				}
 			}
-			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, roleID, version)
+			args := append([]any{now, actor.ID, now, actor.ID, actor.TenantID, roleID, version}, scope.Args...)
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles AS tr SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tr.tenant_id=? AND tr.id=? AND tr.version=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
 			if err != nil {
 				return err
 			}
@@ -538,6 +610,51 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 			return nil
 		})
 	})
+}
+
+func (s *TenantAuthorizationService) roleScope(ctx context.Context) (datapermission.SQLPredicate, error) {
+	if s.dataScopes == nil {
+		actor, err := platformprincipal.Require(ctx)
+		if err == nil && actor.Type == platformprincipal.TypeSystem {
+			return unrestrictedScope(), nil
+		}
+		return datapermission.SQLPredicate{}, datapermission.ErrScopeRequired
+	}
+	return s.dataScopes.Compile(ctx, "tenant.role")
+}
+
+func (s *TenantAuthorizationService) memberScope(ctx context.Context) (datapermission.SQLPredicate, error) {
+	if s.dataScopes == nil {
+		actor, err := platformprincipal.Require(ctx)
+		if err == nil && actor.Type == platformprincipal.TypeSystem {
+			return unrestrictedScope(), nil
+		}
+		return datapermission.SQLPredicate{}, datapermission.ErrScopeRequired
+	}
+	return s.dataScopes.Compile(ctx, "tenant.member")
+}
+
+func (s *TenantAuthorizationService) scopedMembershipName(ctx context.Context, tenantID, membershipID string, scope datapermission.SQLPredicate) (string, error) {
+	var snapshot struct {
+		Username    string `db:"username"`
+		DisplayName string `db:"display_name"`
+	}
+	args := append([]any{tenantID, membershipID}, scope.Args...)
+	query := s.db.Rebind(`SELECT tm.username,tm.display_name FROM tenant_memberships tm WHERE tm.tenant_id=? AND tm.id=? AND tm.deleted_at IS NULL AND ` + scope.Clause)
+	if err := s.db.GetContext(ctx, &snapshot, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrTenantAuthorizationNotFound
+		}
+		return "", err
+	}
+	if name := strings.TrimSpace(snapshot.DisplayName); name != "" {
+		return name, nil
+	}
+	return strings.TrimSpace(snapshot.Username), nil
+}
+
+func unrestrictedScope() datapermission.SQLPredicate {
+	return datapermission.SQLPredicate{Clause: "(1 = 1)", Args: []any{}}
 }
 
 func tenantActor(ctx context.Context) (platformprincipal.Principal, error) {
@@ -610,8 +727,8 @@ func effectivePermissionIDs(ctx context.Context, db queryer, tenantID, membershi
 	return ids, nil
 }
 
-func ensureAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, wanted []string) error {
-	if err := validatePermissions(ctx, tx, wanted); err != nil {
+func (s *TenantAuthorizationService) ensureAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, wanted []string) error {
+	if err := s.validateTenantPermissions(ctx, tx, wanted); err != nil {
 		return err
 	}
 	effective, err := effectivePermissionIDs(ctx, tx, actor.TenantID, actor.MembershipID)
@@ -621,7 +738,7 @@ func ensureAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.
 	return requireSubset(wanted, effective)
 }
 
-func ensureRoleAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, roleID string) error {
+func (s *TenantAuthorizationService) ensureRoleAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, roleID string) error {
 	permissions := []string{}
 	query := `SELECT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL`
 	if err := tx.SelectContext(ctx, &permissions, tx.Rebind(query), actor.TenantID, roleID); err != nil {
@@ -634,10 +751,10 @@ func ensureRoleAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprinci
 	if count != 1 {
 		return ErrTenantAuthorizationNotFound
 	}
-	return ensureAssignable(ctx, tx, actor, permissions)
+	return s.ensureAssignable(ctx, tx, actor, permissions)
 }
 
-func ensureRolesAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, roleIDs []string) error {
+func (s *TenantAuthorizationService) ensureRolesAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, roleIDs []string) error {
 	if len(roleIDs) == 0 {
 		return nil
 	}
@@ -657,7 +774,7 @@ func ensureRolesAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprinc
 	if err := tx.GetContext(ctx, &roleCount, tx.Rebind(countQuery), countArgs...); err != nil || roleCount != len(roleIDs) {
 		return ErrTenantAuthorizationInvalid
 	}
-	return ensureAssignable(ctx, tx, actor, permissions)
+	return s.ensureAssignable(ctx, tx, actor, permissions)
 }
 
 func requireSubset(wanted, available []string) error {
@@ -673,20 +790,34 @@ func requireSubset(wanted, available []string) error {
 	return nil
 }
 
-func validatePermissions(ctx context.Context, tx *sqlx.Tx, ids []string) error {
+func (s *TenantAuthorizationService) validateTenantPermissions(ctx context.Context, tx *sqlx.Tx, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	query, args, inErr := sqlx.In(`SELECT count(*) FROM permissions WHERE id IN (?) AND node_type='permission' AND status='active' AND deleted_at IS NULL`, ids)
+	if s == nil || s.registry == nil {
+		return ErrTenantAuthorizationInvalid
+	}
+	type registeredPermission struct {
+		ID       string `db:"id"`
+		Resource string `db:"resource"`
+		Action   string `db:"action"`
+	}
+	query, args, inErr := sqlx.In(`SELECT id,resource,action FROM permissions WHERE id IN (?) AND node_type='permission' AND status='active' AND deleted_at IS NULL`, ids)
 	if inErr != nil {
 		return fmt.Errorf("build permission validation query: %w", inErr)
 	}
-	var count int
-	if err := tx.GetContext(ctx, &count, tx.Rebind(query), args...); err != nil {
+	permissions := []registeredPermission{}
+	if err := tx.SelectContext(ctx, &permissions, tx.Rebind(query), args...); err != nil {
 		return err
 	}
-	if count != len(ids) {
+	if len(permissions) != len(ids) {
 		return ErrTenantAuthorizationInvalid
+	}
+	for _, permission := range permissions {
+		definition, _, err := s.registry.Resolve(permission.Resource, permission.Action)
+		if err != nil || definition.Scope != pbac.ResourceScopeTenant {
+			return ErrTenantAuthorizationInvalid
+		}
 	}
 	return nil
 }
@@ -916,18 +1047,6 @@ func (s *TenantAuthorizationService) membershipName(ctx context.Context, tenantI
 		return name, nil
 	}
 	return strings.TrimSpace(member.Username), nil
-}
-
-func (s *TenantAuthorizationService) roleName(ctx context.Context, tenantID, roleID string) (string, error) {
-	var name string
-	query := s.db.Rebind(`SELECT name FROM tenant_roles WHERE tenant_id=? AND id=? AND deleted_at IS NULL`)
-	if err := s.db.GetContext(ctx, &name, query, tenantID, roleID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrTenantAuthorizationNotFound
-		}
-		return "", err
-	}
-	return strings.TrimSpace(name), nil
 }
 
 func pruneRolePermissions(ctx context.Context, tx *sqlx.Tx, tenantID string, allowed []string, actorID string) error {

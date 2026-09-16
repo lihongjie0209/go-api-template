@@ -83,7 +83,7 @@ type DeleteTenantRoleRequest struct {
 // @Security Bearer
 // @Param request body setTenantPermissionsRequest true "Tenant permissions"
 // @Success 200 {object} Response
-// @Router /api/v1/tenant-authorization/permissions/set [post]
+// @Router /api/v1/platform/tenant-authorization/permissions/set [post]
 func (h *TenantAuthorizationHandler) SetTenantPermissions(c *gin.Context) {
 	var request setTenantPermissionsRequest
 	if !h.bind(c, &request) {
@@ -101,6 +101,7 @@ func (h *TenantAuthorizationHandler) SetTenantPermissions(c *gin.Context) {
 // @Param request body setAdministratorRequest true "Administrator"
 // @Success 200 {object} Response
 // @Router /api/v1/tenant-authorization/administrators/set [post]
+// @Router /api/v1/platform/tenant-authorization/administrators/set [post]
 func (h *TenantAuthorizationHandler) SetAdministrator(c *gin.Context) {
 	var request setAdministratorRequest
 	if !h.bind(c, &request) {

@@ -1,0 +1,3 @@
+DROP TRIGGER dictionary_items_audit_bd; DROP TRIGGER dictionary_items_audit_bu; DROP TRIGGER dictionary_items_audit_bi;
+DROP TRIGGER dictionary_definitions_audit_bd; DROP TRIGGER dictionary_definitions_audit_bu; DROP TRIGGER dictionary_definitions_audit_bi;
+DROP TABLE dictionary_items; DROP TABLE dictionary_definitions;

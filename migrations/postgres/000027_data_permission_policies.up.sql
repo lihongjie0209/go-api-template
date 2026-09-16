@@ -1,0 +1,13 @@
+CREATE TABLE data_permission_policies (id text PRIMARY KEY,code text NOT NULL,name text NOT NULL,scope text NOT NULL CHECK(scope IN('global','tenant')),tenant_id text,published_version_number bigint,status text NOT NULL CHECK(status IN('active','disabled')),created_at timestamptz NOT NULL,created_by text NOT NULL,updated_at timestamptz NOT NULL,updated_by text NOT NULL,version bigint NOT NULL CHECK(version>0),deleted_at timestamptz,deleted_by text,CHECK((scope='global' AND tenant_id IS NULL) OR (scope='tenant' AND tenant_id IS NOT NULL AND tenant_id<>'')));
+CREATE UNIQUE INDEX data_permission_policies_identity_unique ON data_permission_policies(scope,COALESCE(tenant_id,''),lower(code)) WHERE deleted_at IS NULL;
+CREATE INDEX data_permission_policies_published_idx ON data_permission_policies(status,scope,tenant_id) WHERE deleted_at IS NULL AND published_version_number IS NOT NULL;
+SELECT app_enable_audit('data_permission_policies');
+CREATE TABLE data_permission_policy_versions (id text PRIMARY KEY,policy_id text NOT NULL REFERENCES data_permission_policies(id),version_number bigint NOT NULL CHECK(version_number>0),document text NOT NULL,status text NOT NULL CHECK(status IN('draft','published','archived')),published_at timestamptz,published_by text,created_at timestamptz NOT NULL,created_by text NOT NULL,updated_at timestamptz NOT NULL,updated_by text NOT NULL,version bigint NOT NULL CHECK(version>0),deleted_at timestamptz,deleted_by text);
+CREATE UNIQUE INDEX data_permission_policy_versions_number_unique ON data_permission_policy_versions(policy_id,version_number) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX data_permission_policy_versions_published_unique ON data_permission_policy_versions(policy_id) WHERE deleted_at IS NULL AND status='published';
+CREATE INDEX data_permission_policy_versions_status_idx ON data_permission_policy_versions(policy_id,status,version_number) WHERE deleted_at IS NULL;
+SELECT app_enable_audit('data_permission_policy_versions');
+CREATE TABLE data_permission_policy_actions (id text PRIMARY KEY,policy_version_id text NOT NULL REFERENCES data_permission_policy_versions(id),resource text NOT NULL,action text NOT NULL,created_at timestamptz NOT NULL,created_by text NOT NULL,updated_at timestamptz NOT NULL,updated_by text NOT NULL,version bigint NOT NULL CHECK(version>0),deleted_at timestamptz,deleted_by text);
+CREATE UNIQUE INDEX data_permission_policy_actions_unique ON data_permission_policy_actions(policy_version_id,resource,action) WHERE deleted_at IS NULL;
+CREATE INDEX data_permission_policy_actions_lookup_idx ON data_permission_policy_actions(resource,action,policy_version_id) WHERE deleted_at IS NULL;
+SELECT app_enable_audit('data_permission_policy_actions');

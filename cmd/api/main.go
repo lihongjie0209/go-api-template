@@ -12,7 +12,7 @@ import (
 
 // @title Go API Template
 // @version 1.0
-// @description Production-oriented Go Web API scaffold. Stable application codes: 0 success; 10001 invalid argument; 10004 not found; 10008 timeout; 10029 throttled; 20001 unauthorized; 20003 forbidden; 30009 conflict; 30010 processing; 50000 internal; 50003 dependency unavailable; 50004 authorization unavailable; 50005 route policy missing.
+// @description Production-oriented Go Web API scaffold. Stable application codes: 0 success; 10001 invalid argument; 10004 not found; 10008 timeout; 10029 throttled; 20001 unauthorized; 20003 forbidden; 30009 conflict; 30010 processing; 50000 internal; 50003 dependency unavailable; 50004 authorization unavailable; 50005 authorization policy or endpoint metadata missing.
 // @BasePath /
 // @schemes http https
 // @securityDefinitions.apikey Bearer

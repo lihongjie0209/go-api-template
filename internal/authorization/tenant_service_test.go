@@ -11,8 +11,10 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,37 @@ func TestRolePresentationBatchesActorsAndUsesPlatformTimezone(t *testing.T) {
 	require.Equal(t, "Alice", roles[0].CreatedByName)
 	require.Equal(t, "system-1", roles[0].UpdatedByName)
 	require.Equal(t, "2026-09-16T09:02:03+08:00", roles[0].CreatedAt.Format(time.RFC3339))
+}
+
+func TestTenantRoleScopeFailsClosedWithoutCompiler(t *testing.T) {
+	t.Parallel()
+	service := &TenantAuthorizationService{}
+	userContext := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+	_, err := service.roleScope(userContext)
+	require.ErrorIs(t, err, datapermission.ErrScopeRequired)
+
+	systemContext := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1"})
+	scope, err := service.roleScope(systemContext)
+	require.NoError(t, err)
+	require.Equal(t, "(1 = 1)", scope.Clause)
+}
+
+func TestGetRoleAppliesTenantAndDataPermissionInOneQuery(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status,tr.created_at,tr.created_by,tr.updated_at,tr.updated_by,tr.version FROM tenant_roles tr WHERE tr.tenant_id=\? AND tr.id=\? AND tr.deleted_at IS NULL AND \(tr.created_by = \?\)`).
+		WithArgs("tenant-1", "role-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("role-1", "tenant-1", "auditor", "Auditor", "", "active", now, "user-1", now, "user-1", 1))
+	service := &TenantAuthorizationService{db: db}
+	record, err := service.getRole(t.Context(), "tenant-1", "role-1", datapermission.SQLPredicate{Clause: "(tr.created_by = ?)", Args: []any{"user-1"}})
+	require.NoError(t, err)
+	require.Equal(t, "role-1", record.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestEffectivePermissionIDsForAdministrator(t *testing.T) {
@@ -113,13 +146,32 @@ func TestEnsureRoleAssignableRejectsRoleAboveCallerCeiling(t *testing.T) {
 	require.NoError(t, err)
 	mock.ExpectQuery(`SELECT permission_id FROM tenant_role_permissions`).WithArgs("tenant-1", "role-1").WillReturnRows(sqlmock.NewRows([]string{"permission_id"}).AddRow("permission-delete"))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_roles`).WithArgs("tenant-1", "role-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions`).WithArgs("permission-delete").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id,resource,action FROM permissions`).WithArgs("permission-delete").WillReturnRows(sqlmock.NewRows([]string{"id", "resource", "action"}).AddRow("permission-delete", "tenant.member", "remove"))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`SELECT DISTINCT rp.permission_id FROM tenant_role_permissions`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"permission_id"}).AddRow("permission-read"))
 
 	actor := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
-	require.ErrorIs(t, ensureRoleAssignable(t.Context(), tx, actor, "role-1"), ErrTenantAuthorizationForbidden)
+	service := &TenantAuthorizationService{registry: testAuthorizationRegistry(t)}
+	require.ErrorIs(t, service.ensureRoleAssignable(t.Context(), tx, actor, "role-1"), ErrTenantAuthorizationForbidden)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTenantPermissionsRejectsPlatformResource(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	txDB := sqlx.NewDb(db, "sqlmock")
+	mock.ExpectBegin()
+	tx, err := txDB.Beginx()
+	require.NoError(t, err)
+	mock.ExpectQuery(`SELECT id,resource,action FROM permissions`).WithArgs("permission-platform").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "resource", "action"}).AddRow("permission-platform", "identity.user", "read"),
+	)
+	service := &TenantAuthorizationService{registry: testAuthorizationRegistry(t)}
+	require.ErrorIs(t, service.validateTenantPermissions(t.Context(), tx, []string{"permission-platform"}), ErrTenantAuthorizationInvalid)
 	mock.ExpectRollback()
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -156,9 +208,9 @@ func TestMemberRolesReturnsDisplayFieldsAndScopesTenant(t *testing.T) {
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
 	service := &TenantAuthorizationService{db: sqlxDB}
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
-		ID: "user-1", TenantID: "tenant-1", MembershipID: "member-actor",
+		ID: "user-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-actor",
 	})
-	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships WHERE tenant_id=`).
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships tm WHERE tm.tenant_id=`).
 		WithArgs("tenant-1", "member-target").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT r.id,r.code,r.name FROM tenant_member_roles`).
@@ -174,7 +226,7 @@ func TestMemberRolesReturnsDisplayFieldsAndScopesTenant(t *testing.T) {
 func TestPageRolesRejectsUnboundedAndInvalidFilters(t *testing.T) {
 	service := &TenantAuthorizationService{}
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
-		ID: "user-1", TenantID: "tenant-1", MembershipID: "member-1",
+		ID: "user-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1",
 	})
 	to := time.Now()
 	from := to.Add(time.Hour)
@@ -288,9 +340,11 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 		nil,
 		nil,
 		config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}},
+		nil,
+		testAuthorizationRegistry(t),
 	)
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
-		ID: "user-1", TenantID: "tenant-1", MembershipID: "member-1",
+		ID: "user-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1",
 	})
 	now := time.Now()
 	mock.ExpectBegin()
@@ -306,7 +360,7 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
-	mock.ExpectQuery(`SELECT id,tenant_id,code,name,description,status`).
+	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).
 		WithArgs("tenant-1", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
 			AddRow("role-1", "tenant-1", "auditor", "Auditor", "", "active", now, "user-1", now, "user-1", 1))
@@ -316,4 +370,11 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 	require.Equal(t, "role-1", role.ID)
 	require.NoError(t, ctx.Err())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func testAuthorizationRegistry(t *testing.T) *pbac.Registry {
+	t.Helper()
+	registry, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	return registry
 }

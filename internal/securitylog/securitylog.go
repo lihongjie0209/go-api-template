@@ -41,7 +41,8 @@ const (
 	EventMembershipAdded       EventType = "membership_added"
 	EventMembershipChanged     EventType = "membership_changed"
 	EventMembershipRemoved     EventType = "membership_removed"
-	EventRoutePolicyChanged    EventType = "route_policy_changed"
+	EventPBACPolicyChanged     EventType = "pbac_policy_changed"
+	EventDataPolicyChanged     EventType = "data_permission_policy_changed"
 	EventPermissionChanged     EventType = "permission_definition_changed"
 	EventIdentityUserChanged   EventType = "identity_user_changed"
 	EventTenantChanged         EventType = "tenant_changed"
@@ -303,7 +304,7 @@ func (s *Service) hashIdentifier(value string) string {
 	return s.hash(strings.ToLower(strings.TrimSpace(value)))
 }
 func validEvent(value EventType) bool {
-	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventRoutePolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess || value == EventServiceAccountChanged
+	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventPBACPolicyChanged || value == EventDataPolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess || value == EventServiceAccountChanged
 }
 
 func validateEntry(entry Entry) error {

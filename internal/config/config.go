@@ -34,13 +34,13 @@ type Config struct {
 	JWT             JWT             `mapstructure:"jwt"`
 	Auth            Auth            `mapstructure:"auth"`
 	Authentication  Authentication  `mapstructure:"authentication"`
-	Authorization   Authorization   `mapstructure:"authorization"`
 	Cron            Cron            `mapstructure:"cron"`
 	Migration       Migration       `mapstructure:"migration"`
 	User            User            `mapstructure:"user"`
 	Tenant          Tenant          `mapstructure:"tenant"`
 	Menu            Menu            `mapstructure:"menu"`
 	PlatformConfig  PlatformConfig  `mapstructure:"platform_config"`
+	Dictionary      Dictionary      `mapstructure:"dictionary"`
 	Idempotency     Idempotency     `mapstructure:"idempotency"`
 	Outbound        Outbound        `mapstructure:"outbound"`
 	EventBus        EventBus        `mapstructure:"event_bus"`
@@ -49,6 +49,7 @@ type Config struct {
 	OperationLog    OperationLog    `mapstructure:"operation_log"`
 	SecurityLog     SecurityLog     `mapstructure:"security_log"`
 	DataLifecycle   DataLifecycle   `mapstructure:"data_lifecycle"`
+	PolicySync      PolicySync      `mapstructure:"policy_sync"`
 }
 
 type Runtime struct {
@@ -195,10 +196,6 @@ type Auth struct {
 	Audience string `mapstructure:"audience"`
 	PSK      PSK    `mapstructure:"psk"`
 }
-type Authorization struct {
-	Enabled               bool          `mapstructure:"enabled"`
-	PolicyRefreshInterval time.Duration `mapstructure:"policy_refresh_interval"`
-}
 type Authentication struct {
 	RefreshTTL        time.Duration `mapstructure:"refresh_ttl"`
 	MaxFailedAttempts int64         `mapstructure:"max_failed_attempts"`
@@ -230,6 +227,11 @@ type DistributedLock struct {
 	TTL        time.Duration `mapstructure:"ttl"`
 	RetryDelay time.Duration `mapstructure:"retry_delay"`
 }
+
+type PolicySync struct {
+	PollInterval time.Duration `mapstructure:"poll_interval"`
+	Timeout      time.Duration `mapstructure:"timeout"`
+}
 type Tenant struct {
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
 }
@@ -239,6 +241,10 @@ type Menu struct {
 }
 type PlatformConfig struct {
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+}
+type Dictionary struct {
+	CacheTTL     time.Duration `mapstructure:"cache_ttl"`
+	MaxTreeNodes int           `mapstructure:"max_tree_nodes"`
 }
 type Idempotency struct {
 	Enabled          bool          `mapstructure:"enabled"`
@@ -416,9 +422,6 @@ func loadWithProfile(path, explicitProfile string, validate func(Config) error) 
 	v.AutomaticEnv()
 	if err := v.BindEnv("app.env", "APP_ENV", "APP_APP_ENV"); err != nil {
 		return Config{}, fmt.Errorf("bind environment profile: %w", err)
-	}
-	if err := v.BindEnv("outbound.grpc.authorization.target", "APP_OUTBOUND_GRPC_AUTHORIZATION_TARGET"); err != nil {
-		return Config{}, fmt.Errorf("bind authorization target: %w", err)
 	}
 	setDefaults(v)
 	readErr := v.ReadInConfig()
@@ -608,7 +611,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.audience", "go-api-template")
 	v.SetDefault("auth.psk.enabled", false)
 	v.SetDefault("auth.psk.key", "")
-	v.SetDefault("authorization.enabled", false)
 	v.SetDefault("authentication.refresh_ttl", "720h")
 	v.SetDefault("authentication.max_failed_attempts", 5)
 	v.SetDefault("authentication.lock_duration", "15m")
@@ -621,14 +623,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("migration.auto_up", false)
 	v.SetDefault("migration.create_schema", false)
 	v.SetDefault("migration.table", "go_api_template_schema_migrations")
-	v.SetDefault("authorization.policy_refresh_interval", 30*time.Second)
 	v.SetDefault("user.cache_ttl", "5m")
 	v.SetDefault("distributed_lock.ttl", "10s")
 	v.SetDefault("distributed_lock.retry_delay", "100ms")
+	v.SetDefault("policy_sync.poll_interval", "30s")
+	v.SetDefault("policy_sync.timeout", "5s")
 	v.SetDefault("tenant.cache_ttl", "5m")
 	v.SetDefault("menu.cache_ttl", "5m")
 	v.SetDefault("menu.max_nodes", 10000)
 	v.SetDefault("platform_config.cache_ttl", "5m")
+	v.SetDefault("dictionary.cache_ttl", "5m")
+	v.SetDefault("dictionary.max_tree_nodes", 10000)
 	v.SetDefault("idempotency.enabled", false)
 	v.SetDefault("idempotency.processing_ttl", "30s")
 	v.SetDefault("idempotency.result_ttl", "24h")
@@ -778,17 +783,6 @@ func (c Config) Validate() error {
 	if c.App.Env == "production" && (c.Auth.JWKSURL == "" || c.Auth.Issuer == "" || c.Auth.Audience == "") {
 		return errors.New("production authentication requires identity JWKS URL, issuer, and service audience")
 	}
-	if c.App.Env == "production" && !c.Authorization.Enabled {
-		return errors.New("authorization must be enabled in production")
-	}
-	if c.Authorization.Enabled {
-		if _, ok := c.Outbound.GRPC["authorization"]; !ok {
-			return errors.New("enabled authorization requires outbound.grpc.authorization")
-		}
-		if c.Authorization.PolicyRefreshInterval < 100*time.Millisecond || c.Authorization.PolicyRefreshInterval > 10*time.Minute {
-			return errors.New("authorization.policy_refresh_interval must be between 100ms and 10m")
-		}
-	}
 	hasSigningKey := c.JWT.PrivateKey != "" || c.JWT.PrivateKeyFile != ""
 	if (c.JWT.KeyID != "") != hasSigningKey {
 		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
@@ -809,6 +803,9 @@ func (c Config) Validate() error {
 	if c.DistributedLock.TTL < 300*time.Millisecond || c.DistributedLock.TTL > 5*time.Minute || c.DistributedLock.RetryDelay < 10*time.Millisecond || c.DistributedLock.RetryDelay > 5*time.Second || c.DistributedLock.RetryDelay >= c.DistributedLock.TTL {
 		return errors.New("distributed_lock.ttl must be between 300ms and 5m and retry_delay between 10ms and 5s and less than ttl")
 	}
+	if c.PolicySync.PollInterval < time.Second || c.PolicySync.PollInterval > 10*time.Minute || c.PolicySync.Timeout < 100*time.Millisecond || c.PolicySync.Timeout > 30*time.Second || c.PolicySync.Timeout >= c.PolicySync.PollInterval {
+		return errors.New("policy_sync requires timeout between 100ms and 30s and poll_interval between 1s and 10m greater than timeout")
+	}
 	if strings.TrimSpace(c.Cron.Timezone) == "" || len(c.Cron.Timezone) > 100 || len(c.Cron.SampleSpec) > 256 || c.Cron.JobTimeout < time.Second || c.Cron.JobTimeout > time.Hour {
 		return errors.New("cron requires a bounded timezone, schedule, and job_timeout between one second and one hour")
 	}
@@ -820,6 +817,9 @@ func (c Config) Validate() error {
 	}
 	if c.PlatformConfig.CacheTTL <= 0 || c.PlatformConfig.CacheTTL > maxCacheTTL {
 		return errors.New("platform config cache duration must be positive and no greater than 24h")
+	}
+	if c.Dictionary.CacheTTL <= 0 || c.Dictionary.CacheTTL > maxCacheTTL || c.Dictionary.MaxTreeNodes <= 0 || c.Dictionary.MaxTreeNodes > 100000 {
+		return errors.New("dictionary cache duration or max_tree_nodes is invalid")
 	}
 	if c.Authentication.RefreshTTL <= 0 || c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
 		return errors.New("authentication refresh, failure, and lock settings must be positive")

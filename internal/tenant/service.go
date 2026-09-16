@@ -124,7 +124,7 @@ func (s *Service) AdminGet(ctx context.Context, id string) (View, error) {
 }
 
 // AdminPage is the only service operation allowed to list tenants without a
-// tenant predicate. Database route policy must additionally grant its platform
+// tenant predicate. Operation PBAC must additionally grant its platform
 // permission before the handler is entered.
 func (s *Service) AdminPage(ctx context.Context, input PageInput) (pagination.Result[View], error) {
 	if _, err := requirePlatformActor(ctx); err != nil {

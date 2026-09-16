@@ -82,16 +82,13 @@ func (h *Handler) Me(c *gin.Context) {
 }
 
 // Ping godoc
-// @Summary Exercise an authenticated and authorized business endpoint
+// @Summary Exercise the public example endpoint
 // @Tags example
 // @Accept json
 // @Produce json
-// @Security Bearer
 // @Param request body PingRequest true "Ping request"
 // @Success 200 {object} Response{body=PingResponseBody}
 // @Failure 400 {object} Response "Code 10001: invalid request"
-// @Failure 403 {object} Response "Code 20003: permission denied"
-// @Failure 503 {object} Response "Code 50003: authorization unavailable"
 // @Router /api/v1/example/ping [post]
 func (h *Handler) Ping(c *gin.Context) {
 	var request PingRequest

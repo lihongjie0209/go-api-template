@@ -11,22 +11,45 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/jmoiron/sqlx"
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	grpchealth "google.golang.org/grpc/health"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
+
+func TestGRPCEndpointDescriptorsExactlyCoverRegisteredBusinessMethods(t *testing.T) {
+	t.Parallel()
+	server := grpc.NewServer()
+	hellov1.RegisterHelloServiceServer(server, &helloServer{})
+	identityv1.RegisterIdentityServiceServer(server, &identityServer{})
+	grpc_health_v1.RegisterHealthServer(server, grpchealth.NewServer())
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := accesscontrol.NewEndpointRegistry(resources, grpcEndpointDefinitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ValidateCoverage(grpcBusinessOperations(server)); err != nil {
+		t.Fatalf("gRPC descriptor coverage: %v", err)
+	}
+}
 
 func TestGRPCHealthPublisherImplementsStandardProtocol(t *testing.T) {
 	t.Parallel()
@@ -223,13 +246,10 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	}
 }
 
-func TestGRPCBusinessRoutesIncludeHello(t *testing.T) {
+func TestGRPCEndpointDefinitionsIncludeHello(t *testing.T) {
 	t.Parallel()
-	routes, err := grpcBusinessRoutes("test-service")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(routes) != 4 || routes[0].Path != hellov1.HelloService_Ping_FullMethodName {
-		t.Fatalf("routes = %+v", routes)
+	endpoints := grpcEndpointDefinitions()
+	if len(endpoints) != 8 || endpoints[0].Operation != hellov1.HelloService_Ping_FullMethodName {
+		t.Fatalf("endpoints = %+v", endpoints)
 	}
 }

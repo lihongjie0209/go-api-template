@@ -1,0 +1,12 @@
+DROP TRIGGER IF EXISTS pbac_policy_actions_audit_bd;
+DROP TRIGGER IF EXISTS pbac_policy_actions_audit_bu;
+DROP TRIGGER IF EXISTS pbac_policy_actions_audit_bi;
+DROP TRIGGER IF EXISTS pbac_policy_versions_audit_bd;
+DROP TRIGGER IF EXISTS pbac_policy_versions_audit_bu;
+DROP TRIGGER IF EXISTS pbac_policy_versions_audit_bi;
+DROP TRIGGER IF EXISTS pbac_policies_audit_bd;
+DROP TRIGGER IF EXISTS pbac_policies_audit_bu;
+DROP TRIGGER IF EXISTS pbac_policies_audit_bi;
+DROP TABLE IF EXISTS pbac_policy_actions;
+DROP TABLE IF EXISTS pbac_policy_versions;
+DROP TABLE IF EXISTS pbac_policies;

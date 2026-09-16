@@ -48,6 +48,9 @@ database:
 distributed_lock:
   ttl: 10s
   retry_delay: 100ms
+policy_sync:
+  poll_interval: 30s
+  timeout: 5s
 object_storage:
   enabled: false
   provider: s3 # s3 or oss
@@ -120,9 +123,6 @@ auth:
     enabled: false
     # Inject with APP_AUTH_PSK_KEY; never commit a real key.
     key: ""
-authorization:
-  enabled: false
-  policy_refresh_interval: 30s
 authentication:
   refresh_ttl: 720h
   max_failed_attempts: 5
@@ -151,6 +151,10 @@ menu:
 
 platform_config:
   cache_ttl: 5m
+
+dictionary:
+  cache_ttl: 5m
+  max_tree_nodes: 10000
 
 idempotency:
   enabled: false
@@ -195,8 +199,13 @@ idempotency:
     - /api/v1/permissions/create
     - /api/v1/permissions/update
     - /api/v1/permissions/delete
-    - /api/v1/route-policies/set
     - /api/v1/operation-logs/frontend/record
+    - /api/v1/dictionaries/create
+    - /api/v1/dictionaries/update
+    - /api/v1/dictionaries/delete
+    - /api/v1/dictionary-items/create
+    - /api/v1/dictionary-items/update
+    - /api/v1/dictionary-items/delete
   grpc_methods: []
   processing_ttl: 30s
   result_ttl: 24h
@@ -242,19 +251,4 @@ data_lifecycle:
 # config-{env}.yaml or APP_ variables.
 outbound:
   http: {}
-  grpc:
-    authorization:
-      target: 127.0.0.1:9092
-      timeout: 2s
-      retry:
-        max_attempts: 1
-        initial_backoff: 100ms
-        max_backoff: 1s
-        methods: []
-      breaker:
-        enabled: true
-        failure_threshold: 5
-        open_timeout: 30s
-      tls:
-        enabled: false
-        allow_insecure: false
+  grpc: {}

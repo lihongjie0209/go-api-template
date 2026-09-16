@@ -23,17 +23,18 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	appdb "github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/datalifecycle"
+	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/dictionary"
 	"github.com/lihongjie0209/go-api-template/internal/files"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/menu"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
-	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
-	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
@@ -129,10 +130,12 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testServiceAccountLifecycle(t, ctx, db)
 			testLogQueryPresentation(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
-			testRoutePolicyBootstrap(t, ctx, db)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testMenuLifecycle(t, ctx, db, permissionID)
 			testPlatformConfigLifecycle(t, ctx, db)
+			testDictionaryLifecycle(t, ctx, db)
+			testPBACLifecycle(t, ctx, db)
+			testDataPermissionLifecycle(t, ctx, db)
 			assertFileQueryIndexes(t, ctx, db, databaseType)
 			testFileLifecycle(t, ctx, db)
 			if err := db.Close(); err != nil {
@@ -142,6 +145,186 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "dictionary-test", Type: platformprincipal.TypeUser})
+	service := dictionary.New(db, appdb.NewTransactor(db), nil, dictionary.NewProviderRegistry(), nil, nil, config.Config{Dictionary: config.Dictionary{CacheTTL: time.Minute, MaxTreeNodes: 100}})
+	definition, err := service.CreateDefinition(actorCtx, dictionary.DefinitionInput{Code: "test.region", Name: "Regions", Kind: dictionary.KindTree, Source: dictionary.SourceStatic, Status: "active"})
+	if err != nil {
+		t.Fatalf("create dictionary: %v", err)
+	}
+	root, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "cn", Name: "China", SortOrder: 1})
+	if err != nil {
+		t.Fatalf("create root dictionary item: %v", err)
+	}
+	child, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, ParentID: &root.ID, Code: "gd", Name: "Guangdong", SortOrder: 1})
+	if err != nil {
+		t.Fatalf("create child dictionary item: %v", err)
+	}
+	result, err := service.Query(ctx, dictionary.Query{Code: "test.region"})
+	if err != nil {
+		t.Fatalf("query dictionary: %v", err)
+	}
+	if len(result.Items) != 1 || len(result.Items[0].Children) != 1 || result.Items[0].Children[0].Code != "gd" {
+		t.Fatalf("unexpected dictionary tree: %#v", result.Items)
+	}
+	filtered, err := service.Query(ctx, dictionary.Query{Code: "test.region", Keyword: "guang"})
+	if err != nil || len(filtered.Items) != 1 || len(filtered.Items[0].Children) != 1 {
+		t.Fatalf("tree search must retain ancestors: %#v err=%v", filtered.Items, err)
+	}
+	if _, err := service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: child.ID, ParentID: &root.ID, Name: "Guangdong", Value: "", SortOrder: 1, Version: child.Version + 1}); !errors.Is(err, dictionary.ErrConflict) {
+		t.Fatalf("stale dictionary item update error=%v", err)
+	}
+	stored, err := service.GetItem(actorCtx, root.ID)
+	if err != nil || stored.CreatedBy != "dictionary-test" || stored.Version != 1 {
+		t.Fatalf("dictionary audit fields not maintained: %#v err=%v", stored, err)
+	}
+	enumDefinition, err := service.CreateDefinition(actorCtx, dictionary.DefinitionInput{Code: "test.gender", Name: "Gender", Kind: dictionary.KindEnum, Source: dictionary.SourceStatic, Status: "active"})
+	if err != nil {
+		t.Fatalf("create enum dictionary: %v", err)
+	}
+	for index, code := range []string{"m", "f", "u"} {
+		if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: enumDefinition.ID, Code: code, Name: strings.ToUpper(code), SortOrder: int64(index)}); err != nil {
+			t.Fatalf("create enum item: %v", err)
+		}
+	}
+	enumPage, err := service.Query(ctx, dictionary.Query{Code: "test.gender", Page: 2, PageSize: 2})
+	if err != nil || enumPage.Total != 3 || len(enumPage.Items) != 1 || enumPage.Page != 2 {
+		t.Fatalf("unexpected enum page: %#v err=%v", enumPage, err)
+	}
+}
+
+func testPBACLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	registry, err := pbac.NewRegistry([]pbac.ResourceDefinition{{
+		Key: "integration.member", Name: "Integration member", Scope: pbac.ResourceScopeTenant,
+		Actions: []pbac.ActionDefinition{{Key: "update", Name: "Update"}},
+	}})
+	if err != nil {
+		t.Fatalf("create pbac registry: %v", err)
+	}
+	service := pbac.NewLifecycleService(
+		pbac.NewRepository(db), appdb.NewTransactor(db), registry, nil, nil, nil,
+	)
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{
+		ID: "pbac-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a",
+	})
+	authenticated := true
+	document := pbac.Policy{
+		APIVersion: pbac.APIVersionV1,
+		Kind:       pbac.KindPolicy,
+		Metadata: pbac.PolicyMetadata{
+			Code: "integration-member-update", Name: "Integration member update",
+		},
+		Scope: pbac.PolicyScope{Type: pbac.PolicyScopeTenant, TenantID: "tenant-a"},
+		Spec: pbac.PolicySpec{
+			Subject:  pbac.SubjectMatcher{Authenticated: &authenticated},
+			Resource: pbac.ResourceMatcher{Type: "integration.member"},
+			Actions:  []string{"update"},
+			Effect:   pbac.EffectAllow,
+		},
+	}
+	created, err := service.Create(actorCtx, pbac.CreatePolicyInput{Document: document})
+	if err != nil {
+		t.Fatalf("create pbac policy: %v", err)
+	}
+	if created.Policy.Version != 1 || created.Version.Status != pbac.VersionStatusDraft {
+		t.Fatalf("created pbac policy=%+v version=%+v", created.Policy, created.Version)
+	}
+	published, err := service.Publish(actorCtx, pbac.PublishInput{
+		PolicyID: created.Policy.ID, VersionNumber: 1, ExpectedPolicyVersion: created.Policy.Version,
+	})
+	if err != nil {
+		t.Fatalf("publish pbac policy: %v", err)
+	}
+	if published.Policy.PublishedVersionNumber == nil || *published.Policy.PublishedVersionNumber != 1 ||
+		published.Version.Status != pbac.VersionStatusPublished {
+		t.Fatalf("published pbac policy=%+v version=%+v", published.Policy, published.Version)
+	}
+	engine, err := pbac.NewEngine(registry, nil)
+	if err != nil {
+		t.Fatalf("create pbac engine: %v", err)
+	}
+	if err := pbac.NewRuntimeLoader(pbac.NewRepository(db), engine).Refresh(ctx); err != nil {
+		t.Fatalf("refresh pbac runtime: %v", err)
+	}
+	decision, err := engine.Evaluate(ctx, pbac.EvaluationRequest{
+		Subject:  pbac.Subject{Authenticated: true, TenantID: "tenant-a"},
+		Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
+		Action:   "update",
+	})
+	if err != nil || decision.Effect != pbac.DecisionEffectAllow {
+		t.Fatalf("pbac decision=%+v err=%v", decision, err)
+	}
+	denied, err := engine.Evaluate(ctx, pbac.EvaluationRequest{
+		Subject:  pbac.Subject{Authenticated: true, TenantID: "tenant-b"},
+		Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
+		Action:   "update",
+	})
+	if err != nil || denied.Effect != pbac.DecisionEffectDeny || denied.ReasonCode != pbac.ReasonTenantMismatch {
+		t.Fatalf("cross-tenant pbac decision=%+v err=%v", denied, err)
+	}
+}
+
+func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{
+		"owner_id": {Column: "tm.user_id", Type: datapermission.ValueTypeText},
+	})
+	if err != nil {
+		t.Fatalf("create data permission schema: %v", err)
+	}
+	schemas, err := datapermission.NewSchemaRegistry(schema)
+	if err != nil {
+		t.Fatalf("create data permission schema registry: %v", err)
+	}
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	if err != nil {
+		t.Fatalf("create data permission resource registry: %v", err)
+	}
+	engine, err := datapermission.NewRuntimeEngine(schemas, resources)
+	if err != nil {
+		t.Fatalf("create data permission engine: %v", err)
+	}
+	repository := datapermission.NewRepository(db)
+	service := datapermission.NewLifecycleService(repository, appdb.NewTransactor(db), schemas, resources, datapermission.NewRuntimeLoader(repository, engine), nil, nil)
+	authenticated := true
+	document := datapermission.Policy{
+		APIVersion: datapermission.PolicyAPIVersion,
+		Kind:       datapermission.PolicyKind,
+		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-owner", Name: "Integration member owner"},
+		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: "tenant-data"},
+		Spec: datapermission.PolicySpec{
+			Subject:   pbac.SubjectMatcher{Authenticated: &authenticated},
+			Resource:  "tenant.member",
+			Actions:   []string{"read", "list"},
+			Condition: "resource.owner_id == subject.id",
+			Effect:    datapermission.EffectAllow,
+		},
+	}
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "data-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-data"})
+	created, version, err := service.Create(actorCtx, document)
+	if err != nil || created.Version != 1 || version.Status != datapermission.VersionDraft {
+		t.Fatalf("create data permission policy=%+v version=%+v err=%v", created, version, err)
+	}
+	published, err := service.Publish(actorCtx, created.ID, 1, created.Version)
+	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
+		t.Fatalf("publish data permission policy=%+v err=%v", published, err)
+	}
+	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", pbac.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
+	if err != nil || predicate.Clause != "(tm.user_id = ?)" || len(predicate.Args) != 1 || predicate.Args[0] != "member-1" {
+		t.Fatalf("compiled data permission predicate=%+v err=%v", predicate, err)
+	}
+	disabled, err := service.SetStatus(actorCtx, datapermission.SetPolicyStatusInput{PolicyID: created.ID, Status: datapermission.StatusDisabled, ExpectedPolicyVersion: published.Version})
+	if err != nil || disabled.Status != datapermission.StatusDisabled {
+		t.Fatalf("disable data permission policy=%+v err=%v", disabled, err)
+	}
+	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", pbac.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
+	if err != nil || denied.Clause != "(1 = 0)" {
+		t.Fatalf("disabled data permission predicate=%+v err=%v", denied, err)
 	}
 }
 
@@ -357,7 +540,13 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 
 	cfg := config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, cfg)
+	definitions := pbac.PlatformResourceDefinitions()
+	definitions = append(definitions, pbac.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}})
+	registry, registryErr := pbac.NewRegistryFromDefinitions(definitions)
+	if registryErr != nil {
+		t.Fatal(registryErr)
+	}
+	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, cfg, nil, registry)
 	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); err != nil {
 		t.Fatalf("set tenant permission ceiling: %v", err)
 	}
@@ -370,7 +559,9 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
 		t.Fatalf("remove final tenant administrator error=%v", err)
 	}
-	adminCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: adminMemberID})
+	// Direct service integration uses an explicit system principal; transport
+	// end-to-end tests cover user endpoint descriptors and policy evaluation.
+	adminCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeSystem, TenantID: tenantID, MembershipID: adminMemberID})
 	role, err := service.CreateRole(adminCtx, "auditor", "审计员", "integration role", []string{permissionID})
 	if err != nil || role.Version != 1 {
 		t.Fatalf("created tenant role=%+v err=%v", role, err)
@@ -398,7 +589,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err != nil || page.Total != 1 || len(page.Items) != 1 {
 		t.Fatalf("tenant role page=%+v err=%v", page, err)
 	}
-	otherTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeUser, TenantID: "other-tenant", MembershipID: "other-member"})
+	otherTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeSystem, TenantID: "other-tenant", MembershipID: "other-member"})
 	if _, err := service.GetRole(otherTenantCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("cross-tenant role lookup error=%v", err)
 	}
@@ -561,14 +752,13 @@ func (discardSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.E
 
 func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) string {
 	t.Helper()
-	compiler, err := routepolicy.NewCompiler()
+	definitions := pbac.PlatformResourceDefinitions()
+	definitions = append(definitions, pbac.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}})
+	resources, err := pbac.NewRegistryFromDefinitions(definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{App: config.App{Name: "integration"}, Runtime: config.Runtime{ActiveProfile: "test"}, Authorization: config.Authorization{PolicyRefreshInterval: time.Minute}}
-	metrics := observability.NewMetrics(cfg, nil, nil)
-	manager := routepolicy.NewManager(routepolicy.NewRepository(db), compiler, nil, cfg, slog.Default(), metrics)
-	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), manager, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default())
+	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, nil, resources, slog.Default())
 	actorCtx := platformprincipal.SystemContext(ctx, "permission-integration")
 	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
 	if err != nil {
@@ -583,74 +773,7 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 		t.Fatalf("filtered permission tree=%+v err=%v", tree, err)
 	}
 
-	now := time.Now()
-	err = appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
-		statements := []struct {
-			query string
-			args  []any
-		}{
-			{`INSERT INTO route_definitions(id,protocol,method,path,operation,description,service_name,source_version,status,last_discovered_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, []any{"integration-route", "http", "post", "/integration", "integration", "", "integration", "test", "active", now, now, "permission-integration", now, "permission-integration"}},
-			{`INSERT INTO route_policy_definitions(id,route_id,expression,description,priority,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,0,?,?,?,?,?,1)`, []any{"integration-policy", "integration-route", `permissions["integration.permissions.read"]`, "", "active", now, "permission-integration", now, "permission-integration"}},
-			{`INSERT INTO route_policy_permission_refs(id,policy_id,permission_id,scope,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`, []any{"integration-ref", "integration-policy", leaf.ID, "platform", now, "permission-integration", now, "permission-integration"}},
-		}
-		for _, statement := range statements {
-			if _, execErr := tx.ExecContext(actorCtx, tx.Rebind(statement.query), statement.args...); execErr != nil {
-				return execErr
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = service.Update(actorCtx, leaf.ID, leaf.Version, permission.Input{ParentID: leaf.ParentID, Key: "integration.permissions.get", Name: leaf.Name, NodeType: leaf.NodeType, Resource: leaf.Resource, Action: leaf.Action, Status: leaf.Status})
-	if !errors.Is(err, permission.ErrInUse) {
-		t.Fatalf("referenced permission update error=%v", err)
-	}
 	return leaf.ID
-}
-
-func testRoutePolicyBootstrap(t *testing.T, ctx context.Context, db *sqlx.DB) {
-	t.Helper()
-	actorCtx := platformprincipal.SystemContext(ctx, "policy-bootstrap-integration")
-	permissionService := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default())
-	seededPermission, changed, err := permissionService.Seed(actorCtx, permission.Input{Key: "integration.bootstrap.manage", Name: "管理引导策略", NodeType: "permission", Resource: "integration.bootstrap", Action: "manage", Status: "active"})
-	if err != nil || !changed || !seededPermission.IsSystem {
-		t.Fatalf("seed permission=%+v changed=%v err=%v", seededPermission, changed, err)
-	}
-	seededPermission, changed, err = permissionService.Seed(actorCtx, permission.Input{Key: "integration.bootstrap.manage", Name: "管理引导策略", NodeType: "permission", Resource: "integration.bootstrap", Action: "manage", Status: "active"})
-	if err != nil || changed {
-		t.Fatalf("repeat permission seed=%+v changed=%v err=%v", seededPermission, changed, err)
-	}
-	route, err := routepolicy.NewRoute("http", "post", "/bootstrap/integration", "integration", "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
-		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO route_definitions(id,protocol,method,path,operation,description,service_name,source_version,status,last_discovered_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), route.ID, route.Protocol, route.Method, route.Path, "bootstrap.integration", "", route.ServiceName, route.SourceVersion, "active", now, now, "policy-bootstrap-integration", now, "policy-bootstrap-integration")
-		return execErr
-	}); err != nil {
-		t.Fatal(err)
-	}
-	compiler, err := routepolicy.NewCompiler()
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := routepolicy.NewService(db, appdb.NewTransactor(db), compiler, nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default())
-	manifest := routepolicy.BootstrapManifest{Version: 1, Policies: []routepolicy.BootstrapPolicy{{
-		Protocol: "http", Method: "post", Path: route.Path,
-		Expression: `authenticated && permissions["integration.bootstrap.manage"]`, Status: "active",
-		Permissions: []routepolicy.BootstrapPermission{{Key: "integration.bootstrap.manage", Scope: "platform"}},
-	}}}
-	result, err := routepolicy.Bootstrap(ctx, db, service, "policy-bootstrap-integration", manifest)
-	if err != nil || result.Created != 1 {
-		t.Fatalf("bootstrap create result=%+v err=%v", result, err)
-	}
-	result, err = routepolicy.Bootstrap(ctx, db, service, "policy-bootstrap-integration", manifest)
-	if err != nil || result.Unchanged != 1 {
-		t.Fatalf("bootstrap repeat result=%+v err=%v", result, err)
-	}
 }
 
 func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
@@ -854,11 +977,22 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := db.GetContext(ctx, &membershipID, db.Rebind(`SELECT id FROM tenant_memberships WHERE tenant_id=? AND user_id=? AND deleted_at IS NULL`), created.ID, "owner-1"); err != nil {
 		t.Fatal(err)
 	}
-	departmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID, MembershipID: membershipID})
-	members := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{})
+	// This integration test exercises repository lifecycle behavior directly.
+	// System callers are the only callers allowed to bypass endpoint data scopes.
+	departmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeSystem, TenantID: created.ID, MembershipID: membershipID})
+	members := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{}, nil)
 	addedMember, err := members.Add(departmentCtx, "member.two")
 	if err != nil || addedMember.UserID != "member-2" || addedMember.Version != 1 {
 		t.Fatalf("added tenant member=%+v err=%v", addedMember, err)
+	}
+	memberRepository := tenant.NewRepository(db)
+	visible, visibleTotal, err := memberRepository.PageMembers(ctx, created.ID, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}}, datapermission.SQLPredicate{Clause: "(tm.user_id = ?)", Args: []any{"member-2"}})
+	if err != nil || visibleTotal != 1 || len(visible) != 1 || visible[0].ID != addedMember.ID {
+		t.Fatalf("scoped tenant members=%+v total=%d err=%v", visible, visibleTotal, err)
+	}
+	hidden, hiddenTotal, err := memberRepository.PageMembers(ctx, created.ID, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}}, datapermission.SQLPredicate{Clause: "(1 = 0)"})
+	if err != nil || hiddenTotal != 0 || len(hidden) != 0 {
+		t.Fatalf("denied tenant members=%+v total=%d err=%v", hidden, hiddenTotal, err)
 	}
 	memberPage, err := members.Page(departmentCtx, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "member.two"}, UserIDs: []string{"member-2"}, Statuses: []tenant.Status{tenant.StatusActive}})
 	if err != nil || memberPage.Total != 1 || len(memberPage.Items) != 1 {
@@ -877,7 +1011,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := members.Remove(departmentCtx, addedMember.ID, disabledMember.Version); err != nil {
 		t.Fatalf("remove tenant member: %v", err)
 	}
-	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{})
+	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{}, nil)
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
 	if err != nil {
 		t.Fatal(err)

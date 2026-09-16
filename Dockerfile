@@ -10,8 +10,8 @@ ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/migrate ./cmd/migrate
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/policyctl ./cmd/policyctl
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/outboxctl ./cmd/outboxctl
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/pbacctl ./cmd/pbacctl
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates openssl tzdata \
@@ -29,8 +29,8 @@ WORKDIR /app
 RUN mkdir -p /app/logs && chown -R app:app /app
 COPY --from=build /out/api /app/api
 COPY --from=build /out/migrate /app/migrate
-COPY --from=build /out/policyctl /app/policyctl
 COPY --from=build /out/outboxctl /app/outboxctl
+COPY --from=build /out/pbacctl /app/pbacctl
 COPY config /app/config
 COPY migrations /app/migrations
 USER app

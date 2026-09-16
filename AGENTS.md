@@ -126,6 +126,14 @@ rationale; “considered” is not a decision.
 | Tests | Unit cases, integration cases, concurrency/failure cases, and regression mapping |
 | Shared capability | Existing component reused; candidate extraction or improvement identified |
 
+Every module and interface must also decide whether its owned data should be
+exposed through the shared data-dictionary provider contract. A provider must
+implement the bounded search/filter/sort/tree/extension contract as an
+in-process Go implementation registered by code. Do not add a remote provider
+transport until cross-service dictionaries are explicitly required. Record
+an explicit reason when the data is transactional, sensitive, unbounded, or
+otherwise unsuitable for dictionary use.
+
 ### Permission design is mandatory
 
 - Every module must maintain a permission matrix covering every HTTP operation,
@@ -148,6 +156,24 @@ rationale; “considered” is not a decision.
   unavailable, and undeclared-route fail-closed behavior. CI must compare the
   registered permission matrix with HTTP/gRPC routes and OpenAPI/protobuf
   operations to catch omissions.
+- Operation authorization and data permission are separate modules and policy
+  models. Operation policies answer whether a subject may invoke a resource
+  action and use boolean deny-overrides. Data-permission policies answer which
+  rows that already-authorized action may access; matching Allow predicates are
+  unioned and the union of Deny predicates is subtracted. Never put a data
+  condition in an operation policy or treat an operation Allow as unrestricted
+  row access.
+- Page/list/count/get/update/delete repositories must apply the compiled data
+  scope together with tenant isolation and logical-delete predicates. Items
+  and counts use the same scope; filtering after pagination is forbidden.
+  Policy text and client input never become SQL identifiers or SQL fragments.
+- Every HTTP route and gRPC method must bind an explicit authorization
+  descriptor in the same code registration call: public/internal/authenticated
+  mode, canonical resource, action, and whether data permission is required.
+  Missing metadata fails startup and CI. Paths and handler names are not policy
+  identities; after complete descriptor coverage and decision migration, remove
+  the legacy database route-policy module rather than maintaining two sources
+  of authorization truth.
 
 ## Logging decisions
 

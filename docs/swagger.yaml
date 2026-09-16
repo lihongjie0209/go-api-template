@@ -168,6 +168,335 @@ definitions:
       version:
         type: string
     type: object
+  datapermission.Effect:
+    enum:
+    - allow
+    - deny
+    type: string
+    x-enum-varnames:
+    - EffectAllow
+    - EffectDeny
+  datapermission.Policy:
+    properties:
+      api_version:
+        type: string
+      kind:
+        type: string
+      metadata:
+        $ref: '#/definitions/datapermission.PolicyMetadata'
+      scope:
+        $ref: '#/definitions/datapermission.PolicyBoundary'
+      spec:
+        $ref: '#/definitions/datapermission.PolicySpec'
+    type: object
+  datapermission.PolicyBoundary:
+    properties:
+      tenant_id:
+        type: string
+      type:
+        $ref: '#/definitions/datapermission.PolicyScopeType'
+    type: object
+  datapermission.PolicyMetadata:
+    properties:
+      code:
+        type: string
+      name:
+        type: string
+    type: object
+  datapermission.PolicyPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/datapermission.PolicyRecord'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  datapermission.PolicyRecord:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      scope:
+        $ref: '#/definitions/datapermission.PolicyScopeType'
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  datapermission.PolicyScopeType:
+    enum:
+    - global
+    - tenant
+    type: string
+    x-enum-varnames:
+    - PolicyScopeGlobal
+    - PolicyScopeTenant
+  datapermission.PolicySpec:
+    properties:
+      actions:
+        items:
+          type: string
+        type: array
+      condition:
+        type: string
+      effect:
+        $ref: '#/definitions/datapermission.Effect'
+      resource:
+        type: string
+      subject:
+        $ref: '#/definitions/pbac.SubjectMatcher'
+    type: object
+  datapermission.Publication:
+    properties:
+      policy:
+        $ref: '#/definitions/datapermission.PolicyRecord'
+      version:
+        $ref: '#/definitions/datapermission.VersionRecord'
+    type: object
+  datapermission.VersionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/datapermission.VersionRecord'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  datapermission.VersionRecord:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      document:
+        type: string
+      id:
+        type: string
+      policy_id:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+      version_number:
+        type: integer
+    type: object
+  dictionary.Definition:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      description:
+        type: string
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      source:
+        $ref: '#/definitions/dictionary.Source'
+      status:
+        type: string
+      type:
+        $ref: '#/definitions/dictionary.Kind'
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  dictionary.Item:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/dictionary.Item'
+        type: array
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      dictionary_id:
+        type: string
+      disabled:
+        type: boolean
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      value:
+        type: string
+      version:
+        type: integer
+    type: object
+  dictionary.ItemPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/dictionary.Item'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  dictionary.Kind:
+    enum:
+    - enum
+    - tree
+    type: string
+    x-enum-varnames:
+    - KindEnum
+    - KindTree
+  dictionary.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/dictionary.Definition'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  dictionary.Query:
+    properties:
+      code:
+        type: string
+      codes:
+        items:
+          type: string
+        type: array
+      extension:
+        type: object
+      ids:
+        items:
+          type: string
+        type: array
+      include_disabled:
+        type: boolean
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      sort:
+        items:
+          $ref: '#/definitions/dictionary.Sort'
+        type: array
+    type: object
+  dictionary.Result:
+    properties:
+      code:
+        type: string
+      extension:
+        type: object
+      items:
+        items:
+          $ref: '#/definitions/dictionary.ResultItem'
+        type: array
+      name:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+      type:
+        $ref: '#/definitions/dictionary.Kind'
+    type: object
+  dictionary.ResultItem:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/dictionary.ResultItem'
+        type: array
+      code:
+        type: string
+      disabled:
+        type: boolean
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      value:
+        type: string
+    type: object
+  dictionary.Sort:
+    properties:
+      direction:
+        type: string
+      field:
+        type: string
+    type: object
+  dictionary.Source:
+    enum:
+    - static
+    - provider
+    type: string
+    x-enum-varnames:
+    - SourceStatic
+    - SourceProvider
   files.Download:
     properties:
       expires_at:
@@ -273,6 +602,69 @@ definitions:
     - code
     - name
     type: object
+  httptransport.CreateDictionaryItemRequest:
+    properties:
+      code:
+        maxLength: 128
+        type: string
+      dictionary_id:
+        type: string
+      disabled:
+        type: boolean
+      extension:
+        type: object
+      name:
+        maxLength: 256
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      value:
+        maxLength: 1048576
+        type: string
+    required:
+    - code
+    - dictionary_id
+    - name
+    type: object
+  httptransport.CreateDictionaryRequest:
+    properties:
+      code:
+        maxLength: 128
+        type: string
+      description:
+        maxLength: 4096
+        type: string
+      extension:
+        type: object
+      name:
+        maxLength: 256
+        type: string
+      source:
+        allOf:
+        - $ref: '#/definitions/dictionary.Source'
+        enum:
+        - static
+        - provider
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      type:
+        allOf:
+        - $ref: '#/definitions/dictionary.Kind'
+        enum:
+        - enum
+        - tree
+    required:
+    - code
+    - name
+    - source
+    - status
+    - type
+    type: object
   httptransport.CreatePlatformConfigRequest:
     properties:
       category:
@@ -347,6 +739,103 @@ definitions:
     required:
     - display_name
     - username
+    type: object
+  httptransport.DataPermissionPolicyCreateRequest:
+    properties:
+      policy:
+        $ref: '#/definitions/datapermission.Policy'
+    required:
+    - policy
+    type: object
+  httptransport.DataPermissionPolicyGetRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.DataPermissionPolicyPageRequest:
+    properties:
+      keyword:
+        maxLength: 256
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+    type: object
+  httptransport.DataPermissionPublishRequest:
+    properties:
+      expected_policy_version:
+        type: integer
+      policy_id:
+        type: string
+      version_number:
+        type: integer
+    required:
+    - expected_policy_version
+    - policy_id
+    - version_number
+    type: object
+  httptransport.DataPermissionStatusRequest:
+    properties:
+      expected_policy_version:
+        type: integer
+      policy_id:
+        type: string
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+    required:
+    - expected_policy_version
+    - policy_id
+    - status
+    type: object
+  httptransport.DataPermissionVersionCreateRequest:
+    properties:
+      expected_policy_version:
+        type: integer
+      policy:
+        $ref: '#/definitions/datapermission.Policy'
+      policy_id:
+        type: string
+    required:
+    - expected_policy_version
+    - policy
+    - policy_id
+    type: object
+  httptransport.DataPermissionVersionGetRequest:
+    properties:
+      policy_id:
+        type: string
+      version_number:
+        type: integer
+    required:
+    - policy_id
+    - version_number
+    type: object
+  httptransport.DataPermissionVersionPageRequest:
+    properties:
+      page:
+        type: integer
+      page_size:
+        type: integer
+      policy_id:
+        type: string
+      statuses:
+        items:
+          type: string
+        maxItems: 3
+        type: array
+    required:
+    - policy_id
     type: object
   httptransport.DeleteDepartmentRequest:
     properties:
@@ -444,6 +933,64 @@ definitions:
       keyword:
         maxLength: 256
         type: string
+    type: object
+  httptransport.DictionaryIDRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.DictionaryItemPageRequest:
+    properties:
+      dictionary_id:
+        type: string
+      disabled:
+        type: boolean
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      parent_id:
+        type: string
+    required:
+    - dictionary_id
+    type: object
+  httptransport.DictionaryPageRequest:
+    properties:
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      sources:
+        items:
+          $ref: '#/definitions/dictionary.Source'
+        maxItems: 10
+        type: array
+      statuses:
+        items:
+          type: string
+        maxItems: 10
+        type: array
+      types:
+        items:
+          $ref: '#/definitions/dictionary.Kind'
+        maxItems: 10
+        type: array
+    type: object
+  httptransport.DictionaryVersionRequest:
+    properties:
+      id:
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
     type: object
   httptransport.FileIDRequest:
     properties:
@@ -734,6 +1281,113 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  httptransport.PBACPolicyCreateRequest:
+    properties:
+      policy:
+        $ref: '#/definitions/pbac.Policy'
+    required:
+    - policy
+    type: object
+  httptransport.PBACPolicyGetRequest:
+    properties:
+      id:
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.PBACPolicyPageRequest:
+    properties:
+      keyword:
+        maxLength: 256
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+    type: object
+  httptransport.PBACPolicyPublishRequest:
+    properties:
+      expected_policy_version:
+        type: integer
+      policy_id:
+        type: string
+      version_number:
+        type: integer
+    required:
+    - expected_policy_version
+    - policy_id
+    - version_number
+    type: object
+  httptransport.PBACPolicyStatusSetRequest:
+    properties:
+      expected_policy_version:
+        type: integer
+      policy_id:
+        type: string
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+    required:
+    - expected_policy_version
+    - policy_id
+    - status
+    type: object
+  httptransport.PBACPolicyVersionCreateRequest:
+    properties:
+      expected_policy_version:
+        type: integer
+      policy:
+        $ref: '#/definitions/pbac.Policy'
+      policy_id:
+        type: string
+    required:
+    - expected_policy_version
+    - policy
+    - policy_id
+    type: object
+  httptransport.PBACPolicyVersionGetRequest:
+    properties:
+      policy_id:
+        type: string
+      version_number:
+        type: integer
+    required:
+    - policy_id
+    - version_number
+    type: object
+  httptransport.PBACPolicyVersionPageRequest:
+    properties:
+      page:
+        type: integer
+      page_size:
+        type: integer
+      policy_id:
+        type: string
+      statuses:
+        items:
+          type: string
+        maxItems: 3
+        type: array
+    required:
+    - policy_id
+    type: object
+  httptransport.PBACResourceListRequest:
+    properties:
+      scope:
+        allOf:
+        - $ref: '#/definitions/pbac.ResourceScope'
+        enum:
+        - platform
+        - tenant
+        - principal
     type: object
   httptransport.PageServiceAccountsRequest:
     properties:
@@ -1225,6 +1879,56 @@ definitions:
     - name
     - version
     type: object
+  httptransport.UpdateDictionaryItemRequest:
+    properties:
+      disabled:
+        type: boolean
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        maxLength: 256
+        type: string
+      parent_id:
+        type: string
+      sort_order:
+        type: integer
+      value:
+        maxLength: 1048576
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - version
+    type: object
+  httptransport.UpdateDictionaryRequest:
+    properties:
+      description:
+        maxLength: 4096
+        type: string
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        maxLength: 256
+        type: string
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - status
+    - version
+    type: object
   httptransport.UpdatePlatformConfigRequest:
     properties:
       category:
@@ -1403,63 +2107,6 @@ definitions:
         type: string
     required:
     - membership_id
-    type: object
-  httptransport.routePolicyGetRequest:
-    properties:
-      route_id:
-        maxLength: 128
-        type: string
-    required:
-    - route_id
-    type: object
-  httptransport.routePolicyPageRequest:
-    properties:
-      keyword:
-        maxLength: 256
-        type: string
-      page:
-        type: integer
-      page_size:
-        type: integer
-      protocols:
-        items:
-          type: string
-        maxItems: 20
-        type: array
-      statuses:
-        items:
-          type: string
-        maxItems: 20
-        type: array
-    type: object
-  httptransport.routePolicySetRequest:
-    properties:
-      description:
-        maxLength: 4096
-        type: string
-      expression:
-        maxLength: 4096
-        type: string
-      references:
-        items:
-          $ref: '#/definitions/routepolicy.ReferenceInput'
-        maxItems: 8
-        type: array
-      route_id:
-        maxLength: 128
-        type: string
-      status:
-        enum:
-        - active
-        - disabled
-        type: string
-      version:
-        minimum: 0
-        type: integer
-    required:
-    - expression
-    - route_id
-    - status
     type: object
   httptransport.setAdministratorRequest:
     properties:
@@ -1741,6 +2388,218 @@ definitions:
       version:
         type: integer
     type: object
+  pbac.ActionDefinition:
+    properties:
+      description:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
+    type: object
+  pbac.Effect:
+    enum:
+    - allow
+    - deny
+    type: string
+    x-enum-varnames:
+    - EffectAllow
+    - EffectDeny
+  pbac.Policy:
+    properties:
+      api_version:
+        type: string
+      kind:
+        type: string
+      metadata:
+        $ref: '#/definitions/pbac.PolicyMetadata'
+      scope:
+        $ref: '#/definitions/pbac.PolicyScope'
+      spec:
+        $ref: '#/definitions/pbac.PolicySpec'
+    type: object
+  pbac.PolicyMetadata:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  pbac.PolicyPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/pbac.PolicyRecord'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  pbac.PolicyRecord:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      published_version_number:
+        type: integer
+      scope:
+        $ref: '#/definitions/pbac.PolicyScopeType'
+      status:
+        type: string
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
+  pbac.PolicyScope:
+    properties:
+      tenant_id:
+        type: string
+      type:
+        $ref: '#/definitions/pbac.PolicyScopeType'
+    type: object
+  pbac.PolicyScopeType:
+    enum:
+    - global
+    - tenant
+    type: string
+    x-enum-varnames:
+    - PolicyScopeGlobal
+    - PolicyScopeTenant
+  pbac.PolicySpec:
+    properties:
+      actions:
+        items:
+          type: string
+        type: array
+      effect:
+        $ref: '#/definitions/pbac.Effect'
+      resource:
+        $ref: '#/definitions/pbac.ResourceMatcher'
+      subject:
+        $ref: '#/definitions/pbac.SubjectMatcher'
+    type: object
+  pbac.PolicyVersionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/pbac.PolicyVersionRecord'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  pbac.PolicyVersionRecord:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      document:
+        type: string
+      id:
+        type: string
+      policy_id:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+      version_number:
+        type: integer
+    type: object
+  pbac.Publication:
+    properties:
+      policy:
+        $ref: '#/definitions/pbac.PolicyRecord'
+      version:
+        $ref: '#/definitions/pbac.PolicyVersionRecord'
+    type: object
+  pbac.ResourceDefinition:
+    properties:
+      actions:
+        items:
+          $ref: '#/definitions/pbac.ActionDefinition'
+        type: array
+      description:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
+      scope:
+        $ref: '#/definitions/pbac.ResourceScope'
+    type: object
+  pbac.ResourceMatcher:
+    properties:
+      type:
+        type: string
+    type: object
+  pbac.ResourceScope:
+    enum:
+    - platform
+    - tenant
+    - principal
+    type: string
+    x-enum-varnames:
+    - ResourceScopePlatform
+    - ResourceScopeTenant
+    - ResourceScopePrincipal
+  pbac.RolesMatcher:
+    properties:
+      all_of:
+        items:
+          type: string
+        type: array
+      any_of:
+        items:
+          type: string
+        type: array
+      none_of:
+        items:
+          type: string
+        type: array
+    type: object
+  pbac.SubjectMatcher:
+    properties:
+      authenticated:
+        type: boolean
+      ids:
+        items:
+          type: string
+        type: array
+      roles:
+        $ref: '#/definitions/pbac.RolesMatcher'
+      types:
+        items:
+          type: string
+        type: array
+    type: object
   permission.Record:
     properties:
       action:
@@ -1884,93 +2743,6 @@ definitions:
       version:
         type: integer
     type: object
-  routepolicy.Page:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/routepolicy.RouteSummary'
-        type: array
-      page:
-        type: integer
-      page_size:
-        type: integer
-      total:
-        type: integer
-    type: object
-  routepolicy.Reference:
-    properties:
-      id:
-        type: string
-      permission_id:
-        type: string
-      permission_key:
-        type: string
-      permission_name:
-        type: string
-      scope:
-        type: string
-    type: object
-  routepolicy.ReferenceInput:
-    properties:
-      permission_id:
-        type: string
-      scope:
-        type: string
-    type: object
-  routepolicy.RouteSummary:
-    properties:
-      id:
-        type: string
-      last_discovered_at:
-        type: string
-      method:
-        type: string
-      operation:
-        type: string
-      path:
-        type: string
-      policy_expression:
-        type: string
-      policy_status:
-        type: string
-      policy_version:
-        type: integer
-      protocol:
-        type: string
-      source_version:
-        type: string
-      status:
-        type: string
-    type: object
-  routepolicy.View:
-    properties:
-      created_at:
-        type: string
-      created_by:
-        type: string
-      description:
-        type: string
-      expression:
-        type: string
-      id:
-        type: string
-      priority:
-        type: integer
-      references:
-        items:
-          $ref: '#/definitions/routepolicy.Reference'
-        type: array
-      route_id:
-        type: string
-      status:
-        type: string
-      updated_at:
-        type: string
-      updated_by:
-        type: string
-      version:
-        type: integer
-    type: object
   securitylog.EventType:
     enum:
     - login
@@ -1984,7 +2756,8 @@ definitions:
     - membership_added
     - membership_changed
     - membership_removed
-    - route_policy_changed
+    - pbac_policy_changed
+    - data_permission_policy_changed
     - permission_definition_changed
     - identity_user_changed
     - tenant_changed
@@ -2007,7 +2780,8 @@ definitions:
     - EventMembershipAdded
     - EventMembershipChanged
     - EventMembershipRemoved
-    - EventRoutePolicyChanged
+    - EventPBACPolicyChanged
+    - EventDataPolicyChanged
     - EventPermissionChanged
     - EventIdentityUserChanged
     - EventTenantChanged
@@ -2318,8 +3092,8 @@ info:
   description: 'Production-oriented Go Web API scaffold. Stable application codes:
     0 success; 10001 invalid argument; 10004 not found; 10008 timeout; 10029 throttled;
     20001 unauthorized; 20003 forbidden; 30009 conflict; 30010 processing; 50000 internal;
-    50003 dependency unavailable; 50004 authorization unavailable; 50005 route policy
-    missing.'
+    50003 dependency unavailable; 50004 authorization unavailable; 50005 authorization
+    policy or endpoint metadata missing.'
   title: Go API Template
   version: "1.0"
 paths:
@@ -2400,6 +3174,8 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
       summary: Revoke a user session
       tags:
       - authentication
@@ -2589,6 +3365,724 @@ paths:
       summary: Authenticate a user with username and password
       tags:
       - authentication
+  /api/v1/data-permissions/global-policies/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.Publication'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a global or tenant data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a data-permission policy
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page data-permission policies
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/publish:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Publication
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPublishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Atomically publish a data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/status/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Enable or disable a data-permission policy
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/versions/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Draft
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionVersionCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.VersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Append an immutable data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/versions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionVersionGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.VersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get one data-permission policy version
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/versions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionVersionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.VersionPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page immutable data-permission policy versions
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.Publication'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a global or tenant data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a data-permission policy
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page data-permission policies
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/publish:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Publication
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPublishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Atomically publish a data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/status/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Enable or disable a data-permission policy
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/versions/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Draft
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionVersionCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.VersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Append an immutable data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/versions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionVersionGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.VersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get one data-permission policy version
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/versions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionVersionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.VersionPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page immutable data-permission policy versions
+      tags:
+      - data-permission
+  /api/v1/dictionaries/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateDictionaryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Definition'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a data dictionary
+      tags:
+      - data-dictionaries
+  /api/v1/dictionaries/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryVersionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete an empty data dictionary
+      tags:
+      - data-dictionaries
+  /api/v1/dictionaries/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Definition'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a data dictionary
+      tags:
+      - data-dictionaries
+  /api/v1/dictionaries/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Page'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page data dictionaries
+      tags:
+      - data-dictionaries
+  /api/v1/dictionaries/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateDictionaryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Definition'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a data dictionary
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary item
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateDictionaryItemRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Item'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a static dictionary item
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Item
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryVersionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a leaf dictionary item
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Item
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Item'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a dictionary item
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryItemPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.ItemPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page static dictionary items
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Item
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateDictionaryItemRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Item'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a static dictionary item
+      tags:
+      - data-dictionaries
   /api/v1/example/ping:
     post:
       consumes:
@@ -2616,17 +4110,7 @@ paths:
           description: 'Code 10001: invalid request'
           schema:
             $ref: '#/definitions/httptransport.Response'
-        "403":
-          description: 'Code 20003: permission denied'
-          schema:
-            $ref: '#/definitions/httptransport.Response'
-        "503":
-          description: 'Code 50003: authorization unavailable'
-          schema:
-            $ref: '#/definitions/httptransport.Response'
-      security:
-      - Bearer: []
-      summary: Exercise an authenticated and authorized business endpoint
+      summary: Exercise the public example endpoint
       tags:
       - example
   /api/v1/files/delete:
@@ -3021,6 +4505,484 @@ paths:
       summary: Page operation logs within the caller's tenant scope
       tags:
       - operation-logs
+  /api/v1/pbac/global-policies/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.Publication'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a PBAC policy and its first draft
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a PBAC policy
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page PBAC policies visible to the current tenant context
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/publish:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Publication
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyPublishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.Publication'
+              type: object
+      security:
+      - Bearer: []
+      summary: Atomically publish a PBAC policy draft
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/status/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyStatusSetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Enable or disable a PBAC policy
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/versions/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Draft
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyVersionCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyVersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Append an immutable PBAC policy draft
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/versions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyVersionGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyVersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get one PBAC policy version
+      tags:
+      - pbac
+  /api/v1/pbac/global-policies/versions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyVersionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyVersionPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page immutable versions of a PBAC policy
+      tags:
+      - pbac
+  /api/v1/pbac/resources/list:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filter
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACResourceListRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/pbac.ResourceDefinition'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List registered PBAC resources and actions
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.Publication'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a PBAC policy and its first draft
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a PBAC policy
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page PBAC policies visible to the current tenant context
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/publish:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Publication
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyPublishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.Publication'
+              type: object
+      security:
+      - Bearer: []
+      summary: Atomically publish a PBAC policy draft
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/status/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyStatusSetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Enable or disable a PBAC policy
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/versions/create:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Draft
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyVersionCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyVersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Append an immutable PBAC policy draft
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/versions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyVersionGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyVersionRecord'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get one PBAC policy version
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/versions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACPolicyVersionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.PolicyVersionPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page immutable versions of a PBAC policy
+      tags:
+      - pbac
   /api/v1/permissions/create:
     post:
       consumes:
@@ -3293,6 +5255,52 @@ paths:
       summary: Update a platform configuration
       tags:
       - platform-configs
+  /api/v1/platform/tenant-authorization/administrators/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Administrator
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.setAdministratorRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Add or remove a tenant administrator
+      tags:
+      - tenant-authorization
+  /api/v1/platform/tenant-authorization/permissions/set:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant permissions
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.setTenantPermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Replace a tenant's permission ceiling
+      tags:
+      - tenant-authorization
   /api/v1/platform/tenants/create:
     post:
       consumes:
@@ -3429,6 +5437,34 @@ paths:
       summary: Update any tenant from platform context using optimistic locking
       tags:
       - platform-tenants
+  /api/v1/public/dictionaries/query:
+    post:
+      consumes:
+      - application/json
+      description: Public endpoint. Enum results are paged; tree results are returned
+        as a bounded complete tree.
+      parameters:
+      - description: Dictionary query
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dictionary.Query'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.Result'
+              type: object
+      summary: Query a static or dynamic data dictionary
+      tags:
+      - data-dictionaries
   /api/v1/public/platform-configs/get:
     post:
       consumes:
@@ -3483,90 +5519,6 @@ paths:
       summary: List explicitly public active platform configurations
       tags:
       - public-configs
-  /api/v1/route-policies/get:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Route
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/httptransport.routePolicyGetRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/httptransport.Response'
-            - properties:
-                body:
-                  $ref: '#/definitions/routepolicy.View'
-              type: object
-      security:
-      - Bearer: []
-      summary: Get the database-owned policy for a route
-      tags:
-      - route-policies
-  /api/v1/route-policies/page:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Filters
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/httptransport.routePolicyPageRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/httptransport.Response'
-            - properties:
-                body:
-                  $ref: '#/definitions/routepolicy.Page'
-              type: object
-      security:
-      - Bearer: []
-      summary: Page discovered HTTP and gRPC routes with their policy status
-      tags:
-      - route-policies
-  /api/v1/route-policies/set:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Policy
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/httptransport.routePolicySetRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/httptransport.Response'
-            - properties:
-                body:
-                  $ref: '#/definitions/routepolicy.View'
-              type: object
-      security:
-      - Bearer: []
-      summary: Create or update a database-owned route policy
-      tags:
-      - route-policies
   /api/v1/security-logs/get:
     post:
       consumes:
@@ -3852,29 +5804,6 @@ paths:
       security:
       - Bearer: []
       summary: List effective permission IDs for a tenant member
-      tags:
-      - tenant-authorization
-  /api/v1/tenant-authorization/permissions/set:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Tenant permissions
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/httptransport.setTenantPermissionsRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/httptransport.Response'
-      security:
-      - Bearer: []
-      summary: Replace a tenant's permission ceiling
       tags:
       - tenant-authorization
   /api/v1/tenant-context/available:
