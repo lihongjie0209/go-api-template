@@ -43,7 +43,7 @@ jobs:
         run: go vet ./...
       - name: Scan reachable Go vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.1
           args: ./...
@@ -53,10 +53,11 @@ jobs:
         run: make integration-policy-check
       - name: Validate Docker Compose development stack
         run: make compose-check
-      - uses: bufbuild/buf-setup-action@v1
+      - uses: bufbuild/buf-action@v1
         with:
           version: "1.50.0"
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          setup_only: true
       - name: Verify protobuf contracts and generated code
         env:
           BASE_REF: ${{ github.base_ref }}
