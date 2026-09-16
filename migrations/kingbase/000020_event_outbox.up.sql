@@ -2,6 +2,8 @@ CREATE TABLE event_outbox (
     id text PRIMARY KEY,
     subject text NOT NULL,
     envelope bytea NOT NULL,
+    trace_parent text NOT NULL DEFAULT '',
+    trace_state text NOT NULL DEFAULT '',
     available_at timestamptz NOT NULL,
     attempts bigint NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     locked_by text NOT NULL DEFAULT '',

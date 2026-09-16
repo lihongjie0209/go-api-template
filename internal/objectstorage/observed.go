@@ -2,6 +2,10 @@ package objectstorage
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/observability"
@@ -37,7 +41,16 @@ func (s *observedStore) Put(ctx context.Context, input PutInput) (Info, error) {
 func (s *observedStore) Get(ctx context.Context, key string) (*Object, error) {
 	ctx, done := s.start(ctx, "get")
 	object, err := s.next.Get(ctx, key)
-	done(err)
+	if err != nil {
+		done(err)
+		return nil, err
+	}
+	if object == nil || object.Body == nil {
+		err = errors.New("object storage returned an empty body")
+		done(err)
+		return nil, err
+	}
+	object.Body = &observedReadCloser{ReadCloser: object.Body, done: done}
 	return object, err
 }
 func (s *observedStore) Stat(ctx context.Context, key string) (Info, error) {
@@ -76,3 +89,31 @@ func (s *observedStore) start(ctx context.Context, operation string) (context.Co
 }
 
 var _ Store = (*observedStore)(nil)
+
+type observedReadCloser struct {
+	io.ReadCloser
+	done func(error)
+	once sync.Once
+}
+
+func (r *observedReadCloser) Read(buffer []byte) (int, error) {
+	count, err := r.ReadCloser.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		r.finish(nil)
+	} else if err != nil {
+		r.finish(fmt.Errorf("read object body: %w", err))
+	}
+	return count, err
+}
+
+func (r *observedReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	if err != nil {
+		r.finish(fmt.Errorf("close object body: %w", err))
+	} else {
+		r.finish(nil)
+	}
+	return err
+}
+
+func (r *observedReadCloser) finish(err error) { r.once.Do(func() { r.done(err) }) }

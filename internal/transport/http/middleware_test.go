@@ -461,9 +461,8 @@ func TestPprofBearerProtection(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(pprofAuth(token))
-			router.GET("/debug", func(c *gin.Context) { c.Status(http.StatusOK) })
-			request := httptest.NewRequest(http.MethodGet, "/debug", nil)
+			registerPprof(router.Group("/debug/pprof", pprofAuth(token)))
+			request := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 			request.Header.Set("Authorization", test.header)
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, request)

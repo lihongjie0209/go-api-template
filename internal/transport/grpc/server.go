@@ -420,8 +420,9 @@ func metricsStreamInterceptor(metrics *observability.Metrics, logger *slog.Logge
 		err := handler(srv, stream)
 		code := status.Code(err)
 		if metrics.Enabled() {
-			metrics.GRPCRequests.WithLabelValues(info.FullMethod, code.String()).Inc()
-			metrics.GRPCDuration.WithLabelValues(info.FullMethod).Observe(time.Since(started).Seconds())
+			method := grpcMetricMethod(info.FullMethod)
+			metrics.GRPCRequests.WithLabelValues(method, code.String()).Inc()
+			metrics.GRPCDuration.WithLabelValues(method).Observe(time.Since(started).Seconds())
 		}
 		requestID, _ := requestid.FromContext(stream.Context())
 		logger.InfoContext(stream.Context(), "grpc stream", "request_id", requestID, "method", info.FullMethod, "code", code.String(), "duration", time.Since(started))
@@ -446,14 +447,44 @@ func metricsInterceptor(metrics *observability.Metrics, logger *slog.Logger) grp
 		response, err := handler(ctx, req)
 		code := status.Code(err)
 		if metrics.Enabled() {
-			metrics.GRPCRequests.WithLabelValues(info.FullMethod, code.String()).Inc()
-			metrics.GRPCDuration.WithLabelValues(info.FullMethod).Observe(time.Since(started).Seconds())
+			method := grpcMetricMethod(info.FullMethod)
+			metrics.GRPCRequests.WithLabelValues(method, code.String()).Inc()
+			metrics.GRPCDuration.WithLabelValues(method).Observe(time.Since(started).Seconds())
 		}
 		span := trace.SpanFromContext(ctx).SpanContext()
 		requestID, _ := requestid.FromContext(ctx)
 		logger.InfoContext(ctx, "grpc request", "request_id", requestID, "trace_id", span.TraceID().String(), "span_id", span.SpanID().String(), "method", info.FullMethod, "code", code.String(), "duration", time.Since(started))
 		return response, err
 	}
+}
+
+var knownGRPCMetricMethods = func() map[string]struct{} {
+	methods := make(map[string]struct{})
+	for _, descriptor := range []*grpc.ServiceDesc{
+		&hellov1.HelloService_ServiceDesc,
+		&identityv1.IdentityService_ServiceDesc,
+		&grpc_health_v1.Health_ServiceDesc,
+	} {
+		for _, method := range descriptor.Methods {
+			methods["/"+descriptor.ServiceName+"/"+method.MethodName] = struct{}{}
+		}
+		for _, stream := range descriptor.Streams {
+			methods["/"+descriptor.ServiceName+"/"+stream.StreamName] = struct{}{}
+		}
+	}
+	// Reflection is registered dynamically by gRPC and has two standardized
+	// protocol versions. Keep both exact names rather than accepting an
+	// attacker-controlled suffix as a Prometheus label.
+	methods["/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"] = struct{}{}
+	methods["/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"] = struct{}{}
+	return methods
+}()
+
+func grpcMetricMethod(method string) string {
+	if _, ok := knownGRPCMetricMethods[method]; ok {
+		return method
+	}
+	return "unmatched"
 }
 
 func serverCredentials(cfg config.GRPCTLS) (credentials.TransportCredentials, error) {

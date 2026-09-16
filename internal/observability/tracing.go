@@ -31,7 +31,31 @@ func NewTracing(lc fx.Lifecycle, cfg config.Config) (*Tracing, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}
-	res := resource.NewSchemaless(
+	res, err := traceResource(cfg)
+	if err != nil {
+		return nil, err
+	}
+	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Observability.TracingSampleRatio))))
+	tracing.provider = provider
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(tracePropagator())
+	lc.Append(fx.StopHook(func(ctx context.Context) error {
+		err := provider.Shutdown(ctx)
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+		return err
+	}))
+	return tracing, nil
+}
+
+func tracePropagator() propagation.TextMapPropagator {
+	return propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
+}
+
+func traceResource(cfg config.Config) (*resource.Resource, error) {
+	customResource := resource.NewSchemaless(
 		attribute.String("service.name", cfg.App.Name),
 		attribute.String("service.version", buildinfo.Version),
 		attribute.String("service.namespace", cfg.App.Schema),
@@ -39,10 +63,9 @@ func NewTracing(lc fx.Lifecycle, cfg config.Config) (*Tracing, error) {
 		attribute.String("vcs.ref.head.revision", buildinfo.Commit),
 		attribute.String("service.build.time", buildinfo.BuildTime),
 	)
-	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Observability.TracingSampleRatio))))
-	tracing.provider = provider
-	otel.SetTracerProvider(provider)
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-	lc.Append(fx.StopHook(provider.Shutdown))
-	return tracing, nil
+	res, err := resource.Merge(resource.Default(), customResource)
+	if err != nil {
+		return nil, fmt.Errorf("merge OpenTelemetry resource: %w", err)
+	}
+	return res, nil
 }

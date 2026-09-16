@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -427,6 +428,46 @@ func TestConfig_RejectsUnsafeHealthTimeouts(t *testing.T) {
 				t.Fatalf("Validate() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestConfig_RejectsUnsafeTracingEndpoint(t *testing.T) {
+	t.Parallel()
+	for _, endpoint := range []string{"collector:4318", "ftp://collector:4318", "https://user:secret@collector:4318", "https://collector:4318?token=secret"} {
+		t.Run(endpoint, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.Observability.TracingEnabled = true
+			cfg.Observability.TracingEndpoint = endpoint
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "absolute HTTP(S) URL") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_RejectsUnsafeObservabilityBounds(t *testing.T) {
+	t.Parallel()
+	for _, ratio := range []float64{math.NaN(), math.Inf(1), -0.1, 1.1} {
+		cfg := validDevelopmentConfig(t)
+		cfg.Observability.TracingSampleRatio = ratio
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "sample_ratio") {
+			t.Fatalf("ratio %v Validate() error = %v", ratio, err)
+		}
+	}
+	cfg := validDevelopmentConfig(t)
+	cfg.Observability.PprofEnabled = true
+	cfg.Observability.PprofToken = strings.Repeat("p", 4097)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "32-4096") {
+		t.Fatalf("oversized pprof token Validate() error = %v", err)
+	}
+}
+
+func TestConfig_RejectsUnboundedOutboundMetricLabels(t *testing.T) {
+	t.Parallel()
+	cfg := validDevelopmentConfig(t)
+	cfg.Outbound.HTTP = map[string]HTTPUpstream{strings.Repeat("x", 64): {BaseURL: "https://example.com", Timeout: time.Second}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "bounded lowercase identifier") {
+		t.Fatalf("invalid HTTP client name Validate() error = %v", err)
 	}
 }
 

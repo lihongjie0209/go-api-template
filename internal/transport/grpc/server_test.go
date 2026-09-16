@@ -77,6 +77,18 @@ func TestGRPCHealthPublisherImplementsStandardProtocol(t *testing.T) {
 	}
 }
 
+func TestGRPCMetricMethodBoundsUnknownLabels(t *testing.T) {
+	t.Parallel()
+	if got := grpcMetricMethod(hellov1.HelloService_Ping_FullMethodName); got != hellov1.HelloService_Ping_FullMethodName {
+		t.Fatalf("grpcMetricMethod(known) = %q", got)
+	}
+	for _, method := range []string{"", "/attacker.Service/" + strings.Repeat("x", 1024), "/grpc.health.v1.Health/attacker-controlled"} {
+		if got := grpcMetricMethod(method); got != "unmatched" {
+			t.Fatalf("grpcMetricMethod(%q) = %q", method, got)
+		}
+	}
+}
+
 func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	t.Parallel()
 	jwtConfig, keyErr := testutil.JWTConfig()

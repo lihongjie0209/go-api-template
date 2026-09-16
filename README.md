@@ -261,13 +261,15 @@ Authenticated JWT and PSK callers are injected into the request `context.Context
 
 Generate the checked-in Swagger contract with `make swagger`. CI regenerates `docs/` and fails when it differs from the committed output. JWT-protected operations declare the `Bearer` security scheme. In production, Swagger can only be enabled when `swagger.require_auth=true`.
 
-Prometheus exports bounded-cardinality HTTP latency/status metrics, database pool metrics, Redis pool metrics, Go/process metrics and Cron execution metrics. Enable OTLP/HTTP tracing with:
+Prometheus exports bounded-cardinality HTTP/gRPC latency and status metrics, outbound calls, database and Redis pool saturation, Cron executions, cache/lock/idempotency/object-storage/event operations, Go/process metrics, and a `service_build_info` series carrying the packaged version, commit, build time and environment. Unknown gRPC method names collapse to `unmatched` so clients cannot manufacture label cardinality. Enable OTLP/HTTP tracing with:
 
 ```bash
 export APP_OBSERVABILITY_TRACING_ENABLED=true
 export APP_OBSERVABILITY_TRACING_ENDPOINT=http://otel-collector:4318
 export APP_OBSERVABILITY_TRACING_SAMPLE_RATIO=0.1
 ```
+
+The trace provider merges standard OpenTelemetry SDK resource attributes with service/build/environment identity and propagates W3C Trace Context plus Baggage. HTTP, gRPC, SQL, Redis, outbound clients, Cron and shared infrastructure operations are instrumented. The transactional outbox stores `traceparent` and `tracestate`, then creates a producer span while dispatching, so an asynchronously delivered JetStream event remains connected to the originating request trace. Request ID, Trace ID and Span ID are also correlated in structured logs.
 
 pprof is disabled by default. Enabling it requires an independent Bearer token of at least 32 bytes:
 

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"mime"
 	"net/url"
 	"os"
@@ -453,6 +454,7 @@ func stringToStringSliceHook() mapstructure.DecodeHookFuncType {
 var validProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 var validMigrationTable = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 var validRedisPrefix = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,127}:$`)
+var validUpstreamName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
 func profileConfigPath(path, profile string) string {
 	if path == "" {
@@ -683,14 +685,20 @@ func (c Config) Validate() error {
 	if c.HTTP.CORS.Enabled && len(c.HTTP.CORS.AllowedOrigins) == 0 {
 		return errors.New("cors.allowed_origins is required when cors is enabled")
 	}
-	if c.Observability.TracingSampleRatio < 0 || c.Observability.TracingSampleRatio > 1 {
+	if math.IsNaN(c.Observability.TracingSampleRatio) || math.IsInf(c.Observability.TracingSampleRatio, 0) || c.Observability.TracingSampleRatio < 0 || c.Observability.TracingSampleRatio > 1 {
 		return errors.New("observability.tracing_sample_ratio must be between 0 and 1")
 	}
 	if c.Observability.TracingEnabled && c.Observability.TracingEndpoint == "" {
 		return errors.New("observability.tracing_endpoint is required")
 	}
-	if c.Observability.PprofEnabled && len(c.Observability.PprofToken) < 32 {
-		return errors.New("observability.pprof_token must contain at least 32 bytes")
+	if c.Observability.TracingEnabled {
+		endpoint, err := url.Parse(c.Observability.TracingEndpoint)
+		if err != nil || len(c.Observability.TracingEndpoint) > 2048 || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return errors.New("observability.tracing_endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment")
+		}
+	}
+	if c.Observability.PprofEnabled && (len(c.Observability.PprofToken) < 32 || len(c.Observability.PprofToken) > 4096) {
+		return errors.New("observability.pprof_token must contain 32-4096 bytes")
 	}
 	if c.App.Env == "production" && c.Swagger.Enabled && !c.Swagger.RequireAuth {
 		return errors.New("swagger.require_auth must be enabled in production")
@@ -826,7 +834,13 @@ func (c Config) Validate() error {
 			return errors.New("mysql data_lifecycle requires an empty archive_schema and uses bounded purge batches")
 		}
 	}
+	if len(c.Outbound.HTTP) > 100 || len(c.Outbound.GRPC) > 100 {
+		return errors.New("outbound client registries may contain at most 100 HTTP and 100 gRPC clients")
+	}
 	for name, upstream := range c.Outbound.HTTP {
+		if !validUpstreamName.MatchString(name) {
+			return fmt.Errorf("outbound HTTP client name %q must be a bounded lowercase identifier", name)
+		}
 		if upstream.BaseURL == "" || upstream.Timeout <= 0 {
 			return fmt.Errorf("outbound.http.%s requires base_url and positive timeout", name)
 		}
@@ -835,6 +849,9 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, upstream := range c.Outbound.GRPC {
+		if !validUpstreamName.MatchString(name) {
+			return fmt.Errorf("outbound gRPC client name %q must be a bounded lowercase identifier", name)
+		}
 		if upstream.Target == "" || upstream.Timeout <= 0 {
 			return fmt.Errorf("outbound.grpc.%s requires target and positive timeout", name)
 		}

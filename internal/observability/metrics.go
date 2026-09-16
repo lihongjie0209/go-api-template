@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -25,6 +26,7 @@ type Metrics struct {
 	OutboundDuration         *prometheus.HistogramVec
 	InfrastructureOperations *prometheus.CounterVec
 	InfrastructureDuration   *prometheus.HistogramVec
+	BuildInfo                prometheus.Gauge
 }
 
 func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
@@ -40,8 +42,20 @@ func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
 		OutboundDuration:         prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "outbound_request_duration_seconds", Help: "Outbound request latency.", Buckets: prometheus.DefBuckets}, []string{"protocol", "client"}),
 		InfrastructureOperations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "infrastructure_operations_total", Help: "Total cache, lock, idempotency, and object storage operations."}, []string{"component", "backend", "operation", "status"}),
 		InfrastructureDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "infrastructure_operation_duration_seconds", Help: "Cache, lock, idempotency, and object storage operation latency.", Buckets: prometheus.DefBuckets}, []string{"component", "backend", "operation"}),
+		BuildInfo: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "service_build_info",
+			Help: "Static service build and deployment information.",
+			ConstLabels: prometheus.Labels{
+				"service":     cfg.App.Name,
+				"environment": cfg.Runtime.ActiveProfile,
+				"version":     buildinfo.Version,
+				"commit":      buildinfo.Commit,
+				"build_time":  buildinfo.BuildTime,
+			},
+		}),
 	}
-	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), metrics.HTTPRequests, metrics.HTTPDuration, metrics.CronRuns, metrics.CronDuration, metrics.GRPCRequests, metrics.GRPCDuration, metrics.OutboundRequests, metrics.OutboundDuration, metrics.InfrastructureOperations, metrics.InfrastructureDuration)
+	metrics.BuildInfo.Set(1)
+	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), metrics.HTTPRequests, metrics.HTTPDuration, metrics.CronRuns, metrics.CronDuration, metrics.GRPCRequests, metrics.GRPCDuration, metrics.OutboundRequests, metrics.OutboundDuration, metrics.InfrastructureOperations, metrics.InfrastructureDuration, metrics.BuildInfo)
 	if db != nil {
 		registry.MustRegister(collectors.NewDBStatsCollector(db.DB, "primary"))
 	}
@@ -61,7 +75,7 @@ func (m *Metrics) ObserveInfrastructure(component, backend, operation, status st
 
 func (m *Metrics) Enabled() bool { return m.enabled }
 func (m *Metrics) Handler() http.Handler {
-	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 }
 func (m *Metrics) ObserveCron(job, status string, started time.Time) {
 	if !m.enabled {

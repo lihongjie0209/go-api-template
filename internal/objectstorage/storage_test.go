@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 )
 
 func TestObserveWithoutMetricsPreservesStore(t *testing.T) {
@@ -17,6 +20,36 @@ func TestObserveWithoutMetricsPreservesStore(t *testing.T) {
 	if got := Observe(store, nil, "s3"); got != store {
 		t.Fatalf("Observe() = %T, want original store", got)
 	}
+}
+
+func TestObservedGetMeasuresBodyLifecycle(t *testing.T) {
+	t.Parallel()
+	metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+	store := Observe(&testStore{}, metrics, "s3")
+	object, err := store.Get(t.Context(), "tenant/file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := collectMetrics(t, metrics); strings.Contains(body, `component="object_storage"`) {
+		t.Fatal("GET metric completed before response body close")
+	}
+	if err := object.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body := collectMetrics(t, metrics)
+	if !strings.Contains(body, `component="object_storage"`) || !strings.Contains(body, `operation="get"`) || !strings.Contains(body, `status="success"`) {
+		t.Fatalf("object storage GET metrics missing:\n%s", body)
+	}
+}
+
+func collectMetrics(t *testing.T, metrics *observability.Metrics) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if recorder.Code != 200 {
+		t.Fatalf("metrics status = %d", recorder.Code)
+	}
+	return recorder.Body.String()
 }
 
 type testStore struct{}
