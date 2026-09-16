@@ -111,7 +111,7 @@ func TestConfig_RejectsUnboundedAuthorizationRefresh(t *testing.T) {
 }
 
 func TestValidateClientPolicy_PlaintextCredentialsRequireExplicitNonProductionOptIn(t *testing.T) {
-	retry := Retry{MaxAttempts: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
+	retry := Retry{MaxAttempts: 1, InitialBackoff: 10 * time.Millisecond, MaxBackoff: 10 * time.Millisecond}
 	auth := ClientAuth{Type: "psk", Token: strings.Repeat("p", 32)}
 	if err := validateClientPolicy("application", auth, retry, Breaker{}, ClientTLS{}, false); err == nil || !strings.Contains(err.Error(), "allow_insecure") {
 		t.Fatalf("validateClientPolicy() error = %v", err)
@@ -122,6 +122,47 @@ func TestValidateClientPolicy_PlaintextCredentialsRequireExplicitNonProductionOp
 	}
 	if err := validateClientPolicy("application", auth, retry, Breaker{}, insecureTLS, true); err == nil || !strings.Contains(err.Error(), "production") {
 		t.Fatalf("validateClientPolicy() production error = %v", err)
+	}
+}
+
+func TestConfig_RejectsUnsafeOutboundClientConfiguration(t *testing.T) {
+	t.Parallel()
+	validHTTP := func() HTTPUpstream {
+		return HTTPUpstream{
+			BaseURL: "https://billing.example.com",
+			Timeout: time.Second,
+			Retry:   Retry{MaxAttempts: 1, InitialBackoff: 10 * time.Millisecond, MaxBackoff: 10 * time.Millisecond},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*HTTPUpstream)
+		want   string
+	}{
+		{name: "URL credentials", mutate: func(upstream *HTTPUpstream) { upstream.BaseURL = "https://user:secret@billing.example.com" }, want: "without credentials"},
+		{name: "URL query", mutate: func(upstream *HTTPUpstream) { upstream.BaseURL = "https://billing.example.com?token=secret" }, want: "without credentials"},
+		{name: "short timeout", mutate: func(upstream *HTTPUpstream) { upstream.Timeout = time.Millisecond }, want: "between 10ms and 5m"},
+		{name: "HTTP retry methods", mutate: func(upstream *HTTPUpstream) { upstream.Retry.Methods = []string{"/billing.v1.Billing/Get"} }, want: "gRPC-only"},
+		{name: "token without type", mutate: func(upstream *HTTPUpstream) { upstream.Auth.Token = "secret" }, want: "auth.type is required"},
+		{name: "oversized token", mutate: func(upstream *HTTPUpstream) {
+			upstream.Auth = ClientAuth{Type: "bearer", Token: strings.Repeat("x", 8193)}
+			upstream.TLS.Enabled = true
+		}, want: "auth.token is required"},
+		{name: "disabled TLS settings", mutate: func(upstream *HTTPUpstream) { upstream.TLS.CAFile = "ca.pem" }, want: "require tls.enabled"},
+		{name: "unbounded breaker", mutate: func(upstream *HTTPUpstream) {
+			upstream.Breaker = Breaker{Enabled: true, FailureThreshold: 10001, OpenTimeout: time.Second}
+		}, want: "breaker policy"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			upstream := validHTTP()
+			test.mutate(&upstream)
+			cfg.Outbound.HTTP = map[string]HTTPUpstream{"billing": upstream}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

@@ -261,6 +261,38 @@ message queue with an outbox.
   database constraints/transactions. A distributed lock is not a correctness
   substitute for those controls.
 
+## Outbound service call SOP
+
+- Services use the Fx-managed named HTTP/gRPC registry. Do not construct an
+  ad-hoc client per request or bypass the shared timeout, authentication,
+  telemetry, retry, and circuit-breaker policies.
+- Every unary call has one bounded end-to-end budget covering connection,
+  retries, backoff, headers, and response processing. A shorter caller
+  deadline always wins. HTTP callers must close response bodies; streaming
+  gRPC callers must set an explicit operation deadline and own cancellation.
+- Automatic retries are bounded and jittered. HTTP retries only semantic
+  idempotent verbs or a call carrying `Idempotency-Key`; gRPC retries only a
+  reviewed method pattern or a call carrying the shared idempotency key.
+  Streaming RPCs are never transparently retried or circuit-broken.
+- Bearer/PSK credentials require TLS except for an explicit non-production
+  development opt-in. Base URLs must not contain credentials, query secrets,
+  or fragments. Shared authentication replaces caller-provided authorization
+  values rather than appending a second value, and HTTP redirects are never
+  followed automatically with credentials.
+- TLS uses TLS 1.2 or newer, retains system trust when adding a private CA, and
+  requires client certificate/key pairs together. Production credentials
+  cannot use the plaintext opt-in.
+- gRPC resolver targets use round-robin balancing; HTTP uses the standard DNS
+  and connection pool. More advanced discovery must be added behind the shared
+  registry, not embedded in business services.
+- Metrics use only bounded client names, protocol, result, and duration. Trace,
+  Request ID, and idempotency metadata propagate from the caller Context;
+  credentials, targets, request bodies, and tenant/user IDs are not labels.
+- Tests cover deadline precedence, cancellation, response-body lifecycle,
+  retry eligibility/exhaustion, jitter-compatible bounds, breaker opening,
+  authentication replacement, correlation metadata, unsafe TLS/URL rejection,
+  and direct-constructor validation.
+
 ## Database, audit, and optimistic locking
 
 Every table, including association, outbox, inbox, operation-log, security-log,

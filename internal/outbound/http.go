@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"math"
+	rand "math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -32,12 +34,41 @@ type HTTPClient struct {
 	metrics *observability.Metrics
 }
 
+var validHTTPClientName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
 func (c *HTTPClient) CloseIdleConnections() { c.client.CloseIdleConnections() }
 
 func NewHTTPClient(name string, cfg config.HTTPUpstream, metrics *observability.Metrics) (*HTTPClient, error) {
+	if !validHTTPClientName.MatchString(name) {
+		return nil, errors.New("outbound HTTP client name must be a bounded lowercase identifier")
+	}
 	baseURL, err := url.Parse(cfg.BaseURL)
-	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
-		return nil, fmt.Errorf("parse outbound HTTP base URL %q", cfg.BaseURL)
+	if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return nil, errors.New("outbound HTTP base URL must be an http(s) endpoint without credentials, query, or fragment")
+	}
+	if cfg.Timeout < 10*time.Millisecond || cfg.Timeout > 5*time.Minute {
+		return nil, errors.New("outbound HTTP timeout must be between 10ms and 5m")
+	}
+	if cfg.Retry.MaxAttempts < 1 || cfg.Retry.MaxAttempts > 5 || cfg.Retry.InitialBackoff < 10*time.Millisecond || cfg.Retry.InitialBackoff > time.Minute || cfg.Retry.MaxBackoff < cfg.Retry.InitialBackoff || cfg.Retry.MaxBackoff > time.Minute {
+		return nil, errors.New("outbound HTTP retry policy is invalid")
+	}
+	if len(cfg.Retry.Methods) != 0 {
+		return nil, errors.New("outbound HTTP retry methods are not configurable")
+	}
+	if cfg.Breaker.Enabled && (cfg.Breaker.FailureThreshold == 0 || cfg.Breaker.FailureThreshold > 10000 || cfg.Breaker.OpenTimeout < time.Second || cfg.Breaker.OpenTimeout > time.Hour) {
+		return nil, errors.New("outbound HTTP breaker policy is invalid")
+	}
+	if err := validateHTTPClientTLS(cfg.TLS); err != nil {
+		return nil, err
+	}
+	if cfg.Auth.Type != "" && cfg.Auth.Type != "bearer" && cfg.Auth.Type != "psk" {
+		return nil, errors.New("outbound HTTP auth type must be bearer or psk")
+	}
+	if cfg.Auth.Type != "" && (cfg.Auth.Token == "" || len(cfg.Auth.Token) > 8192) {
+		return nil, errors.New("outbound HTTP auth token is required and must not exceed 8192 bytes")
+	}
+	if cfg.Auth.Type == "" && cfg.Auth.Token != "" {
+		return nil, errors.New("outbound HTTP auth type is required when a token is configured")
 	}
 	if cfg.TLS.Enabled && baseURL.Scheme != "https" {
 		return nil, errors.New("outbound HTTP TLS requires an https base URL")
@@ -67,8 +98,14 @@ func NewHTTPClient(name string, cfg config.HTTPUpstream, metrics *observability.
 }
 
 func (c *HTTPClient) Do(ctx context.Context, method, requestPath string, body []byte, headers http.Header) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	started := time.Now()
 	response, err := c.execute(ctx, method, requestPath, body, headers)
+	if response == nil {
+		cancel()
+	} else {
+		response.Body = &cancelOnCloseBody{ReadCloser: response.Body, cancel: cancel}
+	}
 	status := "error"
 	if response != nil {
 		status = strconv.Itoa(response.StatusCode)
@@ -78,6 +115,24 @@ func (c *HTTPClient) Do(ctx context.Context, method, requestPath string, body []
 		c.metrics.OutboundDuration.WithLabelValues("http", c.name).Observe(time.Since(started).Seconds())
 	}
 	return response, err
+}
+
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Read(buffer []byte) (int, error) {
+	read, err := b.ReadCloser.Read(buffer)
+	if err != nil {
+		b.cancel()
+	}
+	return read, err
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	defer b.cancel()
+	return b.ReadCloser.Close()
 }
 
 func (c *HTTPClient) execute(ctx context.Context, method, requestPath string, body []byte, headers http.Header) (*http.Response, error) {
@@ -171,6 +226,12 @@ func waitBackoff(ctx context.Context, retry config.Retry, attempt int) error {
 	if delay > retry.MaxBackoff {
 		delay = retry.MaxBackoff
 	}
+	// Equal jitter preserves exponential growth while preventing synchronized
+	// retries across replicas after a shared upstream failure.
+	half := delay / 2
+	if spread := delay - half; spread > 0 {
+		delay = half + time.Duration(rand.Int64N(int64(spread)+1))
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -192,7 +253,10 @@ func httpTransport(cfg config.ClientTLS, timeout time.Duration) (*http.Transport
 		if err != nil {
 			return nil, fmt.Errorf("read outbound HTTP CA: %w", err)
 		}
-		pool := x509.NewCertPool()
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("load system certificate pool: %w", err)
+		}
 		if !pool.AppendCertsFromPEM(pem) {
 			return nil, errors.New("parse outbound HTTP CA")
 		}
@@ -206,4 +270,20 @@ func httpTransport(cfg config.ClientTLS, timeout time.Duration) (*http.Transport
 		tlsConfig.Certificates = []tls.Certificate{certificate}
 	}
 	return &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: tlsConfig, ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 10, IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: timeout}, nil
+}
+
+func validateHTTPClientTLS(cfg config.ClientTLS) error {
+	if !cfg.Enabled && (cfg.ServerName != "" || cfg.CAFile != "" || cfg.CertFile != "" || cfg.KeyFile != "") {
+		return errors.New("outbound HTTP TLS settings require tls.enabled")
+	}
+	if (cfg.CertFile == "") != (cfg.KeyFile == "") {
+		return errors.New("outbound HTTP client certificate and key must be configured together")
+	}
+	if cfg.Enabled && cfg.AllowInsecure {
+		return errors.New("outbound HTTP TLS and allow_insecure are mutually exclusive")
+	}
+	if len(cfg.ServerName) > 253 || len(cfg.CAFile) > 4096 || len(cfg.CertFile) > 4096 || len(cfg.KeyFile) > 4096 {
+		return errors.New("outbound HTTP TLS settings exceed their bounds")
+	}
+	return nil
 }

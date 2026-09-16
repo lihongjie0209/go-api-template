@@ -348,7 +348,11 @@ Redis keys include the environment and service namespace so independently deploy
 
 ## Outbound clients
 
-Named HTTP and gRPC clients are created once by the Fx-managed outbound registry. Both support Bearer/PSK, TLS/mTLS, deadline propagation, bounded exponential retry, Sony gobreaker, Prometheus metrics and OpenTelemetry propagation. Credentials require TLS. POST/RPC retries are only enabled for configured safe gRPC methods or calls carrying an idempotency key.
+Named HTTP and gRPC clients are created once by the Fx-managed outbound registry. Unary calls support Bearer/PSK, TLS/mTLS, one end-to-end deadline, bounded jittered exponential retry, Sony gobreaker, Prometheus metrics and OpenTelemetry propagation. The configured timeout caps the complete retry sequence while a shorter caller deadline still wins. HTTP response bodies remain readable until EOF/close or that budget expires; callers must always close them.
+
+Credentials require TLS unless a development profile explicitly opts into plaintext, which production validation rejects. A configured credential replaces caller-supplied authorization rather than producing ambiguous multi-value headers/metadata. HTTP never follows redirects automatically, and base URLs reject embedded credentials, query strings and fragments. Private CA bundles extend the system trust pool rather than replacing it; mTLS certificate and key files are required together.
+
+HTTP retries only idempotent verbs or calls carrying `Idempotency-Key`. Unary gRPC retries only configured safe method patterns or calls carrying the shared idempotency key. Attempts, backoff, timeout, method patterns, credentials, breaker thresholds and TLS paths are bounded and validated even when constructors are called directly. gRPC resolver targets use round-robin balancing (for example `dns:///inventory:9090`); HTTP uses the standard DNS resolver and pooled transport. Streaming RPCs propagate authentication, correlation metadata and OpenTelemetry, but deliberately require a caller-owned deadline and are not transparently retried or circuit-broken.
 
 ```yaml
 outbound:

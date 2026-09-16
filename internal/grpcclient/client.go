@@ -6,8 +6,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	rand "math/rand/v2"
 	"os"
 	"path"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -45,12 +48,37 @@ type TLSConfig struct {
 	AllowInsecureToken bool
 }
 
+var validClientName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+
 func Dial(cfg Config) (*grpc.ClientConn, error) {
-	if cfg.Target == "" {
-		return nil, errors.New("grpc client target is required")
+	if !validClientName.MatchString(cfg.Name) {
+		return nil, errors.New("grpc client name must be a bounded lowercase identifier")
 	}
-	if cfg.Timeout <= 0 {
-		return nil, errors.New("grpc client timeout must be positive")
+	if cfg.Target == "" || len(cfg.Target) > 2048 {
+		return nil, errors.New("grpc client target is required and must not exceed 2048 bytes")
+	}
+	if strings.IndexFunc(cfg.Target, func(character rune) bool { return character <= ' ' || character == 0x7f }) >= 0 {
+		return nil, errors.New("grpc client target must not contain whitespace or control characters")
+	}
+	if cfg.Timeout < 10*time.Millisecond || cfg.Timeout > 5*time.Minute {
+		return nil, errors.New("grpc client timeout must be between 10ms and 5m")
+	}
+	if cfg.Retry.MaxAttempts < 1 || cfg.Retry.MaxAttempts > 5 || cfg.Retry.InitialBackoff < 10*time.Millisecond || cfg.Retry.InitialBackoff > time.Minute || cfg.Retry.MaxBackoff < cfg.Retry.InitialBackoff || cfg.Retry.MaxBackoff > time.Minute || len(cfg.Retry.Methods) > 100 {
+		return nil, errors.New("grpc client retry policy is invalid")
+	}
+	for _, pattern := range cfg.Retry.Methods {
+		if len(pattern) > 256 || !strings.HasPrefix(pattern, "/") || strings.Count(pattern, "/") != 2 {
+			return nil, errors.New("grpc client retry method pattern is invalid")
+		}
+		if _, err := path.Match(pattern, "/validation/target"); err != nil {
+			return nil, fmt.Errorf("grpc client retry method pattern is invalid: %w", err)
+		}
+	}
+	if cfg.Breaker.Enabled && (cfg.Breaker.FailureThreshold == 0 || cfg.Breaker.FailureThreshold > 10000 || cfg.Breaker.OpenTimeout < time.Second || cfg.Breaker.OpenTimeout > time.Hour) {
+		return nil, errors.New("grpc client breaker policy is invalid")
+	}
+	if len(cfg.Token) > 8192 || len(cfg.PSK) > 8192 {
+		return nil, errors.New("grpc client credential must not exceed 8192 bytes")
 	}
 	transport, err := transportCredentials(cfg.TLS)
 	if err != nil {
@@ -124,6 +152,10 @@ func waitRetry(ctx context.Context, cfg config.Retry, attempt int) error {
 	if delay > cfg.MaxBackoff {
 		delay = cfg.MaxBackoff
 	}
+	half := delay / 2
+	if spread := delay - half; spread > 0 {
+		delay = half + time.Duration(rand.Int64N(int64(spread)+1))
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -163,9 +195,6 @@ func metricsInterceptor(name string, metrics *observability.Metrics) grpc.UnaryC
 
 func timeoutInterceptor(timeout time.Duration) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, connection *grpc.ClientConn, invoker grpc.UnaryInvoker, options ...grpc.CallOption) error {
-		if _, ok := ctx.Deadline(); ok {
-			return invoker(ctx, method, req, reply, connection, options...)
-		}
 		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return invoker(callCtx, method, req, reply, connection, options...)
@@ -185,22 +214,23 @@ func metadataStreamInterceptor(token, psk string) grpc.StreamClientInterceptor {
 }
 
 func withOutgoingMetadata(ctx context.Context, token, psk string) context.Context {
-	pairs := make([]string, 0, 6)
+	values, _ := metadata.FromOutgoingContext(ctx)
+	values = values.Copy()
 	if token != "" {
-		pairs = append(pairs, "authorization", "Bearer "+token)
+		values.Set("authorization", "Bearer "+token)
 	} else if psk != "" {
-		pairs = append(pairs, "authorization", "PSK "+psk)
+		values.Set("authorization", "PSK "+psk)
 	}
 	if requestID, ok := RequestIDFromContext(ctx); ok {
-		pairs = append(pairs, "x-request-id", requestID)
+		values.Set("x-request-id", requestID)
 	}
 	if key, ok := idempotency.FromContext(ctx); ok {
-		pairs = append(pairs, "idempotency-key", key)
+		values.Set("idempotency-key", key)
 	}
-	if len(pairs) == 0 {
+	if len(values) == 0 {
 		return ctx
 	}
-	return metadata.AppendToOutgoingContext(ctx, pairs...)
+	return metadata.NewOutgoingContext(ctx, values)
 }
 
 func WithRequestID(ctx context.Context, id string) context.Context {
@@ -214,8 +244,17 @@ func WithIdempotencyKey(ctx context.Context, key string) context.Context {
 }
 
 func transportCredentials(cfg TLSConfig) (credentials.TransportCredentials, error) {
+	if len(cfg.ServerName) > 253 || len(cfg.CAFile) > 4096 || len(cfg.CertFile) > 4096 || len(cfg.KeyFile) > 4096 {
+		return nil, errors.New("grpc TLS settings exceed their bounds")
+	}
 	if !cfg.Enabled {
+		if cfg.ServerName != "" || cfg.CAFile != "" || cfg.CertFile != "" || cfg.KeyFile != "" {
+			return nil, errors.New("grpc TLS settings require TLS to be enabled")
+		}
 		return insecure.NewCredentials(), nil
+	}
+	if cfg.AllowInsecureToken {
+		return nil, errors.New("grpc TLS and plaintext credential opt-in are mutually exclusive")
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: cfg.ServerName}
 	if cfg.CAFile != "" {
@@ -223,7 +262,10 @@ func transportCredentials(cfg TLSConfig) (credentials.TransportCredentials, erro
 		if err != nil {
 			return nil, fmt.Errorf("read grpc CA: %w", err)
 		}
-		pool := x509.NewCertPool()
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("load system certificate pool: %w", err)
+		}
 		if !pool.AppendCertsFromPEM(pem) {
 			return nil, errors.New("parse grpc CA")
 		}

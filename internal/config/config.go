@@ -850,8 +850,15 @@ func (c Config) Validate() error {
 		if !validUpstreamName.MatchString(name) {
 			return fmt.Errorf("outbound HTTP client name %q must be a bounded lowercase identifier", name)
 		}
-		if upstream.BaseURL == "" || upstream.Timeout <= 0 {
-			return fmt.Errorf("outbound.http.%s requires base_url and positive timeout", name)
+		if upstream.BaseURL == "" || upstream.Timeout < 10*time.Millisecond || upstream.Timeout > 5*time.Minute {
+			return fmt.Errorf("outbound.http.%s requires base_url and timeout between 10ms and 5m", name)
+		}
+		baseURL, err := url.Parse(upstream.BaseURL)
+		if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+			return fmt.Errorf("outbound.http.%s base_url must be an http(s) endpoint without credentials, query, or fragment", name)
+		}
+		if len(upstream.Retry.Methods) != 0 {
+			return fmt.Errorf("outbound.http.%s retry.methods is gRPC-only; HTTP retries derive safety from the verb or Idempotency-Key", name)
 		}
 		if err := validateClientPolicy(name, upstream.Auth, upstream.Retry, upstream.Breaker, upstream.TLS, c.App.Env == "production"); err != nil {
 			return err
@@ -861,8 +868,8 @@ func (c Config) Validate() error {
 		if !validUpstreamName.MatchString(name) {
 			return fmt.Errorf("outbound gRPC client name %q must be a bounded lowercase identifier", name)
 		}
-		if upstream.Target == "" || upstream.Timeout <= 0 {
-			return fmt.Errorf("outbound.grpc.%s requires target and positive timeout", name)
+		if upstream.Target == "" || len(upstream.Target) > 2048 || upstream.Timeout < 10*time.Millisecond || upstream.Timeout > 5*time.Minute {
+			return fmt.Errorf("outbound.grpc.%s requires a bounded target and timeout between 10ms and 5m", name)
 		}
 		if err := validateClientPolicy(name, upstream.Auth, upstream.Retry, upstream.Breaker, upstream.TLS, c.App.Env == "production"); err != nil {
 			return err
@@ -904,8 +911,11 @@ func validateClientPolicy(name string, auth ClientAuth, retry Retry, breaker Bre
 	if auth.Type != "" && auth.Type != "bearer" && auth.Type != "psk" {
 		return fmt.Errorf("outbound %s auth.type must be bearer or psk", name)
 	}
-	if auth.Type != "" && auth.Token == "" {
+	if auth.Type != "" && (auth.Token == "" || len(auth.Token) > 8192) {
 		return fmt.Errorf("outbound %s auth.token is required", name)
+	}
+	if auth.Type == "" && auth.Token != "" {
+		return fmt.Errorf("outbound %s auth.type is required when auth.token is configured", name)
 	}
 	if auth.Type != "" && !tls.Enabled && !tls.AllowInsecure {
 		return fmt.Errorf("outbound %s credentials require TLS or explicit allow_insecure", name)
@@ -916,22 +926,28 @@ func validateClientPolicy(name string, auth ClientAuth, retry Retry, breaker Bre
 	if production && auth.Type != "" && tls.AllowInsecure {
 		return fmt.Errorf("production outbound %s credentials require TLS", name)
 	}
-	if retry.MaxAttempts < 1 || retry.MaxAttempts > 5 || retry.InitialBackoff <= 0 || retry.MaxBackoff < retry.InitialBackoff {
+	if retry.MaxAttempts < 1 || retry.MaxAttempts > 5 || retry.InitialBackoff < 10*time.Millisecond || retry.InitialBackoff > time.Minute || retry.MaxBackoff < retry.InitialBackoff || retry.MaxBackoff > time.Minute || len(retry.Methods) > 100 {
 		return fmt.Errorf("outbound %s retry policy is invalid", name)
 	}
 	for _, pattern := range retry.Methods {
-		if !strings.HasPrefix(pattern, "/") || strings.Count(pattern, "/") != 2 {
+		if len(pattern) > 256 || !strings.HasPrefix(pattern, "/") || strings.Count(pattern, "/") != 2 {
 			return fmt.Errorf("outbound %s retry method pattern is invalid", name)
 		}
 		if _, err := path.Match(pattern, "/validation/target"); err != nil {
 			return fmt.Errorf("outbound %s retry method pattern is invalid: %w", name, err)
 		}
 	}
-	if breaker.Enabled && (breaker.FailureThreshold == 0 || breaker.OpenTimeout <= 0) {
+	if breaker.Enabled && (breaker.FailureThreshold == 0 || breaker.FailureThreshold > 10000 || breaker.OpenTimeout < time.Second || breaker.OpenTimeout > time.Hour) {
 		return fmt.Errorf("outbound %s breaker policy is invalid", name)
 	}
 	if tls.Enabled && (tls.CertFile == "") != (tls.KeyFile == "") {
 		return fmt.Errorf("outbound %s TLS certificate and key must be configured together", name)
+	}
+	if !tls.Enabled && (tls.ServerName != "" || tls.CAFile != "" || tls.CertFile != "" || tls.KeyFile != "") {
+		return fmt.Errorf("outbound %s TLS settings require tls.enabled", name)
+	}
+	if len(tls.ServerName) > 253 || len(tls.CAFile) > 4096 || len(tls.CertFile) > 4096 || len(tls.KeyFile) > 4096 {
+		return fmt.Errorf("outbound %s TLS settings exceed their bounds", name)
 	}
 	return nil
 }
