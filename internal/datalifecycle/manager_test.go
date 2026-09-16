@@ -69,6 +69,69 @@ func TestMaintainMySQLPurgesBoundedBatches(t *testing.T) {
 	}
 }
 
+func TestCleanupOutboxMySQLUsesBoundedAuditedBatches(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, platformLocation)
+	actor := "orders:data-lifecycle"
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\?").WithArgs(actor).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE event_outbox SET envelope=`).
+		WithArgs([]byte{}, now, actor, now.Add(-7*24*time.Hour), now.Add(-90*24*time.Hour), 250).
+		WillReturnResult(sqlmock.NewResult(0, 10))
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	manager := &Manager{db: db, dialect: "mysql", appName: "orders", cfg: config.DataLifecycle{
+		PurgeBatchSize: 250, PurgeMaxBatches: 2, OutboxPublishedRetention: 7 * 24 * time.Hour, OutboxDeadRetention: 90 * 24 * time.Hour,
+	}}
+	if err := manager.cleanupOutboxMySQL(platformprincipal.SystemContext(t.Context(), actor), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanupOutboxPostgresUsesBoundedBatches(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, platformLocation)
+	mock.ExpectExec(`WITH expired AS`).
+		WithArgs(now.Add(-7*24*time.Hour), now.Add(-90*24*time.Hour), 250, now, "orders:data-lifecycle").
+		WillReturnResult(sqlmock.NewResult(0, 250))
+	mock.ExpectExec(`WITH expired AS`).
+		WithArgs(now.Add(-7*24*time.Hour), now.Add(-90*24*time.Hour), 250, now, "orders:data-lifecycle").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	manager := &Manager{appName: "orders", cfg: config.DataLifecycle{
+		PurgeBatchSize: 250, PurgeMaxBatches: 2, OutboxPublishedRetention: 7 * 24 * time.Hour, OutboxDeadRetention: 90 * 24 * time.Hour,
+	}}
+	if err := manager.cleanupOutboxPostgres(t.Context(), tx, now); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMaintainUsesBoundedSystemContextAndSkipsContention(t *testing.T) {
 	t.Parallel()
 	raw, _, err := sqlmock.New()

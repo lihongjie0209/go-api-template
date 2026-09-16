@@ -297,6 +297,12 @@ func TestLoad_ValidatesDataLifecycleDatabaseAndBounds(t *testing.T) {
 				"data_lifecycle:\n  enabled: true\n  purge_max_batches: 101\n",
 			want: "purge_max_batches",
 		},
+		{
+			name: "dead outbox retention shorter than published",
+			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
+				"data_lifecycle:\n  enabled: true\n  outbox_published_retention: 168h\n  outbox_dead_retention: 24h\n",
+			want: "outbox dead retention",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -644,6 +650,23 @@ func TestLoadMigrationWithProfile_ProductionDoesNotRequireAPISecrets(t *testing.
 	}
 	if cfg.DatabaseName != "orders_db" || cfg.Schema != "orders" || cfg.Table != "orders_schema_migrations" {
 		t.Fatalf("migration config = %+v", cfg)
+	}
+}
+
+func TestLoadDatabaseWithProfile_ProductionDoesNotRequireAPISecrets(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	content := "app:\n  env: production\ndatabase:\n  enabled: true\n  type: postgres\n  name: orders_db\n  schema: orders\n  dsn: postgres://app:secret@postgres:5432/orders_db?sslmode=require\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadDatabaseWithProfile(path, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.Name != "orders_db" || cfg.Database.Schema != "orders" || cfg.Database.Type != "postgres" {
+		t.Fatalf("database config = %+v", cfg.Database)
 	}
 }
 

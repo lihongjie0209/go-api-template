@@ -14,6 +14,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -96,42 +97,88 @@ func (m *Manager) maintainMySQL(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	return nil
+	return m.cleanupOutboxMySQL(ctx, now)
 }
 
 func (m *Manager) maintain(ctx context.Context, now time.Time) error {
-	tx, err := m.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin partition maintenance: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, m.advisoryLockKey); err != nil {
-		return fmt.Errorf("lock partition maintenance: %w", err)
-	}
-	if m.cfg.ArchiveSchema != "" {
-		if _, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoteIdentifier(m.cfg.ArchiveSchema)); err != nil {
-			return fmt.Errorf("create archive schema: %w", err)
+	return database.NewTransactor(m.db).Within(ctx, nil, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, m.advisoryLockKey); err != nil {
+			return fmt.Errorf("lock partition maintenance: %w", err)
 		}
-	}
-	month := monthStart(now)
-	for _, policy := range []struct {
-		table           string
-		retentionMonths int
-	}{
-		{table: "operation_logs", retentionMonths: m.cfg.OperationLogRetentionMonths},
-		{table: "security_logs", retentionMonths: m.cfg.SecurityLogRetentionMonths},
-	} {
-		for offset := 0; offset <= m.cfg.PremakeMonths; offset++ {
-			if err := ensurePartition(ctx, tx, policy.table, month.AddDate(0, offset, 0)); err != nil {
+		if m.cfg.ArchiveSchema != "" {
+			if _, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoteIdentifier(m.cfg.ArchiveSchema)); err != nil {
+				return fmt.Errorf("create archive schema: %w", err)
+			}
+		}
+		month := monthStart(now)
+		for _, policy := range []struct {
+			table           string
+			retentionMonths int
+		}{
+			{table: "operation_logs", retentionMonths: m.cfg.OperationLogRetentionMonths},
+			{table: "security_logs", retentionMonths: m.cfg.SecurityLogRetentionMonths},
+		} {
+			for offset := 0; offset <= m.cfg.PremakeMonths; offset++ {
+				if err := ensurePartition(ctx, tx, policy.table, month.AddDate(0, offset, 0)); err != nil {
+					return err
+				}
+			}
+			if err := retainPartitions(ctx, tx, policy.table, month.AddDate(0, -policy.retentionMonths, 0), m.cfg.ArchiveSchema); err != nil {
 				return err
 			}
 		}
-		if err := retainPartitions(ctx, tx, policy.table, month.AddDate(0, -policy.retentionMonths, 0), m.cfg.ArchiveSchema); err != nil {
+		return m.cleanupOutboxPostgres(ctx, tx, now)
+	})
+}
+
+func (m *Manager) cleanupOutboxMySQL(ctx context.Context, now time.Time) error {
+	if m.cfg.OutboxPublishedRetention <= 0 || m.cfg.OutboxDeadRetention <= 0 {
+		return nil
+	}
+	query := `UPDATE event_outbox SET envelope=?,trace_parent='',trace_state='',last_error='',deleted_at=?,deleted_by=? WHERE deleted_at IS NULL AND ((published_at IS NOT NULL AND published_at<?) OR (dead_at IS NOT NULL AND dead_at<?)) ORDER BY created_at,id LIMIT ?`
+	for range m.cfg.PurgeMaxBatches {
+		var rows int64
+		err := database.NewTransactor(m.db).Within(ctx, nil, func(tx *sqlx.Tx) error {
+			result, err := tx.ExecContext(ctx, query, []byte{}, now, m.appName+":data-lifecycle", now.Add(-m.cfg.OutboxPublishedRetention), now.Add(-m.cfg.OutboxDeadRetention), m.cfg.PurgeBatchSize)
+			if err != nil {
+				return err
+			}
+			rows, err = result.RowsAffected()
 			return err
+		})
+		if err != nil {
+			return fmt.Errorf("clean retained event outbox rows: %w", err)
+		}
+		if rows < int64(m.cfg.PurgeBatchSize) {
+			break
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit partition maintenance: %w", err)
+	return nil
+}
+
+func (m *Manager) cleanupOutboxPostgres(ctx context.Context, tx *sqlx.Tx, now time.Time) error {
+	if m.cfg.OutboxPublishedRetention <= 0 || m.cfg.OutboxDeadRetention <= 0 {
+		return nil
+	}
+	query := `WITH expired AS (
+		SELECT id FROM event_outbox
+		WHERE deleted_at IS NULL AND ((published_at IS NOT NULL AND published_at<$1) OR (dead_at IS NOT NULL AND dead_at<$2))
+		ORDER BY created_at,id LIMIT $3 FOR UPDATE SKIP LOCKED
+	)
+	UPDATE event_outbox target SET envelope=''::bytea,trace_parent='',trace_state='',last_error='',deleted_at=$4,deleted_by=$5
+	FROM expired WHERE target.id=expired.id`
+	for range m.cfg.PurgeMaxBatches {
+		result, err := tx.ExecContext(ctx, query, now.Add(-m.cfg.OutboxPublishedRetention), now.Add(-m.cfg.OutboxDeadRetention), m.cfg.PurgeBatchSize, now, m.appName+":data-lifecycle")
+		if err != nil {
+			return fmt.Errorf("clean retained event outbox rows: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read cleaned event outbox row count: %w", err)
+		}
+		if rows < int64(m.cfg.PurgeBatchSize) {
+			break
+		}
 	}
 	return nil
 }

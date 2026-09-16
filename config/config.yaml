@@ -232,6 +232,8 @@ data_lifecycle:
   purge_max_batches: 10
   operation_log_retention_months: 12
   security_log_retention_months: 24
+  outbox_published_retention: 168h
+  outbox_dead_retention: 2160h
   archive_schema: ""
 
 # Named outbound clients. Put environment-specific endpoints and credentials in

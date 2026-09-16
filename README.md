@@ -176,6 +176,15 @@ The scheduler uses robfig/cron with six-field specifications and `Asia/Shanghai`
 
 `data_lifecycle` maintains the high-volume operation/security log tables. PostgreSQL and Kingbase pre-create monthly partitions, serialize DDL with both the shared Redis lease and a service/database/schema-scoped advisory transaction lock, and detach expired partitions into the configured archive schema (or permanently drop them only when that schema is deliberately empty). The default partition is never silently moved: maintenance fails when it contains rows belonging to a partition that must be created. MySQL purges in ordered batches, bounded by both `purge_batch_size` and `purge_max_batches` per run. Every run has its own timeout shorter than its interval, service system identity, Request ID, metrics and structured result log. Production partition/archive maintenance requires a deliberately provisioned database role with the necessary DDL privileges.
 
+The same bounded maintenance run retires transactional outbox rows after `outbox_published_retention` (seven days by default) or `outbox_dead_retention` (90 days). Because every table follows the audit/soft-delete contract, it logically deletes the row and clears the protobuf envelope, trace context, and error payload instead of issuing an unaudited physical delete. Dead events therefore retain a substantially longer operator-investigation window than successfully published events.
+
+Use the packaged Cobra command for dead-event repair instead of editing the table. It loads only the database portion of the normal profile/environment configuration, never prints the protobuf envelope, requires an explicit bounded system actor, and replays with the row version as an optimistic lock:
+
+```bash
+/app/outboxctl dead list --config /app/config/config.yaml --env production --actor incident-123 --page 1 --page-size 20
+/app/outboxctl dead replay --config /app/config/config.yaml --env production --actor incident-123 --id EVENT_ID --version 3
+```
+
 Canonical PostgreSQL column definitions:
 
 ```sql

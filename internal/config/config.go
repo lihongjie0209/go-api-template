@@ -312,6 +312,8 @@ type DataLifecycle struct {
 	PurgeMaxBatches             int           `mapstructure:"purge_max_batches"`
 	OperationLogRetentionMonths int           `mapstructure:"operation_log_retention_months"`
 	SecurityLogRetentionMonths  int           `mapstructure:"security_log_retention_months"`
+	OutboxPublishedRetention    time.Duration `mapstructure:"outbox_published_retention"`
+	OutboxDeadRetention         time.Duration `mapstructure:"outbox_dead_retention"`
 	ArchiveSchema               string        `mapstructure:"archive_schema"`
 }
 type Outbound struct {
@@ -362,6 +364,26 @@ func Load(path string) (Config, error) { return LoadWithProfile(path, "") }
 
 func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	return loadWithProfile(path, explicitProfile, func(cfg Config) error { return cfg.Validate() })
+}
+
+// LoadDatabaseWithProfile loads the standard layers for an offline database
+// maintenance command without requiring unrelated API/JWT/Redis credentials.
+func LoadDatabaseWithProfile(path, explicitProfile string) (Config, error) {
+	return loadWithProfile(path, explicitProfile, func(cfg Config) error {
+		if !validMigrationTable.MatchString(cfg.Database.Name) {
+			return errors.New("database.name must contain lowercase letters, digits, or underscores and be at most 63 characters")
+		}
+		if cfg.Database.Schema != "" && !validMigrationTable.MatchString(cfg.Database.Schema) {
+			return errors.New("database.schema must contain lowercase letters, digits, or underscores and be at most 63 characters")
+		}
+		if !cfg.Database.Enabled || cfg.Database.DSN == "" || !isDBType(cfg.Database.Type) {
+			return errors.New("database maintenance requires an enabled database with dsn and type mysql, postgres, or kingbase")
+		}
+		if cfg.Database.MaxOpenConns <= 0 || cfg.Database.MaxIdleConns < 0 || cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns || cfg.Database.ConnMaxLifetime <= 0 || cfg.Database.ConnMaxIdleTime <= 0 || cfg.Database.PingTimeout <= 0 {
+			return errors.New("database maintenance requires bounded pool sizes and positive connection and ping timeouts")
+		}
+		return nil
+	})
 }
 
 // LoadMigrationWithProfile loads the same layered configuration as the API but
@@ -662,6 +684,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("data_lifecycle.purge_max_batches", 10)
 	v.SetDefault("data_lifecycle.operation_log_retention_months", 12)
 	v.SetDefault("data_lifecycle.security_log_retention_months", 24)
+	v.SetDefault("data_lifecycle.outbox_published_retention", "168h")
+	v.SetDefault("data_lifecycle.outbox_dead_retention", "2160h")
 	v.SetDefault("data_lifecycle.archive_schema", "")
 	v.SetDefault("outbound.http", map[string]any{})
 	v.SetDefault("outbound.grpc", map[string]any{})
@@ -871,8 +895,8 @@ func (c Config) Validate() error {
 		if !c.Database.Enabled {
 			return errors.New("data_lifecycle requires an enabled database")
 		}
-		if c.DataLifecycle.Interval < time.Minute || c.DataLifecycle.Interval > 24*time.Hour || c.DataLifecycle.Timeout < time.Second || c.DataLifecycle.Timeout > 30*time.Minute || c.DataLifecycle.Timeout >= c.DataLifecycle.Interval || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.PurgeMaxBatches < 1 || c.DataLifecycle.PurgeMaxBatches > 100 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 {
-			return errors.New("data_lifecycle requires interval between 1m and 24h, timeout between 1s and 30m below interval, positive retention, premake_months 1-24, purge_batch_size 1-10000, and purge_max_batches 1-100")
+		if c.DataLifecycle.Interval < time.Minute || c.DataLifecycle.Interval > 24*time.Hour || c.DataLifecycle.Timeout < time.Second || c.DataLifecycle.Timeout > 30*time.Minute || c.DataLifecycle.Timeout >= c.DataLifecycle.Interval || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.PurgeMaxBatches < 1 || c.DataLifecycle.PurgeMaxBatches > 100 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 || c.DataLifecycle.OutboxPublishedRetention < time.Hour || c.DataLifecycle.OutboxPublishedRetention > 365*24*time.Hour || c.DataLifecycle.OutboxDeadRetention < c.DataLifecycle.OutboxPublishedRetention || c.DataLifecycle.OutboxDeadRetention > 5*365*24*time.Hour {
+			return errors.New("data_lifecycle requires interval between 1m and 24h, timeout between 1s and 30m below interval, positive log retention, outbox published retention between 1h and 365d, outbox dead retention no shorter and at most 5y, premake_months 1-24, purge_batch_size 1-10000, and purge_max_batches 1-100")
 		}
 		if c.DataLifecycle.ArchiveSchema != "" && !validMigrationTable.MatchString(c.DataLifecycle.ArchiveSchema) {
 			return errors.New("data_lifecycle.archive_schema must contain lowercase letters, digits, or underscores and be at most 63 characters")
