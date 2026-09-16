@@ -3,9 +3,11 @@ package objectstorage
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -28,6 +30,12 @@ func newS3(ctx context.Context, cfg config.ObjectStorage) (Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load S3 configuration: %w", err)
 	}
+	// Put accepts streaming io.Reader values that are not seekable. Computing
+	// optional SDK checksums can require rewinding the body (or TLS trailers),
+	// which breaks S3-compatible HTTP endpoints. Required service checksums are
+	// still calculated; transport TLS and caller-provided content hashes remain
+	// available for integrity where the operation does not mandate one.
+	awsCfg.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	client := s3.NewFromConfig(awsCfg, func(options *s3.Options) {
 		options.UsePathStyle = cfg.UsePathStyle
 		if cfg.Endpoint != "" {
@@ -48,7 +56,13 @@ func (s *s3Store) Put(ctx context.Context, input PutInput) (Info, error) {
 	if input.ContentType != "" {
 		request.ContentType = aws.String(input.ContentType)
 	}
-	result, err := s.client.PutObject(ctx, request)
+	options := []func(*s3.Options){}
+	if _, seekable := input.Body.(io.Seeker); !seekable {
+		options = append(options, func(options *s3.Options) {
+			options.APIOptions = append(options.APIOptions, awsv4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
+		})
+	}
+	result, err := s.client.PutObject(ctx, request, options...)
 	if err != nil {
 		return Info{}, fmt.Errorf("put S3 object: %w", err)
 	}
