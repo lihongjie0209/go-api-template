@@ -32,6 +32,11 @@ type grpcUserResolver struct {
 	client identityv1.IdentityServiceClient
 }
 
+const (
+	maxActorResolutionIDs = 20000
+	actorResolutionBatch  = 200
+)
+
 func NewUserResolver(registry *outbound.Registry) *grpcUserResolver {
 	conn, ok := registry.GRPC("identity")
 	if !ok {
@@ -73,20 +78,23 @@ func (r *grpcUserResolver) ResolveUserIDs(ctx context.Context, ids []string) (ma
 		}
 		names[id] = id
 		unique = append(unique, id)
-		if len(unique) > 200 {
+		if len(unique) > maxActorResolutionIDs {
 			return nil, ErrInvalid
 		}
 	}
 	if len(unique) == 0 {
 		return names, nil
 	}
-	response, err := r.client.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: unique})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
-	}
-	for _, user := range response.GetUsers() {
-		if _, requested := names[user.GetId()]; requested && strings.TrimSpace(user.GetDisplayName()) != "" {
-			names[user.GetId()] = user.GetDisplayName()
+	for start := 0; start < len(unique); start += actorResolutionBatch {
+		end := min(start+actorResolutionBatch, len(unique))
+		response, err := r.client.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: unique[start:end]})
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
+		}
+		for _, user := range response.GetUsers() {
+			if _, requested := names[user.GetId()]; requested && strings.TrimSpace(user.GetDisplayName()) != "" {
+				names[user.GetId()] = user.GetDisplayName()
+			}
 		}
 	}
 	return names, nil

@@ -103,7 +103,7 @@ func runBootstrap(ctx context.Context, options bootstrapOptions) (routepolicy.Bo
 	if err != nil {
 		return routepolicy.BootstrapResult{}, err
 	}
-	permissionService := permission.New(permission.NewRepository(db), transactor, nil, operations, security, logger)
+	permissionService := permission.New(permission.NewRepository(db), transactor, nil, operations, security, nil, logger)
 	actorCtx := platformprincipal.SystemContext(ctx, options.actor)
 	for index, definition := range manifest.PermissionDefinitions {
 		var parentID *string

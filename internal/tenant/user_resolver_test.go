@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,8 +13,9 @@ import (
 
 type identityClientStub struct {
 	identityv1.IdentityServiceClient
-	request      *identityv1.ListUsersRequest
-	batchRequest *identityv1.BatchGetUsersRequest
+	request       *identityv1.ListUsersRequest
+	batchRequest  *identityv1.BatchGetUsersRequest
+	batchRequests []*identityv1.BatchGetUsersRequest
 }
 
 func TestMembershipPresentationUsesIdentityBatchAndPlatformTimezone(t *testing.T) {
@@ -32,7 +34,26 @@ func TestMembershipPresentationUsesIdentityBatchAndPlatformTimezone(t *testing.T
 
 func (s *identityClientStub) BatchGetUsers(_ context.Context, request *identityv1.BatchGetUsersRequest, _ ...grpc.CallOption) (*identityv1.BatchGetUsersResponse, error) {
 	s.batchRequest = request
+	s.batchRequests = append(s.batchRequests, request)
 	return &identityv1.BatchGetUsersResponse{Users: []*identityv1.User{{Id: "user-1", DisplayName: "Alice"}}}, nil
+}
+
+func TestGRPCUserResolverChunksLargeActorSets(t *testing.T) {
+	t.Parallel()
+	client := &identityClientStub{}
+	resolver := &grpcUserResolver{client: client}
+	ids := make([]string, actorResolutionBatch+1)
+	for index := range ids {
+		ids[index] = fmt.Sprintf("user-%d", index)
+	}
+
+	names, err := resolver.ResolveUserIDs(t.Context(), ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.batchRequests) != 2 || len(client.batchRequests[0].GetUserIds()) != actorResolutionBatch || len(client.batchRequests[1].GetUserIds()) != 1 || names["user-200"] != "user-200" {
+		t.Fatalf("requests=%d first=%d second=%d names=%d", len(client.batchRequests), len(client.batchRequests[0].GetUserIds()), len(client.batchRequests[1].GetUserIds()), len(names))
+	}
 }
 
 func (s *identityClientStub) ListUsers(_ context.Context, request *identityv1.ListUsersRequest, _ ...grpc.CallOption) (*identityv1.ListUsersResponse, error) {

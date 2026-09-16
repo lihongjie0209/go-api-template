@@ -566,7 +566,7 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	cfg := config.Config{App: config.App{Name: "integration"}, Runtime: config.Runtime{ActiveProfile: "test"}, Authorization: config.Authorization{PolicyRefreshInterval: time.Minute}}
 	metrics := observability.NewMetrics(cfg, nil, nil)
 	manager := routepolicy.NewManager(routepolicy.NewRepository(db), compiler, nil, cfg, slog.Default(), metrics)
-	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), manager, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default())
+	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), manager, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default())
 	actorCtx := platformprincipal.SystemContext(ctx, "permission-integration")
 	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
 	if err != nil {
@@ -611,7 +611,7 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 func testRoutePolicyBootstrap(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	actorCtx := platformprincipal.SystemContext(ctx, "policy-bootstrap-integration")
-	permissionService := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default())
+	permissionService := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default())
 	seededPermission, changed, err := permissionService.Seed(actorCtx, permission.Input{Key: "integration.bootstrap.manage", Name: "管理引导策略", NodeType: "permission", Resource: "integration.bootstrap", Action: "manage", Status: "active"})
 	if err != nil || !changed || !seededPermission.IsSystem {
 		t.Fatalf("seed permission=%+v changed=%v err=%v", seededPermission, changed, err)

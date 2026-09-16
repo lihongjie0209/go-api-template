@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -33,22 +34,24 @@ var validKey = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{2,127}$`)
 const permissionSeedNamespace = "ec62a525-a494-4f0f-bf19-0e982c1a6f6f"
 
 type Record struct {
-	ID          string    `db:"id" json:"id"`
-	ParentID    *string   `db:"parent_id" json:"parent_id"`
-	Key         string    `db:"permission_key" json:"permission_key"`
-	Name        string    `db:"name" json:"name"`
-	NodeType    string    `db:"node_type" json:"node_type"`
-	Resource    string    `db:"resource" json:"resource"`
-	Action      string    `db:"action" json:"action"`
-	Description string    `db:"description" json:"description"`
-	SortOrder   int64     `db:"sort_order" json:"sort_order"`
-	Status      string    `db:"status" json:"status"`
-	IsSystem    bool      `db:"is_system" json:"is_system"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	CreatedBy   string    `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string    `db:"updated_by" json:"updated_by"`
-	Version     int64     `db:"version" json:"version"`
+	ID            string    `db:"id" json:"id"`
+	ParentID      *string   `db:"parent_id" json:"parent_id"`
+	Key           string    `db:"permission_key" json:"permission_key"`
+	Name          string    `db:"name" json:"name"`
+	NodeType      string    `db:"node_type" json:"node_type"`
+	Resource      string    `db:"resource" json:"resource"`
+	Action        string    `db:"action" json:"action"`
+	Description   string    `db:"description" json:"description"`
+	SortOrder     int64     `db:"sort_order" json:"sort_order"`
+	Status        string    `db:"status" json:"status"`
+	IsSystem      bool      `db:"is_system" json:"is_system"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	CreatedBy     string    `db:"created_by" json:"created_by"`
+	CreatedByName string    `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string    `db:"updated_by" json:"updated_by"`
+	UpdatedByName string    `db:"-" json:"updated_by_name"`
+	Version       int64     `db:"version" json:"version"`
 }
 type TreeNode struct {
 	Record
@@ -105,6 +108,7 @@ type Service struct {
 	policies   policyRefresher
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
+	actors     presentation.ActorResolver
 	logger     *slog.Logger
 }
 
@@ -114,8 +118,8 @@ type policyRefresher interface {
 	Invalidate()
 }
 
-func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger) *Service {
-	service := &Service{repository: repository, transactor: transactor, operations: operations, security: security, logger: logger}
+func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger) *Service {
+	service := &Service{repository: repository, transactor: transactor, operations: operations, security: security, actors: actors, logger: logger}
 	if policies != nil {
 		service.policies = policies
 	}
@@ -126,8 +130,50 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if id == "" || len(id) > maxIDLength {
 		return Record{}, ErrInvalid
 	}
-	return s.repository.Get(ctx, id)
+	return s.get(ctx, id)
 }
+
+func (s *Service) get(ctx context.Context, id string) (Record, error) {
+	record, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return record, err
+	}
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, err
+	}
+	return records[0], nil
+}
+
+func (s *Service) present(ctx context.Context, records []Record) error {
+	ids := make([]string, 0, len(records)*2)
+	names := make(map[string]string, len(records)*2)
+	for _, record := range records {
+		for _, id := range []string{record.CreatedBy, record.UpdatedBy} {
+			if id = strings.TrimSpace(id); id != "" {
+				names[id] = id
+				ids = append(ids, id)
+			}
+		}
+	}
+	if s.actors != nil {
+		resolved, err := s.actors.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+	}
+	return nil
+}
+
 func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*TreeNode, error) {
 	input.Keyword = strings.TrimSpace(input.Keyword)
 	if len(input.Keyword) > 256 || len(input.NodeTypes) > 20 || len(input.Statuses) > 20 || !validFilters(input) {
@@ -141,6 +187,9 @@ func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*TreeNode, error
 		return nil, fmt.Errorf("%w: tree exceeds %d nodes", ErrInvalid, maxTreeNodes)
 	}
 	records = filterRecords(records, input)
+	if err := s.present(ctx, records); err != nil {
+		return nil, err
+	}
 	forest, err := platformtree.Build(records, func(v Record) string { return v.ID }, func(v Record) (string, bool) {
 		if v.ParentID == nil {
 			return "", false
@@ -268,7 +317,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if e != nil {
 		return Record{}, fmt.Errorf("create permission: %w", e)
 	}
-	return s.repository.Get(ctx, id)
+	return s.get(ctx, id)
 }
 
 // Seed idempotently installs a built-in permission with a stable UUIDv5. It is
@@ -291,7 +340,11 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 	}
 	err = s.repository.db.GetContext(ctx, &current, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
 	if err == nil && !current.DeletedAt.Valid && current.IsSystem && seedEqual(current.Record, input) {
-		return current.Record, false, nil
+		records := []Record{current.Record}
+		if err := s.present(ctx, records); err != nil {
+			return Record{}, false, err
+		}
+		return records[0], false, nil
 	}
 	if err == nil && !current.IsSystem {
 		return Record{}, false, ErrConflict
@@ -330,7 +383,14 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		return Record{}, false, err
 	}
 	record, err := s.repository.Get(ctx, id)
-	return record, true, err
+	if err != nil {
+		return record, true, err
+	}
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, true, err
+	}
+	return records[0], true, nil
 }
 
 func SeedID(key string) (string, error) {
@@ -478,7 +538,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 	if e != nil {
 		return Record{}, e
 	}
-	return s.repository.Get(ctx, id)
+	return s.get(ctx, id)
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	id = strings.TrimSpace(id)

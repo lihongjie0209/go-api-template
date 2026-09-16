@@ -46,6 +46,29 @@ func TestPermissionSeedIDGoldenMapping(t *testing.T) {
 	require.Equal(t, "f2d9d463-eea9-5cf0-95e3-f8c8b12fa039", id)
 }
 
+type actorResolverStub struct {
+	calls int
+}
+
+func (s *actorResolverStub) ResolveUserIDs(_ context.Context, _ []string) (map[string]string, error) {
+	s.calls++
+	return map[string]string{"user-1": "Alice"}, nil
+}
+
+func TestPermissionPresentationBatchesActorsAndUsesPlatformTimezone(t *testing.T) {
+	t.Parallel()
+	resolver := &actorResolverStub{}
+	service := &Service{actors: resolver}
+	instant := time.Date(2026, time.September, 16, 1, 2, 3, 0, time.UTC)
+	records := []Record{{CreatedBy: "user-1", UpdatedBy: "system-1", CreatedAt: instant, UpdatedAt: instant}, {CreatedBy: "user-1", UpdatedBy: "user-1", CreatedAt: instant, UpdatedAt: instant}}
+
+	require.NoError(t, service.present(t.Context(), records))
+	require.Equal(t, 1, resolver.calls)
+	require.Equal(t, "Alice", records[0].CreatedByName)
+	require.Equal(t, "system-1", records[0].UpdatedByName)
+	require.Equal(t, "2026-09-16T09:02:03+08:00", records[0].CreatedAt.Format(time.RFC3339))
+}
+
 func TestFilterRecordsRetainsAncestors(t *testing.T) {
 	t.Parallel()
 	root, group := "root", "group"
