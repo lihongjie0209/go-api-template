@@ -173,7 +173,7 @@ func (s *DepartmentService) presentDepartments(ctx context.Context, records []De
 		ids = append(ids, record.CreatedBy, record.UpdatedBy)
 	}
 	names := stableActorNames(ids)
-	if resolver, ok := s.users.(UserDisplayResolver); ok {
+	if resolver, ok := s.users.(presentation.ActorResolver); ok {
 		resolved, err := resolver.ResolveUserIDs(ctx, ids)
 		if err != nil {
 			return err

@@ -28,6 +28,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/outbound"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
@@ -62,7 +63,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(routepolicy.NewRepository, routepolicy.NewCompiler, routepolicy.NewManager, routepolicy.NewService),
 		fx.Provide(platformconfig.New),
 		fx.Provide(menu.New),
-		fx.Provide(tenant.NewRepository, tenant.New, tenant.NewUserResolver, tenant.NewMembershipService, tenant.NewContextService),
+		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), tenant.NewMembershipService, tenant.NewContextService),
 		fx.Provide(tenant.NewDepartmentService),
 		fx.Provide(idempotency.New),
 		fx.Provide(observability.NewMetrics),

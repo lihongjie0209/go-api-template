@@ -355,7 +355,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 
 	cfg := config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, cfg)
+	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, cfg)
 	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); err != nil {
 		t.Fatalf("set tenant permission ceiling: %v", err)
 	}

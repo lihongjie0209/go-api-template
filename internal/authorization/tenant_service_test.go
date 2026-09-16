@@ -28,6 +28,34 @@ func TestNormalizeIDs(t *testing.T) {
 	require.ErrorIs(t, err, ErrTenantAuthorizationInvalid)
 }
 
+type actorResolverStub struct {
+	calls int
+	ids   []string
+}
+
+func (s *actorResolverStub) ResolveUserIDs(_ context.Context, ids []string) (map[string]string, error) {
+	s.calls++
+	s.ids = append([]string(nil), ids...)
+	return map[string]string{"user-1": "Alice"}, nil
+}
+
+func TestRolePresentationBatchesActorsAndUsesPlatformTimezone(t *testing.T) {
+	t.Parallel()
+	resolver := &actorResolverStub{}
+	service := &TenantAuthorizationService{actors: resolver}
+	instant := time.Date(2026, time.September, 16, 1, 2, 3, 0, time.UTC)
+	roles := []TenantRole{
+		{CreatedBy: "user-1", UpdatedBy: "system-1", CreatedAt: instant, UpdatedAt: instant},
+		{CreatedBy: "user-1", UpdatedBy: "user-1", CreatedAt: instant, UpdatedAt: instant},
+	}
+
+	require.NoError(t, service.presentRoles(t.Context(), roles))
+	require.Equal(t, 1, resolver.calls)
+	require.Equal(t, "Alice", roles[0].CreatedByName)
+	require.Equal(t, "system-1", roles[0].UpdatedByName)
+	require.Equal(t, "2026-09-16T09:02:03+08:00", roles[0].CreatedAt.Format(time.RFC3339))
+}
+
 func TestEffectivePermissionIDsForAdministrator(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -257,6 +285,7 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 		database.NewTransactor(db),
 		immediateLocker{},
 		operationRecorderStub{},
+		nil,
 		nil,
 		config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}},
 	)

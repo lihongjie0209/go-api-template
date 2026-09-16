@@ -17,6 +17,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -37,17 +38,19 @@ const (
 )
 
 type TenantRole struct {
-	ID          string    `db:"id" json:"id"`
-	TenantID    string    `db:"tenant_id" json:"tenant_id"`
-	Code        string    `db:"code" json:"code"`
-	Name        string    `db:"name" json:"name"`
-	Description string    `db:"description" json:"description"`
-	Status      string    `db:"status" json:"status"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	CreatedBy   string    `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string    `db:"updated_by" json:"updated_by"`
-	Version     int64     `db:"version" json:"version"`
+	ID            string    `db:"id" json:"id"`
+	TenantID      string    `db:"tenant_id" json:"tenant_id"`
+	Code          string    `db:"code" json:"code"`
+	Name          string    `db:"name" json:"name"`
+	Description   string    `db:"description" json:"description"`
+	Status        string    `db:"status" json:"status"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	CreatedBy     string    `db:"created_by" json:"created_by"`
+	CreatedByName string    `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string    `db:"updated_by" json:"updated_by"`
+	UpdatedByName string    `db:"-" json:"updated_by_name"`
+	Version       int64     `db:"version" json:"version"`
 }
 type RolePageInput struct {
 	pagination.Request
@@ -86,11 +89,12 @@ type TenantAuthorizationService struct {
 	locker     cache.Locker
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
+	actors     presentation.ActorResolver
 	cfg        config.Config
 }
 
-func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, cfg config.Config) *TenantAuthorizationService {
-	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, cfg: cfg}
+func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config) *TenantAuthorizationService {
+	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, actors: actors, cfg: cfg}
 }
 
 // SetTenantPermissions replaces the tenant's authorization ceiling. Platform
@@ -306,7 +310,14 @@ func (s *TenantAuthorizationService) GetRole(ctx context.Context, roleID string)
 	if errors.Is(err, sql.ErrNoRows) {
 		return role, ErrTenantAuthorizationNotFound
 	}
-	return role, err
+	if err != nil {
+		return role, err
+	}
+	roles := []TenantRole{role}
+	if err := s.presentRoles(ctx, roles); err != nil {
+		return TenantRole{}, err
+	}
+	return roles[0], nil
 }
 
 func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePageInput) (pagination.Result[TenantRole], error) {
@@ -363,7 +374,39 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), queryArgs...); err != nil {
 		return pagination.Result[TenantRole]{}, err
 	}
+	if err := s.presentRoles(ctx, items); err != nil {
+		return pagination.Result[TenantRole]{}, err
+	}
 	return pagination.Result[TenantRole]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func (s *TenantAuthorizationService) presentRoles(ctx context.Context, roles []TenantRole) error {
+	ids := make([]string, 0, len(roles)*2)
+	names := make(map[string]string, len(roles)*2)
+	for _, role := range roles {
+		for _, id := range []string{role.CreatedBy, role.UpdatedBy} {
+			if id = strings.TrimSpace(id); id != "" {
+				names[id] = id
+				ids = append(ids, id)
+			}
+		}
+	}
+	if s.actors != nil {
+		resolved, err := s.actors.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	for index := range roles {
+		roles[index].CreatedByName = names[roles[index].CreatedBy]
+		roles[index].UpdatedByName = names[roles[index].UpdatedBy]
+		roles[index].CreatedAt = presentation.Time(roles[index].CreatedAt)
+		roles[index].UpdatedAt = presentation.Time(roles[index].UpdatedAt)
+	}
+	return nil
 }
 
 func (s *TenantAuthorizationService) RolePermissions(ctx context.Context, roleID string) ([]PermissionView, error) {

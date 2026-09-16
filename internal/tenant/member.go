@@ -28,14 +28,11 @@ type UserSnapshot struct{ ID, Username, DisplayName string }
 type UserResolver interface {
 	ResolveUsername(context.Context, string) (UserSnapshot, error)
 }
-type UserDisplayResolver interface {
-	ResolveUserIDs(context.Context, []string) (map[string]string, error)
-}
 type grpcUserResolver struct {
 	client identityv1.IdentityServiceClient
 }
 
-func NewUserResolver(registry *outbound.Registry) UserResolver {
+func NewUserResolver(registry *outbound.Registry) *grpcUserResolver {
 	conn, ok := registry.GRPC("identity")
 	if !ok {
 		return &grpcUserResolver{}
@@ -450,7 +447,7 @@ func (s *MembershipService) presentMembers(ctx context.Context, members []Member
 		ids = append(ids, member.CreatedBy, member.UpdatedBy)
 	}
 	names := stableActorNames(ids)
-	if resolver, ok := s.users.(UserDisplayResolver); ok {
+	if resolver, ok := s.users.(presentation.ActorResolver); ok {
 		resolved, err := resolver.ResolveUserIDs(ctx, ids)
 		if err != nil {
 			return err

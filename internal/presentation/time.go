@@ -3,7 +3,16 @@
 // original timezone-aware values.
 package presentation
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// ActorResolver resolves audit principal IDs through the owning identity
+// service. Callers should batch all IDs for one response to avoid N+1 RPCs.
+type ActorResolver interface {
+	ResolveUserIDs(context.Context, []string) (map[string]string, error)
+}
 
 var location = time.FixedZone("Asia/Shanghai", 8*60*60)
 

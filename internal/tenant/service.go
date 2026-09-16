@@ -17,6 +17,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -226,7 +227,7 @@ func (s *Service) present(ctx context.Context, records []Record) ([]View, error)
 		ids = append(ids, record.CreatedBy, record.UpdatedBy)
 	}
 	names := stableActorNames(ids)
-	if resolver, ok := s.users.(UserDisplayResolver); ok {
+	if resolver, ok := s.users.(presentation.ActorResolver); ok {
 		resolved, err := resolver.ResolveUserIDs(ctx, ids)
 		if err != nil {
 			return nil, err
