@@ -20,6 +20,12 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
+type actorResolverStub struct{}
+
+func (actorResolverStub) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
+	return map[string]string{"user-1": "Alice", "service-1": "Billing Worker"}, nil
+}
+
 type storageStub struct {
 	putInfo   objectstorage.Info
 	deleted   []string
@@ -124,7 +130,7 @@ func TestService_UploadCompensatesWhenDatabaseInsertFails(t *testing.T) {
 		WillReturnError(errors.New("database unavailable"))
 	mock.ExpectRollback()
 	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
-	service := New(db, database.NewTransactor(db), storage, nil, operationStub{}, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
+	service := New(db, database.NewTransactor(db), storage, nil, operationStub{}, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
 
 	_, err = service.Upload(ctx, UploadInput{Name: "../report.txt", ContentType: "text/plain", Size: 5, Body: bytes.NewBufferString("hello")})
@@ -153,7 +159,7 @@ func TestServiceUploadRollsBackMetadataWhenTransactionalLogFails(t *testing.T) {
 	mock.ExpectRollback()
 	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
 	operations := &failingTransactionalOperationStub{}
-	service := New(db, database.NewTransactor(db), storage, nil, operations, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
+	service := New(db, database.NewTransactor(db), storage, nil, operations, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
 
 	_, err = service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
@@ -174,7 +180,7 @@ func TestService_GetEnforcesTenant(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "pgx")
 	mock.ExpectQuery(`SELECT id, tenant_id`).WithArgs("file-1", "tenant-b").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "object_key", "original_name", "content_type", "size_bytes", "etag", "checksum_sha256", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at", "deleted_by"}))
-	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operationStub{}, slog.Default(), config.Config{Files: config.Files{Enabled: true}})
+	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operationStub{}, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-b", Type: platformprincipal.TypeUser, TenantID: "tenant-b"})
 
 	_, err = service.Get(ctx, "file-1")
@@ -188,15 +194,7 @@ func TestService_GetEnforcesTenant(t *testing.T) {
 
 func TestServicePresentResolvesAuditNamesAndAsiaShanghaiTimes(t *testing.T) {
 	t.Parallel()
-	raw, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = raw.Close() })
-	db := sqlx.NewDb(raw, "sqlmock")
-	mock.ExpectQuery(`SELECT id,display_name FROM identity_users`).WithArgs("user-1", "service-1", "user-1", "service-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "display_name"}).AddRow("user-1", "Alice").AddRow("service-1", "Billing Worker"))
-	service := &Service{db: db}
+	service := &Service{actors: actorResolverStub{}}
 	instant := time.Date(2026, time.September, 16, 1, 2, 3, 0, time.UTC)
 	records := []Record{{CreatedBy: "user-1", UpdatedBy: "service-1", CreatedAt: instant, UpdatedAt: instant}}
 	if err := service.present(t.Context(), records); err != nil {
@@ -204,9 +202,6 @@ func TestServicePresentResolvesAuditNamesAndAsiaShanghaiTimes(t *testing.T) {
 	}
 	if records[0].CreatedByName != "Alice" || records[0].UpdatedByName != "Billing Worker" || records[0].CreatedAt.Format(time.RFC3339) != "2026-09-16T09:02:03+08:00" || records[0].UpdatedAt.Format(time.RFC3339) != "2026-09-16T09:02:03+08:00" {
 		t.Fatalf("record = %+v", records[0])
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -224,10 +219,8 @@ func TestServiceDownloadFailsClosedWhenAccessLogCannotBeStored(t *testing.T) {
 		"file-1", "tenant-1", "files/tenant-1/file-1/report.txt", "report.txt", "text/plain", int64(5), "etag", "checksum",
 		now, "user-1", now, "user-1", int64(1), nil, nil, nil, int64(0), "", nil,
 	))
-	mock.ExpectQuery(`SELECT id,display_name FROM identity_users`).WithArgs("user-1", "user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "display_name"}).AddRow("user-1", "Alice"))
 	operations := &failingReadOperationStub{}
-	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operations, slog.Default(), config.Config{Files: config.Files{Enabled: true}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
+	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operations, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
 
 	download, err := service.Download(ctx, "file-1")

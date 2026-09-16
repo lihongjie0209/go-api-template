@@ -183,7 +183,7 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 	for _, record := range records {
 		ids = append(ids, record.ActorID, record.CreatedBy, record.UpdatedBy)
 	}
-	names, err := presentation.ActorNames(ctx, s.db, ids...)
+	names, err := presentation.ActorNames(ctx, s.actors, ids...)
 	if err != nil {
 		return err
 	}

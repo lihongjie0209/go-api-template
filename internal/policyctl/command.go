@@ -97,8 +97,8 @@ func runBootstrap(ctx context.Context, options bootstrapOptions) (routepolicy.Bo
 	transactor := database.NewTransactor(db)
 	metrics := observability.NewMetrics(cfg, db, nil)
 	outbox := eventbus.NewOutbox(cfg, bus, transactor, metrics, logger)
-	operations := operationlog.New(cfg, bus, db, transactor, metrics, outbox)
-	security := securitylog.New(cfg, bus, db, transactor, metrics, outbox)
+	operations := operationlog.New(cfg, bus, db, transactor, metrics, outbox, nil)
+	security := securitylog.New(cfg, bus, db, transactor, metrics, outbox, nil)
 	compiler, err := routepolicy.NewCompiler()
 	if err != nil {
 		return routepolicy.BootstrapResult{}, err

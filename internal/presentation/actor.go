@@ -4,19 +4,17 @@ import (
 	"context"
 	"errors"
 	"strings"
-
-	"github.com/jmoiron/sqlx"
 )
 
 const maxActorIDs = 1000
 
 var ErrInvalidActorIDs = errors.New("invalid actor ids")
 
-// ActorNames resolves identities owned by this service in one bounded query.
+// ActorNames resolves identities through the owning service's interface.
 // Missing, deleted, system and external identities deliberately fall back to
 // their stable ID so response records never expose an opaque ID without a
-// display field.
-func ActorNames(ctx context.Context, db *sqlx.DB, ids ...string) (map[string]string, error) {
+// display field. A nil resolver is a supported deployment mode.
+func ActorNames(ctx context.Context, resolver ActorResolver, ids ...string) (map[string]string, error) {
 	names := make(map[string]string, len(ids))
 	unique := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -36,27 +34,16 @@ func ActorNames(ctx context.Context, db *sqlx.DB, ids ...string) (map[string]str
 			return nil, ErrInvalidActorIDs
 		}
 	}
-	if len(unique) == 0 {
+	if len(unique) == 0 || resolver == nil {
 		return names, nil
 	}
-	if db == nil {
-		return nil, errors.New("actor display database is unavailable")
-	}
-	query, args, err := sqlx.In(`SELECT id,display_name FROM identity_users WHERE deleted_at IS NULL AND id IN (?)
-UNION ALL SELECT id,name AS display_name FROM identity_service_accounts WHERE deleted_at IS NULL AND id IN (?)`, unique, unique)
+	resolved, err := resolver.ResolveUserIDs(ctx, unique)
 	if err != nil {
 		return nil, err
 	}
-	rows := []struct {
-		ID          string `db:"id"`
-		DisplayName string `db:"display_name"`
-	}{}
-	if err := db.SelectContext(ctx, &rows, db.Rebind(query), args...); err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		if name := strings.TrimSpace(row.DisplayName); name != "" {
-			names[row.ID] = name
+	for id, name := range resolved {
+		if _, requested := names[id]; requested && strings.TrimSpace(name) != "" {
+			names[id] = name
 		}
 	}
 	return names, nil

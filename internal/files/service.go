@@ -103,14 +103,15 @@ type Service struct {
 	storage    objectstorage.Store
 	locker     cache.Locker
 	operations operationlog.TransactionalRecorder
+	actors     presentation.ActorResolver
 	logger     *slog.Logger
 	cfg        config.Files
 	lockTTL    time.Duration
 	lockRetry  time.Duration
 }
 
-func New(db *sqlx.DB, transactor *database.Transactor, storage objectstorage.Store, locker cache.Locker, operations operationlog.TransactionalRecorder, logger *slog.Logger, cfg config.Config) *Service {
-	return &Service{enabled: cfg.Files.Enabled, db: db, transactor: transactor, storage: storage, locker: locker, operations: operations, logger: logger, cfg: cfg.Files, lockTTL: cfg.DistributedLock.TTL, lockRetry: cfg.DistributedLock.RetryDelay}
+func New(db *sqlx.DB, transactor *database.Transactor, storage objectstorage.Store, locker cache.Locker, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger, cfg config.Config) *Service {
+	return &Service{enabled: cfg.Files.Enabled, db: db, transactor: transactor, storage: storage, locker: locker, operations: operations, actors: actors, logger: logger, cfg: cfg.Files, lockTTL: cfg.DistributedLock.TTL, lockRetry: cfg.DistributedLock.RetryDelay}
 }
 
 const recordColumns = `id, tenant_id, object_key, original_name, content_type, size_bytes, etag, checksum_sha256, created_at, created_by, updated_at, updated_by, version, deleted_at, deleted_by, object_deleted_at, object_delete_attempts, object_delete_error, object_delete_next_at`
@@ -285,7 +286,7 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 	for _, record := range records {
 		ids = append(ids, record.CreatedBy, record.UpdatedBy)
 	}
-	names, err := presentation.ActorNames(ctx, s.db, ids...)
+	names, err := presentation.ActorNames(ctx, s.actors, ids...)
 	if err != nil {
 		return err
 	}

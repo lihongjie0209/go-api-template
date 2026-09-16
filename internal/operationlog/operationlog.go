@@ -15,6 +15,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	platformredact "github.com/lihongjie0209/microservice-platform-go/redact"
@@ -105,10 +106,11 @@ type Service struct {
 	db         *sqlx.DB
 	transactor *database.Transactor
 	metrics    *observability.Metrics
+	actors     presentation.ActorResolver
 }
 
-func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics, outbox *eventbus.Outbox) *Service {
-	return &Service{enabled: cfg.OperationLog.Enabled, cfg: cfg.OperationLog, appName: cfg.App.Name, bus: bus, outbox: outbox, db: db, transactor: transactor, metrics: metrics}
+func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics, outbox *eventbus.Outbox, actors presentation.ActorResolver) *Service {
+	return &Service{enabled: cfg.OperationLog.Enabled, cfg: cfg.OperationLog, appName: cfg.App.Name, bus: bus, outbox: outbox, db: db, transactor: transactor, metrics: metrics, actors: actors}
 }
 
 func (s *Service) Enabled() bool { return s.enabled }

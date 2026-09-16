@@ -167,12 +167,13 @@ func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatal(err)
 	}
 
-	operationService := operationlog.New(config.Config{}, nil, db, nil, nil, nil)
+	actors := staticActorResolver{actorID: "Log Presentation User"}
+	operationService := operationlog.New(config.Config{}, nil, db, nil, nil, nil, actors)
 	operationRecord, err := operationService.Get(actorCtx, "operation-presentation")
 	if err != nil {
 		t.Fatalf("get operation presentation: %v", err)
 	}
-	securityService := securitylog.New(config.Config{}, nil, db, nil, nil, nil)
+	securityService := securitylog.New(config.Config{}, nil, db, nil, nil, nil, actors)
 	securityRecord, err := securityService.Get(actorCtx, "security-presentation")
 	if err != nil {
 		t.Fatalf("get security presentation: %v", err)
@@ -765,7 +766,7 @@ func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	storage := &integrationStorage{}
 	cfg := config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024, DeletionInterval: time.Minute, DeletionRetryDelay: time.Minute, DeletionBatchSize: 10}, DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	service := files.New(db, appdb.NewTransactor(db), storage, nil, discardOperationRecorder{}, slog.Default(), cfg)
+	service := files.New(db, appdb.NewTransactor(db), storage, nil, discardOperationRecorder{}, nil, slog.Default(), cfg)
 	ownerCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "file-owner", Type: platformprincipal.TypeUser, TenantID: "file-tenant"})
 	created, err := service.Upload(ownerCtx, files.UploadInput{Name: "../report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
 	if err != nil || created.OriginalName != "report.txt" || created.ContentType != "text/plain; charset=utf-8" || created.Version != 1 {
@@ -889,6 +890,18 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 }
 
 type staticUserResolver struct{ id, username, name string }
+
+type staticActorResolver map[string]string
+
+func (r staticActorResolver) ResolveUserIDs(_ context.Context, ids []string) (map[string]string, error) {
+	names := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if name := r[id]; name != "" {
+			names[id] = name
+		}
+	}
+	return names, nil
+}
 
 func (r staticUserResolver) ResolveUsername(context.Context, string) (tenant.UserSnapshot, error) {
 	return tenant.UserSnapshot{ID: r.id, Username: r.username, DisplayName: r.name}, nil
