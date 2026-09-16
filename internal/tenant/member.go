@@ -60,9 +60,6 @@ func (r *grpcUserResolver) ResolveUsername(ctx context.Context, username string)
 }
 
 func (r *grpcUserResolver) ResolveUserIDs(ctx context.Context, ids []string) (map[string]string, error) {
-	if r.client == nil {
-		return nil, ErrIdentityUnavailable
-	}
 	names := make(map[string]string, len(ids))
 	unique := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -85,11 +82,20 @@ func (r *grpcUserResolver) ResolveUserIDs(ctx context.Context, ids []string) (ma
 	if len(unique) == 0 {
 		return names, nil
 	}
+	// Actor names are response decoration, not an authorization decision.
+	// Services without an Identity upstream, or with a temporarily unavailable
+	// one, retain stable IDs rather than failing otherwise valid reads.
+	if r.client == nil {
+		return names, nil
+	}
 	for start := 0; start < len(unique); start += actorResolutionBatch {
 		end := min(start+actorResolutionBatch, len(unique))
 		response, err := r.client.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: unique[start:end]})
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				return nil, err
+			}
+			return names, nil
 		}
 		for _, user := range response.GetUsers() {
 			if _, requested := names[user.GetId()]; requested && strings.TrimSpace(user.GetDisplayName()) != "" {

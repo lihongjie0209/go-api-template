@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ type identityClientStub struct {
 	request       *identityv1.ListUsersRequest
 	batchRequest  *identityv1.BatchGetUsersRequest
 	batchRequests []*identityv1.BatchGetUsersRequest
+	batchErr      error
 }
 
 func TestMembershipPresentationUsesIdentityBatchAndPlatformTimezone(t *testing.T) {
@@ -35,6 +37,9 @@ func TestMembershipPresentationUsesIdentityBatchAndPlatformTimezone(t *testing.T
 func (s *identityClientStub) BatchGetUsers(_ context.Context, request *identityv1.BatchGetUsersRequest, _ ...grpc.CallOption) (*identityv1.BatchGetUsersResponse, error) {
 	s.batchRequest = request
 	s.batchRequests = append(s.batchRequests, request)
+	if s.batchErr != nil {
+		return nil, s.batchErr
+	}
 	return &identityv1.BatchGetUsersResponse{Users: []*identityv1.User{{Id: "user-1", DisplayName: "Alice"}}}, nil
 }
 
@@ -53,6 +58,25 @@ func TestGRPCUserResolverChunksLargeActorSets(t *testing.T) {
 	}
 	if len(client.batchRequests) != 2 || len(client.batchRequests[0].GetUserIds()) != actorResolutionBatch || len(client.batchRequests[1].GetUserIds()) != 1 || names["user-200"] != "user-200" {
 		t.Fatalf("requests=%d first=%d second=%d names=%d", len(client.batchRequests), len(client.batchRequests[0].GetUserIds()), len(client.batchRequests[1].GetUserIds()), len(names))
+	}
+}
+
+func TestGRPCUserResolverActorPresentationFallsBackWhenIdentityUnavailable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		resolver *grpcUserResolver
+	}{
+		{name: "client not configured", resolver: &grpcUserResolver{}},
+		{name: "upstream failed", resolver: &grpcUserResolver{client: &identityClientStub{batchErr: errors.New("unavailable")}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			names, err := test.resolver.ResolveUserIDs(t.Context(), []string{"user-1", "system-1"})
+			if err != nil || names["user-1"] != "user-1" || names["system-1"] != "system-1" {
+				t.Fatalf("names=%#v err=%v", names, err)
+			}
+		})
 	}
 }
 
