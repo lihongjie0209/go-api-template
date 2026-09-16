@@ -452,7 +452,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("http.trusted_proxies", []string{})
 	v.SetDefault("http.cors.enabled", false)
 	v.SetDefault("http.cors.allowed_origins", []string{})
-	v.SetDefault("http.cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID"})
+	v.SetDefault("http.cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"})
 	v.SetDefault("http.cors.exposed_headers", []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"})
 	v.SetDefault("http.cors.max_age", "12h")
 	v.SetDefault("grpc.enabled", true)
@@ -607,6 +607,9 @@ func (c Config) Validate() error {
 	if c.HTTP.Address == "" {
 		return errors.New("http.address is required")
 	}
+	if c.HTTP.ReadTimeout <= 0 || c.HTTP.WriteTimeout <= 0 || c.HTTP.IdleTimeout <= 0 || c.HTTP.RequestTimeout <= 0 || c.HTTP.MaxBodyBytes <= 0 || c.HTTP.MaxBodyBytes > 1<<30 {
+		return errors.New("http requires positive timeouts and max_body_bytes no greater than 1 GiB")
+	}
 	if c.Log.Level != "debug" && c.Log.Level != "info" && c.Log.Level != "warn" && c.Log.Level != "error" {
 		return errors.New("log.level must be debug, info, warn, or error")
 	}
@@ -643,7 +646,7 @@ func (c Config) Validate() error {
 	if c.Redis.KeyPrefix != "" && !validRedisPrefix.MatchString(c.Redis.KeyPrefix) {
 		return errors.New("redis.key_prefix must be a bounded namespace ending in ':'")
 	}
-	if c.HTTP.RequestTimeout <= 0 || c.Health.DatabaseTimeout <= 0 || c.Health.RedisTimeout <= 0 {
+	if c.Health.DatabaseTimeout <= 0 || c.Health.RedisTimeout <= 0 {
 		return errors.New("http and health timeouts must be positive")
 	}
 	if c.RateLimit.Enabled && !c.Redis.Enabled {
@@ -732,7 +735,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("idempotency.grpc_methods contains invalid pattern %q: %w", pattern, err)
 		}
 	}
-	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.DispatchInterval <= 0 || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchLease <= 0 || c.EventBus.DispatchRetryDelay <= 0) {
+	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.ConsumerMaxDeliver > 100 || c.EventBus.DispatchInterval < 10*time.Millisecond || c.EventBus.DispatchInterval > time.Minute || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchBatchSize > 1000 || c.EventBus.DispatchLease <= c.EventBus.PublishTimeout || c.EventBus.DispatchLease > 10*time.Minute || c.EventBus.DispatchRetryDelay <= 0 || c.EventBus.DispatchRetryDelay > time.Hour) {
 		return errors.New("enabled event_bus requires URLs, stream, canonical platform.> subjects, valid storage, positive timeouts, delivery, and dispatch settings")
 	}
 	if c.ObjectStorage.Enabled && ((c.ObjectStorage.Provider != "s3" && c.ObjectStorage.Provider != "oss") || c.ObjectStorage.Bucket == "" || c.ObjectStorage.Region == "" || c.ObjectStorage.PresignTTL <= 0 || c.ObjectStorage.PresignTTL > 24*time.Hour) {

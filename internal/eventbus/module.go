@@ -2,7 +2,9 @@ package eventbus
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"go.uber.org/fx"
 )
@@ -16,4 +18,15 @@ func newBus(lifecycle fx.Lifecycle, cfg config.Config) (*Bus, error) {
 	return bus, nil
 }
 
-var Module = fx.Module("event-bus", fx.Provide(newBus), fx.Invoke(func(*Bus) {}))
+func startOutbox(lifecycle fx.Lifecycle, outbox *Outbox, logger *slog.Logger) {
+	worker := background.New(outbox.Run)
+	lifecycle.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			worker.Start()
+			return nil
+		},
+		OnStop: worker.Stop,
+	})
+}
+
+var Module = fx.Module("event-bus", fx.Provide(newBus, NewOutbox), fx.Invoke(startOutbox))

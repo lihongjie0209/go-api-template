@@ -15,6 +15,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
+	"github.com/lihongjie0209/microservice-platform-go/authn"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -58,6 +59,7 @@ func TestService_VerifyRejectsSessionWhenIdentityUserIsDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.db = sqlx.NewDb(db, "sqlmock")
+	service.verifier = new(authn.JWKSVerifier)
 	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions s JOIN identity_users u`).WithArgs("session-1", "user-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	if _, err := service.Verify(context.Background(), raw); err == nil {
 		t.Fatal("Verify() accepted a session for a disabled user")
@@ -66,6 +68,88 @@ func TestService_VerifyRejectsSessionWhenIdentityUserIsDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.Close()
+}
+
+func TestService_VerifyRejectsDisabledServiceAccount(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	raw, err := service.Issue("service-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	service.db = sqlx.NewDb(db, "sqlmock")
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	if _, err := service.Verify(t.Context(), raw); err == nil {
+		t.Fatal("Verify() accepted a disabled service account")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_IssueRejectsEmptyPrincipal(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	if _, err := service.IssuePrincipal(platformprincipal.Principal{Type: platformprincipal.TypeUser}); err == nil {
+		t.Fatal("IssuePrincipal() accepted an empty subject")
+	}
+}
+
+func TestService_IssueRejectsUnsafePrincipalShapes(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	for _, principal := range []platformprincipal.Principal{
+		{ID: "user-1", Type: platformprincipal.TypeUser},
+		{ID: "system-1", Type: platformprincipal.TypeSystem},
+		{ID: "unknown-1", Type: platformprincipal.Type("unknown")},
+	} {
+		if _, err := service.IssuePrincipal(principal); err == nil {
+			t.Fatalf("IssuePrincipal(%+v) succeeded", principal)
+		}
+	}
+}
+
+func TestService_VerifyDoesNotDelegateInvalidLocallySignedToken(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	now := time.Now()
+	claims := Claims{RegisteredClaims: jwtlib.RegisteredClaims{
+		Issuer: jwtConfig.Issuer, Audience: jwtlib.ClaimStrings{jwtConfig.Audience}, Subject: "user-1", ID: "token-1",
+		IssuedAt: jwtlib.NewNumericDate(now), NotBefore: jwtlib.NewNumericDate(now), ExpiresAt: jwtlib.NewNumericDate(now.Add(time.Hour)),
+	}, PrincipalType: platformprincipal.TypeUser}
+	token := jwtlib.NewWithClaims(jwtlib.GetSigningMethod(service.active.algorithm), claims)
+	token.Header["kid"] = service.active.id
+	raw, err := token.SignedString(service.active.private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A zero verifier would panic if called. A token naming a local key must
+	// remain on the local validation path even when remote JWKS is configured.
+	service.verifier = new(authn.JWKSVerifier)
+	if _, err := service.Verify(t.Context(), raw); err == nil {
+		t.Fatal("Verify() accepted a user token without a session")
+	}
 }
 
 func TestService_KeyRotationKeepsOldTokensVerifiableAndPublishesBothKeys(t *testing.T) {

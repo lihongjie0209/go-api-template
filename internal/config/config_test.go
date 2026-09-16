@@ -305,6 +305,66 @@ func TestConfig_RejectsInvalidDatabasePoolSettings(t *testing.T) {
 	}
 }
 
+func TestConfig_RejectsInvalidHTTPBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*HTTP)
+	}{
+		{name: "read timeout", mutate: func(cfg *HTTP) { cfg.ReadTimeout = 0 }},
+		{name: "write timeout", mutate: func(cfg *HTTP) { cfg.WriteTimeout = 0 }},
+		{name: "idle timeout", mutate: func(cfg *HTTP) { cfg.IdleTimeout = 0 }},
+		{name: "request timeout", mutate: func(cfg *HTTP) { cfg.RequestTimeout = 0 }},
+		{name: "body size", mutate: func(cfg *HTTP) { cfg.MaxBodyBytes = 0 }},
+		{name: "unbounded body size", mutate: func(cfg *HTTP) { cfg.MaxBodyBytes = 1<<30 + 1 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			test.mutate(&cfg.HTTP)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "http requires positive timeouts") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_RejectsUnsafeOutboxBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*EventBus)
+	}{
+		{name: "delivery attempts", mutate: func(cfg *EventBus) { cfg.ConsumerMaxDeliver = 101 }},
+		{name: "dispatch interval", mutate: func(cfg *EventBus) { cfg.DispatchInterval = time.Millisecond }},
+		{name: "batch size", mutate: func(cfg *EventBus) { cfg.DispatchBatchSize = 1001 }},
+		{name: "lease shorter than publish", mutate: func(cfg *EventBus) { cfg.DispatchLease = cfg.PublishTimeout }},
+		{name: "retry delay", mutate: func(cfg *EventBus) { cfg.DispatchRetryDelay = 2 * time.Hour }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.EventBus.Enabled = true
+			test.mutate(&cfg.EventBus)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "dispatch settings") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestDefaultCORSAllowsIdempotencyKey(t *testing.T) {
+	t.Parallel()
+	cfg := validDevelopmentConfig(t)
+	found := false
+	for _, header := range cfg.HTTP.CORS.AllowedHeaders {
+		found = found || strings.EqualFold(header, "Idempotency-Key")
+	}
+	if !found {
+		t.Fatalf("allowed headers = %v", cfg.HTTP.CORS.AllowedHeaders)
+	}
+}
+
 func TestLoad_ShippedDevelopmentAndTestProfiles(t *testing.T) {
 	t.Parallel()
 	for _, profile := range []string{"development", "test"} {

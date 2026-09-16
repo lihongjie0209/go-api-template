@@ -24,18 +24,18 @@ func NewUserAuthenticationHandler(service *authentication.Service, security secu
 
 type UserLoginRequest struct {
 	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required,max=4096"`
+	Password string `json:"password" binding:"required,max=1024"`
 }
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required,max=4096"`
 }
 type SetPasswordRequest struct {
 	UserID   string `json:"user_id" binding:"required"`
-	Password string `json:"password" binding:"required,max=4096"`
+	Password string `json:"password" binding:"required,max=1024"`
 }
 type ChangePasswordRequest struct {
-	OldPassword string `json:"old_password" binding:"required,max=4096"`
-	NewPassword string `json:"new_password" binding:"required,max=4096"`
+	OldPassword string `json:"old_password" binding:"required,max=1024"`
+	NewPassword string `json:"new_password" binding:"required,max=1024"`
 }
 type SessionPageRequest struct {
 	Page     int `json:"page"`
@@ -67,24 +67,16 @@ func (h *UserAuthenticationHandler) Login(c *gin.Context) {
 	entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: r.Username, SubjectType: string(platformprincipal.TypeUser), Succeeded: e == nil, ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent()}
 	if e != nil {
 		entry.Reason = loginFailureReason(e)
-		if logErr := h.record(c, entry); logErr != nil {
-			h.logger.ErrorContext(c.Request.Context(), "record failed user login", "error", logErr, "request_id", requestID(c))
+		if !errors.Is(e, authentication.ErrAttemptAudited) && !errors.Is(e, authentication.ErrSecurityUnavailable) {
+			if logErr := h.record(c, entry); logErr != nil {
+				h.logger.ErrorContext(c.Request.Context(), "record failed user login", "error", logErr, "request_id", requestID(c))
+			}
 		}
 		h.fail(c, e)
 		return
 	}
 	entry.SessionID = tokens.SessionID
 	entry.SubjectID = tokens.UserID
-	if logErr := h.record(c, entry); logErr != nil {
-		if h.security.FailClosed() {
-			if abortErr := h.service.AbortSession(c.Request.Context(), tokens.SessionID, "security_log_unavailable"); abortErr != nil {
-				h.logger.ErrorContext(c.Request.Context(), "abort unaudited login session", "error", abortErr, "request_id", requestID(c))
-			}
-			Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
-			return
-		}
-		h.logger.ErrorContext(c.Request.Context(), "record successful user login", "error", logErr, "request_id", requestID(c))
-	}
 	OK(c, tokens)
 }
 
@@ -104,21 +96,14 @@ func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 	}
 	tokens, e := h.service.Refresh(c.Request.Context(), r.RefreshToken)
 	entry := securitylog.Entry{EventType: securitylog.EventTokenRefresh, SubjectID: tokens.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: tokens.SessionID, TokenID: r.RefreshToken, Succeeded: e == nil}
-	logErr := h.record(c, entry)
 	if e != nil {
-		if logErr != nil {
-			h.logger.ErrorContext(c.Request.Context(), "record failed token refresh", "error", logErr, "request_id", requestID(c))
+		if !errors.Is(e, authentication.ErrRefreshReused) {
+			if logErr := h.record(c, entry); logErr != nil {
+				h.logger.ErrorContext(c.Request.Context(), "record failed token refresh", "error", logErr, "request_id", requestID(c))
+			}
 		}
 		h.fail(c, e)
 		return
-	}
-	if logErr != nil {
-		if h.security.FailClosed() {
-			_ = h.service.AbortSession(c.Request.Context(), tokens.SessionID, "security_log_unavailable")
-			Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
-			return
-		}
-		h.logger.ErrorContext(c.Request.Context(), "record successful token refresh", "error", logErr, "request_id", requestID(c))
 	}
 	OK(c, tokens)
 }
@@ -138,13 +123,9 @@ func (h *UserAuthenticationHandler) Logout(c *gin.Context) {
 		return
 	}
 	e := h.service.Logout(c.Request.Context(), r.RefreshToken)
-	logErr := h.record(c, securitylog.Entry{EventType: securitylog.EventLogout, TokenID: r.RefreshToken, Succeeded: e == nil})
 	if e != nil {
+		h.recordFailure(c, e, securitylog.Entry{EventType: securitylog.EventLogout, TokenID: r.RefreshToken}, "logout")
 		h.fail(c, e)
-		return
-	}
-	if logErr != nil && h.security.FailClosed() {
-		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
 		return
 	}
 	OK(c, gin.H{})
@@ -166,13 +147,9 @@ func (h *UserAuthenticationHandler) SetPassword(c *gin.Context) {
 		return
 	}
 	e := h.service.SetPassword(c.Request.Context(), r.UserID, r.Password)
-	logErr := h.record(c, securitylog.Entry{EventType: securitylog.EventPasswordReset, SubjectID: r.UserID, SubjectType: string(platformprincipal.TypeUser), Succeeded: e == nil})
 	if e != nil {
+		h.recordFailure(c, e, securitylog.Entry{EventType: securitylog.EventPasswordReset, SubjectID: r.UserID, SubjectType: string(platformprincipal.TypeUser)}, "password reset")
 		h.fail(c, e)
-		return
-	}
-	if logErr != nil && h.security.FailClosed() {
-		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
 		return
 	}
 	OK(c, gin.H{})
@@ -194,13 +171,9 @@ func (h *UserAuthenticationHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 	e := h.service.ChangePassword(c.Request.Context(), r.OldPassword, r.NewPassword)
-	logErr := h.record(c, securitylog.Entry{EventType: securitylog.EventPasswordChanged, Succeeded: e == nil})
 	if e != nil {
+		h.recordFailure(c, e, securitylog.Entry{EventType: securitylog.EventPasswordChanged}, "password change")
 		h.fail(c, e)
-		return
-	}
-	if logErr != nil && h.security.FailClosed() {
-		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
 		return
 	}
 	OK(c, gin.H{})
@@ -245,13 +218,9 @@ func (h *UserAuthenticationHandler) RevokeSession(c *gin.Context) {
 		return
 	}
 	e := h.service.RevokeSession(c.Request.Context(), r.SessionID, r.Version)
-	logErr := h.record(c, securitylog.Entry{EventType: securitylog.EventSessionRevoked, SessionID: r.SessionID, Succeeded: e == nil})
 	if e != nil {
+		h.recordFailure(c, e, securitylog.Entry{EventType: securitylog.EventSessionRevoked, SessionID: r.SessionID}, "session revoke")
 		h.fail(c, e)
-		return
-	}
-	if logErr != nil && h.security.FailClosed() {
-		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
 		return
 	}
 	OK(c, gin.H{})
@@ -266,13 +235,9 @@ func (h *UserAuthenticationHandler) RevokeSession(c *gin.Context) {
 // @Router /api/v1/auth/sessions/logout-all [post]
 func (h *UserAuthenticationHandler) LogoutAll(c *gin.Context) {
 	e := h.service.LogoutAll(c.Request.Context())
-	logErr := h.record(c, securitylog.Entry{EventType: securitylog.EventLogoutAll, Succeeded: e == nil})
 	if e != nil {
+		h.recordFailure(c, e, securitylog.Entry{EventType: securitylog.EventLogoutAll}, "logout all")
 		h.fail(c, e)
-		return
-	}
-	if logErr != nil && h.security.FailClosed() {
-		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
 		return
 	}
 	OK(c, gin.H{})
@@ -294,13 +259,9 @@ func (h *UserAuthenticationHandler) ForceLogoutAll(c *gin.Context) {
 		return
 	}
 	e := h.service.ForceLogoutAll(c.Request.Context(), r.UserID)
-	logErr := h.record(c, securitylog.Entry{EventType: securitylog.EventForcedLogout, SubjectID: r.UserID, SubjectType: string(platformprincipal.TypeUser), Succeeded: e == nil})
 	if e != nil {
+		h.recordFailure(c, e, securitylog.Entry{EventType: securitylog.EventForcedLogout, SubjectID: r.UserID, SubjectType: string(platformprincipal.TypeUser)}, "forced logout")
 		h.fail(c, e)
-		return
-	}
-	if logErr != nil && h.security.FailClosed() {
-		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
 		return
 	}
 	OK(c, gin.H{})
@@ -309,6 +270,16 @@ func (h *UserAuthenticationHandler) record(c *gin.Context, entry securitylog.Ent
 	entry.ClientIP = c.ClientIP()
 	entry.UserAgent = c.Request.UserAgent()
 	return h.security.Record(c.Request.Context(), entry)
+}
+func (h *UserAuthenticationHandler) recordFailure(c *gin.Context, operationErr error, entry securitylog.Entry, operation string) {
+	if errors.Is(operationErr, authentication.ErrSecurityUnavailable) {
+		return
+	}
+	entry.Succeeded = false
+	entry.ErrorMessage = operationErr.Error()
+	if err := h.record(c, entry); err != nil {
+		h.logger.ErrorContext(c.Request.Context(), "record failed authentication operation", "operation", operation, "error", err, "request_id", requestID(c))
+	}
 }
 func loginFailureReason(err error) string {
 	if errors.Is(err, authentication.ErrAccountLocked) {
@@ -326,6 +297,8 @@ func (h *UserAuthenticationHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Invalid("invalid authentication request", e))
 	case errors.Is(e, authentication.ErrSessionNotFound):
 		Fail(c, h.logger, apperror.NotFound("session not found"))
+	case errors.Is(e, authentication.ErrSecurityUnavailable):
+		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", e))
 	case errors.Is(e, identity.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("user not found"))
 	default:

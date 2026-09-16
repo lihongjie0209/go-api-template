@@ -100,6 +100,12 @@ type Recorder interface {
 	Record(ctx context.Context, entry Entry) error
 }
 
+type TransactionalRecorder interface {
+	Enabled() bool
+	FailClosed() bool
+	RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error
+}
+
 type Service struct {
 	cfg        config.SecurityLog
 	appName    string
@@ -107,10 +113,11 @@ type Service struct {
 	db         *sqlx.DB
 	transactor *database.Transactor
 	metrics    *observability.Metrics
+	outbox     *eventbus.Outbox
 }
 
-func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics) *Service {
-	return &Service{cfg: cfg.SecurityLog, appName: cfg.App.Name, bus: bus, db: db, transactor: transactor, metrics: metrics}
+func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics, outbox *eventbus.Outbox) *Service {
+	return &Service{cfg: cfg.SecurityLog, appName: cfg.App.Name, bus: bus, db: db, transactor: transactor, metrics: metrics, outbox: outbox}
 }
 func (s *Service) Enabled() bool    { return s.cfg.Enabled }
 func (s *Service) FailClosed() bool { return s.cfg.FailClosed }
@@ -119,26 +126,10 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 	if !s.Enabled() {
 		return nil
 	}
-	if !validEvent(entry.EventType) {
-		return fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
-	}
-	actor, _ := platformprincipal.FromContext(ctx)
-	if entry.TenantID == "" {
-		entry.TenantID = actor.TenantID
-	}
-	metadata, err := safeMetadata(entry.Metadata, s.cfg.MaxPayloadBytes)
+	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidEntry, err)
+		return err
 	}
-	requestID, _ := requestid.FromContext(ctx)
-	span := trace.SpanContextFromContext(ctx)
-	now := time.Now()
-	value := payload{EventType: entry.EventType, ActorID: actor.ID, ActorType: string(actor.Type), SubjectID: entry.SubjectID, SubjectType: entry.SubjectType, TenantID: entry.TenantID, Succeeded: entry.Succeeded, Reason: truncate(entry.Reason, 1024), ErrorCode: truncate(entry.ErrorCode, 128), ErrorMessage: truncate(entry.ErrorMessage, 2048), IdentifierHash: s.hashIdentifier(entry.Identifier), TokenIDHash: s.hash(entry.TokenID), SessionID: truncate(entry.SessionID, 256), RequestID: requestID, TraceID: span.TraceID().String(), ClientIP: truncate(entry.ClientIP, 256), UserAgent: truncate(entry.UserAgent, 1024), Metadata: metadata, OccurredAt: now}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("encode security log: %w", err)
-	}
-	envelope := &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: envelopeType, AggregateId: entry.SubjectID, AggregateType: "security_log", TenantId: entry.TenantID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: actor.ID, ActorType: string(actor.Type), TenantId: entry.TenantID}, Payload: data}
 	started := time.Now()
 	err = eventbus.Publish(ctx, s.bus, s.cfg.Subject, envelope)
 	status := "success"
@@ -150,6 +141,54 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 		return fmt.Errorf("enqueue security log: %w", err)
 	}
 	return nil
+}
+
+// RecordTx stores a security event in the transactional outbox owned by tx.
+// A successful security-critical mutation must use this method so the domain
+// change and its durable audit event commit or roll back together.
+func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error {
+	if !s.Enabled() {
+		return nil
+	}
+	envelope, err := s.envelope(ctx, entry)
+	if err != nil {
+		return err
+	}
+	if err := s.outbox.Store(ctx, tx, s.cfg.Subject, envelope); err != nil {
+		return fmt.Errorf("store security log in outbox: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnvelope, error) {
+	if !validEvent(entry.EventType) {
+		return nil, fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
+	}
+	actor, _ := platformprincipal.FromContext(ctx)
+	clientIP, userAgent := clientFromContext(ctx)
+	if entry.ClientIP == "" {
+		entry.ClientIP = clientIP
+	}
+	if entry.UserAgent == "" {
+		entry.UserAgent = userAgent
+	}
+	if entry.TenantID == "" {
+		entry.TenantID = actor.TenantID
+	}
+	metadata, err := safeMetadata(entry.Metadata, s.cfg.MaxPayloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidEntry, err)
+	}
+	requestID, _ := requestid.FromContext(ctx)
+	span := trace.SpanContextFromContext(ctx)
+	now := time.Now()
+	value := payload{EventType: entry.EventType, ActorID: actor.ID, ActorType: string(actor.Type), SubjectID: entry.SubjectID, SubjectType: entry.SubjectType, TenantID: entry.TenantID, Succeeded: entry.Succeeded, Reason: truncate(entry.Reason, 1024), ErrorCode: truncate(entry.ErrorCode, 128), ErrorMessage: truncate(entry.ErrorMessage, 2048), IdentifierHash: s.hashIdentifier(entry.Identifier), TokenIDHash: s.hash(entry.TokenID), SessionID: truncate(entry.SessionID, 256), RequestID: requestID, TraceID: span.TraceID().String(), ClientIP: truncate(entry.ClientIP, 256), UserAgent: truncate(entry.UserAgent, 1024), Metadata: metadata, OccurredAt: now}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode security log: %w", err)
+	}
+	envelope := &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: envelopeType, AggregateId: entry.SubjectID, AggregateType: "security_log", TenantId: entry.TenantID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: actor.ID, ActorType: string(actor.Type), TenantId: entry.TenantID}, Payload: data}
+	return envelope, nil
 }
 
 func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope) error {
@@ -235,3 +274,4 @@ func truncate(value string, limit int) string {
 }
 
 var _ Recorder = (*Service)(nil)
+var _ TransactionalRecorder = (*Service)(nil)

@@ -25,12 +25,21 @@ import (
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const requestIDKey = "request_id"
+
+func SecurityClientContext() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := securitylog.WithClient(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
 
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -281,10 +290,19 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		c.Header("Cross-Origin-Resource-Policy", "same-origin")
 		c.Header("Cache-Control", "no-store")
-		if c.Request.TLS != nil {
-			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-		}
+		// Browsers ignore HSTS received over plaintext HTTP. Always emitting it
+		// also covers TLS terminated by a trusted reverse proxy.
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Next()
+	}
+}
+
+func SwaggerSecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
 		c.Next()
 	}
 }

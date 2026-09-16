@@ -13,7 +13,7 @@ http:
   cors:
     enabled: false
     allowed_origins: []
-    allowed_headers: [Authorization, Content-Type, X-Request-ID]
+    allowed_headers: [Authorization, Content-Type, X-Request-ID, Idempotency-Key]
     exposed_headers: [X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining, Retry-After]
     max_age: 12h
 grpc:

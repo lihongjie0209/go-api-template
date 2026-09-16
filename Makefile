@@ -1,4 +1,4 @@
-.PHONY: run build docker-build test test-race test-integration ci-test-integration integration-policy-check compose-check lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
+.PHONY: run build docker-build test test-race vet verify test-integration ci-test-integration integration-policy-check compose-check lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || echo unknown)
@@ -29,6 +29,11 @@ test:
 
 test-race:
 	go test -race ./...
+
+vet:
+	go vet ./...
+
+verify: test test-race vet lint swagger-check proto-check integration-policy-check compose-check
 
 test-integration:
 	go test -tags=integration -run '^$$' ./integration/...

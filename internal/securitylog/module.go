@@ -17,6 +17,7 @@ func start(lifecycle fx.Lifecycle, service *Service, logger *slog.Logger) {
 		return service.bus.ConsumeWithOptions(ctx, platformeventbus.ConsumerOptions{Durable: service.cfg.Durable, FilterSubject: service.cfg.Subject, Handler: service.consume, OnError: func(err error) { logger.Error("security log consumer failed", "error", err) }})
 	})
 }
-func asRecorder(service *Service) Recorder { return service }
+func asRecorder(service *Service) Recorder                           { return service }
+func asTransactionalRecorder(service *Service) TransactionalRecorder { return service }
 
-var Module = fx.Module("security-log", fx.Provide(New, asRecorder), fx.Invoke(start))
+var Module = fx.Module("security-log", fx.Provide(New, asRecorder, asTransactionalRecorder), fx.Invoke(start))

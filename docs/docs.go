@@ -4610,11 +4610,11 @@ const docTemplate = `{
             "properties": {
                 "new_password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 },
                 "old_password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 }
             }
         },
@@ -5795,7 +5795,7 @@ const docTemplate = `{
             "properties": {
                 "password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 },
                 "user_id": {
                     "type": "string"
@@ -6133,7 +6133,7 @@ const docTemplate = `{
             "properties": {
                 "password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 },
                 "username": {
                     "type": "string"

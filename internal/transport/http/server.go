@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	docs "github.com/lihongjie0209/go-api-template/docs"
+	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
@@ -39,7 +40,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		return nil, fmt.Errorf("configure trusted proxies: %w", err)
 	}
 	_ = tracing
-	router.Use(RequestID(), IdempotencyKey(logger), Environment(cfg.Runtime.ActiveProfile), otelgin.Middleware(cfg.App.Name), RequestLogger(logger), Recovery(logger), HTTPMetrics(metrics), SecurityHeaders(), CORS(cfg.HTTP.CORS), MaxBody(cfg.HTTP.MaxBodyBytes), Timeout(cfg.HTTP.RequestTimeout, logger), RequireJSON())
+	router.Use(RequestID(), IdempotencyKey(logger), Environment(cfg.Runtime.ActiveProfile), otelgin.Middleware(cfg.App.Name), RequestLogger(logger), Recovery(logger), HTTPMetrics(metrics), SecurityHeaders(), CORS(cfg.HTTP.CORS), MaxBody(cfg.HTTP.MaxBodyBytes), Timeout(cfg.HTTP.RequestTimeout, logger), RequireJSON(), SecurityClientContext())
+	configureRouterContract(router, logger)
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		router.Handle(method, "/live", handler.Live)
 		router.Handle(method, "/ready", handler.Ready)
@@ -53,6 +55,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	if cfg.Swagger.Enabled {
 		docs.SwaggerInfo.Version = buildinfo.Version
 		swagger := router.Group("/swagger")
+		swagger.Use(SwaggerSecurityHeaders())
 		if cfg.Swagger.RequireAuth {
 			swagger.Use(JWT(authService, logger))
 		}
@@ -197,6 +200,14 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		return errors.Join(policyErr, shutdownErr)
 	}})
 	return server, nil
+}
+
+func configureRouterContract(router *gin.Engine, logger *slog.Logger) {
+	router.RedirectTrailingSlash = false
+	router.RedirectFixedPath = false
+	router.HandleMethodNotAllowed = true
+	router.NoRoute(func(c *gin.Context) { Fail(c, logger, apperror.NotFound("route not found")) })
+	router.NoMethod(func(c *gin.Context) { Fail(c, logger, apperror.MethodNotAllowed()) })
 }
 
 func pprofAuth(expected string) gin.HandlerFunc {

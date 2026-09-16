@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -58,8 +59,7 @@ type JWKS struct {
 }
 
 func NewRuntime(lifecycle fx.Lifecycle, cfg config.Config, db *sqlx.DB) (*Service, error) {
-	service := New(cfg)
-	service.db = db
+	service := NewWithDatabase(cfg, db)
 	if service.initErr != nil {
 		return nil, service.initErr
 	}
@@ -75,7 +75,11 @@ func NewRuntime(lifecycle fx.Lifecycle, cfg config.Config, db *sqlx.DB) (*Servic
 	return service, nil
 }
 func New(cfg config.Config) *Service {
-	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, verification: map[string]signingKey{}}
+	return NewWithDatabase(cfg, nil)
+}
+
+func NewWithDatabase(cfg config.Config, db *sqlx.DB) *Service {
+	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, verification: map[string]signingKey{}, db: db}
 	if cfg.JWT.KeyID == "" || (cfg.JWT.PrivateKey == "" && cfg.JWT.PrivateKeyFile == "") {
 		return s
 	}
@@ -111,18 +115,22 @@ func New(cfg config.Config) *Service {
 	return s
 }
 func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Principal, error) {
-	if s.verifier != nil {
+	if len(s.verification) == 0 {
+		if s.verifier == nil {
+			return platformprincipal.Principal{}, errors.New("jwt verification keys are not configured")
+		}
 		return s.verifier.VerifyBearer(ctx, raw)
 	}
-	claims, err := s.Parse(raw)
-	if err != nil {
-		return platformprincipal.Principal{}, err
+	claims, parseErr := s.Parse(raw)
+	if parseErr != nil {
+		if s.verifier != nil && !s.referencesLocalKey(raw) {
+			return s.verifier.VerifyBearer(ctx, raw)
+		}
+		return platformprincipal.Principal{}, parseErr
 	}
 	t := claims.PrincipalType
-	if t == "" {
-		t = platformprincipal.TypeServiceAccount
-	}
-	if t == platformprincipal.TypeUser && claims.SessionID != "" {
+	switch t {
+	case platformprincipal.TypeUser:
 		if s.db == nil {
 			return platformprincipal.Principal{}, errors.New("session validation is unavailable")
 		}
@@ -130,6 +138,15 @@ func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Pri
 		query := s.db.Rebind(`SELECT count(*) FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`)
 		if err := s.db.GetContext(ctx, &count, query, claims.SessionID, claims.Subject, time.Now()); err != nil || count != 1 {
 			return platformprincipal.Principal{}, errors.New("session is revoked or expired")
+		}
+	case platformprincipal.TypeServiceAccount:
+		if s.db == nil {
+			return platformprincipal.Principal{}, errors.New("service account validation is unavailable")
+		}
+		var count int
+		query := s.db.Rebind(`SELECT count(*) FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
+		if err := s.db.GetContext(ctx, &count, query, claims.Subject, time.Now()); err != nil || count != 1 {
+			return platformprincipal.Principal{}, errors.New("service account is disabled or expired")
 		}
 	}
 	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, nil
@@ -141,6 +158,15 @@ func (s *Service) Issue(subject string) (string, error) {
 func (s *Service) IssuePrincipal(principal platformprincipal.Principal) (string, error) {
 	if !s.Enabled() {
 		return "", errors.New("asymmetric jwt signing is not configured")
+	}
+	if strings.TrimSpace(principal.ID) == "" || principal.Type == "" {
+		return "", errors.New("jwt principal id and type are required")
+	}
+	if principal.Type != platformprincipal.TypeUser && principal.Type != platformprincipal.TypeServiceAccount {
+		return "", errors.New("jwt principal type is not externally issuable")
+	}
+	if principal.Type == platformprincipal.TypeUser && strings.TrimSpace(principal.SessionID) == "" {
+		return "", errors.New("user jwt requires a session id")
 	}
 	now := time.Now()
 	jti, err := randomID()
@@ -178,7 +204,23 @@ func (s *Service) Parse(raw string) (*Claims, error) {
 	if !ok || !token.Valid {
 		return nil, errors.New("invalid jwt claims")
 	}
+	if claims.PrincipalType != platformprincipal.TypeUser && claims.PrincipalType != platformprincipal.TypeServiceAccount {
+		return nil, errors.New("invalid jwt principal type")
+	}
+	if claims.PrincipalType == platformprincipal.TypeUser && strings.TrimSpace(claims.SessionID) == "" {
+		return nil, errors.New("user jwt requires a session id")
+	}
 	return claims, nil
+}
+
+func (s *Service) referencesLocalKey(raw string) bool {
+	token, _, err := jwt.NewParser().ParseUnverified(raw, &Claims{})
+	if err != nil {
+		return false
+	}
+	kid, _ := token.Header["kid"].(string)
+	_, ok := s.verification[kid]
+	return ok
 }
 func (s *Service) JWKS() JWKS {
 	ids := make([]string, 0, len(s.verification))

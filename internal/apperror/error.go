@@ -22,17 +22,17 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 const (
-	CodeOK                       = 0
-	CodeInvalidArgument          = 10001
-	CodeNotFound                 = 10004
-	CodeRequestTimeout           = 10008
-	CodeTooManyRequests          = 10029
-	CodeUnauthorized             = 20001
-	CodeForbidden                = 20003
-	CodeConflict                 = 30009
-	CodeRequestInProgress        = 30010
-	CodeInternal                 = 50000
-	CodeDependencyUnavailable    = 50003
+	CodeOK                       = int(platformcode.OK)
+	CodeInvalidArgument          = int(platformcode.InvalidArgument)
+	CodeNotFound                 = int(platformcode.NotFound)
+	CodeRequestTimeout           = int(platformcode.RequestTimeout)
+	CodeTooManyRequests          = int(platformcode.TooManyRequests)
+	CodeUnauthorized             = int(platformcode.Unauthorized)
+	CodeForbidden                = int(platformcode.Forbidden)
+	CodeConflict                 = int(platformcode.Conflict)
+	CodeRequestInProgress        = int(platformcode.RequestInProgress)
+	CodeInternal                 = int(platformcode.Internal)
+	CodeDependencyUnavailable    = int(platformcode.DependencyUnavailable)
 	CodeAuthorizationUnavailable = int(platformcode.AuthorizationUnavailable)
 	CodePermissionPolicyMissing  = int(platformcode.PermissionPolicyMissing)
 )
@@ -45,6 +45,9 @@ func Invalid(message string, err error) *Error {
 }
 func NotFound(message string) *Error {
 	return New(CodeNotFound, message, http.StatusNotFound, nil)
+}
+func MethodNotAllowed() *Error {
+	return New(CodeInvalidArgument, "method not allowed", http.StatusMethodNotAllowed, nil)
 }
 func Conflict(message string, err error) *Error {
 	return New(CodeConflict, message, http.StatusConflict, err)

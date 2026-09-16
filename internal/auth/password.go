@@ -11,7 +11,12 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-var ErrInvalidPasswordHash = errors.New("invalid password hash")
+var (
+	ErrInvalidPassword     = errors.New("invalid password")
+	ErrInvalidPasswordHash = errors.New("invalid password hash")
+)
+
+const maxPasswordBytes = 1024
 
 type PasswordHasher struct {
 	memory      uint32
@@ -25,8 +30,8 @@ func NewPasswordHasher() *PasswordHasher {
 	return &PasswordHasher{memory: 64 * 1024, iterations: 3, parallelism: 2, saltLength: 16, keyLength: 32}
 }
 func (h *PasswordHasher) Hash(password string) (string, error) {
-	if len(password) < 12 {
-		return "", errors.New("password must contain at least 12 characters")
+	if len(password) < 12 || len(password) > maxPasswordBytes {
+		return "", fmt.Errorf("%w: must contain between 12 and %d bytes", ErrInvalidPassword, maxPasswordBytes)
 	}
 	salt := make([]byte, h.saltLength)
 	if _, err := rand.Read(salt); err != nil {
@@ -36,6 +41,9 @@ func (h *PasswordHasher) Hash(password string) (string, error) {
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", h.memory, h.iterations, h.parallelism, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 func (h *PasswordHasher) Verify(password, encoded string) (bool, error) {
+	if len(password) > maxPasswordBytes || len(encoded) > 1024 {
+		return false, ErrInvalidPasswordHash
+	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" || parts[2] != "v=19" {
 		return false, ErrInvalidPasswordHash
@@ -45,11 +53,11 @@ func (h *PasswordHasher) Verify(password, encoded string) (bool, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil {
 		return false, ErrInvalidPasswordHash
 	}
-	if memory > 256*1024 || iterations > 10 || parallelism > 16 {
+	if memory < 8*1024 || memory > 256*1024 || iterations < 1 || iterations > 10 || parallelism < 1 || parallelism > 16 {
 		return false, ErrInvalidPasswordHash
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) < 16 || len(salt) > 64 {
 		return false, ErrInvalidPasswordHash
 	}
 	expected, err := base64.RawStdEncoding.DecodeString(parts[5])

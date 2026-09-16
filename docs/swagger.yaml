@@ -226,10 +226,10 @@ definitions:
   httptransport.ChangePasswordRequest:
     properties:
       new_password:
-        maxLength: 4096
+        maxLength: 1024
         type: string
       old_password:
-        maxLength: 4096
+        maxLength: 1024
         type: string
     required:
     - new_password
@@ -1020,7 +1020,7 @@ definitions:
   httptransport.SetPasswordRequest:
     properties:
       password:
-        maxLength: 4096
+        maxLength: 1024
         type: string
       user_id:
         type: string
@@ -1248,7 +1248,7 @@ definitions:
   httptransport.UserLoginRequest:
     properties:
       password:
-        maxLength: 4096
+        maxLength: 1024
         type: string
       username:
         type: string

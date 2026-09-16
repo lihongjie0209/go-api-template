@@ -4607,11 +4607,11 @@
             "properties": {
                 "new_password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 },
                 "old_password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 }
             }
         },
@@ -5792,7 +5792,7 @@
             "properties": {
                 "password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 },
                 "user_id": {
                     "type": "string"
@@ -6130,7 +6130,7 @@
             "properties": {
                 "password": {
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 1024
                 },
                 "username": {
                     "type": "string"

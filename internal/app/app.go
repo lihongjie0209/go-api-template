@@ -54,7 +54,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(files.New),
 		fx.Invoke(registerFileDeletionWorker),
 		fx.Provide(identity.NewRepository, identity.New),
-		fx.Provide(userauthentication.New),
+		fx.Provide(userauthentication.NewWithSecurity),
 		eventbus.Module,
 		operationlog.Module,
 		securitylog.Module,

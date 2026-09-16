@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -27,11 +29,17 @@ func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	if keyErr != nil {
 		t.Fatal(keyErr)
 	}
-	authService := auth.New(config.Config{JWT: jwtConfig})
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	authService := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(rawDB, "sqlmock"))
 	token, err := authService.Issue("client")
 	if err != nil {
 		t.Fatal(err)
 	}
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("client", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(requestIDInterceptor, authInterceptor(authService, config.Auth{})))
 	hellov1.RegisterHelloServiceServer(server, &helloServer{})
@@ -127,11 +135,17 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	if keyErr != nil {
 		t.Fatal(keyErr)
 	}
-	service := auth.New(config.Config{JWT: jwtConfig})
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	service := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(rawDB, "sqlmock"))
 	token, err := service.Issue("user-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("user-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token))
 	ctx, err = authenticateGRPC(ctx, "/hello.v1.UserService/GetUser", service, config.Auth{})
 	if err != nil {

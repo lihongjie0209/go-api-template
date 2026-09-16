@@ -18,6 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -270,6 +271,14 @@ func TestRequestID(t *testing.T) {
 	if response.RequestID != "client-request-1" {
 		t.Fatalf("request_id = %q", response.RequestID)
 	}
+	invalid := httptest.NewRequest(http.MethodPost, "/test", nil)
+	invalid.Header.Set("X-Request-ID", "contains spaces")
+	invalidRecorder := httptest.NewRecorder()
+	router.ServeHTTP(invalidRecorder, invalid)
+	generated := invalidRecorder.Header().Get("X-Request-ID")
+	if generated == "contains spaces" || !requestid.Valid(generated) {
+		t.Fatalf("generated X-Request-ID = %q", generated)
+	}
 }
 
 func TestDatabaseAuthenticationVerifiesSuppliedCredentials(t *testing.T) {
@@ -379,7 +388,7 @@ func TestSecurityHeadersAndCORSWhitelist(t *testing.T) {
 	allowed.Header.Set("Origin", "https://admin.example.com")
 	allowedRecorder := httptest.NewRecorder()
 	router.ServeHTTP(allowedRecorder, allowed)
-	if allowedRecorder.Code != http.StatusOK || allowedRecorder.Header().Get("Access-Control-Allow-Origin") != "https://admin.example.com" || allowedRecorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+	if allowedRecorder.Code != http.StatusOK || allowedRecorder.Header().Get("Access-Control-Allow-Origin") != "https://admin.example.com" || allowedRecorder.Header().Get("X-Content-Type-Options") != "nosniff" || allowedRecorder.Header().Get("Permissions-Policy") == "" || allowedRecorder.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" || allowedRecorder.Header().Get("Strict-Transport-Security") == "" {
 		t.Fatalf("allowed response status=%d headers=%v", allowedRecorder.Code, allowedRecorder.Header())
 	}
 
@@ -389,6 +398,21 @@ func TestSecurityHeadersAndCORSWhitelist(t *testing.T) {
 	router.ServeHTTP(deniedRecorder, denied)
 	if deniedRecorder.Code != http.StatusForbidden {
 		t.Fatalf("denied status=%d", deniedRecorder.Code)
+	}
+}
+
+func TestSwaggerSecurityHeadersOverrideStrictAPIContentPolicy(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(SecurityHeaders())
+	group := router.Group("/swagger", SwaggerSecurityHeaders())
+	group.GET("/index.html", func(c *gin.Context) { c.Status(http.StatusOK) })
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil))
+	policy := recorder.Header().Get("Content-Security-Policy")
+	if recorder.Code != http.StatusOK || !strings.Contains(policy, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("status=%d policy=%q", recorder.Code, policy)
 	}
 }
 
@@ -416,6 +440,41 @@ func TestPprofBearerProtection(t *testing.T) {
 			router.ServeHTTP(recorder, request)
 			if recorder.Code != test.status {
 				t.Fatalf("status=%d, want %d", recorder.Code, test.status)
+			}
+		})
+	}
+}
+
+func TestUnknownRouteAndMethodUseUnifiedEnvelope(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+	router.Use(RequestID())
+	configureRouterContract(router, logger)
+	router.POST("/api/v1/known", func(c *gin.Context) { OK(c, nil) })
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantStatus int
+		wantCode   int
+	}{
+		{name: "unknown route", method: http.MethodPost, path: "/api/v1/missing", wantStatus: http.StatusNotFound, wantCode: apperror.CodeNotFound},
+		{name: "unknown method", method: http.MethodGet, path: "/api/v1/known", wantStatus: http.StatusMethodNotAllowed, wantCode: apperror.CodeInvalidArgument},
+		{name: "trailing slash is not redirected", method: http.MethodPost, path: "/api/v1/known/", wantStatus: http.StatusNotFound, wantCode: apperror.CodeNotFound},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(test.method, test.path, nil))
+			var response Response
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response %q: %v", recorder.Body.String(), err)
+			}
+			if recorder.Code != test.wantStatus || response.Code != test.wantCode || response.RequestID == "" {
+				t.Fatalf("status=%d response=%+v", recorder.Code, response)
 			}
 		})
 	}

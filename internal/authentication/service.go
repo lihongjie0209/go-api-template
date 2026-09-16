@@ -17,17 +17,20 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrAccountLocked      = errors.New("account locked")
-	ErrRefreshInvalid     = errors.New("refresh token invalid")
-	ErrRefreshReused      = errors.New("refresh token reused")
-	ErrSessionNotFound    = errors.New("session not found")
-	ErrForbidden          = errors.New("authentication operation forbidden")
-	ErrInvalid            = errors.New("invalid authentication request")
+	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrAccountLocked       = errors.New("account locked")
+	ErrRefreshInvalid      = errors.New("refresh token invalid")
+	ErrRefreshReused       = errors.New("refresh token reused")
+	ErrSessionNotFound     = errors.New("session not found")
+	ErrForbidden           = errors.New("authentication operation forbidden")
+	ErrInvalid             = errors.New("invalid authentication request")
+	ErrSecurityUnavailable = errors.New("security audit unavailable")
+	ErrAttemptAudited      = errors.New("authentication attempt audited")
 )
 
 type Tokens struct {
@@ -74,18 +77,37 @@ type SessionPage struct {
 	Total    int64         `json:"total"`
 }
 type Service struct {
-	db     *sqlx.DB
-	tx     *database.Transactor
-	users  *identity.Service
-	jwt    *auth.Service
-	hasher *auth.PasswordHasher
-	cfg    config.Config
+	db       *sqlx.DB
+	tx       *database.Transactor
+	users    *identity.Service
+	jwt      *auth.Service
+	hasher   *auth.PasswordHasher
+	cfg      config.Config
+	security securitylog.TransactionalRecorder
 }
 
 const identitySessionInsertSQL = `INSERT INTO identity_sessions (id,user_id,refresh_token_hash,previous_refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?, '',?,?, '',?,?,?,?,?,?,1)`
 
 func New(db *sqlx.DB, tx *database.Transactor, users *identity.Service, jwt *auth.Service, cfg config.Config) *Service {
-	return &Service{db, tx, users, jwt, auth.NewPasswordHasher(), cfg}
+	return &Service{db: db, tx: tx, users: users, jwt: jwt, hasher: auth.NewPasswordHasher(), cfg: cfg}
+}
+
+// NewWithSecurity is the runtime constructor. New remains available to small
+// isolated unit tests whose operation does not require durable security logs.
+func NewWithSecurity(db *sqlx.DB, tx *database.Transactor, users *identity.Service, jwt *auth.Service, cfg config.Config, security securitylog.TransactionalRecorder) *Service {
+	service := New(db, tx, users, jwt, cfg)
+	service.security = security
+	return service
+}
+
+func (s *Service) recordSecurityTx(ctx context.Context, tx *sqlx.Tx, entry securitylog.Entry) error {
+	if s.security == nil || !s.security.Enabled() {
+		return nil
+	}
+	if err := s.security.RecordTx(ctx, tx, entry); err != nil {
+		return fmt.Errorf("%w: %v", ErrSecurityUnavailable, err)
+	}
+	return nil
 }
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
 	actor, ok := platformprincipal.FromContext(ctx)
@@ -94,11 +116,17 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 	}
 	hash, err := s.hasher.Hash(password)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidPassword) {
+			return ErrInvalid
+		}
 		return err
 	}
 	now := time.Now()
 	return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		return setPasswordAndRevoke(ctx, tx, userID, hash, actor.ID, "password_reset", now)
+		if err := setPasswordAndRevoke(ctx, tx, userID, hash, actor.ID, "password_reset", now); err != nil {
+			return err
+		}
+		return s.recordSecurityTx(ctx, tx, securitylog.Entry{EventType: securitylog.EventPasswordReset, SubjectID: userID, SubjectType: string(platformprincipal.TypeUser), Succeeded: true})
 	})
 }
 
@@ -109,6 +137,9 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 	}
 	hash, err := s.hasher.Hash(newPassword)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidPassword) {
+			return ErrInvalid
+		}
 		return err
 	}
 	return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
@@ -121,7 +152,10 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 		if verifyErr != nil || !valid {
 			return ErrInvalidCredentials
 		}
-		return updatePasswordAndRevoke(ctx, tx, credential, hash, actor.ID, "password_changed", time.Now())
+		if err := updatePasswordAndRevoke(ctx, tx, credential, hash, actor.ID, "password_changed", time.Now()); err != nil {
+			return err
+		}
+		return s.recordSecurityTx(ctx, tx, securitylog.Entry{EventType: securitylog.EventPasswordChanged, SubjectID: actor.ID, SubjectType: string(platformprincipal.TypeUser), Succeeded: true})
 	})
 }
 
@@ -171,7 +205,7 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID string, version i
 		if rows != 1 {
 			return ErrSessionNotFound
 		}
-		return nil
+		return s.recordSecurityTx(ctx, tx, securitylog.Entry{EventType: securitylog.EventSessionRevoked, SubjectID: actor.ID, SubjectType: string(platformprincipal.TypeUser), SessionID: sessionID, Succeeded: true})
 	})
 }
 
@@ -196,32 +230,14 @@ func (s *Service) ForceLogoutAll(ctx context.Context, userID string) error {
 
 func (s *Service) revokeAll(ctx context.Context, userID, actorID, reason string) error {
 	return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		_, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), time.Now(), reason, time.Now(), actorID, userID)
-		return err
-	})
-}
-
-// AbortSession revokes a just-issued session when a fail-closed postcondition,
-// such as durable security-event enqueueing, cannot be satisfied.
-func (s *Service) AbortSession(ctx context.Context, sessionID, reason string) error {
-	if sessionID == "" || reason == "" {
-		return ErrInvalid
-	}
-	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:session-abort")
-	return s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
-		now := time.Now()
-		result, err := tx.ExecContext(systemCtx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND revoked_at IS NULL AND deleted_at IS NULL`), now, reason, now, "identity-service:session-abort", sessionID)
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), time.Now(), reason, time.Now(), actorID, userID); err != nil {
 			return err
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("abort session affected rows: %w", err)
+		eventType := securitylog.EventLogoutAll
+		if reason == "forced_logout" {
+			eventType = securitylog.EventForcedLogout
 		}
-		if rows != 1 {
-			return ErrSessionNotFound
-		}
-		return nil
+		return s.recordSecurityTx(ctx, tx, securitylog.Entry{EventType: eventType, SubjectID: userID, SubjectType: string(platformprincipal.TypeUser), Succeeded: true})
 	})
 }
 
@@ -274,16 +290,20 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	}
 	valid, verifyErr := s.hasher.Verify(password, credential.PasswordHash)
 	if verifyErr != nil || !valid {
-		if failureErr := s.recordFailure(ctx, credential); failureErr != nil {
+		if failureErr := s.recordFailure(ctx, credential, username, ip, ua); failureErr != nil {
 			return Tokens{}, fmt.Errorf("record failed login attempt: %w", failureErr)
 		}
-		return Tokens{}, ErrInvalidCredentials
+		return Tokens{}, errors.Join(ErrInvalidCredentials, ErrAttemptAudited)
 	}
 	refresh, hash, err := newRefreshToken()
 	if err != nil {
 		return Tokens{}, err
 	}
 	sessionID := uuid.NewString()
+	access, err := s.jwt.IssuePrincipal(platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser, SessionID: sessionID})
+	if err != nil {
+		return Tokens{}, err
+	}
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:login")
 	now := time.Now()
 	err = s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
@@ -300,19 +320,17 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 			return ErrInvalidCredentials
 		}
 		insert := tx.Rebind(identitySessionInsertSQL)
-		_, e = tx.ExecContext(systemCtx, insert, sessionID, user.ID, hash, now.Add(s.cfg.Authentication.RefreshTTL), now, ip, ua, now, user.ID, now, user.ID)
-		return e
+		if _, e = tx.ExecContext(systemCtx, insert, sessionID, user.ID, hash, now.Add(s.cfg.Authentication.RefreshTTL), now, ip, ua, now, user.ID, now, user.ID); e != nil {
+			return e
+		}
+		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogin, SubjectID: user.ID, SubjectType: string(platformprincipal.TypeUser), SessionID: sessionID, Succeeded: true, ClientIP: ip, UserAgent: ua})
 	})
-	if err != nil {
-		return Tokens{}, err
-	}
-	access, err := s.jwt.IssuePrincipal(platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser, SessionID: sessionID})
 	if err != nil {
 		return Tokens{}, err
 	}
 	return Tokens{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: sessionID, UserID: user.ID}, nil
 }
-func (s *Service) recordFailure(ctx context.Context, c Credential) error {
+func (s *Service) recordFailure(ctx context.Context, c Credential, identifier, ip, userAgent string) error {
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:login")
 	return s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
@@ -328,7 +346,7 @@ func (s *Service) recordFailure(ctx context.Context, c Credential) error {
 		if rows != 1 {
 			return ErrInvalidCredentials
 		}
-		return nil
+		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogin, SubjectID: c.UserID, SubjectType: string(platformprincipal.TypeUser), Identifier: identifier, Succeeded: false, Reason: "invalid_credentials", ClientIP: ip, UserAgent: userAgent})
 	})
 }
 func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
@@ -343,6 +361,7 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:refresh")
 	var current session
 	reused := false
+	access := ""
 	err = s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
 		q := tx.Rebind(`SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE (s.refresh_token_hash=? OR s.previous_refresh_token_hash=?) AND s.deleted_at IS NULL FOR UPDATE`)
 		if e := tx.GetContext(systemCtx, &current, q, oldHash, oldHash); e != nil {
@@ -351,8 +370,10 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 		if current.PreviousRefreshTokenHash == oldHash {
 			reused = true
 			revoke := tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='refresh_token_reuse',updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=?`)
-			_, e := tx.ExecContext(systemCtx, revoke, time.Now(), time.Now(), current.UserID, current.ID, current.Version)
-			return e
+			if _, e := tx.ExecContext(systemCtx, revoke, time.Now(), time.Now(), current.UserID, current.ID, current.Version); e != nil {
+				return e
+			}
+			return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventTokenRefresh, SubjectID: current.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: current.ID, TokenID: raw, Succeeded: false, Reason: "refresh_token_reuse"})
 		}
 		if current.RevokedAt != nil || !current.ExpiresAt.After(time.Now()) {
 			return ErrRefreshInvalid
@@ -369,17 +390,18 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 		if rows != 1 {
 			return ErrRefreshInvalid
 		}
-		return nil
+		var issueErr error
+		access, issueErr = s.jwt.IssuePrincipal(platformprincipal.Principal{ID: current.UserID, Type: platformprincipal.TypeUser, SessionID: current.ID})
+		if issueErr != nil {
+			return issueErr
+		}
+		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventTokenRefresh, SubjectID: current.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: current.ID, TokenID: raw, Succeeded: true})
 	})
 	if err != nil {
 		return Tokens{}, err
 	}
 	if reused {
 		return Tokens{}, ErrRefreshReused
-	}
-	access, err := s.jwt.IssuePrincipal(platformprincipal.Principal{ID: current.UserID, Type: platformprincipal.TypeUser, SessionID: current.ID})
-	if err != nil {
-		return Tokens{}, err
 	}
 	return Tokens{AccessToken: access, RefreshToken: newRaw, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: current.ID, UserID: current.UserID}, nil
 }
@@ -401,7 +423,7 @@ func (s *Service) Logout(ctx context.Context, raw string) error {
 		if rows != 1 {
 			return ErrRefreshInvalid
 		}
-		return nil
+		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogout, TokenID: raw, Succeeded: true})
 	})
 }
 func newRefreshToken() (string, string, error) {
