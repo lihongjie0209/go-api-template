@@ -535,7 +535,11 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if id == "" || len(id) > maxMenuIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	return s.mutate(ctx, "platform.menu.delete", id, map[string]any{"version": version}, func(lockCtx context.Context, tx *sqlx.Tx) error {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.mutate(ctx, "platform.menu.delete", id, map[string]any{"name": current.Name, "version": version}, func(lockCtx context.Context, tx *sqlx.Tx) error {
 		var children int
 		if err := tx.GetContext(lockCtx, &children, tx.Rebind(`SELECT count(*) FROM menus WHERE parent_id=? AND deleted_at IS NULL`), id); err != nil {
 			return err
@@ -670,6 +674,10 @@ func menuMutationName(request any, fallback string) string {
 		return value.Name
 	case UpdateInput:
 		return value.Name
+	case map[string]any:
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
 	}
 	return fallback
 }

@@ -208,9 +208,12 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 	operationEntry := operationlog.Entry{Operation: "route_policy.set", ResourceType: "route_policy", ResourceID: input.RouteID, Source: "backend", Protocol: "service", Request: map[string]any{"status": input.Status, "version": input.Version}}
 	securityEntry := securitylog.Entry{EventType: securitylog.EventRoutePolicyChanged, SubjectID: input.RouteID, SubjectType: "route_policy", Metadata: map[string]any{"status": input.Status, "version": input.Version}}
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		if err := ensureRoute(ctx, tx, input.RouteID); err != nil {
+		routeName, err := ensureRoute(ctx, tx, input.RouteID)
+		if err != nil {
 			return err
 		}
+		operationEntry.ResourceName = routeName
+		securityEntry.SubjectName = routeName
 		if err := ensurePermissionReferences(ctx, tx, input.References); err != nil {
 			return err
 		}
@@ -346,15 +349,19 @@ func (s *Service) resolvePermissions(ctx context.Context, refs []ReferenceInput)
 	return permissions, nil
 }
 
-func ensureRoute(ctx context.Context, tx *sqlx.Tx, routeID string) error {
-	var exists int
-	if err := tx.GetContext(ctx, &exists, tx.Rebind(`SELECT 1 FROM route_definitions WHERE id=? AND status='active' AND deleted_at IS NULL`), routeID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("get route definition: %w", err)
+func ensureRoute(ctx context.Context, tx *sqlx.Tx, routeID string) (string, error) {
+	var route struct {
+		Protocol string `db:"protocol"`
+		Method   string `db:"method"`
+		Path     string `db:"path"`
 	}
-	return nil
+	if err := tx.GetContext(ctx, &route, tx.Rebind(`SELECT protocol,method,path FROM route_definitions WHERE id=? AND status='active' AND deleted_at IS NULL`), routeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("get route definition: %w", err)
+	}
+	return strings.TrimSpace(route.Protocol + " " + strings.ToUpper(route.Method) + " " + route.Path), nil
 }
 
 func setPolicy(ctx context.Context, tx *sqlx.Tx, actor string, input SetInput) error {

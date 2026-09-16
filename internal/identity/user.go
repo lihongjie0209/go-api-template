@@ -297,7 +297,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if e != nil {
 		return e
 	}
-	e = s.mutate(ctx, "identity.user.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
+	e = s.mutate(ctx, "identity.user.delete", id, map[string]any{"name": identityUserDisplayName(existing), "version": version}, func(tx *sqlx.Tx) error {
 		for _, query := range []string{
 			`SELECT count(*) FROM tenants WHERE owner_user_id=? AND deleted_at IS NULL`,
 			`SELECT count(*) FROM tenant_memberships WHERE user_id=? AND deleted_at IS NULL`,
@@ -400,6 +400,13 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		_ = s.security.Record(ctx, securityEntry)
 	}
 	return err
+}
+
+func identityUserDisplayName(user User) string {
+	if name := strings.TrimSpace(user.DisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(user.Username)
 }
 
 func identityMutationName(request any, fallback string) string {

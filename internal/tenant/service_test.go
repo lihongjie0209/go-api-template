@@ -285,6 +285,16 @@ func TestMembershipMutationRollsBackWhenTransactionalOperationLogFails(t *testin
 	}
 }
 
+func TestMemberDisplayNamePrefersSnapshotAndFallsBackToUsername(t *testing.T) {
+	t.Parallel()
+	if got := memberDisplayName(Member{Username: "alice", DisplayName: " Alice Chen "}); got != "Alice Chen" {
+		t.Fatalf("memberDisplayName() = %q", got)
+	}
+	if got := memberDisplayName(Member{Username: " alice "}); got != "alice" {
+		t.Fatalf("memberDisplayName() fallback = %q", got)
+	}
+}
+
 func paginationRequest(page, pageSize int) pagination.Request {
 	return pagination.Request{Page: page, PageSize: pageSize}
 }

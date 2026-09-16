@@ -549,7 +549,11 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if id == "" || len(id) > maxIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	return s.mutate(ctx, "permission.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
+	current, e := s.get(ctx, id)
+	if e != nil {
+		return e
+	}
+	return s.mutate(ctx, "permission.delete", id, map[string]any{"name": current.Name, "version": version}, func(tx *sqlx.Tx) error {
 		current, err := getForUpdate(ctx, tx, id)
 		if err != nil {
 			return err
@@ -703,8 +707,15 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 }
 
 func permissionMutationName(request any, fallback string) string {
-	if value, ok := request.(Input); ok && strings.TrimSpace(value.Name) != "" {
-		return strings.TrimSpace(value.Name)
+	switch value := request.(type) {
+	case Input:
+		if strings.TrimSpace(value.Name) != "" {
+			return strings.TrimSpace(value.Name)
+		}
+	case map[string]any:
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
 	}
 	return fallback
 }

@@ -281,8 +281,12 @@ func (s *DepartmentService) Delete(ctx context.Context, id string, version int64
 	if id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	return s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.department.delete", id, map[string]any{"version": version}, nil, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.department.delete", id, map[string]any{"name": current.Name, "version": version}, nil, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 				return err
 			}
@@ -333,6 +337,10 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 		seen[assignment.MembershipID] = struct{}{}
 		ids[i] = assignment.MembershipID
 	}
+	department, err := s.Get(ctx, departmentID)
+	if err != nil {
+		return err
+	}
 	return s.withDepartmentLock(ctx, actor.TenantID, "members", func(ctx context.Context) error {
 		primaryCount := 0
 		for _, assignment := range assignments {
@@ -340,7 +348,7 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 				primaryCount++
 			}
 		}
-		request := map[string]any{"assignment_count": len(assignments), "primary_count": primaryCount}
+		request := map[string]any{"name": department.Name, "assignment_count": len(assignments), "primary_count": primaryCount}
 		return s.mutate(ctx, "tenant.department.members.set", departmentID, request, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 				return err
@@ -423,6 +431,10 @@ func departmentMutationName(request any, fallback string) string {
 		return value.Name
 	case DepartmentUpdate:
 		return value.Name
+	case map[string]any:
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
 	}
 	return fallback
 }

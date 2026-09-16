@@ -248,6 +248,10 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 	if strings.TrimSpace(id) == "" || len(id) > maxAccountIDLength || version <= 0 {
 		return Created{}, ErrInvalid
 	}
+	account, err := s.get(ctx, "id=?", id)
+	if err != nil {
+		return Created{}, err
+	}
 	secret, err := newSecret()
 	if err != nil {
 		return Created{}, err
@@ -256,7 +260,7 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 	if err != nil {
 		return Created{}, err
 	}
-	err = s.mutate(ctx, "identity.service-account.secret.rotate", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
+	err = s.mutate(ctx, "identity.service-account.secret.rotate", id, map[string]any{"name": account.Name, "version": version}, func(tx *sqlx.Tx) error {
 		query := tx.Rebind(`UPDATE identity_service_accounts SET secret_hash=?,last_used_at=NULL,failed_attempts=0,locked_until=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		result, execErr := tx.ExecContext(ctx, query, hash, time.Now(), actor.ID, id, version)
 		return oneRow(result, execErr)
@@ -264,7 +268,7 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 	if err != nil {
 		return Created{}, err
 	}
-	account, err := s.get(ctx, "id=?", id)
+	account, err = s.get(ctx, "id=?", id)
 	return Created{Account: account, Secret: secret}, err
 }
 
@@ -276,7 +280,11 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if strings.TrimSpace(id) == "" || len(id) > maxAccountIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	return s.mutate(ctx, "identity.service-account.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
+	account, err := s.get(ctx, "id=?", id)
+	if err != nil {
+		return err
+	}
+	return s.mutate(ctx, "identity.service-account.delete", id, map[string]any{"name": account.Name, "version": version}, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		query := tx.Rebind(`UPDATE identity_service_accounts SET status=?,deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		result, execErr := tx.ExecContext(ctx, query, StatusDisabled, now, actor.ID, now, actor.ID, id, version)

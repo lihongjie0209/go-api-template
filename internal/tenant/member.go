@@ -227,8 +227,12 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 	now := time.Now()
 	var created Member
 	var businessErr error
+	subjectName := strings.TrimSpace(user.DisplayName)
+	if subjectName == "" {
+		subjectName = strings.TrimSpace(user.Username)
+	}
 	run := func(runCtx context.Context) error {
-		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectName: user.DisplayName, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
+		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectName: subjectName, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(runCtx, tx, actor.TenantID); err != nil {
 				return err
 			}
@@ -285,7 +289,12 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength || version <= 0 || (status != StatusActive && status != StatusDisabled) {
 		return Member{}, ErrInvalid
 	}
-	e = s.mutate(ctx, "tenant.member.status.update", id, map[string]any{"status": status, "version": version}, securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: id, SubjectType: "tenant_membership", TenantID: actor.TenantID, Metadata: map[string]any{"status": status}}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+	member, e := s.repository.GetMember(ctx, actor.TenantID, id)
+	if e != nil {
+		return Member{}, e
+	}
+	subjectName := memberDisplayName(member)
+	e = s.mutate(ctx, "tenant.member.status.update", id, map[string]any{"status": status, "version": version}, securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: id, SubjectName: subjectName, SubjectType: "tenant_membership", TenantID: actor.TenantID, Metadata: map[string]any{"status": status}}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 		if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 			return err
 		}
@@ -310,7 +319,7 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if e != nil {
 		return Member{}, e
 	}
-	member, e := s.repository.GetMember(ctx, actor.TenantID, id)
+	member, e = s.repository.GetMember(ctx, actor.TenantID, id)
 	if e != nil {
 		return Member{}, e
 	}
@@ -325,7 +334,11 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	e = s.mutate(ctx, "tenant.member.remove", id, map[string]any{"version": version}, securitylog.Entry{EventType: securitylog.EventMembershipRemoved, SubjectID: id, SubjectType: "tenant_membership", TenantID: actor.TenantID}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+	member, e := s.repository.GetMember(ctx, actor.TenantID, id)
+	if e != nil {
+		return e
+	}
+	e = s.mutate(ctx, "tenant.member.remove", id, map[string]any{"version": version}, securitylog.Entry{EventType: securitylog.EventMembershipRemoved, SubjectID: id, SubjectName: memberDisplayName(member), SubjectType: "tenant_membership", TenantID: actor.TenantID}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 		if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 			return err
 		}
@@ -353,6 +366,14 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 	})
 	return e
 }
+
+func memberDisplayName(member Member) string {
+	if name := strings.TrimSpace(member.DisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(member.Username)
+}
+
 func ensureActiveTenant(ctx context.Context, tx *sqlx.Tx, tenantID string) error {
 	var count int
 	if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT count(*) FROM tenants WHERE id=? AND status='active' AND deleted_at IS NULL`), tenantID); err != nil {

@@ -112,8 +112,12 @@ func (s *TenantAuthorizationService) SetTenantPermissions(ctx context.Context, t
 	if err != nil {
 		return err
 	}
+	tenantName, err := s.tenantName(ctx, tenantID)
+	if err != nil {
+		return err
+	}
 	return s.withLock(ctx, "tenant:"+tenantID+":permissions", func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.permissions.set", tenantID, permissionIDs, tenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.permissions.set", tenantID, map[string]any{"name": tenantName, "permission_ids": permissionIDs}, tenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureTenant(ctx, tx, tenantID); err != nil {
 				return err
 			}
@@ -148,8 +152,12 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 	if actor.TenantID != "" && (actor.TenantID != tenantID || !s.isAdministrator(ctx, tenantID, actor.MembershipID)) {
 		return ErrTenantAuthorizationForbidden
 	}
+	memberName, err := s.membershipName(ctx, tenantID, membershipID)
+	if err != nil {
+		return err
+	}
 	return s.withLock(ctx, "tenant:"+tenantID+":administrators", func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.administrator.set", membershipID, map[string]any{"tenant_id": tenantID, "enabled": enabled}, tenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.administrator.set", membershipID, map[string]any{"name": memberName, "tenant_id": tenantID, "enabled": enabled}, tenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if actor.TenantID != "" {
 				if err := ensureAdministrator(ctx, tx, tenantID, actor.MembershipID); err != nil {
 					return err
@@ -220,8 +228,12 @@ func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, rol
 	if err != nil {
 		return err
 	}
+	roleName, err := s.roleName(ctx, actor.TenantID, roleID)
+	if err != nil {
+		return err
+	}
 	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.role.permissions.set", roleID, permissionIDs, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.role.permissions.set", roleID, map[string]any{"name": roleName, "permission_ids": permissionIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
 				return err
 			}
@@ -254,8 +266,12 @@ func (s *TenantAuthorizationService) SetMemberRoles(ctx context.Context, members
 	if err != nil {
 		return err
 	}
+	memberName, err := s.membershipName(ctx, actor.TenantID, membershipID)
+	if err != nil {
+		return err
+	}
 	return s.withLock(ctx, "tenant:"+actor.TenantID+":member:"+membershipID+":roles", func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.member.roles.set", membershipID, roleIDs, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.member.roles.set", membershipID, map[string]any{"name": memberName, "role_ids": roleIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureMembership(ctx, tx, actor.TenantID, membershipID); err != nil {
 				return err
 			}
@@ -493,8 +509,12 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 	if roleID == "" || len(roleID) > maxAuthorizationIDLength || version <= 0 {
 		return ErrTenantAuthorizationInvalid
 	}
+	roleName, err := s.roleName(ctx, actor.TenantID, roleID)
+	if err != nil {
+		return err
+	}
 	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.role.delete", roleID, map[string]any{"version": version}, actor.TenantID, nil, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.role.delete", roleID, map[string]any{"name": roleName, "version": version}, actor.TenantID, nil, func(tx *sqlx.Tx) error {
 			if err := ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
 				return err
 			}
@@ -867,6 +887,47 @@ func authorizationMutationName(request any, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func (s *TenantAuthorizationService) tenantName(ctx context.Context, tenantID string) (string, error) {
+	var name string
+	if err := s.db.GetContext(ctx, &name, s.db.Rebind(`SELECT name FROM tenants WHERE id=? AND deleted_at IS NULL`), tenantID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrTenantAuthorizationNotFound
+		}
+		return "", err
+	}
+	return strings.TrimSpace(name), nil
+}
+
+func (s *TenantAuthorizationService) membershipName(ctx context.Context, tenantID, membershipID string) (string, error) {
+	var member struct {
+		Username    string `db:"username"`
+		DisplayName string `db:"display_name"`
+	}
+	query := s.db.Rebind(`SELECT username,display_name FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`)
+	if err := s.db.GetContext(ctx, &member, query, tenantID, membershipID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrTenantAuthorizationNotFound
+		}
+		return "", err
+	}
+	if name := strings.TrimSpace(member.DisplayName); name != "" {
+		return name, nil
+	}
+	return strings.TrimSpace(member.Username), nil
+}
+
+func (s *TenantAuthorizationService) roleName(ctx context.Context, tenantID, roleID string) (string, error) {
+	var name string
+	query := s.db.Rebind(`SELECT name FROM tenant_roles WHERE tenant_id=? AND id=? AND deleted_at IS NULL`)
+	if err := s.db.GetContext(ctx, &name, query, tenantID, roleID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrTenantAuthorizationNotFound
+		}
+		return "", err
+	}
+	return strings.TrimSpace(name), nil
 }
 
 func pruneRolePermissions(ctx context.Context, tx *sqlx.Tx, tenantID string, allowed []string, actorID string) error {

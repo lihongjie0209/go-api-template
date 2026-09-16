@@ -89,7 +89,7 @@ func TestSetRollsBackWhenTransactionalAuditFails(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT 1 FROM route_definitions`).WithArgs("route-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(1))
+	mock.ExpectQuery(`SELECT protocol,method,path FROM route_definitions`).WithArgs("route-1").WillReturnRows(sqlmock.NewRows([]string{"protocol", "method", "path"}).AddRow("http", "post", "/api/v1/users/page"))
 	mock.ExpectExec(`INSERT INTO route_policy_definitions`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT id,permission_id,deleted_at FROM route_policy_permission_refs`).WithArgs("route-1").WillReturnRows(sqlmock.NewRows([]string{"id", "permission_id", "deleted_at"}))
 	mock.ExpectRollback()
@@ -98,6 +98,7 @@ func TestSetRollsBackWhenTransactionalAuditFails(t *testing.T) {
 	require.ErrorContains(t, err, "outbox unavailable")
 	require.Equal(t, 1, recorder.transactionalCalls)
 	require.Equal(t, 1, recorder.failureCalls)
+	require.Equal(t, "http POST /api/v1/users/page", recorder.lastEntry.ResourceName)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -105,6 +106,7 @@ type failingOperationRecorder struct {
 	err                error
 	transactionalCalls int
 	failureCalls       int
+	lastEntry          operationlog.Entry
 }
 
 func (*failingOperationRecorder) Enabled() bool { return true }
@@ -114,8 +116,9 @@ func (r *failingOperationRecorder) Record(_ context.Context, entry operationlog.
 	}
 	return nil
 }
-func (r *failingOperationRecorder) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+func (r *failingOperationRecorder) RecordTx(_ context.Context, _ *sqlx.Tx, entry operationlog.Entry) error {
 	r.transactionalCalls++
+	r.lastEntry = entry
 	return r.err
 }
 

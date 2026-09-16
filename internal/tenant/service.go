@@ -275,7 +275,11 @@ func (s *Service) AdminDelete(ctx context.Context, id string, version int64) err
 	if id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	err = s.mutate(ctx, "platform.tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
+	current, err := s.repository.AdminGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	err = s.mutate(ctx, "platform.tenant.delete", id, map[string]any{"name": current.Name, "version": version}, func(tx *sqlx.Tx) error {
 		return deleteTenant(ctx, tx, id, version, actor.ID)
 	})
 	if err == nil {
@@ -321,7 +325,11 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	err = s.mutate(ctx, "tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error { return deleteTenant(ctx, tx, id, version, actor.ID) })
+	current, err := s.repository.Get(ctx, id, actor.TenantID)
+	if err != nil {
+		return err
+	}
+	err = s.mutate(ctx, "tenant.delete", id, map[string]any{"name": current.Name, "version": version}, func(tx *sqlx.Tx) error { return deleteTenant(ctx, tx, id, version, actor.ID) })
 	if err == nil {
 		s.invalidate(ctx, id)
 	}
