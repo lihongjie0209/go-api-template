@@ -605,8 +605,9 @@ func (s *Service) validateReferences(ctx context.Context, tx *sqlx.Tx, id, menuT
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(context.Context, *sqlx.Tx) error) error {
 	run := func(runCtx context.Context) error {
 		started := time.Now()
-		operationEntry := operationlog.Entry{Operation: operation, ResourceType: "menu", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
-		securityEntry := securitylog.Entry{EventType: securitylog.EventMenuChanged, SubjectID: id, SubjectType: "menu", Metadata: map[string]any{"operation": operation}}
+		resourceName := menuMutationName(request, id)
+		operationEntry := operationlog.Entry{Operation: operation, ResourceType: "menu", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
+		securityEntry := securitylog.Entry{EventType: securitylog.EventMenuChanged, SubjectID: id, SubjectName: resourceName, SubjectType: "menu", Metadata: map[string]any{"operation": operation}}
 		err := s.tx.Within(runCtx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := fn(runCtx, tx); err != nil {
 				return err
@@ -661,6 +662,16 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		return ErrConflict
 	}
 	return nil
+}
+
+func menuMutationName(request any, fallback string) string {
+	switch value := request.(type) {
+	case Input:
+		return value.Name
+	case UpdateInput:
+		return value.Name
+	}
+	return fallback
 }
 
 func validParentTypes(records []Record) bool {

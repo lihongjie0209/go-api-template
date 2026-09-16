@@ -60,6 +60,7 @@ var ErrInvalidEntry = errors.New("invalid security log entry")
 type Entry struct {
 	EventType    EventType `json:"event_type"`
 	SubjectID    string    `json:"subject_id,omitempty"`
+	SubjectName  string    `json:"subject_name,omitempty"`
 	SubjectType  string    `json:"subject_type,omitempty"`
 	TenantID     string    `json:"tenant_id,omitempty"`
 	Identifier   string    `json:"-"`
@@ -79,6 +80,7 @@ type payload struct {
 	ActorID        string          `json:"actor_id"`
 	ActorType      string          `json:"actor_type"`
 	SubjectID      string          `json:"subject_id"`
+	SubjectName    string          `json:"subject_name"`
 	SubjectType    string          `json:"subject_type"`
 	TenantID       string          `json:"tenant_id"`
 	Succeeded      bool            `json:"succeeded"`
@@ -203,7 +205,7 @@ func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnv
 	requestID, _ := requestid.FromContext(ctx)
 	span := trace.SpanContextFromContext(ctx)
 	now := time.Now()
-	value := payload{EventType: entry.EventType, ActorID: actor.ID, ActorType: string(actor.Type), SubjectID: entry.SubjectID, SubjectType: entry.SubjectType, TenantID: entry.TenantID, Succeeded: entry.Succeeded, Reason: truncate(entry.Reason, 1024), ErrorCode: truncate(entry.ErrorCode, 128), ErrorMessage: truncate(entry.ErrorMessage, 2048), IdentifierHash: s.hashIdentifier(entry.Identifier), TokenIDHash: s.hash(entry.TokenID), SessionID: truncate(entry.SessionID, 256), RequestID: requestID, TraceID: span.TraceID().String(), ClientIP: truncate(entry.ClientIP, 256), UserAgent: truncate(entry.UserAgent, 1024), Metadata: metadata, OccurredAt: now}
+	value := payload{EventType: entry.EventType, ActorID: actor.ID, ActorType: string(actor.Type), SubjectID: entry.SubjectID, SubjectName: entry.SubjectName, SubjectType: entry.SubjectType, TenantID: entry.TenantID, Succeeded: entry.Succeeded, Reason: truncate(entry.Reason, 1024), ErrorCode: truncate(entry.ErrorCode, 128), ErrorMessage: truncate(entry.ErrorMessage, 2048), IdentifierHash: s.hashIdentifier(entry.Identifier), TokenIDHash: s.hash(entry.TokenID), SessionID: truncate(entry.SessionID, 256), RequestID: requestID, TraceID: span.TraceID().String(), ClientIP: truncate(entry.ClientIP, 256), UserAgent: truncate(entry.UserAgent, 1024), Metadata: metadata, OccurredAt: now}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("encode security log: %w", err)
@@ -228,8 +230,19 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 		auditActor = s.appName + ":security-log-consumer"
 	}
 	actorCtx := platformprincipal.SystemContext(ctx, auditActor)
+	names, err := presentation.ActorNameSnapshots(ctx, s.actors, value.ActorID, value.SubjectID)
+	if err != nil {
+		return fmt.Errorf("resolve security log name snapshots: %w", err)
+	}
+	actorName := names[value.ActorID]
+	subjectName := value.SubjectName
+	if subjectName == "" {
+		subjectName = names[value.SubjectID]
+	}
 	started := time.Now()
-	err := s.transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error { return insert(actorCtx, tx, envelope.EventId, value, auditActor) })
+	err = s.transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		return insert(actorCtx, tx, envelope.EventId, value, auditActor, actorName, subjectName)
+	})
 	status := "success"
 	if err != nil {
 		status = "error"
@@ -250,7 +263,7 @@ func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, value 
 	if envelope.TenantId != value.TenantID || envelope.Context.ActorId != value.ActorID || envelope.Context.ActorType != value.ActorType || envelope.Context.TenantId != value.TenantID || envelope.Context.RequestId != value.RequestID || envelope.Context.TraceId != value.TraceID {
 		return fmt.Errorf("%w: inconsistent security log envelope context", ErrInvalidEntry)
 	}
-	entry := Entry{EventType: value.EventType, SubjectID: value.SubjectID, SubjectType: value.SubjectType, TenantID: value.TenantID, SessionID: value.SessionID, Succeeded: value.Succeeded, Reason: value.Reason, ErrorCode: value.ErrorCode, ErrorMessage: value.ErrorMessage, ClientIP: value.ClientIP, UserAgent: value.UserAgent}
+	entry := Entry{EventType: value.EventType, SubjectID: value.SubjectID, SubjectName: value.SubjectName, SubjectType: value.SubjectType, TenantID: value.TenantID, SessionID: value.SessionID, Succeeded: value.Succeeded, Reason: value.Reason, ErrorCode: value.ErrorCode, ErrorMessage: value.ErrorMessage, ClientIP: value.ClientIP, UserAgent: value.UserAgent}
 	if err := validateEntry(entry); err != nil || len(value.ActorID) > 256 || len(value.ActorType) > 64 || len(value.IdentifierHash) > 64 || len(value.TokenIDHash) > 64 || len(value.RequestID) > 256 || len(value.TraceID) > 64 || len(value.Metadata) > s.cfg.MaxPayloadBytes || !json.Valid(value.Metadata) {
 		return fmt.Errorf("%w: invalid security log event payload", ErrInvalidEntry)
 	}
@@ -261,16 +274,16 @@ func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, value 
 	return nil
 }
 
-func insert(ctx context.Context, tx *sqlx.Tx, id string, value payload, auditActor string) error {
+func insert(ctx context.Context, tx *sqlx.Tx, id string, value payload, auditActor, actorName, subjectName string) error {
 	now := time.Now()
-	query := `INSERT INTO security_logs (id, tenant_id, actor_id, actor_type, subject_id, subject_type, event_type, succeeded, reason, error_code, error_message, identifier_hash, token_id_hash, session_id, request_id, trace_id, client_ip, user_agent, metadata, occurred_at, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO security_logs (id, tenant_id, actor_id, actor_name_snapshot, actor_type, subject_id, subject_name_snapshot, subject_type, event_type, succeeded, reason, error_code, error_message, identifier_hash, token_id_hash, session_id, request_id, trace_id, client_ip, user_agent, metadata, occurred_at, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`
 	if tx.DriverName() == "mysql" {
 		query = "INSERT IGNORE" + strings.TrimPrefix(query, "INSERT")
 	} else {
 		query = strings.Replace(query, "CAST(? AS JSON)", "CAST(? AS jsonb)", 1) + " ON CONFLICT (id, occurred_at) DO NOTHING"
 	}
 	query = tx.Rebind(query)
-	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, value.ActorType, value.SubjectID, value.SubjectType, value.EventType, value.Succeeded, value.Reason, value.ErrorCode, value.ErrorMessage, value.IdentifierHash, value.TokenIDHash, value.SessionID, value.RequestID, value.TraceID, value.ClientIP, value.UserAgent, string(value.Metadata), value.OccurredAt, now, auditActor, now, auditActor, 1)
+	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, truncate(actorName, 512), value.ActorType, value.SubjectID, truncate(subjectName, 512), value.SubjectType, value.EventType, value.Succeeded, value.Reason, value.ErrorCode, value.ErrorMessage, value.IdentifierHash, value.TokenIDHash, value.SessionID, value.RequestID, value.TraceID, value.ClientIP, value.UserAgent, string(value.Metadata), value.OccurredAt, now, auditActor, now, auditActor, 1)
 	if err != nil {
 		return fmt.Errorf("insert security log: %w", err)
 	}
@@ -298,7 +311,7 @@ func validateEntry(entry Entry) error {
 		return fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
 	}
 	for name, value := range map[string]string{
-		"subject_id": entry.SubjectID, "subject_type": entry.SubjectType, "tenant_id": entry.TenantID,
+		"subject_id": entry.SubjectID, "subject_name": entry.SubjectName, "subject_type": entry.SubjectType, "tenant_id": entry.TenantID,
 		"identifier": entry.Identifier, "token_id": entry.TokenID, "session_id": entry.SessionID,
 		"reason": entry.Reason, "error_code": entry.ErrorCode, "error_message": entry.ErrorMessage,
 		"client_ip": entry.ClientIP, "user_agent": entry.UserAgent,
@@ -307,7 +320,7 @@ func validateEntry(entry Entry) error {
 			return fmt.Errorf("%w: %s must be valid UTF-8", ErrInvalidEntry, name)
 		}
 	}
-	if len(entry.SubjectID) > 256 || len(entry.SubjectType) > 64 || len(entry.TenantID) > 256 ||
+	if len(entry.SubjectID) > 256 || len(entry.SubjectName) > 512 || len(entry.SubjectType) > 64 || len(entry.TenantID) > 256 ||
 		len(entry.Identifier) > 320 || len(entry.TokenID) > 4096 || len(entry.SessionID) > 256 ||
 		len(entry.Reason) > 8192 || len(entry.ErrorCode) > 1024 || len(entry.ErrorMessage) > 8192 ||
 		len(entry.ClientIP) > 256 || len(entry.UserAgent) > 4096 {

@@ -157,10 +157,10 @@ func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_users(id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), actorID, "log.presentation.user", "Log Presentation User", "", "", "active", now, actorID, now, actorID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,application_id,source,operation,resource_type,resource_id,protocol,method,route,request_payload,duration_ms,succeeded,error_code,error_message,request_id,trace_id,client_ip,user_agent,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "operation-presentation", tenantID, actorID, "user", "", "backend", "presentation.test", "test", "resource-1", "service", "", "", "", 1, true, "", "", "", "", "", "", `{}`, now, now, actorID, now, actorID); err != nil {
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_name_snapshot,actor_type,application_id,source,operation,resource_type,resource_id,resource_name_snapshot,protocol,method,route,request_payload,duration_ms,succeeded,error_code,error_message,request_id,trace_id,client_ip,user_agent,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "operation-presentation", tenantID, actorID, "Historical Actor", "user", "", "backend", "presentation.test", "test", "resource-1", "Historical Resource", "service", "", "", "", 1, true, "", "", "", "", "", "", `{}`, now, now, actorID, now, actorID); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_type,subject_id,subject_type,event_type,succeeded,reason,error_code,error_message,identifier_hash,token_id_hash,session_id,request_id,trace_id,client_ip,user_agent,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "security-presentation", tenantID, actorID, "user", actorID, "user", "login", true, "", "", "", "", "", "", "", "", "", "", `{}`, now, now, actorID, now, actorID)
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_name_snapshot,actor_type,subject_id,subject_name_snapshot,subject_type,event_type,succeeded,reason,error_code,error_message,identifier_hash,token_id_hash,session_id,request_id,trace_id,client_ip,user_agent,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "security-presentation", tenantID, actorID, "Historical Actor", "user", actorID, "Historical Subject", "user", "login", true, "", "", "", "", "", "", "", "", "", "", `{}`, now, now, actorID, now, actorID)
 		return err
 	})
 	if err != nil {
@@ -179,13 +179,13 @@ func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatalf("get security presentation: %v", err)
 	}
 	for name, value := range map[string]struct {
-		actorName, createdByName, updatedByName string
-		occurredAt                              time.Time
+		actorName, relatedName, createdByName, updatedByName string
+		occurredAt                                           time.Time
 	}{
-		"operation": {operationRecord.ActorName, operationRecord.CreatedByName, operationRecord.UpdatedByName, operationRecord.OccurredAt},
-		"security":  {securityRecord.ActorName, securityRecord.CreatedByName, securityRecord.UpdatedByName, securityRecord.OccurredAt},
+		"operation": {operationRecord.ActorName, operationRecord.ResourceName, operationRecord.CreatedByName, operationRecord.UpdatedByName, operationRecord.OccurredAt},
+		"security":  {securityRecord.ActorName, securityRecord.SubjectName, securityRecord.CreatedByName, securityRecord.UpdatedByName, securityRecord.OccurredAt},
 	} {
-		if value.actorName != "Log Presentation User" || value.createdByName != "Log Presentation User" || value.updatedByName != "Log Presentation User" {
+		if value.actorName != "Historical Actor" || !strings.HasPrefix(value.relatedName, "Historical ") || value.createdByName != "Log Presentation User" || value.updatedByName != "Log Presentation User" {
 			t.Fatalf("%s display names = %+v", name, value)
 		}
 		_, offset := value.occurredAt.Zone()

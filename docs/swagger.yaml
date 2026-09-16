@@ -1716,6 +1716,8 @@ definitions:
         type: string
       resource_id:
         type: string
+      resource_name:
+        type: string
       resource_type:
         type: string
       route:
@@ -2065,6 +2067,8 @@ definitions:
       session_id:
         type: string
       subject_id:
+        type: string
+      subject_name:
         type: string
       subject_type:
         type: string

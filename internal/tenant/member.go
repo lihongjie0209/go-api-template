@@ -228,7 +228,7 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 	var created Member
 	var businessErr error
 	run := func(runCtx context.Context) error {
-		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
+		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectName: user.DisplayName, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(runCtx, tx, actor.TenantID); err != nil {
 				return err
 			}
@@ -389,7 +389,11 @@ func protectLastAdministrator(ctx context.Context, tx *sqlx.Tx, tenantID, member
 }
 func (s *MembershipService) mutate(ctx context.Context, operation, id string, request any, securityEntry securitylog.Entry, options *sql.TxOptions, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant_membership", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	resourceName := securityEntry.SubjectName
+	if resourceName == "" {
+		resourceName = id
+	}
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant_membership", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
 	err := s.transactor.Within(ctx, options, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err

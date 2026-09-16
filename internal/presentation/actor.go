@@ -48,3 +48,22 @@ func ActorNames(ctx context.Context, resolver ActorResolver, ids ...string) (map
 	}
 	return names, nil
 }
+
+// ActorNameSnapshots returns only real display names. Stable-ID fallbacks are
+// intentionally omitted so an unavailable Identity service does not freeze an
+// ID into a historical name column and suppress later response-time recovery.
+func ActorNameSnapshots(ctx context.Context, resolver ActorResolver, ids ...string) (map[string]string, error) {
+	if resolver == nil {
+		return map[string]string{}, nil
+	}
+	names, err := ActorNames(ctx, resolver, ids...)
+	if err != nil {
+		return nil, err
+	}
+	for id, name := range names {
+		if name == id {
+			delete(names, id)
+		}
+	}
+	return names, nil
+}

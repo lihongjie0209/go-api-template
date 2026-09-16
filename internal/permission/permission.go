@@ -649,8 +649,9 @@ func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int,
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "permission", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
-	securityEntry := securitylog.Entry{EventType: securitylog.EventPermissionChanged, SubjectID: id, SubjectType: "permission", Metadata: map[string]any{"operation": operation}}
+	resourceName := permissionMutationName(request, id)
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "permission", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventPermissionChanged, SubjectID: id, SubjectName: resourceName, SubjectType: "permission", Metadata: map[string]any{"operation": operation}}
 	err := s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -699,4 +700,11 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		}
 	}
 	return nil
+}
+
+func permissionMutationName(request any, fallback string) string {
+	if value, ok := request.(Input); ok && strings.TrimSpace(value.Name) != "" {
+		return strings.TrimSpace(value.Name)
+	}
+	return fallback
 }

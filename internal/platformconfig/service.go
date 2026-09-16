@@ -459,8 +459,8 @@ func (s *Service) ListPublic(ctx context.Context, category string) ([]PublicView
 func (s *Service) mutate(ctx context.Context, operation, id, key string, request any, fn func(context.Context, *sqlx.Tx) error) error {
 	run := func(runCtx context.Context) error {
 		started := time.Now()
-		operationEntry := operationlog.Entry{Operation: operation, ResourceType: "platform_config", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
-		securityEntry := securitylog.Entry{EventType: securitylog.EventPlatformConfigChanged, SubjectID: id, SubjectType: "platform_config", Metadata: map[string]any{"operation": operation, "key": key}}
+		operationEntry := operationlog.Entry{Operation: operation, ResourceType: "platform_config", ResourceID: id, ResourceName: key, Source: "backend", Protocol: "service", Request: request}
+		securityEntry := securitylog.Entry{EventType: securitylog.EventPlatformConfigChanged, SubjectID: id, SubjectName: key, SubjectType: "platform_config", Metadata: map[string]any{"operation": operation, "key": key}}
 		err := s.tx.Within(runCtx, nil, func(tx *sqlx.Tx) error {
 			if err := fn(runCtx, tx); err != nil {
 				return err

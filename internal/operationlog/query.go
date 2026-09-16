@@ -27,6 +27,7 @@ type Record struct {
 	Operation      string          `db:"operation" json:"operation"`
 	ResourceType   string          `db:"resource_type" json:"resource_type"`
 	ResourceID     string          `db:"resource_id" json:"resource_id"`
+	ResourceName   string          `db:"resource_name" json:"resource_name"`
 	Protocol       string          `db:"protocol" json:"protocol"`
 	Method         string          `db:"method" json:"method"`
 	Route          string          `db:"route" json:"route"`
@@ -75,7 +76,7 @@ type Page struct {
 	Total    int64    `json:"total"`
 }
 
-const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_type,l.application_id,l.source,l.operation,l.resource_type,l.resource_id,l.protocol,l.method,l.route,l.request_payload,l.duration_ms,l.succeeded,l.error_code,l.error_message,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.extension,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
+const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_name_snapshot AS actor_name,l.actor_type,l.application_id,l.source,l.operation,l.resource_type,l.resource_id,l.resource_name_snapshot AS resource_name,l.protocol,l.method,l.route,l.request_payload,l.duration_ms,l.succeeded,l.error_code,l.error_message,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.extension,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -130,8 +131,8 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
 		pattern := "%" + strings.ToLower(keyword) + "%"
-		where += ` AND (LOWER(l.operation) LIKE ? OR LOWER(l.resource_type) LIKE ? OR LOWER(l.resource_id) LIKE ? OR LOWER(l.actor_id) LIKE ? OR LOWER(l.request_id) LIKE ?)`
-		args = append(args, pattern, pattern, pattern, pattern, pattern)
+		where += ` AND (LOWER(l.operation) LIKE ? OR LOWER(l.resource_type) LIKE ? OR LOWER(l.resource_id) LIKE ? OR LOWER(l.resource_name_snapshot) LIKE ? OR LOWER(l.actor_id) LIKE ? OR LOWER(l.actor_name_snapshot) LIKE ? OR LOWER(l.request_id) LIKE ?)`
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	for _, filter := range []struct {
 		column string
@@ -176,14 +177,22 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 func (s *Service) present(ctx context.Context, records []Record) error {
 	ids := make([]string, 0, len(records)*3)
 	for _, record := range records {
-		ids = append(ids, record.ActorID, record.CreatedBy, record.UpdatedBy)
+		if record.ActorName == "" {
+			ids = append(ids, record.ActorID)
+		}
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
 	}
 	names, err := presentation.ActorNames(ctx, s.actors, ids...)
 	if err != nil {
 		return err
 	}
 	for index := range records {
-		records[index].ActorName = names[records[index].ActorID]
+		if records[index].ActorName == "" {
+			records[index].ActorName = names[records[index].ActorID]
+		}
+		if records[index].ResourceName == "" {
+			records[index].ResourceName = records[index].ResourceID
+		}
 		records[index].CreatedByName = names[records[index].CreatedBy]
 		records[index].UpdatedByName = names[records[index].UpdatedBy]
 		records[index] = presentRecord(records[index])

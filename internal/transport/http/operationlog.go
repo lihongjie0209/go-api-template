@@ -82,6 +82,7 @@ func (h *OperationLogHandler) RecordFrontend(c *gin.Context) {
 		Operation:     "frontend." + request.EventType + "." + request.EventName,
 		ResourceType:  request.EventType,
 		ResourceID:    request.ResourceID,
+		ResourceName:  request.EventName,
 		ApplicationID: request.ApplicationID,
 		Source:        "frontend",
 		Protocol:      "http",

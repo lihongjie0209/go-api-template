@@ -395,7 +395,7 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 
 func (s *DepartmentService) mutate(ctx context.Context, operation, id string, request any, options *sql.TxOptions, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	entry := operationlog.Entry{Operation: operation, ResourceType: "tenant_department", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	entry := operationlog.Entry{Operation: operation, ResourceType: "tenant_department", ResourceID: id, ResourceName: departmentMutationName(request, id), Source: "backend", Protocol: "service", Request: request}
 	err := s.tx.Within(ctx, options, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -415,6 +415,16 @@ func (s *DepartmentService) mutate(ctx context.Context, operation, id string, re
 		_ = s.operations.Record(ctx, entry)
 	}
 	return err
+}
+
+func departmentMutationName(request any, fallback string) string {
+	switch value := request.(type) {
+	case DepartmentInput:
+		return value.Name
+	case DepartmentUpdate:
+		return value.Name
+	}
+	return fallback
 }
 func departmentActor(ctx context.Context) (platformprincipal.Principal, error) {
 	actor, err := platformprincipal.Require(ctx)

@@ -189,7 +189,7 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 	}
 	role := TenantRole{ID: uuid.NewString(), TenantID: actor.TenantID, Code: code, Name: name, Description: description, Status: "active", Version: 1}
 	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role-code:"+code, func(ctx context.Context) error {
-		return s.mutate(ctx, "tenant.role.create", role.ID, permissionIDs, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		return s.mutate(ctx, "tenant.role.create", role.ID, map[string]any{"name": role.Name, "permission_ids": permissionIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
 				return err
 			}
@@ -822,8 +822,9 @@ func (s *TenantAuthorizationService) withLock(ctx context.Context, key string, f
 
 func (s *TenantAuthorizationService) mutate(ctx context.Context, operation, resourceID string, request any, tenantID string, options *sql.TxOptions, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant_authorization", ResourceID: resourceID, Source: "backend", Protocol: "service", Request: request}
-	securityEntry := securitylog.Entry{EventType: securitylog.EventTenantAuthorization, SubjectID: resourceID, SubjectType: "tenant_authorization", TenantID: tenantID, Metadata: map[string]any{"operation": operation}}
+	resourceName := authorizationMutationName(request, resourceID)
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant_authorization", ResourceID: resourceID, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventTenantAuthorization, SubjectID: resourceID, SubjectName: resourceName, SubjectType: "tenant_authorization", TenantID: tenantID, Metadata: map[string]any{"operation": operation}}
 	err := s.transactor.Within(ctx, options, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -857,6 +858,15 @@ func (s *TenantAuthorizationService) mutate(ctx context.Context, operation, reso
 		}
 	}
 	return err
+}
+
+func authorizationMutationName(request any, fallback string) string {
+	if value, ok := request.(map[string]any); ok {
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return fallback
 }
 
 func pruneRolePermissions(ctx context.Context, tx *sqlx.Tx, tenantID string, allowed []string, actorID string) error {

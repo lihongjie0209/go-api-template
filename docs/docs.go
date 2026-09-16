@@ -6788,6 +6788,9 @@ const docTemplate = `{
                 "resource_id": {
                     "type": "string"
                 },
+                "resource_name": {
+                    "type": "string"
+                },
                 "resource_type": {
                     "type": "string"
                 },
@@ -7297,6 +7300,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "subject_id": {
+                    "type": "string"
+                },
+                "subject_name": {
                     "type": "string"
                 },
                 "subject_type": {

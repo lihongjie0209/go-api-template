@@ -12,6 +12,12 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
+type changingActorResolver struct{}
+
+func (changingActorResolver) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
+	return map[string]string{"actor-1": "Current Actor", "subject-1": "Current Subject", "audit-1": "Current Auditor"}, nil
+}
+
 func TestGetScopesTenantPrincipalInSQL(t *testing.T) {
 	t.Parallel()
 	database, mock, err := sqlmock.New()
@@ -41,6 +47,18 @@ func TestPresentUsesAsiaShanghaiWithoutChangingInstant(t *testing.T) {
 		if !value.Equal(instant) || value.Format(time.RFC3339) != "2026-09-16T09:02:03+08:00" {
 			t.Fatalf("%s = %s", name, value.Format(time.RFC3339))
 		}
+	}
+}
+
+func TestPresentPreservesHistoricalActorAndSubjectSnapshots(t *testing.T) {
+	t.Parallel()
+	service := &Service{actors: changingActorResolver{}}
+	records := []Record{{ActorID: "actor-1", ActorName: "Historical Actor", SubjectID: "subject-1", SubjectName: "Historical Subject", CreatedBy: "audit-1", UpdatedBy: "audit-1"}}
+	if err := service.present(t.Context(), records); err != nil {
+		t.Fatal(err)
+	}
+	if records[0].ActorName != "Historical Actor" || records[0].SubjectName != "Historical Subject" || records[0].CreatedByName != "Current Auditor" {
+		t.Fatalf("record=%+v", records[0])
 	}
 }
 

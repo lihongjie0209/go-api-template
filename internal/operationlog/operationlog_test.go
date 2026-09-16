@@ -174,11 +174,15 @@ func TestRecordTxUsesCallerTransaction(t *testing.T) {
 	outbox := &outboxStub{}
 	service := &Service{enabled: true, cfg: config.OperationLog{Subject: "platform.operation-log.v1", MaxPayloadBytes: 1024}, outbox: outbox}
 	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
-	if err := service.RecordTx(ctx, tx, Entry{Operation: "order.create", Source: "backend", Protocol: "service", Succeeded: true}); err != nil {
+	if err := service.RecordTx(ctx, tx, Entry{Operation: "order.create", ResourceID: "order-1", ResourceName: "Quarterly Order", Source: "backend", Protocol: "service", Succeeded: true}); err != nil {
 		t.Fatal(err)
 	}
 	if !outbox.called {
 		t.Fatal("RecordTx() did not use caller transaction")
+	}
+	var payload eventPayload
+	if err := json.Unmarshal(outbox.event.Payload, &payload); err != nil || payload.ResourceName != "Quarterly Order" {
+		t.Fatalf("payload=%+v error=%v", payload, err)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

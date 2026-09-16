@@ -136,11 +136,15 @@ func TestRecordTxUsesCallerTransaction(t *testing.T) {
 	mock.ExpectRollback()
 	outbox := &outboxStub{}
 	service := &Service{cfg: config.SecurityLog{Enabled: true, Subject: "platform.security-log.v1", MaxPayloadBytes: 1024, HashKey: strings.Repeat("h", 32)}, outbox: outbox}
-	if err := service.RecordTx(platformprincipal.SystemContext(t.Context(), "actor-1"), tx, Entry{EventType: EventLogin, Succeeded: true}); err != nil {
+	if err := service.RecordTx(platformprincipal.SystemContext(t.Context(), "actor-1"), tx, Entry{EventType: EventLogin, SubjectID: "user-1", SubjectName: "Historical User", Succeeded: true}); err != nil {
 		t.Fatal(err)
 	}
 	if !outbox.called {
 		t.Fatal("RecordTx() did not use caller transaction")
+	}
+	var recorded payload
+	if err := json.Unmarshal(outbox.event.Payload, &recorded); err != nil || recorded.SubjectName != "Historical User" {
+		t.Fatalf("payload=%+v error=%v", recorded, err)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

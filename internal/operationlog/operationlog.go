@@ -32,6 +32,7 @@ type Entry struct {
 	Operation     string        `json:"operation"`
 	ResourceType  string        `json:"resource_type,omitempty"`
 	ResourceID    string        `json:"resource_id,omitempty"`
+	ResourceName  string        `json:"resource_name,omitempty"`
 	ApplicationID string        `json:"application_id,omitempty"`
 	Source        string        `json:"source"`
 	Protocol      string        `json:"protocol"`
@@ -217,8 +218,13 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 		actorID = s.appName + ":operation-log-consumer"
 	}
 	actorCtx := platformprincipal.SystemContext(ctx, actorID)
+	names, err := presentation.ActorNameSnapshots(ctx, s.actors, payload.ActorID)
+	if err != nil {
+		return fmt.Errorf("resolve operation log actor snapshot: %w", err)
+	}
+	actorName := names[payload.ActorID]
 	started := time.Now()
-	err := s.transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error { return s.insert(actorCtx, tx, envelope.EventId, payload) })
+	err = s.transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error { return s.insert(actorCtx, tx, envelope.EventId, payload, actorName) })
 	status := "success"
 	if err != nil {
 		status = "error"
@@ -260,9 +266,9 @@ func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, payloa
 	return nil
 }
 
-func (s *Service) insert(ctx context.Context, tx *sqlx.Tx, id string, value eventPayload) error {
+func (s *Service) insert(ctx context.Context, tx *sqlx.Tx, id string, value eventPayload, actorName string) error {
 	now := time.Now()
-	query := `INSERT INTO operation_logs (id, tenant_id, actor_id, actor_type, application_id, source, operation, resource_type, resource_id, protocol, method, route, request_payload, duration_ms, succeeded, error_code, error_message, request_id, trace_id, client_ip, user_agent, extension, occurred_at, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO operation_logs (id, tenant_id, actor_id, actor_name_snapshot, actor_type, application_id, source, operation, resource_type, resource_id, resource_name_snapshot, protocol, method, route, request_payload, duration_ms, succeeded, error_code, error_message, request_id, trace_id, client_ip, user_agent, extension, occurred_at, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`
 	if tx.DriverName() == "mysql" {
 		query = "INSERT IGNORE" + strings.TrimPrefix(query, "INSERT")
 	} else {
@@ -270,7 +276,7 @@ func (s *Service) insert(ctx context.Context, tx *sqlx.Tx, id string, value even
 		query += " ON CONFLICT (id, occurred_at) DO NOTHING"
 	}
 	query = tx.Rebind(query)
-	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, value.ActorType, value.ApplicationID, value.Source, value.Operation, value.ResourceType, value.ResourceID, value.Protocol, value.Method, value.Route, value.RequestPayload, value.DurationMS, value.Succeeded, value.ErrorCode, truncate(value.ErrorMessage, 2048), value.RequestID, value.TraceID, value.ClientIP, truncate(value.UserAgent, 1024), string(value.Extension), value.OccurredAt, now, value.ActorID, now, value.ActorID, 1)
+	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, truncate(actorName, 512), value.ActorType, value.ApplicationID, value.Source, value.Operation, value.ResourceType, value.ResourceID, truncate(value.ResourceName, 512), value.Protocol, value.Method, value.Route, value.RequestPayload, value.DurationMS, value.Succeeded, value.ErrorCode, truncate(value.ErrorMessage, 2048), value.RequestID, value.TraceID, value.ClientIP, truncate(value.UserAgent, 1024), string(value.Extension), value.OccurredAt, now, value.ActorID, now, value.ActorID, 1)
 	if err != nil {
 		return fmt.Errorf("insert operation log: %w", err)
 	}
@@ -334,6 +340,7 @@ func validateEntry(entry Entry) error {
 	}
 	for name, value := range map[string]string{
 		"operation": entry.Operation, "resource_type": entry.ResourceType, "resource_id": entry.ResourceID,
+		"resource_name":  entry.ResourceName,
 		"application_id": entry.ApplicationID, "source": entry.Source, "protocol": entry.Protocol,
 		"method": entry.Method, "route": entry.Route, "error_code": entry.ErrorCode,
 		"error_message": entry.ErrorMessage, "client_ip": entry.ClientIP, "user_agent": entry.UserAgent,
@@ -343,7 +350,7 @@ func validateEntry(entry Entry) error {
 		}
 	}
 	if strings.TrimSpace(entry.Source) == "" || strings.TrimSpace(entry.Protocol) == "" ||
-		len(entry.Operation) > 256 || len(entry.ResourceType) > 128 || len(entry.ResourceID) > 256 ||
+		len(entry.Operation) > 256 || len(entry.ResourceType) > 128 || len(entry.ResourceID) > 256 || len(entry.ResourceName) > 512 ||
 		len(entry.ApplicationID) > 128 || len(entry.Source) > 32 || len(entry.Protocol) > 32 ||
 		len(entry.Method) > 32 || len(entry.Route) > 1024 || len(entry.ErrorCode) > 128 ||
 		len(entry.ErrorMessage) > 2048 || len(entry.ClientIP) > 128 || len(entry.UserAgent) > 4096 {

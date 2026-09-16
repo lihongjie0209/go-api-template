@@ -23,6 +23,7 @@ type Record struct {
 	ActorName      string          `db:"actor_name" json:"actor_name"`
 	ActorType      string          `db:"actor_type" json:"actor_type"`
 	SubjectID      string          `db:"subject_id" json:"subject_id"`
+	SubjectName    string          `db:"subject_name" json:"subject_name"`
 	SubjectType    string          `db:"subject_type" json:"subject_type"`
 	EventType      EventType       `db:"event_type" json:"event_type"`
 	Succeeded      bool            `db:"succeeded" json:"succeeded"`
@@ -72,7 +73,7 @@ type Page struct {
 	Total    int64    `json:"total"`
 }
 
-const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_type,l.subject_id,l.subject_type,l.event_type,l.succeeded,l.reason,l.error_code,l.error_message,l.identifier_hash,l.token_id_hash,l.session_id,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.metadata,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
+const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_name_snapshot AS actor_name,l.actor_type,l.subject_id,l.subject_name_snapshot AS subject_name,l.subject_type,l.event_type,l.succeeded,l.reason,l.error_code,l.error_message,l.identifier_hash,l.token_id_hash,l.session_id,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.metadata,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -124,8 +125,8 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
 		pattern := "%" + strings.ToLower(keyword) + "%"
-		where += ` AND (LOWER(l.actor_id) LIKE ? OR LOWER(l.subject_id) LIKE ? OR LOWER(l.session_id) LIKE ? OR LOWER(l.request_id) LIKE ? OR LOWER(l.error_code) LIKE ?)`
-		args = append(args, pattern, pattern, pattern, pattern, pattern)
+		where += ` AND (LOWER(l.actor_id) LIKE ? OR LOWER(l.actor_name_snapshot) LIKE ? OR LOWER(l.subject_id) LIKE ? OR LOWER(l.subject_name_snapshot) LIKE ? OR LOWER(l.session_id) LIKE ? OR LOWER(l.request_id) LIKE ? OR LOWER(l.error_code) LIKE ?)`
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	filters := []struct {
 		column string
@@ -181,14 +182,25 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 func (s *Service) present(ctx context.Context, records []Record) error {
 	ids := make([]string, 0, len(records)*3)
 	for _, record := range records {
-		ids = append(ids, record.ActorID, record.CreatedBy, record.UpdatedBy)
+		if record.ActorName == "" {
+			ids = append(ids, record.ActorID)
+		}
+		if record.SubjectName == "" {
+			ids = append(ids, record.SubjectID)
+		}
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
 	}
 	names, err := presentation.ActorNames(ctx, s.actors, ids...)
 	if err != nil {
 		return err
 	}
 	for index := range records {
-		records[index].ActorName = names[records[index].ActorID]
+		if records[index].ActorName == "" {
+			records[index].ActorName = names[records[index].ActorID]
+		}
+		if records[index].SubjectName == "" {
+			records[index].SubjectName = names[records[index].SubjectID]
+		}
 		records[index].CreatedByName = names[records[index].CreatedBy]
 		records[index].UpdatedByName = names[records[index].UpdatedBy]
 		records[index] = presentRecord(records[index])

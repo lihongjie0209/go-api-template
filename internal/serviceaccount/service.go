@@ -345,7 +345,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		if rows != 1 {
 			return ErrInvalidCredentials
 		}
-		entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: clientID, SubjectID: value.ID, SubjectType: string(platformprincipal.TypeServiceAccount), TokenID: tokenID, Succeeded: true}
+		entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: clientID, SubjectID: value.ID, SubjectName: value.Name, SubjectType: string(platformprincipal.TypeServiceAccount), TokenID: tokenID, Succeeded: true}
 		if recordErr := s.security.RecordTx(accountCtx, tx, entry); recordErr != nil {
 			return fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
 		}
@@ -402,8 +402,9 @@ func (s *Service) get(ctx context.Context, predicate string, args ...any) (Accou
 
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "service_account", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
-	securityEntry := securitylog.Entry{EventType: securitylog.EventServiceAccountChanged, SubjectID: id, SubjectType: "service_account", Metadata: map[string]any{"operation": operation}}
+	resourceName := serviceAccountMutationName(request, id)
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "service_account", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventServiceAccountChanged, SubjectID: id, SubjectName: resourceName, SubjectType: "service_account", Metadata: map[string]any{"operation": operation}}
 	err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -428,6 +429,15 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		_ = s.security.Record(ctx, securityEntry)
 	}
 	return err
+}
+
+func serviceAccountMutationName(request any, fallback string) string {
+	if value, ok := request.(map[string]any); ok {
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return fallback
 }
 
 func requireActor(ctx context.Context) (platformprincipal.Principal, error) {

@@ -39,3 +39,18 @@ func TestActorNamesSupportsMissingResolverAndRejectsUnboundedInput(t *testing.T)
 		t.Fatal("ActorNames() error = nil")
 	}
 }
+
+func TestActorNameSnapshotsOmitsStableIDFallbacks(t *testing.T) {
+	t.Parallel()
+	resolver := &actorResolverStub{}
+	names, err := ActorNameSnapshots(t.Context(), resolver, "user-1", "system-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names["user-1"] != "Alice" {
+		t.Fatalf("names=%#v", names)
+	}
+	if _, exists := names["system-1"]; exists {
+		t.Fatalf("stable ID persisted as snapshot: %#v", names)
+	}
+}

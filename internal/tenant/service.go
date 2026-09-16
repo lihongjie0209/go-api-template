@@ -393,8 +393,9 @@ func (s *Service) invalidate(ctx context.Context, id string) {
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
-	securityEntry := securitylog.Entry{EventType: securitylog.EventTenantChanged, SubjectID: id, SubjectType: "tenant", TenantID: id, Metadata: map[string]any{"operation": operation}}
+	resourceName := tenantMutationName(request, id)
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventTenantChanged, SubjectID: id, SubjectName: resourceName, SubjectType: "tenant", TenantID: id, Metadata: map[string]any{"operation": operation}}
 	err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -428,4 +429,18 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		}
 	}
 	return err
+}
+
+func tenantMutationName(request any, fallback string) string {
+	switch value := request.(type) {
+	case CreateInput:
+		return value.Name
+	case UpdateInput:
+		return value.Name
+	case map[string]any:
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return fallback
 }

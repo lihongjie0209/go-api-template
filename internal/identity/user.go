@@ -373,8 +373,9 @@ func (s *Service) invalidate(ctx context.Context, user User) {
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
 	started := time.Now()
-	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "identity_user", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
-	securityEntry := securitylog.Entry{EventType: securitylog.EventIdentityUserChanged, SubjectID: id, SubjectType: "identity_user", Metadata: map[string]any{"operation": operation}}
+	resourceName := identityMutationName(request, id)
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "identity_user", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventIdentityUserChanged, SubjectID: id, SubjectName: resourceName, SubjectType: "identity_user", Metadata: map[string]any{"operation": operation}}
 	err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
@@ -399,6 +400,23 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		_ = s.security.Record(ctx, securityEntry)
 	}
 	return err
+}
+
+func identityMutationName(request any, fallback string) string {
+	switch value := request.(type) {
+	case CreateInput:
+		if value.DisplayName != "" {
+			return value.DisplayName
+		}
+		return value.Username
+	case UpdateInput:
+		return value.DisplayName
+	case map[string]any:
+		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return fallback
 }
 func actor(ctx context.Context) (string, error) {
 	principal, ok := platformprincipal.FromContext(ctx)

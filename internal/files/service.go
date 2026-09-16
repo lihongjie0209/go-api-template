@@ -206,7 +206,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 	objectKey := fmt.Sprintf("files/%s/%s/%s", tenantSegment(actor.TenantID), id, name)
 	record := Record{ID: id, TenantID: actor.TenantID, ObjectKey: objectKey, OriginalName: name, ContentType: staged.contentType, SizeBytes: input.Size, ChecksumSHA256: staged.checksum}
 	request := map[string]any{"name": name, "content_type": staged.contentType, "size_bytes": input.Size, "checksum_sha256": record.ChecksumSHA256}
-	entry := operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	entry := operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, ResourceName: name, Source: "backend", Protocol: "service", Request: request}
 	started := time.Now()
 	if err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		return insertUploadIntent(ctx, tx, record, actor.ID, started.Add(s.cfg.UploadStaleAfter))
@@ -347,6 +347,7 @@ func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 		s.recordFailure(ctx, entry, started)
 		return Download{}, err
 	}
+	entry.ResourceName = record.OriginalName
 	signed, err := s.storage.Presign(ctx, record.ObjectKey, objectstorage.OperationGet, 0)
 	if err != nil {
 		s.recordFailure(ctx, entry, started)
@@ -394,7 +395,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		return fmt.Errorf("%w: version must be positive", ErrInvalidInput)
 	}
 	request := map[string]any{"version": version, "original_name": record.OriginalName}
-	entry := operationlog.Entry{Operation: "file.delete", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	entry := operationlog.Entry{Operation: "file.delete", ResourceType: "file", ResourceID: id, ResourceName: record.OriginalName, Source: "backend", Protocol: "service", Request: request}
 	started := time.Now()
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		where, args := fileScope(actorValue, id)

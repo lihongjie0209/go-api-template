@@ -452,7 +452,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		if _, e = tx.ExecContext(systemCtx, insert, sessionID, user.ID, hash, now.Add(s.cfg.Authentication.RefreshTTL), now, ip, ua, now, user.ID, now, user.ID); e != nil {
 			return e
 		}
-		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogin, SubjectID: user.ID, SubjectType: string(platformprincipal.TypeUser), SessionID: sessionID, Succeeded: true, ClientIP: ip, UserAgent: ua})
+		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogin, SubjectID: user.ID, SubjectName: user.DisplayName, SubjectType: string(platformprincipal.TypeUser), SessionID: sessionID, Succeeded: true, ClientIP: ip, UserAgent: ua})
 	})
 	if err != nil {
 		return Tokens{}, err
