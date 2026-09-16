@@ -365,7 +365,10 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	err = s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
 		q := tx.Rebind(`SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE (s.refresh_token_hash=? OR s.previous_refresh_token_hash=?) AND s.deleted_at IS NULL FOR UPDATE`)
 		if e := tx.GetContext(systemCtx, &current, q, oldHash, oldHash); e != nil {
-			return ErrRefreshInvalid
+			if errors.Is(e, sql.ErrNoRows) {
+				return ErrRefreshInvalid
+			}
+			return fmt.Errorf("load refresh session: %w", e)
 		}
 		if current.PreviousRefreshTokenHash == oldHash {
 			reused = true
@@ -411,8 +414,17 @@ func (s *Service) Logout(ctx context.Context, raw string) error {
 	}
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:logout")
 	return s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
-		q := tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='logout',updated_at=?,updated_by=?,version=version+1 WHERE refresh_token_hash=? AND revoked_at IS NULL AND deleted_at IS NULL`)
-		result, err := tx.ExecContext(systemCtx, q, time.Now(), time.Now(), "identity-service:logout", tokenHash(raw))
+		var current session
+		lookup := tx.Rebind(`SELECT id,user_id,version FROM identity_sessions WHERE refresh_token_hash=? AND revoked_at IS NULL AND deleted_at IS NULL FOR UPDATE`)
+		if err := tx.GetContext(systemCtx, &current, lookup, tokenHash(raw)); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrRefreshInvalid
+			}
+			return fmt.Errorf("load logout session: %w", err)
+		}
+		now := time.Now()
+		q := tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='logout',updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND revoked_at IS NULL AND deleted_at IS NULL`)
+		result, err := tx.ExecContext(systemCtx, q, now, now, "identity-service:logout", current.ID, current.Version)
 		if err != nil {
 			return err
 		}
@@ -423,7 +435,7 @@ func (s *Service) Logout(ctx context.Context, raw string) error {
 		if rows != 1 {
 			return ErrRefreshInvalid
 		}
-		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogout, TokenID: raw, Succeeded: true})
+		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogout, SubjectID: current.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: current.ID, TokenID: raw, Succeeded: true})
 	})
 }
 func newRefreshToken() (string, string, error) {

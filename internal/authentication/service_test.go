@@ -180,6 +180,75 @@ func TestService_RefreshRollsBackRotationWhenAccessTokenSigningFails(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestService_LogoutAtomicallyAttributesSecurityEvent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	recorder := &transactionalSecurityRecorder{}
+	service := NewWithSecurity(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{}, recorder)
+	raw := "refresh-token"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id,user_id,version FROM identity_sessions`).
+		WithArgs(tokenHash(raw)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "version"}).AddRow("session-1", "user-1", 4))
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "identity-service:logout", "session-1", int64(4)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, service.Logout(t.Context(), raw))
+	require.Len(t, recorder.entries, 1)
+	require.Equal(t, securitylog.EventLogout, recorder.entries[0].EventType)
+	require.Equal(t, "user-1", recorder.entries[0].SubjectID)
+	require.Equal(t, string(platformprincipal.TypeUser), recorder.entries[0].SubjectType)
+	require.Equal(t, "session-1", recorder.entries[0].SessionID)
+	require.Equal(t, raw, recorder.entries[0].TokenID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshPreservesDatabaseFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	raw := "refresh-token"
+	databaseErr := errors.New("database unavailable")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).
+		WithArgs(tokenHash(raw), tokenHash(raw)).
+		WillReturnError(databaseErr)
+	mock.ExpectRollback()
+
+	_, err = service.Refresh(t.Context(), raw)
+	require.ErrorIs(t, err, databaseErr)
+	require.NotErrorIs(t, err, ErrRefreshInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_LogoutPreservesDatabaseFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	databaseErr := errors.New("database unavailable")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id,user_id,version FROM identity_sessions`).
+		WithArgs(tokenHash("refresh-token")).
+		WillReturnError(databaseErr)
+	mock.ExpectRollback()
+
+	err = service.Logout(t.Context(), "refresh-token")
+	require.ErrorIs(t, err, databaseErr)
+	require.NotErrorIs(t, err, ErrRefreshInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestService_ChangePasswordRollsBackWhenSecurityEventCannotBeStored(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
