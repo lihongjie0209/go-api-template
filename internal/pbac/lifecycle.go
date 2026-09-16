@@ -96,8 +96,11 @@ type Publication struct {
 
 type PolicyPageInput struct {
 	pagination.Request
-	Scopes   []PolicyScopeType
-	Statuses []string
+	IDs, Codes                 []string
+	Scopes                     []PolicyScopeType
+	Statuses                   []string
+	CreatedAtFrom, CreatedAtTo *time.Time
+	UpdatedAtFrom, UpdatedAtTo *time.Time
 }
 
 type PolicyVersionPageInput struct {

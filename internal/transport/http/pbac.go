@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
@@ -33,10 +34,16 @@ type PBACPolicyGetRequest struct {
 	ID string `json:"id" binding:"required,uuid"`
 }
 type PBACPolicyPageRequest struct {
-	Page     int      `json:"page"`
-	PageSize int      `json:"page_size"`
-	Keyword  string   `json:"keyword" binding:"omitempty,max=256"`
-	Statuses []string `json:"statuses" binding:"max=2,dive,oneof=active disabled"`
+	Page          int        `json:"page"`
+	PageSize      int        `json:"page_size"`
+	Keyword       string     `json:"keyword" binding:"omitempty,max=256"`
+	IDs           []string   `json:"ids" binding:"max=200,dive,uuid"`
+	Codes         []string   `json:"codes" binding:"max=200,dive,max=128"`
+	Statuses      []string   `json:"statuses" binding:"max=2,dive,oneof=active disabled"`
+	CreatedAtFrom *time.Time `json:"created_at_from"`
+	CreatedAtTo   *time.Time `json:"created_at_to"`
+	UpdatedAtFrom *time.Time `json:"updated_at_from"`
+	UpdatedAtTo   *time.Time `json:"updated_at_to"`
 }
 type PBACPolicyVersionCreateRequest struct {
 	PolicyID              string      `json:"policy_id" binding:"required,uuid"`
@@ -152,7 +159,7 @@ func (h *PBACHandler) Page(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	result, err := h.service.Page(c.Request.Context(), pbac.PolicyPageInput{Request: pagination.Request{Page: request.Page, PageSize: request.PageSize, Keyword: request.Keyword}, Scopes: []pbac.PolicyScopeType{expectedPBACPolicyScope(c)}, Statuses: request.Statuses})
+	result, err := h.service.Page(c.Request.Context(), pbac.PolicyPageInput{Request: pagination.Request{Page: request.Page, PageSize: request.PageSize, Keyword: request.Keyword}, IDs: request.IDs, Codes: request.Codes, Scopes: []pbac.PolicyScopeType{expectedPBACPolicyScope(c)}, Statuses: request.Statuses, CreatedAtFrom: request.CreatedAtFrom, CreatedAtTo: request.CreatedAtTo, UpdatedAtFrom: request.UpdatedAtFrom, UpdatedAtTo: request.UpdatedAtTo})
 	h.respond(c, result, err)
 }
 

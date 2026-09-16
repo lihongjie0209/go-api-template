@@ -72,7 +72,7 @@ func (r *Repository) GetVersion(ctx context.Context, policyID string, versionNum
 
 func (r *Repository) Page(ctx context.Context, tenantID string, input PolicyPageInput) (PolicyPage, error) {
 	page, err := pagination.Normalize(input.Request)
-	if err != nil || len(input.Scopes) > 2 || len(input.Statuses) > 2 {
+	if err != nil || !validPolicyPageFilters(input.IDs, input.Codes, input.CreatedAtFrom, input.CreatedAtTo, input.UpdatedAtFrom, input.UpdatedAtTo) || len(input.Scopes) > 2 || len(input.Statuses) > 2 {
 		return PolicyPage{}, ErrInvalidPolicy
 	}
 	where, args := visiblePoliciesWhere(tenantID)
@@ -91,6 +91,10 @@ func (r *Repository) Page(ctx context.Context, tenantID string, input PolicyPage
 	if err != nil {
 		return PolicyPage{}, err
 	}
+	where, args = appendStringSetFilter(where, args, "id", input.IDs)
+	where, args = appendStringSetFilter(where, args, "code", input.Codes)
+	where, args = appendTimeRange(where, args, "created_at", input.CreatedAtFrom, input.CreatedAtTo)
+	where, args = appendTimeRange(where, args, "updated_at", input.UpdatedAtFrom, input.UpdatedAtTo)
 	var total int64
 	if err := r.db.GetContext(ctx, &total, r.db.Rebind("SELECT count(*) FROM data_permission_policies WHERE "+where), args...); err != nil {
 		return PolicyPage{}, fmt.Errorf("count data permission policies: %w", err)
@@ -101,6 +105,47 @@ func (r *Repository) Page(ctx context.Context, tenantID string, input PolicyPage
 		return PolicyPage{}, fmt.Errorf("page data permission policies: %w", err)
 	}
 	return PolicyPage{Items: items, Page: page.Page, PageSize: page.PageSize, Total: total}, nil
+}
+
+func validPolicyPageFilters(ids, codes []string, createdFrom, createdTo, updatedFrom, updatedTo *time.Time) bool {
+	if len(ids) > 200 || len(codes) > 200 || createdFrom != nil && createdTo != nil && !createdFrom.Before(*createdTo) || updatedFrom != nil && updatedTo != nil && !updatedFrom.Before(*updatedTo) {
+		return false
+	}
+	for _, value := range ids {
+		if value == "" || value != strings.TrimSpace(value) || len(value) > 128 {
+			return false
+		}
+	}
+	for _, value := range codes {
+		if !policyCode.MatchString(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func appendStringSetFilter(where string, args []any, column string, values []string) (string, []any) {
+	if len(values) == 0 {
+		return where, args
+	}
+	placeholders := make([]string, len(values))
+	for index, value := range values {
+		placeholders[index] = "?"
+		args = append(args, value)
+	}
+	return where + " AND " + column + " IN (" + strings.Join(placeholders, ",") + ")", args
+}
+
+func appendTimeRange(where string, args []any, column string, from, to *time.Time) (string, []any) {
+	if from != nil {
+		where += " AND " + column + ">=?"
+		args = append(args, *from)
+	}
+	if to != nil {
+		where += " AND " + column + "<?"
+		args = append(args, *to)
+	}
+	return where, args
 }
 
 func (r *Repository) PageVersions(ctx context.Context, tenantID string, input VersionPageInput) (VersionPage, error) {

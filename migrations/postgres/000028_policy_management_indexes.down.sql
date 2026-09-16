@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS data_permission_policies_management_created_idx;
+DROP INDEX IF EXISTS data_permission_policies_management_updated_idx;
+DROP INDEX IF EXISTS pbac_policies_management_created_idx;
+DROP INDEX IF EXISTS pbac_policies_management_updated_idx;

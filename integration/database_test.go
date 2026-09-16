@@ -986,7 +986,6 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || addedMember.UserID != "member-2" || addedMember.Version != 1 {
 		t.Fatalf("added tenant member=%+v err=%v", addedMember, err)
 	}
-	testMemberDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, addedMember)
 	memberRepository := tenant.NewRepository(db)
 	visible, visibleTotal, err := memberRepository.PageMembers(ctx, created.ID, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}}, datapermission.SQLPredicate{Clause: "(tm.user_id = ?)", Args: []any{"member-2"}})
 	if err != nil || visibleTotal != 1 || len(visible) != 1 || visible[0].ID != addedMember.ID {
@@ -1003,6 +1002,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := members.Remove(departmentCtx, membershipID, 1); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("remove final tenant administrator error=%v", err)
 	}
+	testMemberDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, addedMember)
 	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{}, nil)
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
 	if err != nil {

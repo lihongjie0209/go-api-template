@@ -7448,6 +7448,26 @@ const docTemplate = `{
         "httptransport.DataPermissionPolicyPageRequest": {
             "type": "object",
             "properties": {
+                "codes": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "keyword": {
                     "type": "string",
                     "maxLength": 256
@@ -7464,6 +7484,12 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "updated_at_from": {
+                    "type": "string"
+                },
+                "updated_at_to": {
+                    "type": "string"
                 }
             }
         },
@@ -8247,6 +8273,26 @@ const docTemplate = `{
         "httptransport.PBACPolicyPageRequest": {
             "type": "object",
             "properties": {
+                "codes": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "keyword": {
                     "type": "string",
                     "maxLength": 256
@@ -8263,6 +8309,12 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "updated_at_from": {
+                    "type": "string"
+                },
+                "updated_at_to": {
+                    "type": "string"
                 }
             }
         },

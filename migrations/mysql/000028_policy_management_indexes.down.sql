@@ -1,0 +1,4 @@
+DROP INDEX data_permission_policies_management_created_idx ON data_permission_policies;
+DROP INDEX data_permission_policies_management_updated_idx ON data_permission_policies;
+DROP INDEX pbac_policies_management_created_idx ON pbac_policies;
+DROP INDEX pbac_policies_management_updated_idx ON pbac_policies;
