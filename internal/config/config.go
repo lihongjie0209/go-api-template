@@ -361,6 +361,24 @@ type ClientTLS struct {
 func Load(path string) (Config, error) { return LoadWithProfile(path, "") }
 
 func LoadWithProfile(path, explicitProfile string) (Config, error) {
+	return loadWithProfile(path, explicitProfile, func(cfg Config) error { return cfg.Validate() })
+}
+
+// LoadMigrationWithProfile loads the same layered configuration as the API but
+// validates only the fields required by the standalone migration process. This
+// keeps migration Jobs independent from HTTP, gRPC, JWT, Redis, and event-bus
+// credentials that they never use.
+func LoadMigrationWithProfile(path, explicitProfile string) (Migration, error) {
+	cfg, err := loadWithProfile(path, explicitProfile, func(cfg Config) error {
+		return cfg.Migration.Validate()
+	})
+	if err != nil {
+		return Migration{}, err
+	}
+	return cfg.Migration, nil
+}
+
+func loadWithProfile(path, explicitProfile string, validate func(Config) error) (Config, error) {
 	v := viper.New()
 	if path == "" {
 		v.SetConfigName("config")
@@ -426,11 +444,31 @@ func LoadWithProfile(path, explicitProfile string) (Config, error) {
 	cfg.Migration.DatabaseName = cfg.Database.Name
 	cfg.Log.Level = strings.ToLower(strings.TrimSpace(cfg.Log.Level))
 	cfg.Log.Format = strings.ToLower(strings.TrimSpace(cfg.Log.Format))
-	if err := cfg.Validate(); err != nil {
+	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	cfg.Runtime = Runtime{ActiveProfile: profile, ConfigFiles: loadedFiles}
 	return cfg, nil
+}
+
+// Validate checks the complete standalone migration contract.
+func (m Migration) Validate() error {
+	if strings.TrimSpace(m.Path) == "" {
+		return errors.New("migration.path is required")
+	}
+	if strings.TrimSpace(m.DatabaseURL) == "" {
+		return errors.New("migration.database_url is required")
+	}
+	if !validMigrationTable.MatchString(m.Table) {
+		return errors.New("migration.table must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
+	if !validMigrationTable.MatchString(m.DatabaseName) {
+		return errors.New("database.name must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
+	if m.Schema != "" && !validMigrationTable.MatchString(m.Schema) {
+		return errors.New("database.schema must contain lowercase letters, digits, or underscores and be at most 63 characters")
+	}
+	return nil
 }
 
 func stringToStringSliceHook() mapstructure.DecodeHookFuncType {

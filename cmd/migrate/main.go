@@ -25,9 +25,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "direction must be up or down")
 		os.Exit(2)
 	}
-	cfg, err := config.LoadWithProfile(*configPath, *profile)
+	cfg, err := config.LoadMigrationWithProfile(*configPath, *profile)
 	if err == nil {
-		err = migration.Run(cfg.Migration, *direction, *steps)
+		err = migration.Run(cfg, *direction, *steps)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "migration failed: %v\n", err)

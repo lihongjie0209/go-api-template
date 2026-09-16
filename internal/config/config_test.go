@@ -630,6 +630,36 @@ func TestLoad_ShippedProductionProfileRequiresAndAcceptsInjectedSecrets(t *testi
 	}
 }
 
+func TestLoadMigrationWithProfile_ProductionDoesNotRequireAPISecrets(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	content := "app:\n  env: production\ndatabase:\n  name: orders_db\n  schema: orders\nmigration:\n  path: /app/migrations/postgres\n  database_url: postgres://app:secret@postgres:5432/orders_db?sslmode=require\n  table: orders_schema_migrations\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadMigrationWithProfile(path, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DatabaseName != "orders_db" || cfg.Schema != "orders" || cfg.Table != "orders_schema_migrations" {
+		t.Fatalf("migration config = %+v", cfg)
+	}
+}
+
+func TestLoadMigrationWithProfile_RejectsInvalidMigrationIdentity(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	content := "database:\n  name: orders_db\n  schema: orders\nmigration:\n  path: migrations/postgres\n  database_url: postgres://localhost/orders_db\n  table: shared-table\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadMigrationWithProfile(path, "development"); err == nil || !strings.Contains(err.Error(), "migration.table") {
+		t.Fatalf("LoadMigrationWithProfile() error = %v, want migration.table validation", err)
+	}
+}
+
 func TestConfig_ProductionSecurityRequirementsFailClosed(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
