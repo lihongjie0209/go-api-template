@@ -21,6 +21,12 @@ import (
 
 var departmentCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 
+const (
+	maxDepartmentNameLength = 256
+	maxDepartmentNodes      = 10000
+	maxDepartmentSortOrder  = 1_000_000_000
+)
+
 type Department struct {
 	ID        string    `db:"id" json:"id"`
 	TenantID  string    `db:"tenant_id" json:"tenant_id"`
@@ -58,11 +64,11 @@ type DepartmentService struct {
 	db         *sqlx.DB
 	tx         *database.Transactor
 	locker     cache.Locker
-	operations operationlog.Recorder
+	operations operationlog.TransactionalRecorder
 	cfg        config.Config
 }
 
-func NewDepartmentService(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, operations operationlog.Recorder, cfg config.Config) *DepartmentService {
+func NewDepartmentService(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, cfg config.Config) *DepartmentService {
 	return &DepartmentService{db, tx, locker, operations, cfg}
 }
 
@@ -74,26 +80,25 @@ func (s *DepartmentService) Create(ctx context.Context, input DepartmentInput) (
 		return Department{}, err
 	}
 	input.Code, input.Name = strings.ToLower(strings.TrimSpace(input.Code)), strings.TrimSpace(input.Name)
-	if !departmentCodePattern.MatchString(input.Code) || input.Name == "" {
+	input.ParentID = cleanParent(input.ParentID)
+	if !departmentCodePattern.MatchString(input.Code) || input.Name == "" || len(input.Name) > maxDepartmentNameLength || !validDepartmentID(input.ParentID) || input.SortOrder < -maxDepartmentSortOrder || input.SortOrder > maxDepartmentSortOrder {
 		return Department{}, ErrInvalid
 	}
-	record := Department{ID: uuid.NewString(), TenantID: actor.TenantID, ParentID: cleanParent(input.ParentID), Code: input.Code, Name: input.Name, SortOrder: input.SortOrder, Version: 1}
+	record := Department{ID: uuid.NewString(), TenantID: actor.TenantID, ParentID: input.ParentID, Code: input.Code, Name: input.Name, SortOrder: input.SortOrder, Version: 1}
 	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(lockCtx context.Context) error {
-		return operationlog.Do(lockCtx, s.operations, operationlog.Entry{Operation: "tenant.department.create", ResourceType: "tenant_department", ResourceID: record.ID, Source: "backend", Protocol: "service", Request: input}, func() error {
-			return s.tx.Within(lockCtx, nil, func(tx *sqlx.Tx) error {
-				if err := ensureActiveTenant(lockCtx, tx, actor.TenantID); err != nil {
-					return err
-				}
-				if err := ensureDepartmentParent(lockCtx, tx, actor.TenantID, record.ParentID); err != nil {
-					return err
-				}
-				now := time.Now()
-				_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO tenant_departments (id,tenant_id,parent_id,code,name,sort_order,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`), record.ID, record.TenantID, record.ParentID, record.Code, record.Name, record.SortOrder, now, actor.ID, now, actor.ID)
-				if isUniqueViolation(err) {
-					return ErrConflict
-				}
+		return s.mutate(lockCtx, "tenant.department.create", record.ID, input, nil, func(tx *sqlx.Tx) error {
+			if err := ensureActiveTenant(lockCtx, tx, actor.TenantID); err != nil {
 				return err
-			})
+			}
+			if err := ensureDepartmentParent(lockCtx, tx, actor.TenantID, record.ParentID); err != nil {
+				return err
+			}
+			now := time.Now()
+			_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO tenant_departments (id,tenant_id,parent_id,code,name,sort_order,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`), record.ID, record.TenantID, record.ParentID, record.Code, record.Name, record.SortOrder, now, actor.ID, now, actor.ID)
+			if isUniqueViolation(err) {
+				return ErrConflict
+			}
+			return err
 		})
 	})
 	if err != nil {
@@ -106,7 +111,8 @@ func (s *DepartmentService) Get(ctx context.Context, id string) (Department, err
 	if err != nil {
 		return Department{}, err
 	}
-	if id == "" {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength {
 		return Department{}, ErrInvalid
 	}
 	var record Department
@@ -127,12 +133,12 @@ func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*Depart
 	}
 	records := []Department{}
 	query, args := `SELECT `+departmentColumns+` FROM tenant_departments WHERE tenant_id=? AND deleted_at IS NULL`, []any{actor.TenantID}
-	query += ` ORDER BY sort_order,id`
+	query += ` ORDER BY sort_order,id LIMIT 10001`
 	if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), args...); err != nil {
 		return nil, err
 	}
-	if len(records) > 10000 {
-		return nil, fmt.Errorf("%w: department tree exceeds 10000 nodes", ErrInvalid)
+	if len(records) > maxDepartmentNodes {
+		return nil, fmt.Errorf("%w: department tree exceeds %d nodes", ErrInvalid, maxDepartmentNodes)
 	}
 	records = filterDepartments(records, keyword)
 	forest, err := platformtree.Build(records, func(v Department) string { return v.ID }, func(v Department) (string, bool) {
@@ -197,31 +203,30 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 		return Department{}, err
 	}
 	input.Name, input.ParentID = strings.TrimSpace(input.Name), cleanParent(input.ParentID)
-	if input.ID == "" || input.Name == "" || input.Version <= 0 || (input.ParentID != nil && *input.ParentID == input.ID) {
+	input.ID = strings.TrimSpace(input.ID)
+	if input.ID == "" || len(input.ID) > maxTenantIDLength || input.Name == "" || len(input.Name) > maxDepartmentNameLength || !validDepartmentID(input.ParentID) || input.SortOrder < -maxDepartmentSortOrder || input.SortOrder > maxDepartmentSortOrder || input.Version <= 0 || (input.ParentID != nil && *input.ParentID == input.ID) {
 		return Department{}, ErrInvalid
 	}
 	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
-		return operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "tenant.department.update", ResourceType: "tenant_department", ResourceID: input.ID, Source: "backend", Protocol: "service", Request: input}, func() error {
-			return s.tx.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-				if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
-					return err
-				}
-				if err := ensureDepartmentMove(ctx, tx, actor.TenantID, input.ID, input.ParentID); err != nil {
-					return err
-				}
-				result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_departments SET parent_id=?,name=?,sort_order=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), input.ParentID, input.Name, input.SortOrder, time.Now(), actor.ID, actor.TenantID, input.ID, input.Version)
-				if err != nil {
-					return err
-				}
-				rows, rowsErr := result.RowsAffected()
-				if rowsErr != nil {
-					return fmt.Errorf("update department affected rows: %w", rowsErr)
-				}
-				if rows != 1 {
-					return ErrConflict
-				}
-				return nil
-			})
+		return s.mutate(ctx, "tenant.department.update", input.ID, input, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+				return err
+			}
+			if err := ensureDepartmentMove(ctx, tx, actor.TenantID, input.ID, input.ParentID); err != nil {
+				return err
+			}
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_departments SET parent_id=?,name=?,sort_order=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), input.ParentID, input.Name, input.SortOrder, time.Now(), actor.ID, actor.TenantID, input.ID, input.Version)
+			if err != nil {
+				return err
+			}
+			rows, rowsErr := result.RowsAffected()
+			if rowsErr != nil {
+				return fmt.Errorf("update department affected rows: %w", rowsErr)
+			}
+			if rows != 1 {
+				return ErrConflict
+			}
+			return nil
 		})
 	})
 	if err != nil {
@@ -234,37 +239,36 @@ func (s *DepartmentService) Delete(ctx context.Context, id string, version int64
 	if err != nil {
 		return err
 	}
-	if id == "" || version <= 0 {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	return s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
-		return operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "tenant.department.delete", ResourceType: "tenant_department", ResourceID: id, Source: "backend", Protocol: "service"}, func() error {
-			return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
-				if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
-					return err
-				}
-				var dependents int
-				q := `SELECT (SELECT count(*) FROM tenant_departments WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL)+(SELECT count(*) FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND deleted_at IS NULL)`
-				if err := tx.GetContext(ctx, &dependents, tx.Rebind(q), actor.TenantID, id, actor.TenantID, id); err != nil {
-					return err
-				}
-				if dependents > 0 {
-					return ErrConflict
-				}
-				now := time.Now()
-				result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_departments SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id, version)
-				if err != nil {
-					return err
-				}
-				rows, rowsErr := result.RowsAffected()
-				if rowsErr != nil {
-					return fmt.Errorf("delete department affected rows: %w", rowsErr)
-				}
-				if rows != 1 {
-					return ErrConflict
-				}
-				return nil
-			})
+		return s.mutate(ctx, "tenant.department.delete", id, map[string]any{"version": version}, nil, func(tx *sqlx.Tx) error {
+			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+				return err
+			}
+			var dependents int
+			q := `SELECT (SELECT count(*) FROM tenant_departments WHERE tenant_id=? AND parent_id=? AND deleted_at IS NULL)+(SELECT count(*) FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND deleted_at IS NULL)`
+			if err := tx.GetContext(ctx, &dependents, tx.Rebind(q), actor.TenantID, id, actor.TenantID, id); err != nil {
+				return err
+			}
+			if dependents > 0 {
+				return ErrConflict
+			}
+			now := time.Now()
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_departments SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id, version)
+			if err != nil {
+				return err
+			}
+			rows, rowsErr := result.RowsAffected()
+			if rowsErr != nil {
+				return fmt.Errorf("delete department affected rows: %w", rowsErr)
+			}
+			if rows != 1 {
+				return ErrConflict
+			}
+			return nil
 		})
 	})
 }
@@ -273,71 +277,106 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 	if err != nil {
 		return err
 	}
-	if departmentID == "" || len(assignments) > 1000 {
+	departmentID = strings.TrimSpace(departmentID)
+	if departmentID == "" || len(departmentID) > maxTenantIDLength || len(assignments) > 1000 {
 		return ErrInvalid
 	}
 	seen := make(map[string]struct{}, len(assignments))
 	ids := make([]string, len(assignments))
 	for i, assignment := range assignments {
-		if assignment.MembershipID == "" {
+		assignment.MembershipID = strings.TrimSpace(assignment.MembershipID)
+		if assignment.MembershipID == "" || len(assignment.MembershipID) > maxTenantIDLength {
 			return ErrInvalid
 		}
+		assignments[i].MembershipID = assignment.MembershipID
 		if _, exists := seen[assignment.MembershipID]; exists {
 			return ErrInvalid
 		}
 		seen[assignment.MembershipID] = struct{}{}
 		ids[i] = assignment.MembershipID
 	}
-	return s.withDepartmentLock(ctx, actor.TenantID, departmentID+":members", func(ctx context.Context) error {
-		return operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "tenant.department.members.set", ResourceType: "tenant_department", ResourceID: departmentID, Source: "backend", Protocol: "service", Request: assignments}, func() error {
-			return s.tx.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-				if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+	return s.withDepartmentLock(ctx, actor.TenantID, "members", func(ctx context.Context) error {
+		primaryCount := 0
+		for _, assignment := range assignments {
+			if assignment.IsPrimary {
+				primaryCount++
+			}
+		}
+		request := map[string]any{"assignment_count": len(assignments), "primary_count": primaryCount}
+		return s.mutate(ctx, "tenant.department.members.set", departmentID, request, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+				return err
+			}
+			if err := ensureDepartmentParent(ctx, tx, actor.TenantID, &departmentID); err != nil {
+				return err
+			}
+			if len(ids) > 0 {
+				query, args, inErr := sqlx.In(`SELECT count(*) FROM tenant_memberships WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL`, actor.TenantID, ids)
+				if inErr != nil {
+					return fmt.Errorf("build department member validation: %w", inErr)
+				}
+				var count int
+				if err := tx.GetContext(ctx, &count, tx.Rebind(query), args...); err != nil {
 					return err
 				}
-				if err := ensureDepartmentParent(ctx, tx, actor.TenantID, &departmentID); err != nil {
-					return err
+				if count != len(ids) {
+					return ErrInvalid
 				}
-				if len(ids) > 0 {
-					query, args, inErr := sqlx.In(`SELECT count(*) FROM tenant_memberships WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL`, actor.TenantID, ids)
-					if inErr != nil {
-						return fmt.Errorf("build department member validation: %w", inErr)
-					}
-					var count int
-					if err := tx.GetContext(ctx, &count, tx.Rebind(query), args...); err != nil {
-						return err
-					}
-					if count != len(ids) {
-						return ErrInvalid
-					}
-				}
-				now := time.Now()
-				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND department_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, departmentID); err != nil {
-					return err
-				}
-				for _, assignment := range assignments {
-					if assignment.IsPrimary {
-						if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=false,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND is_primary=true AND deleted_at IS NULL`), now, actor.ID, actor.TenantID, assignment.MembershipID); err != nil {
-							return err
-						}
-					}
-					var linkID string
-					findErr := tx.GetContext(ctx, &linkID, tx.Rebind(`SELECT id FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND membership_id=?`), actor.TenantID, departmentID, assignment.MembershipID)
-					switch {
-					case findErr == nil:
-						_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=?`), assignment.IsPrimary, now, actor.ID, linkID)
-					case errors.Is(findErr, sql.ErrNoRows):
-						_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO tenant_department_members(id,tenant_id,department_id,membership_id,is_primary,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), actor.TenantID, departmentID, assignment.MembershipID, assignment.IsPrimary, now, actor.ID, now, actor.ID)
-					default:
-						err = findErr
-					}
-					if err != nil {
+			}
+			now := time.Now()
+			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND department_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, departmentID); err != nil {
+				return err
+			}
+			for _, assignment := range assignments {
+				if assignment.IsPrimary {
+					if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=false,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND is_primary=true AND deleted_at IS NULL`), now, actor.ID, actor.TenantID, assignment.MembershipID); err != nil {
 						return err
 					}
 				}
-				return nil
-			})
+				var linkID string
+				findErr := tx.GetContext(ctx, &linkID, tx.Rebind(`SELECT id FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND membership_id=?`), actor.TenantID, departmentID, assignment.MembershipID)
+				switch {
+				case findErr == nil:
+					_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=?`), assignment.IsPrimary, now, actor.ID, actor.TenantID, linkID)
+				case errors.Is(findErr, sql.ErrNoRows):
+					_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO tenant_department_members(id,tenant_id,department_id,membership_id,is_primary,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), actor.TenantID, departmentID, assignment.MembershipID, assignment.IsPrimary, now, actor.ID, now, actor.ID)
+				default:
+					err = findErr
+				}
+				if err != nil {
+					if isUniqueViolation(err) {
+						return ErrConflict
+					}
+					return err
+				}
+			}
+			return nil
 		})
 	})
+}
+
+func (s *DepartmentService) mutate(ctx context.Context, operation, id string, request any, options *sql.TxOptions, fn func(*sqlx.Tx) error) error {
+	started := time.Now()
+	entry := operationlog.Entry{Operation: operation, ResourceType: "tenant_department", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	err := s.tx.Within(ctx, options, func(tx *sqlx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		entry.Duration = time.Since(started)
+		entry.Succeeded = true
+		if s.operations != nil {
+			return s.operations.RecordTx(ctx, tx, entry)
+		}
+		return nil
+	})
+	if err != nil && s.operations != nil {
+		entry.Duration = time.Since(started)
+		entry.Succeeded = false
+		entry.ErrorCode = "operation_failed"
+		entry.ErrorMessage = "operation failed"
+		_ = s.operations.Record(ctx, entry)
+	}
+	return err
 }
 func departmentActor(ctx context.Context) (platformprincipal.Principal, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -355,6 +394,10 @@ func cleanParent(parent *string) *string {
 		return nil
 	}
 	return &value
+}
+
+func validDepartmentID(id *string) bool {
+	return id == nil || (len(*id) > 0 && len(*id) <= maxTenantIDLength)
 }
 func ensureDepartmentParent(ctx context.Context, tx *sqlx.Tx, tenantID string, parent *string) error {
 	if parent == nil {

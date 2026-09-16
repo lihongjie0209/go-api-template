@@ -1,8 +1,14 @@
 package tenant
 
 import (
+	"errors"
+	"regexp"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/database"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,3 +49,61 @@ func TestFilterDepartmentsRetainsAncestorsAndSearchesCode(t *testing.T) {
 	require.Empty(t, missing)
 }
 func ptr(value string) *string { return &value }
+
+func TestDepartmentServiceRejectsUnboundedInputBeforeDatabase(t *testing.T) {
+	t.Parallel()
+	service := &DepartmentService{}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a", MembershipID: "member-a"})
+	overlongID := string(make([]byte, maxTenantIDLength+1))
+	overlongName := string(make([]byte, maxDepartmentNameLength+1))
+
+	_, err := service.Create(ctx, DepartmentInput{Code: "engineering", Name: overlongName})
+	require.ErrorIs(t, err, ErrInvalid)
+	_, err = service.Get(ctx, overlongID)
+	require.ErrorIs(t, err, ErrInvalid)
+	_, err = service.Update(ctx, DepartmentUpdate{ID: "department-a", Name: "Engineering", SortOrder: maxDepartmentSortOrder + 1, Version: 1})
+	require.ErrorIs(t, err, ErrInvalid)
+	require.ErrorIs(t, service.Delete(ctx, overlongID, 1), ErrInvalid)
+	require.ErrorIs(t, service.SetMembers(ctx, "department-a", []DepartmentMemberAssignment{{MembershipID: overlongID}}), ErrInvalid)
+}
+
+func TestDepartmentServiceTreeBoundsDatabaseResult(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + departmentColumns + ` FROM tenant_departments WHERE tenant_id=? AND deleted_at IS NULL ORDER BY sort_order,id LIMIT 10001`)).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	service := &DepartmentService{db: db}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a", MembershipID: "member-a"})
+
+	tree, err := service.Tree(ctx, "")
+	require.NoError(t, err)
+	require.Empty(t, tree)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentMutationRollsBackWhenTransactionalOperationLogFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	wantErr := errors.New("operation outbox unavailable")
+	operations := &transactionalOperationRecorderStub{txErr: wantErr}
+	service := &DepartmentService{tx: database.NewTransactor(db), operations: operations}
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE tenant_departments SET name`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a", MembershipID: "member-a"})
+
+	err = service.mutate(ctx, "tenant.department.update", "department-a", map[string]any{"name": "Engineering"}, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(ctx, `UPDATE tenant_departments SET name='Engineering'`)
+		return execErr
+	})
+	require.ErrorIs(t, err, wantErr)
+	require.Len(t, operations.txEntries, 1)
+	require.Len(t, operations.standalone, 1)
+	require.False(t, operations.standalone[0].Succeeded)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
