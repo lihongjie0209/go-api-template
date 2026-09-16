@@ -116,3 +116,4 @@ type policyStub struct{}
 
 func (*policyStub) Refresh(context.Context) error { return nil }
 func (*policyStub) Notify(context.Context) error  { return nil }
+func (*policyStub) Invalidate()                   {}

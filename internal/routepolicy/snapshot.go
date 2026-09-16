@@ -15,6 +15,44 @@ type Snapshot struct {
 	value    atomic.Pointer[map[string]*compiled]
 }
 
+func (s *Snapshot) upsert(definition Definition) error {
+	if definition.RouteID == "" {
+		return fmt.Errorf("%w: empty route id", ErrInvalid)
+	}
+	policy, err := s.compiler.Compile(definition)
+	if err != nil {
+		return fmt.Errorf("compile policy %q: %w", definition.ID, err)
+	}
+	s.store(policy)
+	return nil
+}
+
+func (s *Snapshot) store(policy *compiled) {
+	current := *s.value.Load()
+	next := make(map[string]*compiled, len(current)+1)
+	for routeID, existing := range current {
+		next[routeID] = existing
+	}
+	next[policy.definition.RouteID] = policy
+	s.value.Store(&next)
+}
+
+func (s *Snapshot) delete(routeID string) {
+	current := *s.value.Load()
+	next := make(map[string]*compiled, len(current))
+	for id, existing := range current {
+		if id != routeID {
+			next[id] = existing
+		}
+	}
+	s.value.Store(&next)
+}
+
+func (s *Snapshot) clear() {
+	empty := map[string]*compiled{}
+	s.value.Store(&empty)
+}
+
 func NewSnapshot(compiler *Compiler) *Snapshot {
 	snapshot := &Snapshot{compiler: compiler}
 	empty := map[string]*compiled{}

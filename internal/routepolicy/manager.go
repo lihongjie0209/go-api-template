@@ -66,6 +66,29 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// Apply updates the local immutable snapshot from the definition that was
+// validated before and committed by the caller. It avoids a post-commit
+// database read turning a successful mutation into an error or leaving this
+// instance on the previous authorization decision.
+func (m *Manager) Apply(policy *compiled, active bool) {
+	m.refresh.Lock()
+	defer m.refresh.Unlock()
+	if !active {
+		m.snapshot.delete(policy.definition.RouteID)
+		return
+	}
+	m.snapshot.store(policy)
+}
+
+// Invalidate removes all compiled decisions. Callers use it when the database
+// is known to have changed but a complete validated replacement cannot be
+// loaded; missing policies then deny requests until recovery.
+func (m *Manager) Invalidate() {
+	m.refresh.Lock()
+	defer m.refresh.Unlock()
+	m.snapshot.clear()
+}
+
 func (m *Manager) ValidateRoutes(ctx context.Context, serviceName string) error {
 	ids, err := m.repository.ActiveRouteIDs(ctx, serviceName)
 	if err != nil {
@@ -173,6 +196,7 @@ func (m *Manager) poll(ctx context.Context) {
 
 func (m *Manager) reloadAndLog(ctx context.Context, source string) {
 	if err := m.Refresh(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		m.Invalidate()
 		m.logger.Error("refresh route policy cache", "source", source, "error", err)
 		return
 	}

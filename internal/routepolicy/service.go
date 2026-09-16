@@ -196,7 +196,9 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	if _, err := s.compiler.Compile(Definition{Expression: input.Expression, Permissions: permissions}); err != nil {
+	definition := Definition{ID: input.RouteID, RouteID: input.RouteID, Expression: input.Expression, Permissions: permissions, Version: input.Version + 1}
+	compiledPolicy, err := s.compiler.Compile(definition)
+	if err != nil {
 		return View{}, err
 	}
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
@@ -211,9 +213,7 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	if err := s.manager.Refresh(ctx); err != nil {
-		return View{}, fmt.Errorf("refresh local route policy: %w", err)
-	}
+	s.manager.Apply(compiledPolicy, input.Status == "active")
 	if err := s.manager.Notify(ctx); err != nil {
 		s.logger.WarnContext(ctx, "notify route policy cache refresh", "error", err)
 	}

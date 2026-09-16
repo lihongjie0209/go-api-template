@@ -39,7 +39,7 @@ func TestRepositoryRevisionIncludesDeletes(t *testing.T) {
 	require.NoError(t, err)
 	repository := NewRepository(sqlx.NewDb(database, "sqlmock"))
 	expected := time.Date(2026, time.September, 15, 10, 0, 0, 0, time.UTC)
-	mock.ExpectQuery(`(?s)SELECT max\(updated_at\) FROM \(.*SELECT updated_at FROM route_policy_definitions.*UNION ALL.*SELECT p.updated_at FROM permissions p.*route_policy_revisions`).
+	mock.ExpectQuery(`(?s)SELECT max\(updated_at\) FROM \(.*SELECT updated_at FROM route_policy_definitions.*UNION ALL.*SELECT updated_at FROM route_policy_permission_refs.*UNION ALL.*SELECT p.updated_at FROM permissions p.*route_policy_revisions`).
 		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(expected))
 
 	revision, err := repository.Revision(t.Context())
@@ -47,5 +47,27 @@ func TestRepositoryRevisionIncludesDeletes(t *testing.T) {
 	require.Equal(t, expected, revision)
 	mock.ExpectClose()
 	require.NoError(t, database.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRepositorySyncRoutesPropagatesMySQLAuditActor(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	repository := NewRepository(sqlx.NewDb(raw, "mysql"))
+	route, err := NewRoute("http", "post", "/api/v1/users/page", "identity-service", "v1")
+	require.NoError(t, err)
+	route.Operation = "users.page"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET @app_actor_id = \?`).WithArgs("identity-service:route-discovery").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE route_definitions SET status='inactive'`).WithArgs(sqlmock.AnyArg(), "identity-service:route-discovery", "identity-service", "http").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT 1 FROM route_definitions`).WithArgs(route.ID).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	mock.ExpectExec(`INSERT INTO route_definitions`).WithArgs(route.ID, "http", "post", "/api/v1/users/page", "users.page", "", "identity-service", "v1", "active", sqlmock.AnyArg(), sqlmock.AnyArg(), "identity-service:route-discovery", sqlmock.AnyArg(), "identity-service:route-discovery").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`SET @app_actor_id = NULL`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	require.NoError(t, repository.SyncRoutes(t.Context(), []Route{route}, "identity-service:route-discovery"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -28,3 +28,23 @@ func TestNewRouteEscapesLeadingDotWithoutCollision(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dotRoute.ID, dotRouteAgain.ID)
 }
+
+func TestNewRouteDistinguishesStaticParameterWildcardAndCase(t *testing.T) {
+	t.Parallel()
+	paths := []string{
+		"/api/v1/users/id",
+		"/api/v1/users/:id",
+		"/api/v1/users/*id",
+		"/api/v1/users/p-id",
+		"/api/v1/users/ID",
+	}
+	ids := map[string]struct{}{}
+	for _, path := range paths {
+		route, err := NewRoute("http", "post", path, "identity-service", "v1")
+		require.NoError(t, err)
+		if _, exists := ids[route.ID]; exists {
+			t.Fatalf("route %q collided at %s", path, route.ID)
+		}
+		ids[route.ID] = struct{}{}
+	}
+}

@@ -98,6 +98,7 @@ type Service struct {
 type policyRefresher interface {
 	Refresh(context.Context) error
 	Notify(context.Context) error
+	Invalidate()
 }
 
 func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.Recorder, security securitylog.Recorder, logger *slog.Logger) *Service {
@@ -476,6 +477,7 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		return err
 	}
 	if refreshErr := s.policies.Refresh(ctx); refreshErr != nil {
+		s.policies.Invalidate()
 		s.logger.Error("refresh route policies after permission change", "permission_id", id, "error", refreshErr)
 	}
 	if notifyErr := s.policies.Notify(ctx); notifyErr != nil {

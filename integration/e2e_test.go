@@ -151,12 +151,16 @@ func seedRoutePolicies(t *testing.T, ctx context.Context, cfg config.Config, dsn
 	}
 	transactor := appdb.NewTransactor(db)
 	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		accountQuery := tx.Rebind(`INSERT INTO identity_service_accounts(id,client_id,name,description,secret_hash,status,failed_attempts,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,'active',0,?,?,?,?,1)`)
+		if _, insertErr := tx.ExecContext(actorCtx, accountQuery, "client", "integration-client", "Integration Client", "JWT verification fixture", "not-used-for-this-test", now, "ignored", now, "ignored"); insertErr != nil {
+			return insertErr
+		}
 		for _, item := range routes {
 			route, routeErr := routepolicy.NewRoute(item.protocol, item.method, item.path, cfg.App.Name, "")
 			if routeErr != nil {
 				return routeErr
 			}
-			now := time.Now()
 			query := tx.Rebind(`INSERT INTO route_policy_definitions(id,route_id,expression,description,priority,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,0,'active',?,?,?,?,1)`)
 			if _, routeErr = tx.ExecContext(actorCtx, query, route.ID, route.ID, item.expression, "integration policy", now, "ignored", now, "ignored"); routeErr != nil {
 				return routeErr

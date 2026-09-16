@@ -18,12 +18,14 @@ var (
 	ErrMissing       = errors.New("route policy missing")
 	ErrInvalid       = errors.New("route policy invalid")
 	ErrDenied        = errors.New("route policy denied")
-	permissionKeyRef = regexp.MustCompile(`permissions\[\s*"([a-z][a-z0-9_.:-]{2,127})"\s*\]`)
+	permissionKeyRef = regexp.MustCompile(`permissions\s*\[\s*"([a-z][a-z0-9_.:-]{2,127})"\s*\]`)
+	permissionAccess = regexp.MustCompile(`permissions\s*\[`)
 )
 
 const (
 	MaxExpressionBytes = 4096
 	MaxPermissionRefs  = 8
+	MaxEvaluationCost  = 1000
 )
 
 type Permission struct {
@@ -68,6 +70,12 @@ func (c *Compiler) Compile(definition Definition) (*compiled, error) {
 		return nil, fmt.Errorf("%w: expression length must be between 1 and %d", ErrInvalid, MaxExpressionBytes)
 	}
 	keys := PermissionKeys(expression)
+	if strings.Contains(expression, "permissions") {
+		accesses := len(permissionAccess.FindAllStringIndex(expression, -1))
+		if accesses == 0 || accesses != len(permissionKeyRef.FindAllStringSubmatch(expression, -1)) {
+			return nil, fmt.Errorf("%w: permissions must use static string keys", ErrInvalid)
+		}
+	}
 	if len(keys) > MaxPermissionRefs {
 		return nil, fmt.Errorf("%w: expression references more than %d permissions", ErrInvalid, MaxPermissionRefs)
 	}
@@ -87,7 +95,7 @@ func (c *Compiler) Compile(definition Definition) (*compiled, error) {
 	if ast.OutputType() != cel.BoolType {
 		return nil, fmt.Errorf("%w: expression must return bool", ErrInvalid)
 	}
-	program, err := c.environment.Program(ast)
+	program, err := c.environment.Program(ast, cel.CostLimit(MaxEvaluationCost))
 	if err != nil {
 		return nil, fmt.Errorf("%w: create expression program: %v", ErrInvalid, err)
 	}

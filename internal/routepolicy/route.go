@@ -1,6 +1,7 @@
 package routepolicy
 
 import (
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
@@ -10,9 +11,14 @@ import (
 
 const routeNamespace = "afc952de-95c3-455a-bc5c-89fb3c2a5da5"
 
-var routeSegment = regexp.MustCompile(`^[a-z0-9_.-]+$`)
+var routeSegment = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
-const escapedRouteSegmentPrefix = "x-"
+const (
+	parameterSegmentPrefix = "p-"
+	wildcardSegmentPrefix  = "w-"
+	staticEscapePrefix     = "s-"
+	hexSegmentPrefix       = "h-"
+)
 
 type Route struct {
 	ID            string
@@ -35,20 +41,11 @@ func NewRoute(protocol, method, path, serviceName, sourceVersion string) (Route,
 	}
 	segments := []string{"route", protocol, method}
 	for _, segment := range strings.Split(strings.Trim(path, "/"), "/") {
-		segment = strings.TrimPrefix(segment, ":")
-		segment = strings.TrimPrefix(segment, "*")
-		segment = strings.ToLower(segment)
-		if segment == "" || !routeSegment.MatchString(segment) {
-			return Route{}, fmt.Errorf("%w: unsupported route segment %q", ErrInvalid, segment)
+		encoded, err := canonicalRouteSegment(segment)
+		if err != nil {
+			return Route{}, err
 		}
-		// Stable-ID canonical segments must begin with an alphanumeric byte.
-		// Escape both leading dots and the escape marker itself so the mapping
-		// remains injective (for example, .well-known cannot collide with
-		// x-.well-known).
-		if strings.HasPrefix(segment, ".") || strings.HasPrefix(segment, escapedRouteSegmentPrefix) {
-			segment = escapedRouteSegmentPrefix + segment
-		}
-		segments = append(segments, segment)
+		segments = append(segments, encoded)
 	}
 	generator, err := stableid.New(routeNamespace)
 	if err != nil {
@@ -66,4 +63,40 @@ func NewRoute(protocol, method, path, serviceName, sourceVersion string) (Route,
 		ServiceName:   serviceName,
 		SourceVersion: sourceVersion,
 	}, nil
+}
+
+func canonicalRouteSegment(segment string) (string, error) {
+	if segment == "" {
+		return "", fmt.Errorf("%w: empty route segment", ErrInvalid)
+	}
+	kind := byte(0)
+	if segment[0] == ':' || segment[0] == '*' {
+		kind = segment[0]
+		segment = segment[1:]
+	}
+	if segment == "" {
+		return "", fmt.Errorf("%w: empty route parameter", ErrInvalid)
+	}
+	encoded := segment
+	hexEncoded := false
+	if segment != strings.ToLower(segment) || !routeSegment.MatchString(segment) {
+		encoded = hexSegmentPrefix + hex.EncodeToString([]byte(segment))
+		hexEncoded = true
+	}
+	switch kind {
+	case ':':
+		return parameterSegmentPrefix + encoded, nil
+	case '*':
+		return wildcardSegmentPrefix + encoded, nil
+	default:
+		if hexEncoded {
+			return encoded, nil
+		}
+		for _, prefix := range []string{parameterSegmentPrefix, wildcardSegmentPrefix, staticEscapePrefix, hexSegmentPrefix} {
+			if strings.HasPrefix(encoded, prefix) {
+				return staticEscapePrefix + encoded, nil
+			}
+		}
+		return encoded, nil
+	}
 }

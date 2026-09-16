@@ -684,8 +684,8 @@ func (c Config) Validate() error {
 		if _, ok := c.Outbound.GRPC["authorization"]; !ok {
 			return errors.New("enabled authorization requires outbound.grpc.authorization")
 		}
-		if c.Authorization.PolicyRefreshInterval <= 0 {
-			return errors.New("authorization.policy_refresh_interval must be positive")
+		if c.Authorization.PolicyRefreshInterval < 100*time.Millisecond || c.Authorization.PolicyRefreshInterval > 10*time.Minute {
+			return errors.New("authorization.policy_refresh_interval must be between 100ms and 10m")
 		}
 	}
 	hasSigningKey := c.JWT.PrivateKey != "" || c.JWT.PrivateKeyFile != ""

@@ -97,6 +97,18 @@ func TestConfig_ValidateAuthorizationDependency(t *testing.T) {
 	}
 }
 
+func TestConfig_RejectsUnboundedAuthorizationRefresh(t *testing.T) {
+	t.Parallel()
+	for _, interval := range []time.Duration{time.Millisecond, 11 * time.Minute} {
+		cfg := validDevelopmentConfig(t)
+		cfg.Authorization.Enabled = true
+		cfg.Authorization.PolicyRefreshInterval = interval
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "between 100ms and 10m") {
+			t.Fatalf("interval %s Validate() error = %v", interval, err)
+		}
+	}
+}
+
 func TestValidateClientPolicy_PlaintextCredentialsRequireExplicitNonProductionOptIn(t *testing.T) {
 	retry := Retry{MaxAttempts: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
 	auth := ClientAuth{Type: "psk", Token: strings.Repeat("p", 32)}

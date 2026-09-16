@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 type Repository struct{ db *sqlx.DB }
@@ -90,6 +92,8 @@ func (r *Repository) Revision(ctx context.Context) (time.Time, error) {
 	query := `SELECT max(updated_at) FROM (
 		SELECT updated_at FROM route_policy_definitions
 		UNION ALL
+		SELECT updated_at FROM route_policy_permission_refs
+		UNION ALL
 		SELECT p.updated_at FROM permissions p
 		JOIN route_policy_permission_refs r ON r.permission_id=p.id AND r.deleted_at IS NULL
 	) route_policy_revisions`
@@ -112,32 +116,30 @@ func (r *Repository) SyncRoutes(ctx context.Context, routes []Route, actor strin
 	if r.db == nil {
 		return errors.New("route policy database is disabled")
 	}
-	tx, err := r.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin route sync: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if r.db.DriverName() == "pgx" || r.db.DriverName() == "postgres" {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.actor_id', $1, true)`, actor); err != nil {
-			return fmt.Errorf("set route sync actor: %w", err)
-		}
-	}
-	now := time.Now()
 	if len(routes) == 0 {
 		return errors.New("route sync requires at least one route")
 	}
-	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE route_definitions SET status='inactive',updated_at=?,updated_by=? WHERE service_name=? AND protocol=? AND status='active' AND deleted_at IS NULL`), now, actor, routes[0].ServiceName, routes[0].Protocol); err != nil {
-		return fmt.Errorf("deactivate undiscovered routes: %w", err)
+	if actor == "" {
+		return errors.New("route sync requires an audit actor")
 	}
 	for _, route := range routes {
-		if err := upsertRoute(ctx, tx, route, actor, now); err != nil {
-			return err
+		if route.ServiceName != routes[0].ServiceName || route.Protocol != routes[0].Protocol {
+			return errors.New("route sync batch must share service name and protocol")
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit route sync: %w", err)
-	}
-	return nil
+	actorCtx := platformprincipal.SystemContext(ctx, actor)
+	return database.NewTransactor(r.db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE route_definitions SET status='inactive',updated_at=?,updated_by=? WHERE service_name=? AND protocol=? AND status='active' AND deleted_at IS NULL`), now, actor, routes[0].ServiceName, routes[0].Protocol); err != nil {
+			return fmt.Errorf("deactivate undiscovered routes: %w", err)
+		}
+		for _, route := range routes {
+			if err := upsertRoute(actorCtx, tx, route, actor, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func upsertRoute(ctx context.Context, tx *sqlx.Tx, route Route, actor string, now time.Time) error {
