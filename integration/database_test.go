@@ -128,6 +128,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testIdentityUserLifecycle(t, ctx, db)
 			testServiceAccountLifecycle(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
+			testRoutePolicyBootstrap(t, ctx, db)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testMenuLifecycle(t, ctx, db, permissionID)
 			testPlatformConfigLifecycle(t, ctx, db)
@@ -555,6 +556,49 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 		t.Fatalf("referenced permission update error=%v", err)
 	}
 	return leaf.ID
+}
+
+func testRoutePolicyBootstrap(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	actorCtx := platformprincipal.SystemContext(ctx, "policy-bootstrap-integration")
+	permissionService := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default())
+	seededPermission, changed, err := permissionService.Seed(actorCtx, permission.Input{Key: "integration.bootstrap.manage", Name: "管理引导策略", NodeType: "permission", Resource: "integration.bootstrap", Action: "manage", Status: "active"})
+	if err != nil || !changed || !seededPermission.IsSystem {
+		t.Fatalf("seed permission=%+v changed=%v err=%v", seededPermission, changed, err)
+	}
+	seededPermission, changed, err = permissionService.Seed(actorCtx, permission.Input{Key: "integration.bootstrap.manage", Name: "管理引导策略", NodeType: "permission", Resource: "integration.bootstrap", Action: "manage", Status: "active"})
+	if err != nil || changed {
+		t.Fatalf("repeat permission seed=%+v changed=%v err=%v", seededPermission, changed, err)
+	}
+	route, err := routepolicy.NewRoute("http", "post", "/bootstrap/integration", "integration", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO route_definitions(id,protocol,method,path,operation,description,service_name,source_version,status,last_discovered_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), route.ID, route.Protocol, route.Method, route.Path, "bootstrap.integration", "", route.ServiceName, route.SourceVersion, "active", now, now, "policy-bootstrap-integration", now, "policy-bootstrap-integration")
+		return execErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := routepolicy.NewCompiler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := routepolicy.NewService(db, appdb.NewTransactor(db), compiler, nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default())
+	manifest := routepolicy.BootstrapManifest{Version: 1, Policies: []routepolicy.BootstrapPolicy{{
+		Protocol: "http", Method: "post", Path: route.Path,
+		Expression: `authenticated && permissions["integration.bootstrap.manage"]`, Status: "active",
+		Permissions: []routepolicy.BootstrapPermission{{Key: "integration.bootstrap.manage", Scope: "platform"}},
+	}}}
+	result, err := routepolicy.Bootstrap(ctx, db, service, "policy-bootstrap-integration", manifest)
+	if err != nil || result.Created != 1 {
+		t.Fatalf("bootstrap create result=%+v err=%v", result, err)
+	}
+	result, err = routepolicy.Bootstrap(ctx, db, service, "policy-bootstrap-integration", manifest)
+	if err != nil || result.Unchanged != 1 {
+		t.Fatalf("bootstrap repeat result=%+v err=%v", result, err)
+	}
 }
 
 func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {

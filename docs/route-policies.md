@@ -67,9 +67,23 @@ effect on the next revision poll. Normal platform administration must use the
 policy service/API so commit, local refresh, operation logging, and Redis
 notification remain one controlled workflow.
 
-On the first deployment, bootstrap only the policies for
-`/api/v1/route-policies/get` and `/api/v1/route-policies/set` directly in the
-database after route discovery. Assign them an existing platform-level
-administration permission. Thereafter all route policy changes, including the
-remaining initial policies, go through the protected API. There is no built-in
-anonymous bootstrap route or code-level superuser bypass.
+On the first deployment, first start the service long enough to discover its
+route definitions, then apply a reviewed manifest with the offline command:
+
+```shell
+/app/policyctl bootstrap \
+  --config /app/config/config.yaml \
+  --env production \
+  --manifest /secure/route-policies.yaml \
+  --actor deployment/route-policy-bootstrap
+```
+
+`config/route-policies.bootstrap.example.yaml` contains the stable built-in
+administration permission and the minimum policy administration routes. The
+command strictly parses and bounds the manifest, derives permission and route
+UUIDv5 IDs, resolves active permission keys, validates CEL, and idempotently
+creates or updates definitions. Each permission or policy mutation shares its
+transaction with operation and security events; therefore database, NATS
+JetStream, operation logging, and security logging are mandatory. Re-running an
+unchanged manifest performs no domain write. There is no anonymous bootstrap
+route or code-level superuser bypass.

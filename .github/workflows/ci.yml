@@ -37,6 +37,7 @@ jobs:
           make build VERSION="ci-${GITHUB_SHA::12}" COMMIT="$GITHUB_SHA" BUILD_TIME="$build_time"
           ./bin/api -version | grep -F "version=ci-${GITHUB_SHA::12} commit=$GITHUB_SHA build_time=$build_time"
           ./bin/migrate -version | grep -F "version=ci-${GITHUB_SHA::12} commit=$GITHUB_SHA build_time=$build_time"
+          ./bin/policyctl version | grep -F "version=ci-${GITHUB_SHA::12} commit=$GITHUB_SHA build_time=$build_time"
       - name: Vet
         run: go vet ./...
       - name: Scan reachable Go vulnerabilities

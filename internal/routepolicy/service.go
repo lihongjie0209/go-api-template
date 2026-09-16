@@ -252,9 +252,11 @@ func (s *Service) set(ctx context.Context, input SetInput) (View, error) {
 		}
 		return View{}, err
 	}
-	s.manager.Apply(compiledPolicy, input.Status == "active")
-	if err := s.manager.Notify(ctx); err != nil {
-		s.logger.WarnContext(ctx, "notify route policy cache refresh", "error", err)
+	if s.manager != nil {
+		s.manager.Apply(compiledPolicy, input.Status == "active")
+		if err := s.manager.Notify(ctx); err != nil && s.logger != nil {
+			s.logger.WarnContext(ctx, "notify route policy cache refresh", "error", err)
+		}
 	}
 	return s.Get(ctx, input.RouteID)
 }

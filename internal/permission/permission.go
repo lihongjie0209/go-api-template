@@ -17,6 +17,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/routepolicy"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"github.com/lihongjie0209/microservice-platform-go/stableid"
 	platformtree "github.com/lihongjie0209/microservice-platform-go/tree"
 )
 
@@ -28,6 +29,8 @@ var (
 	ErrInUse       = errors.New("permission is in use")
 )
 var validKey = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{2,127}$`)
+
+const permissionSeedNamespace = "ec62a525-a494-4f0f-bf19-0e982c1a6f6f"
 
 type Record struct {
 	ID          string    `db:"id" json:"id"`
@@ -112,7 +115,11 @@ type policyRefresher interface {
 }
 
 func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger) *Service {
-	return &Service{repository: repository, transactor: transactor, policies: policies, operations: operations, security: security, logger: logger}
+	service := &Service{repository: repository, transactor: transactor, operations: operations, security: security, logger: logger}
+	if policies != nil {
+		service.policies = policies
+	}
+	return service
 }
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	id = strings.TrimSpace(id)
@@ -263,6 +270,93 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	}
 	return s.repository.Get(ctx, id)
 }
+
+// Seed idempotently installs a built-in permission with a stable UUIDv5. It is
+// intended only for reviewed deployment manifests, not ordinary CRUD input.
+func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
+	if _, err := actor(ctx); err != nil {
+		return Record{}, false, err
+	}
+	input = normalize(input)
+	if err := validate(input); err != nil {
+		return Record{}, false, err
+	}
+	id, err := SeedID(input.Key)
+	if err != nil {
+		return Record{}, false, err
+	}
+	var current struct {
+		Record
+		DeletedAt sql.NullTime `db:"deleted_at"`
+	}
+	err = s.repository.db.GetContext(ctx, &current, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
+	if err == nil && !current.DeletedAt.Valid && current.IsSystem && seedEqual(current.Record, input) {
+		return current.Record, false, nil
+	}
+	if err == nil && !current.IsSystem {
+		return Record{}, false, ErrConflict
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Record{}, false, err
+	}
+	a, _ := actor(ctx)
+	err = s.mutate(ctx, "permission.seed", id, input, func(tx *sqlx.Tx) error {
+		treeID := current.ID
+		if current.DeletedAt.Valid {
+			treeID = ""
+		}
+		if err := s.validateTreeTx(ctx, tx, treeID, input.ParentID); err != nil {
+			return err
+		}
+		now := time.Now()
+		if current.ID == "" {
+			_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO permissions (id,parent_id,permission_key,name,node_type,resource,action,description,sort_order,status,is_system,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,true,?,?,?,?,1)`), id, input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, now, a)
+			return err
+		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET parent_id=?,permission_key=?,name=?,node_type=?,resource=?,action=?,description=?,sort_order=?,status=?,is_system=true,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND is_system=true`), input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, id)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
+	if err != nil {
+		return Record{}, false, err
+	}
+	record, err := s.repository.Get(ctx, id)
+	return record, true, err
+}
+
+func SeedID(key string) (string, error) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if !validKey.MatchString(key) {
+		return "", ErrInvalid
+	}
+	generator, err := stableid.New(permissionSeedNamespace)
+	if err != nil {
+		return "", fmt.Errorf("configure permission seed namespace: %w", err)
+	}
+	id, err := generator.String("permission:" + key)
+	if err != nil {
+		return "", fmt.Errorf("generate permission seed ID: %w", err)
+	}
+	return id, nil
+}
+
+func seedEqual(record Record, input Input) bool {
+	return equalStringPointer(record.ParentID, input.ParentID) && record.Key == input.Key && record.Name == input.Name && record.NodeType == input.NodeType && record.Resource == input.Resource && record.Action == input.Action && record.Description == input.Description && record.SortOrder == input.SortOrder && record.Status == input.Status
+}
+
+func equalStringPointer(left, right *string) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
 func (s *Service) validateTreeTx(ctx context.Context, tx *sqlx.Tx, id string, parent *string) error {
 	var records []Record
 	e := tx.SelectContext(ctx, &records, `SELECT `+columns+` FROM permissions WHERE deleted_at IS NULL ORDER BY sort_order,id LIMIT 10001`)
@@ -350,6 +444,9 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 			return err
 		}
 		if current.Version != version {
+			return ErrConflict
+		}
+		if current.IsSystem {
 			return ErrConflict
 		}
 		if err := s.validateTreeTx(ctx, tx, id, input.ParentID); err != nil {
@@ -530,12 +627,16 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		}
 		return err
 	}
-	if refreshErr := s.policies.Refresh(ctx); refreshErr != nil {
-		s.policies.Invalidate()
-		s.logger.Error("refresh route policies after permission change", "permission_id", id, "error", refreshErr)
-	}
-	if notifyErr := s.policies.Notify(ctx); notifyErr != nil {
-		s.logger.Warn("publish permission policy refresh", "permission_id", id, "error", notifyErr)
+	if s.policies != nil {
+		if refreshErr := s.policies.Refresh(ctx); refreshErr != nil {
+			s.policies.Invalidate()
+			if s.logger != nil {
+				s.logger.Error("refresh route policies after permission change", "permission_id", id, "error", refreshErr)
+			}
+		}
+		if notifyErr := s.policies.Notify(ctx); notifyErr != nil && s.logger != nil {
+			s.logger.Warn("publish permission policy refresh", "permission_id", id, "error", notifyErr)
+		}
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ run:
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/api ./cmd/api
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/migrate ./cmd/migrate
+	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/policyctl ./cmd/policyctl
 # microgen:template-only:start
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/microgen ./cmd/microgen
 # microgen:template-only:end

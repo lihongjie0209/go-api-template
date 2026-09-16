@@ -261,6 +261,21 @@ Configure `http.trusted_proxies` explicitly before trusting forwarding headers. 
 
 Anonymous, JWT, and PSK access are controlled only by database-owned route policies. Enable PSK verification with `APP_AUTH_PSK_ENABLED=true` and inject a key of at least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML. A route grants PSK callers by evaluating `authenticated && principal_type == "service_account"` or a stricter permission expression.
 
+For a fresh database, let startup discovery register the route table, then apply
+the reviewed bootstrap manifest without opening an anonymous administration
+route or writing SQL manually:
+
+```shell
+policyctl bootstrap --env production \
+  --manifest config/route-policies.bootstrap.example.yaml \
+  --actor deployment/route-policy-bootstrap
+```
+
+The manifest seeds stable UUIDv5 permission definitions and the minimum policy
+administration routes. Database, NATS JetStream, operation logging and security
+logging are mandatory so every changed definition and its audit events commit
+atomically. See `docs/route-policies.md` before adapting the example.
+
 Authenticated JWT and PSK callers are injected into the request `context.Context` through the shared principal package; application and repository code should read this principal when constructing explicit audit fields. NATS JetStream is available through `internal/eventbus` and is disabled by default. `eventbus.Outbox.Store` persists a protobuf envelope through the caller-owned database transaction; the managed dispatcher claims committed rows with a lease, publishes with the envelope event ID for JetStream de-duplication, retries with bounded delivery attempts, and moves exhausted rows to a dead state. Domain writes must use this path instead of dual-writing the database and queue. Consumers use durable names, explicit acknowledgements, redelivery, and idempotent processing.
 
 ## OpenAPI and observability

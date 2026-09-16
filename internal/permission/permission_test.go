@@ -39,6 +39,13 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestPermissionSeedIDGoldenMapping(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.route-policy.manage")
+	require.NoError(t, err)
+	require.Equal(t, "f2d9d463-eea9-5cf0-95e3-f8c8b12fa039", id)
+}
+
 func TestFilterRecordsRetainsAncestors(t *testing.T) {
 	t.Parallel()
 	root, group := "root", "group"

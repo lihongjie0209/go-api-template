@@ -1,0 +1,38 @@
+version: 1
+permission_definitions:
+  - key: platform.route-policy.manage
+    name: Manage route authorization policies
+    node_type: permission
+    resource: platform.route-policy
+    action: manage
+    description: Bootstrap permission for route policy administration
+    sort_order: 0
+    status: active
+policies:
+  - protocol: http
+    method: post
+    path: /api/v1/route-policies/get
+    expression: 'authenticated && permissions["platform.route-policy.manage"]'
+    description: Read route authorization policies
+    status: active
+    permissions:
+      - key: platform.route-policy.manage
+        scope: platform
+  - protocol: http
+    method: post
+    path: /api/v1/route-policies/page
+    expression: 'authenticated && permissions["platform.route-policy.manage"]'
+    description: Page route authorization policies
+    status: active
+    permissions:
+      - key: platform.route-policy.manage
+        scope: platform
+  - protocol: http
+    method: post
+    path: /api/v1/route-policies/set
+    expression: 'authenticated && permissions["platform.route-policy.manage"]'
+    description: Manage route authorization policies
+    status: active
+    permissions:
+      - key: platform.route-policy.manage
+        scope: platform
