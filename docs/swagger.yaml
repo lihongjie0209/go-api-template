@@ -254,16 +254,23 @@ definitions:
   httptransport.CreatePlatformConfigRequest:
     properties:
       category:
+        maxLength: 128
         type: string
       description:
+        maxLength: 4096
         type: string
       is_public:
         type: boolean
       key:
+        maxLength: 128
         type: string
       name:
+        maxLength: 256
         type: string
       status:
+        enum:
+        - active
+        - disabled
         type: string
       value:
         type: object
@@ -364,6 +371,7 @@ definitions:
   httptransport.DeletePlatformConfigRequest:
     properties:
       id:
+        maxLength: 128
         type: string
       version:
         type: integer
@@ -892,6 +900,7 @@ definitions:
   httptransport.PlatformConfigIDRequest:
     properties:
       id:
+        maxLength: 128
         type: string
     required:
     - id
@@ -899,6 +908,7 @@ definitions:
   httptransport.PlatformConfigKeyRequest:
     properties:
       key:
+        maxLength: 128
         type: string
     required:
     - key
@@ -908,6 +918,7 @@ definitions:
       categories:
         items:
           type: string
+        maxItems: 100
         type: array
       created_at_from:
         type: string
@@ -916,10 +927,12 @@ definitions:
       ids:
         items:
           type: string
+        maxItems: 200
         type: array
       is_public:
         type: boolean
       keyword:
+        maxLength: 256
         type: string
       page:
         type: integer
@@ -928,15 +941,21 @@ definitions:
       statuses:
         items:
           type: string
+        maxItems: 10
         type: array
       value_types:
         items:
           type: string
+        maxItems: 10
         type: array
+    required:
+    - categories
+    - ids
     type: object
   httptransport.PublicPlatformConfigsRequest:
     properties:
       category:
+        maxLength: 128
         type: string
     type: object
   httptransport.RefreshRequest:
@@ -1165,16 +1184,23 @@ definitions:
   httptransport.UpdatePlatformConfigRequest:
     properties:
       category:
+        maxLength: 128
         type: string
       description:
+        maxLength: 4096
         type: string
       id:
+        maxLength: 128
         type: string
       is_public:
         type: boolean
       name:
+        maxLength: 256
         type: string
       status:
+        enum:
+        - active
+        - disabled
         type: string
       value:
         type: object

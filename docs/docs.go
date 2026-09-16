@@ -4653,22 +4653,30 @@ const docTemplate = `{
             ],
             "properties": {
                 "category": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "is_public": {
                     "type": "boolean"
                 },
                 "key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
                 },
                 "value": {
                     "type": "object"
@@ -4812,7 +4820,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "version": {
                     "type": "integer"
@@ -5583,7 +5592,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -5594,15 +5604,21 @@ const docTemplate = `{
             ],
             "properties": {
                 "key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
         "httptransport.PlatformConfigPageRequest": {
             "type": "object",
+            "required": [
+                "categories",
+                "ids"
+            ],
             "properties": {
                 "categories": {
                     "type": "array",
+                    "maxItems": 100,
                     "items": {
                         "type": "string"
                     }
@@ -5615,6 +5631,7 @@ const docTemplate = `{
                 },
                 "ids": {
                     "type": "array",
+                    "maxItems": 200,
                     "items": {
                         "type": "string"
                     }
@@ -5623,7 +5640,8 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "keyword": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "page": {
                     "type": "integer"
@@ -5633,12 +5651,14 @@ const docTemplate = `{
                 },
                 "statuses": {
                     "type": "array",
+                    "maxItems": 10,
                     "items": {
                         "type": "string"
                     }
                 },
                 "value_types": {
                     "type": "array",
+                    "maxItems": 10,
                     "items": {
                         "type": "string"
                     }
@@ -5649,7 +5669,8 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "category": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -5998,22 +6019,30 @@ const docTemplate = `{
             ],
             "properties": {
                 "category": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "is_public": {
                     "type": "boolean"
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
                 },
                 "value": {
                     "type": "object"

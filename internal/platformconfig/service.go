@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -20,6 +19,19 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"github.com/lihongjie0209/microservice-platform-go/stableid"
+)
+
+const platformConfigNamespace = "aa4b92d2-9002-4523-b390-27b57ffe65f2"
+
+const (
+	maxConfigIDLength          = 128
+	maxConfigNameLength        = 256
+	maxConfigCategoryLength    = 128
+	maxConfigDescriptionLength = 4096
+	maxConfigKeywordLength     = 256
+	maxConfigValueBytes        = 1 << 20
+	maxPublicConfigs           = 1000
 )
 
 var (
@@ -86,23 +98,25 @@ type Service struct {
 	tx         *database.Transactor
 	cache      cache.Store
 	locker     cache.Locker
-	operations operationlog.Recorder
-	security   securitylog.Recorder
+	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 	logger     *slog.Logger
 	cfg        config.Config
 }
 
-func New(db *sqlx.DB, tx *database.Transactor, store cache.Store, locker cache.Locker, operations operationlog.Recorder, security securitylog.Recorder, logger *slog.Logger, cfg config.Config) *Service {
+func New(db *sqlx.DB, tx *database.Transactor, store cache.Store, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{db: db, tx: tx, cache: store, locker: locker, operations: operations, security: security, logger: logger, cfg: cfg}
 }
 
 const columns = `id,config_key,name,category,value_type,value,description,is_public,status,created_at,created_by,updated_at,updated_by,version`
 
-func validate(key, name, status string, value json.RawMessage) error {
+func validate(key, name, category, description, status string, value json.RawMessage) error {
 	if key != "" && (!keyPattern.MatchString(key) || sensitiveKeyPattern.MatchString(key)) {
 		return ErrInvalid
 	}
-	if strings.TrimSpace(name) == "" || (status != "active" && status != "disabled") || len(value) == 0 || len(value) > 1<<20 || !json.Valid(value) || containsSensitiveJSONKey(value) {
+	if name == "" || len(name) > maxConfigNameLength || len(category) > maxConfigCategoryLength ||
+		(category != "" && !keyPattern.MatchString(category)) || len(description) > maxConfigDescriptionLength ||
+		(status != "active" && status != "disabled") || len(value) == 0 || len(value) > maxConfigValueBytes || !json.Valid(value) || containsSensitiveJSONKey(value) {
 		return ErrInvalid
 	}
 	return nil
@@ -161,17 +175,34 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	input.Key = strings.ToLower(strings.TrimSpace(input.Key))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Category = strings.ToLower(strings.TrimSpace(input.Category))
-	if err := validate(input.Key, input.Name, input.Status, input.Value); err != nil {
+	input.Description = strings.TrimSpace(input.Description)
+	if err := validate(input.Key, input.Name, input.Category, input.Description, input.Status, input.Value); err != nil {
 		return Record{}, err
 	}
-	id := uuid.NewString()
+	generator, err := stableid.New(platformConfigNamespace)
+	if err != nil {
+		return Record{}, fmt.Errorf("configure platform config stable ID: %w", err)
+	}
+	id, err := generator.String("platform-config:" + input.Key)
+	if err != nil {
+		return Record{}, fmt.Errorf("generate platform config stable ID: %w", err)
+	}
 	err = s.mutate(ctx, "platform.config.create", id, input.Key, configLogRequest(input.Key, input.Name, input.Category, input.IsPublic, input.Status, 0), func(lockCtx context.Context, tx *sqlx.Tx) error {
 		now := time.Now()
-		_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO platform_configs(id,config_key,name,category,value_type,value,description,is_public,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, now, actor.ID)
-		if database.IsUniqueViolation(err) {
+		var deletedAt sql.NullTime
+		findErr := tx.GetContext(lockCtx, &deletedAt, tx.Rebind(`SELECT deleted_at FROM platform_configs WHERE id=? FOR UPDATE`), id)
+		switch {
+		case findErr == nil && !deletedAt.Valid:
 			return ErrConflict
+		case findErr == nil:
+			_, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE platform_configs SET config_key=?,name=?,category=?,value_type=?,value=?,description=?,is_public=?,status=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL`), input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, id)
+			return err
+		case errors.Is(findErr, sql.ErrNoRows):
+			_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO platform_configs(id,config_key,name,category,value_type,value,description,is_public,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, now, actor.ID)
+			return err
+		default:
+			return findErr
 		}
-		return err
 	})
 	if err != nil {
 		return Record{}, err
@@ -182,7 +213,8 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return Record{}, err
 	}
-	if strings.TrimSpace(id) == "" {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxConfigIDLength {
 		return Record{}, ErrInvalid
 	}
 	var record Record
@@ -197,8 +229,13 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 		return Page{}, err
 	}
 	request, err := pagination.Normalize(input.Request)
-	if err != nil || len(input.IDs) > 200 || len(input.Categories) > 100 || len(input.ValueTypes) > 10 || len(input.Statuses) > 10 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+	if err != nil || len(strings.TrimSpace(input.Keyword)) > maxConfigKeywordLength || len(input.IDs) > 200 || len(input.Categories) > 100 || len(input.ValueTypes) > 10 || len(input.Statuses) > 10 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
 		return Page{}, ErrInvalid
+	}
+	for _, id := range input.IDs {
+		if id == "" || id != strings.TrimSpace(id) || len(id) > maxConfigIDLength {
+			return Page{}, ErrInvalid
+		}
 	}
 	for _, status := range input.Statuses {
 		if status != "active" && status != "disabled" {
@@ -207,7 +244,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	}
 	for index := range input.Categories {
 		input.Categories[index] = strings.ToLower(strings.TrimSpace(input.Categories[index]))
-		if input.Categories[index] == "" || len(input.Categories[index]) > 128 {
+		if input.Categories[index] == "" || len(input.Categories[index]) > maxConfigCategoryLength || !keyPattern.MatchString(input.Categories[index]) {
 			return Page{}, ErrInvalid
 		}
 	}
@@ -266,10 +303,12 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.Category = strings.ToLower(strings.TrimSpace(input.Category))
-	if input.ID == "" || input.Version <= 0 {
+	input.Description = strings.TrimSpace(input.Description)
+	input.ID = strings.TrimSpace(input.ID)
+	if input.ID == "" || len(input.ID) > maxConfigIDLength || input.Version <= 0 {
 		return Record{}, ErrInvalid
 	}
-	if err := validate("", input.Name, input.Status, input.Value); err != nil {
+	if err := validate("", input.Name, input.Category, input.Description, input.Status, input.Value); err != nil {
 		return Record{}, err
 	}
 	existing, err := s.Get(ctx, input.ID)
@@ -300,7 +339,8 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err != nil {
 		return err
 	}
-	if id == "" || version <= 0 {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxConfigIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	existing, err := s.Get(ctx, id)
@@ -355,7 +395,7 @@ func (s *Service) GetPublic(ctx context.Context, key string) (PublicView, error)
 }
 func (s *Service) ListPublic(ctx context.Context, category string) ([]PublicView, error) {
 	category = strings.ToLower(strings.TrimSpace(category))
-	if len(category) > 128 {
+	if len(category) > maxConfigCategoryLength || (category != "" && !keyPattern.MatchString(category)) {
 		return nil, ErrInvalid
 	}
 	items := []PublicView{}
@@ -364,35 +404,64 @@ func (s *Service) ListPublic(ctx context.Context, category string) ([]PublicView
 		query += ` AND category=?`
 		args = append(args, category)
 	}
-	query += ` ORDER BY category,config_key`
+	query += ` ORDER BY category,config_key LIMIT 1001`
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), args...); err != nil {
 		return nil, err
+	}
+	if len(items) > maxPublicConfigs {
+		return nil, fmt.Errorf("%w: public platform configuration list exceeds %d records", ErrConflict, maxPublicConfigs)
 	}
 	return items, nil
 }
 func (s *Service) mutate(ctx context.Context, operation, id, key string, request any, fn func(context.Context, *sqlx.Tx) error) error {
-	committed := false
 	run := func(runCtx context.Context) error {
-		err := operationlog.Do(runCtx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "platform_config", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-			businessErr := s.tx.Within(runCtx, nil, func(tx *sqlx.Tx) error { return fn(runCtx, tx) })
-			committed = businessErr == nil
-			return businessErr
+		started := time.Now()
+		operationEntry := operationlog.Entry{Operation: operation, ResourceType: "platform_config", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+		securityEntry := securitylog.Entry{EventType: securitylog.EventPlatformConfigChanged, SubjectID: id, SubjectType: "platform_config", Metadata: map[string]any{"operation": operation, "key": key}}
+		err := s.tx.Within(runCtx, nil, func(tx *sqlx.Tx) error {
+			if err := fn(runCtx, tx); err != nil {
+				return err
+			}
+			operationEntry.Duration = time.Since(started)
+			operationEntry.Succeeded = true
+			if s.operations != nil {
+				if err := s.operations.RecordTx(runCtx, tx, operationEntry); err != nil {
+					return err
+				}
+			}
+			securityEntry.Succeeded = true
+			if s.security != nil {
+				return s.security.RecordTx(runCtx, tx, securityEntry)
+			}
+			return nil
 		})
-		if committed && s.cache != nil {
+		if database.IsUniqueViolation(err) {
+			err = ErrConflict
+		}
+		if err != nil {
+			operationEntry.Duration = time.Since(started)
+			operationEntry.Succeeded = false
+			operationEntry.ErrorCode = "operation_failed"
+			operationEntry.ErrorMessage = "operation failed"
+			if s.operations != nil {
+				_ = s.operations.Record(runCtx, operationEntry)
+			}
+			securityEntry.Succeeded = false
+			securityEntry.ErrorCode = "operation_failed"
+			securityEntry.ErrorMessage = "operation failed"
+			if s.security != nil {
+				_ = s.security.Record(runCtx, securityEntry)
+			}
+			return err
+		}
+		if s.cache != nil {
 			cacheCtx, cancel := cache.AfterCommitContext(runCtx)
 			defer cancel()
 			if cacheErr := s.cache.Delete(cacheCtx, "platform-config:public:v1:"+key); cacheErr != nil && s.logger != nil {
 				s.logger.WarnContext(cacheCtx, "invalidate public platform config cache", "key", key, "error", cacheErr)
 			}
 		}
-		if s.security == nil {
-			return err
-		}
-		securityErr := s.security.Record(runCtx, securitylog.Entry{EventType: securitylog.EventPlatformConfigChanged, SubjectID: id, SubjectType: "platform_config", Succeeded: committed, Metadata: map[string]any{"operation": operation, "key": key}})
-		if securityErr != nil && committed && err == nil && s.security.FailClosed() {
-			return securityErr
-		}
-		return err
+		return nil
 	}
 	if s.locker != nil {
 		var businessErr error

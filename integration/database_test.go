@@ -638,6 +638,13 @@ func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
 	}
+	restored, err := service.Create(actorCtx, platformconfig.Input{Key: created.Key, Name: "恢复配置", Category: created.Category, Value: []byte(`true`), IsPublic: true, Status: "active"})
+	if err != nil || restored.ID != created.ID || restored.Version <= updated.Version {
+		t.Fatalf("restored stable platform config=%+v err=%v", restored, err)
+	}
+	if err := service.Delete(actorCtx, restored.ID, restored.Version); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type integrationStorage struct{ deleted []string }

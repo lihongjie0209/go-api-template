@@ -22,46 +22,46 @@ func NewPlatformConfigHandler(service *platformconfig.Service, logger *slog.Logg
 }
 
 type CreatePlatformConfigRequest struct {
-	Key         string          `json:"key" binding:"required"`
-	Name        string          `json:"name" binding:"required"`
-	Category    string          `json:"category"`
+	Key         string          `json:"key" binding:"required,max=128"`
+	Name        string          `json:"name" binding:"required,max=256"`
+	Category    string          `json:"category" binding:"max=128"`
 	Value       json.RawMessage `json:"value" binding:"required" swaggertype:"object"`
-	Description string          `json:"description"`
+	Description string          `json:"description" binding:"max=4096"`
 	IsPublic    bool            `json:"is_public"`
-	Status      string          `json:"status" binding:"required"`
+	Status      string          `json:"status" binding:"required,oneof=active disabled"`
 }
 type PlatformConfigIDRequest struct {
-	ID string `json:"id" binding:"required"`
+	ID string `json:"id" binding:"required,max=128"`
 }
 type PlatformConfigKeyRequest struct {
-	Key string `json:"key" binding:"required"`
+	Key string `json:"key" binding:"required,max=128"`
 }
 type PlatformConfigPageRequest struct {
 	pagination.Request
-	Keyword       string     `json:"keyword"`
-	IDs           []string   `json:"ids"`
-	Categories    []string   `json:"categories"`
-	ValueTypes    []string   `json:"value_types"`
-	Statuses      []string   `json:"statuses"`
+	Keyword       string     `json:"keyword" binding:"omitempty,max=256"`
+	IDs           []string   `json:"ids" binding:"max=200,dive,required,max=128"`
+	Categories    []string   `json:"categories" binding:"max=100,dive,required,max=128"`
+	ValueTypes    []string   `json:"value_types" binding:"max=10,dive,oneof=string number boolean object array null"`
+	Statuses      []string   `json:"statuses" binding:"max=10,dive,oneof=active disabled"`
 	IsPublic      *bool      `json:"is_public"`
 	CreatedAtFrom *time.Time `json:"created_at_from"`
 	CreatedAtTo   *time.Time `json:"created_at_to"`
 }
 type PublicPlatformConfigsRequest struct {
-	Category string `json:"category"`
+	Category string `json:"category" binding:"max=128"`
 }
 type UpdatePlatformConfigRequest struct {
-	ID          string          `json:"id" binding:"required"`
-	Name        string          `json:"name" binding:"required"`
-	Category    string          `json:"category"`
+	ID          string          `json:"id" binding:"required,max=128"`
+	Name        string          `json:"name" binding:"required,max=256"`
+	Category    string          `json:"category" binding:"max=128"`
 	Value       json.RawMessage `json:"value" binding:"required" swaggertype:"object"`
-	Description string          `json:"description"`
+	Description string          `json:"description" binding:"max=4096"`
 	IsPublic    bool            `json:"is_public"`
-	Status      string          `json:"status" binding:"required"`
+	Status      string          `json:"status" binding:"required,oneof=active disabled"`
 	Version     int64           `json:"version" binding:"required,gt=0"`
 }
 type DeletePlatformConfigRequest struct {
-	ID      string `json:"id" binding:"required"`
+	ID      string `json:"id" binding:"required,max=128"`
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
 
