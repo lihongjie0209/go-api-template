@@ -213,6 +213,10 @@ func TestAuthenticateGRPC_PSKWildcard(t *testing.T) {
 				if !ok || value.ID != "go-api-template:psk" || value.Type != platformprincipal.TypeServiceAccount {
 					t.Fatalf("principal = %#v, %v", value, ok)
 				}
+				scheme, schemeOK := accesscontrol.CredentialSchemeFromContext(authenticated)
+				if !schemeOK || scheme != accesscontrol.CredentialSchemePSK {
+					t.Fatalf("credential scheme = %q, %v", scheme, schemeOK)
+				}
 			}
 		})
 	}
@@ -243,6 +247,9 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	value, ok := platformprincipal.FromContext(ctx)
 	if !ok || value.ID != "user-1" || value.Type != platformprincipal.TypeServiceAccount {
 		t.Fatalf("principal = %#v, %v", value, ok)
+	}
+	if scheme, schemeOK := accesscontrol.CredentialSchemeFromContext(ctx); !schemeOK || scheme != accesscontrol.CredentialSchemeBearer {
+		t.Fatalf("credential scheme = %q, %v", scheme, schemeOK)
 	}
 }
 

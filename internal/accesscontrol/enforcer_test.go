@@ -29,7 +29,7 @@ func TestEnforcerAuthorizesDeclaredOperation(t *testing.T) {
 		require.Equal(t, platformauthz.ScopeTenant, requirement.Scope)
 		return nil
 	}))
-	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "u1", Type: platformprincipal.TypeUser})
+	ctx := WithCredentialScheme(platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "u1", Type: platformprincipal.TypeUser}), CredentialSchemeBearer)
 	endpoint, err := enforcer.Authorize(ctx, TransportHTTP, "POST /members/get")
 	require.NoError(t, err)
 	require.True(t, called)
@@ -45,7 +45,7 @@ func TestEnforcerMapsPrincipalResourceScope(t *testing.T) {
 		require.Equal(t, platformauthz.ScopePrincipal, requirement.Scope)
 		return nil
 	}))
-	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "u1", Type: platformprincipal.TypeUser})
+	ctx := WithCredentialScheme(platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "u1", Type: platformprincipal.TypeUser}), CredentialSchemeBearer)
 	endpoint, err := enforcer.Authorize(ctx, TransportHTTP, "POST /sessions/page")
 	require.NoError(t, err)
 	require.Equal(t, pbac.ResourceScopePrincipal, endpoint.Scope)
@@ -73,6 +73,39 @@ func TestEnforcerAllowsOnlyExplicitPublicOperation(t *testing.T) {
 	enforcer := NewEnforcer(registry, nil)
 	_, err = enforcer.Authorize(context.Background(), TransportHTTP, "POST /version")
 	require.NoError(t, err)
+}
+
+func TestEnforcerRequiresDeclaredCredentialScheme(t *testing.T) {
+	resources, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "callback", Name: "callback", Scope: pbac.ResourceScopePlatform, Actions: []pbac.ActionDefinition{{Key: "invoke", Name: "invoke"}}}})
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name    string
+		mode    AuthenticationMode
+		scheme  CredentialScheme
+		wantErr bool
+	}{
+		{name: "jwt accepts bearer", mode: AuthenticationJWT, scheme: CredentialSchemeBearer},
+		{name: "jwt rejects psk", mode: AuthenticationJWT, scheme: CredentialSchemePSK, wantErr: true},
+		{name: "psk accepts psk", mode: AuthenticationPSK, scheme: CredentialSchemePSK},
+		{name: "psk rejects bearer", mode: AuthenticationPSK, scheme: CredentialSchemeBearer, wantErr: true},
+		{name: "missing verified scheme", mode: AuthenticationJWT, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry, registryErr := NewEndpointRegistry(resources, []Endpoint{{Transport: TransportHTTP, Operation: "POST /callback", Authentication: test.mode, Resource: "callback", Action: "invoke", DataPermission: DataPermissionNone, DataPermissionReason: "platform callback"}})
+			require.NoError(t, registryErr)
+			enforcer := NewEnforcer(registry, authorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }))
+			ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "caller", Type: platformprincipal.TypeServiceAccount})
+			if test.scheme != "" {
+				ctx = WithCredentialScheme(ctx, test.scheme)
+			}
+			_, authorizeErr := enforcer.Authorize(ctx, TransportHTTP, "POST /callback")
+			if test.wantErr {
+				require.ErrorIs(t, authorizeErr, ErrAuthentication)
+			} else {
+				require.NoError(t, authorizeErr)
+			}
+		})
+	}
 }
 
 func TestEndpointContextRoundTrip(t *testing.T) {

@@ -304,11 +304,13 @@ func authenticateGRPCOptional(ctx context.Context, service *auth.Service, cfg co
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
 		identity = verified
+		ctx = accesscontrol.WithCredentialScheme(ctx, accesscontrol.CredentialSchemeBearer)
 	case strings.EqualFold(scheme, "PSK"):
 		if !cfg.PSK.Enabled || !auth.VerifyPSK(header, cfg.PSK.Key) {
 			return nil, status.Error(codes.Unauthenticated, "invalid PSK")
 		}
 		identity = platformprincipal.Principal{ID: "go-api-template:psk", Type: platformprincipal.TypeServiceAccount}
+		ctx = accesscontrol.WithCredentialScheme(ctx, accesscontrol.CredentialSchemePSK)
 	default:
 		return nil, status.Error(codes.Unauthenticated, "unsupported authorization scheme")
 	}

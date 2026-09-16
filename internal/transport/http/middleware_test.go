@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -333,6 +334,13 @@ func TestDatabaseAuthenticationVerifiesSuppliedCredentials(t *testing.T) {
 				if strings.HasPrefix(test.header, "PSK ") && (!ok || value.ID != "orders-service:psk" || value.Type != platformprincipal.TypeServiceAccount) {
 					c.AbortWithStatus(http.StatusInternalServerError)
 					return
+				}
+				if strings.HasPrefix(test.header, "PSK ") {
+					scheme, schemeOK := accesscontrol.CredentialSchemeFromContext(c.Request.Context())
+					if !schemeOK || scheme != accesscontrol.CredentialSchemePSK {
+						c.AbortWithStatus(http.StatusInternalServerError)
+						return
+					}
 				}
 				OK(c, nil)
 			})

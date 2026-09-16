@@ -68,6 +68,32 @@ type Operation struct {
 }
 
 type endpointContextKey struct{}
+type credentialSchemeContextKey struct{}
+
+// CredentialScheme identifies the already verified transport credential. It
+// contains no secret and lets the transport-independent enforcer distinguish
+// endpoints that explicitly require Bearer JWT from endpoints requiring PSK.
+type CredentialScheme string
+
+const (
+	CredentialSchemeBearer CredentialScheme = "bearer"
+	CredentialSchemePSK    CredentialScheme = "psk"
+)
+
+// WithCredentialScheme records how the principal was authenticated after the
+// credential itself has been verified by the transport authentication layer.
+func WithCredentialScheme(ctx context.Context, scheme CredentialScheme) context.Context {
+	return context.WithValue(ctx, credentialSchemeContextKey{}, scheme)
+}
+
+// CredentialSchemeFromContext returns the verified credential scheme.
+func CredentialSchemeFromContext(ctx context.Context) (CredentialScheme, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	scheme, ok := ctx.Value(credentialSchemeContextKey{}).(CredentialScheme)
+	return scheme, ok
+}
 
 // WithEndpoint carries the already-authorized descriptor into application and
 // repository layers so required data permission cannot be inferred from paths.
@@ -215,6 +241,13 @@ func (e *Enforcer) Authorize(ctx context.Context, transport Transport, operation
 	}
 	principal, ok := platformprincipal.FromContext(ctx)
 	if !ok {
+		return Endpoint{}, ErrAuthentication
+	}
+	scheme, _ := CredentialSchemeFromContext(ctx)
+	if endpoint.Authentication == AuthenticationJWT && scheme != CredentialSchemeBearer {
+		return Endpoint{}, ErrAuthentication
+	}
+	if endpoint.Authentication == AuthenticationPSK && scheme != CredentialSchemePSK {
 		return Endpoint{}, ErrAuthentication
 	}
 	if endpoint.Authentication == AuthenticationService && principal.Type != platformprincipal.TypeServiceAccount && principal.Type != platformprincipal.TypeSystem {

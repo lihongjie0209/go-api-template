@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -443,12 +444,14 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 				return
 			}
 			identity = verified
+			c.Request = c.Request.WithContext(accesscontrol.WithCredentialScheme(c.Request.Context(), accesscontrol.CredentialSchemeBearer))
 		case strings.EqualFold(scheme, "PSK"):
 			if !cfg.Auth.PSK.Enabled || !auth.VerifyPSK(header, cfg.Auth.PSK.Key) {
 				Fail(c, logger, apperror.Unauthorized("invalid PSK"))
 				return
 			}
 			identity = platformprincipal.Principal{ID: cfg.App.Name + ":psk", Type: platformprincipal.TypeServiceAccount}
+			c.Request = c.Request.WithContext(accesscontrol.WithCredentialScheme(c.Request.Context(), accesscontrol.CredentialSchemePSK))
 		default:
 			Fail(c, logger, apperror.Unauthorized("unsupported authorization scheme"))
 			return
