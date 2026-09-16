@@ -63,7 +63,7 @@ func (s *Service) checkDatabase(parent context.Context, results chan<- result) {
 
 func (s *Service) checkRedis(parent context.Context, results chan<- result) {
 	if s.redis == nil {
-		results <- result{name: "redis", dependency: Dependency{Status: "disabled"}, ready: true}
+		results <- result{name: "redis", dependency: Dependency{Status: "down"}, ready: false}
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, s.cfg.RedisTimeout)

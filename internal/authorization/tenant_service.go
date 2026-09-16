@@ -97,8 +97,7 @@ func (s *TenantAuthorizationService) SetTenantPermissions(ctx context.Context, t
 	if err != nil {
 		return err
 	}
-	return s.withLock(ctx, "tenant:"+tenantID+":permissions", func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withLock(ctx, "tenant:"+tenantID+":permissions", func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.permissions.set", tenantID, permissionIDs, func() error {
 			return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureTenant(ctx, tx, tenantID); err != nil {
@@ -124,8 +123,7 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 	if actor.TenantID != "" && (actor.TenantID != tenantID || !s.isAdministrator(ctx, tenantID, actor.MembershipID)) {
 		return ErrTenantAuthorizationForbidden
 	}
-	return s.withLock(ctx, "tenant:"+tenantID+":administrator:"+membershipID, func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withLock(ctx, "tenant:"+tenantID+":administrator:"+membershipID, func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.administrator.set", membershipID, map[string]any{"tenant_id": tenantID, "enabled": enabled}, func() error {
 			return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureMembership(ctx, tx, tenantID, membershipID); err != nil {
@@ -159,8 +157,7 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 		return TenantRole{}, ErrTenantAuthorizationInvalid
 	}
 	role := TenantRole{ID: uuid.NewString(), TenantID: actor.TenantID, Code: code, Name: name, Description: description, Status: "active", Version: 1}
-	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role-code:"+code, func(lockCtx context.Context) error {
-		ctx = lockCtx
+	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role-code:"+code, func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.role.create", role.ID, permissionIDs, func() error {
 			return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
@@ -190,8 +187,7 @@ func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, rol
 	if err != nil {
 		return err
 	}
-	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.role.permissions.set", roleID, permissionIDs, func() error {
 			return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
@@ -223,8 +219,7 @@ func (s *TenantAuthorizationService) SetMemberRoles(ctx context.Context, members
 	if err != nil {
 		return err
 	}
-	return s.withLock(ctx, "tenant:"+actor.TenantID+":member:"+membershipID+":roles", func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withLock(ctx, "tenant:"+actor.TenantID+":member:"+membershipID+":roles", func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.member.roles.set", membershipID, roleIDs, func() error {
 			return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureMembership(ctx, tx, actor.TenantID, membershipID); err != nil {
@@ -370,8 +365,7 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 	if roleID == "" || name == "" || version <= 0 || (status != "active" && status != "disabled") {
 		return TenantRole{}, ErrTenantAuthorizationInvalid
 	}
-	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(lockCtx context.Context) error {
-		ctx = lockCtx
+	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.role.update", roleID, map[string]any{"name": name, "status": status, "version": version}, func() error {
 			return s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 				if err := ensureAssignable(ctx, tx, actor, nil); err != nil {
@@ -406,8 +400,7 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 	if roleID == "" || version <= 0 {
 		return ErrTenantAuthorizationInvalid
 	}
-	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.logged(ctx, "tenant.role.delete", roleID, map[string]any{"version": version}, func() error {
 			return s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 				if err := ensureAssignable(ctx, tx, actor, nil); err != nil {
@@ -669,7 +662,7 @@ func (s *TenantAuthorizationService) withLock(ctx context.Context, key string, f
 		return fn(ctx)
 	}
 	var businessErr error
-	err := cache.WithLock(ctx, s.locker, key, s.cfg.User.LockTTL, s.cfg.User.LockRetryDelay, func(lockCtx context.Context) error {
+	err := cache.WithLock(ctx, s.locker, key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, func(lockCtx context.Context) error {
 		businessErr = fn(lockCtx)
 		return businessErr
 	})

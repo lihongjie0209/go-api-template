@@ -9,7 +9,6 @@ x-app-env: &app-env
   APP_DATABASE_NAME: go_api_template_db
   APP_DATABASE_SCHEMA: go_api_template
   APP_DATABASE_DSN: postgres://app:app@postgres:5432/go_api_template_db?sslmode=disable&search_path=go_api_template
-  APP_REDIS_ENABLED: "true"
   APP_REDIS_ADDRESS: redis:6379
   APP_RATE_LIMIT_ENABLED: "true"
   APP_IDEMPOTENCY_ENABLED: "true"

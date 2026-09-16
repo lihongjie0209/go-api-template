@@ -396,7 +396,7 @@ func (s *Service) mutate(ctx context.Context, operation, id, key string, request
 	}
 	if s.locker != nil {
 		var businessErr error
-		err := cache.WithLock(ctx, s.locker, "platform-config:"+key, s.cfg.User.LockTTL, s.cfg.User.LockRetryDelay, func(lockCtx context.Context) error {
+		err := cache.WithLock(ctx, s.locker, "platform-config:"+key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, func(lockCtx context.Context) error {
 			businessErr = run(lockCtx)
 			return businessErr
 		})

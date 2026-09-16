@@ -16,35 +16,36 @@ import (
 )
 
 type Config struct {
-	Runtime        Runtime        `mapstructure:"-"`
-	App            App            `mapstructure:"app"`
-	HTTP           HTTP           `mapstructure:"http"`
-	GRPC           GRPC           `mapstructure:"grpc"`
-	Log            Log            `mapstructure:"log"`
-	Database       Database       `mapstructure:"database"`
-	Redis          Redis          `mapstructure:"redis"`
-	Health         Health         `mapstructure:"health"`
-	RateLimit      RateLimit      `mapstructure:"rate_limit"`
-	Observability  Observability  `mapstructure:"observability"`
-	Swagger        Swagger        `mapstructure:"swagger"`
-	JWT            JWT            `mapstructure:"jwt"`
-	Auth           Auth           `mapstructure:"auth"`
-	Authentication Authentication `mapstructure:"authentication"`
-	Authorization  Authorization  `mapstructure:"authorization"`
-	Cron           Cron           `mapstructure:"cron"`
-	Migration      Migration      `mapstructure:"migration"`
-	User           User           `mapstructure:"user"`
-	Tenant         Tenant         `mapstructure:"tenant"`
-	Menu           Menu           `mapstructure:"menu"`
-	PlatformConfig PlatformConfig `mapstructure:"platform_config"`
-	Idempotency    Idempotency    `mapstructure:"idempotency"`
-	Outbound       Outbound       `mapstructure:"outbound"`
-	EventBus       EventBus       `mapstructure:"event_bus"`
-	ObjectStorage  ObjectStorage  `mapstructure:"object_storage"`
-	Files          Files          `mapstructure:"files"`
-	OperationLog   OperationLog   `mapstructure:"operation_log"`
-	SecurityLog    SecurityLog    `mapstructure:"security_log"`
-	DataLifecycle  DataLifecycle  `mapstructure:"data_lifecycle"`
+	Runtime         Runtime         `mapstructure:"-"`
+	App             App             `mapstructure:"app"`
+	HTTP            HTTP            `mapstructure:"http"`
+	GRPC            GRPC            `mapstructure:"grpc"`
+	Log             Log             `mapstructure:"log"`
+	Database        Database        `mapstructure:"database"`
+	Redis           Redis           `mapstructure:"redis"`
+	DistributedLock DistributedLock `mapstructure:"distributed_lock"`
+	Health          Health          `mapstructure:"health"`
+	RateLimit       RateLimit       `mapstructure:"rate_limit"`
+	Observability   Observability   `mapstructure:"observability"`
+	Swagger         Swagger         `mapstructure:"swagger"`
+	JWT             JWT             `mapstructure:"jwt"`
+	Auth            Auth            `mapstructure:"auth"`
+	Authentication  Authentication  `mapstructure:"authentication"`
+	Authorization   Authorization   `mapstructure:"authorization"`
+	Cron            Cron            `mapstructure:"cron"`
+	Migration       Migration       `mapstructure:"migration"`
+	User            User            `mapstructure:"user"`
+	Tenant          Tenant          `mapstructure:"tenant"`
+	Menu            Menu            `mapstructure:"menu"`
+	PlatformConfig  PlatformConfig  `mapstructure:"platform_config"`
+	Idempotency     Idempotency     `mapstructure:"idempotency"`
+	Outbound        Outbound        `mapstructure:"outbound"`
+	EventBus        EventBus        `mapstructure:"event_bus"`
+	ObjectStorage   ObjectStorage   `mapstructure:"object_storage"`
+	Files           Files           `mapstructure:"files"`
+	OperationLog    OperationLog    `mapstructure:"operation_log"`
+	SecurityLog     SecurityLog     `mapstructure:"security_log"`
+	DataLifecycle   DataLifecycle   `mapstructure:"data_lifecycle"`
 }
 
 type Runtime struct {
@@ -111,7 +112,6 @@ type Database struct {
 	PingTimeout     time.Duration `mapstructure:"ping_timeout"`
 }
 type Redis struct {
-	Enabled      bool          `mapstructure:"enabled"`
 	KeyPrefix    string        `mapstructure:"key_prefix"`
 	Address      string        `mapstructure:"address"`
 	Username     string        `mapstructure:"username"`
@@ -220,9 +220,11 @@ type Migration struct {
 	DatabaseName string `mapstructure:"-"`
 }
 type User struct {
-	CacheTTL       time.Duration `mapstructure:"cache_ttl"`
-	LockTTL        time.Duration `mapstructure:"lock_ttl"`
-	LockRetryDelay time.Duration `mapstructure:"lock_retry_delay"`
+	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+}
+type DistributedLock struct {
+	TTL        time.Duration `mapstructure:"ttl"`
+	RetryDelay time.Duration `mapstructure:"retry_delay"`
 }
 type Tenant struct {
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
@@ -503,7 +505,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.dial_timeout", "5s")
 	v.SetDefault("redis.read_timeout", "3s")
 	v.SetDefault("redis.write_timeout", "3s")
-	v.SetDefault("redis.enabled", false)
 	v.SetDefault("redis.key_prefix", "")
 	v.SetDefault("redis.username", "")
 	v.SetDefault("redis.password", "")
@@ -541,7 +542,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("authentication.refresh_ttl", "720h")
 	v.SetDefault("authentication.max_failed_attempts", 5)
 	v.SetDefault("authentication.lock_duration", "15m")
-	v.SetDefault("cron.enabled", true)
+	v.SetDefault("cron.enabled", false)
 	v.SetDefault("cron.timezone", "Asia/Shanghai")
 	v.SetDefault("cron.sample_spec", "0 */5 * * * *")
 	v.SetDefault("migration.path", "migrations/postgres")
@@ -551,8 +552,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("migration.table", "go_api_template_schema_migrations")
 	v.SetDefault("authorization.policy_refresh_interval", 30*time.Second)
 	v.SetDefault("user.cache_ttl", "5m")
-	v.SetDefault("user.lock_ttl", "10s")
-	v.SetDefault("user.lock_retry_delay", "100ms")
+	v.SetDefault("distributed_lock.ttl", "10s")
+	v.SetDefault("distributed_lock.retry_delay", "100ms")
 	v.SetDefault("tenant.cache_ttl", "5m")
 	v.SetDefault("menu.cache_ttl", "5m")
 	v.SetDefault("menu.max_nodes", 10000)
@@ -659,17 +660,14 @@ func (c Config) Validate() error {
 	if c.Migration.AutoUp && (!c.Database.Enabled || c.Migration.Path == "" || c.Migration.DatabaseURL == "" || !validMigrationTable.MatchString(c.Migration.Table)) {
 		return errors.New("migration.auto_up requires enabled database, path, database_url, and a valid service-specific table")
 	}
-	if c.Redis.Enabled && (c.Redis.Address == "" || c.Redis.DialTimeout <= 0 || c.Redis.DialTimeout > time.Minute || c.Redis.ReadTimeout <= 0 || c.Redis.ReadTimeout > time.Minute || c.Redis.WriteTimeout <= 0 || c.Redis.WriteTimeout > time.Minute) {
-		return errors.New("enabled redis requires an address and positive timeouts no greater than one minute")
+	if c.Redis.Address == "" || c.Redis.DialTimeout <= 0 || c.Redis.DialTimeout > time.Minute || c.Redis.ReadTimeout <= 0 || c.Redis.ReadTimeout > time.Minute || c.Redis.WriteTimeout <= 0 || c.Redis.WriteTimeout > time.Minute {
+		return errors.New("redis requires an address and positive timeouts no greater than one minute")
 	}
 	if c.Redis.KeyPrefix != "" && !validRedisPrefix.MatchString(c.Redis.KeyPrefix) {
 		return errors.New("redis.key_prefix must be a bounded namespace ending in ':'")
 	}
 	if c.Health.DatabaseTimeout <= 0 || c.Health.RedisTimeout <= 0 {
 		return errors.New("http and health timeouts must be positive")
-	}
-	if c.RateLimit.Enabled && !c.Redis.Enabled {
-		return errors.New("rate_limit requires redis.enabled")
 	}
 	if c.RateLimit.Enabled {
 		for name, rule := range map[string]RateLimitRule{"ip": c.RateLimit.IP, "api": c.RateLimit.API, "user": c.RateLimit.User, "login": c.RateLimit.Login} {
@@ -721,8 +719,11 @@ func (c Config) Validate() error {
 		return errors.New("enabled auth.psk requires a key of at least 32 bytes")
 	}
 	const maxCacheTTL = 24 * time.Hour
-	if c.User.CacheTTL <= 0 || c.User.CacheTTL > maxCacheTTL || c.User.LockTTL <= 0 || c.User.LockRetryDelay <= 0 {
-		return errors.New("user cache duration must be positive and no greater than 24h; lock durations must be positive")
+	if c.User.CacheTTL <= 0 || c.User.CacheTTL > maxCacheTTL {
+		return errors.New("user cache duration must be positive and no greater than 24h")
+	}
+	if c.DistributedLock.TTL < 300*time.Millisecond || c.DistributedLock.TTL > 5*time.Minute || c.DistributedLock.RetryDelay < 10*time.Millisecond || c.DistributedLock.RetryDelay > 5*time.Second || c.DistributedLock.RetryDelay >= c.DistributedLock.TTL {
+		return errors.New("distributed_lock.ttl must be between 300ms and 5m and retry_delay between 10ms and 5s and less than ttl")
 	}
 	if c.Tenant.CacheTTL <= 0 || c.Tenant.CacheTTL > maxCacheTTL {
 		return errors.New("tenant cache duration must be positive and no greater than 24h")
@@ -736,8 +737,8 @@ func (c Config) Validate() error {
 	if c.Authentication.RefreshTTL <= 0 || c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
 		return errors.New("authentication refresh, failure, and lock settings must be positive")
 	}
-	if c.Idempotency.Enabled && (!c.Redis.Enabled || (len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0 || c.Idempotency.MaxResponseBytes <= 0 || c.Idempotency.MaxResponseBytes > 16<<20) {
-		return errors.New("enabled idempotency requires redis, at least one route pattern, positive TTL values, and max_response_bytes no greater than 16 MiB")
+	if c.Idempotency.Enabled && ((len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0 || c.Idempotency.MaxResponseBytes <= 0 || c.Idempotency.MaxResponseBytes > 16<<20) {
+		return errors.New("enabled idempotency requires at least one route pattern, positive TTL values, and max_response_bytes no greater than 16 MiB")
 	}
 	for _, pattern := range c.Idempotency.HTTPPaths {
 		if !strings.HasPrefix(pattern, "/api/") {

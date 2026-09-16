@@ -84,3 +84,12 @@ func TestService_ReadyWhenRedisIsDown(t *testing.T) {
 		t.Fatalf("Ready() status = %#v", status)
 	}
 }
+
+func TestService_ReadyFailsWhenMandatoryRedisClientIsMissing(t *testing.T) {
+	t.Parallel()
+	service := New(nil, nil, config.Config{Health: config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}})
+	status, ready := service.Ready(t.Context())
+	if ready || status.Dependencies["redis"].Status != "down" {
+		t.Fatalf("Ready() = %#v, %t", status, ready)
+	}
+}

@@ -375,7 +375,6 @@ func TestConfig_RejectsUnsafeRateLimitBounds(t *testing.T) {
 	} {
 		cfg := validDevelopmentConfig(t)
 		cfg.RateLimit.Enabled = true
-		cfg.Redis.Enabled = true
 		cfg.RateLimit.IP = rule
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "bounded and positive") {
 			t.Fatalf("rule %+v Validate() error = %v", rule, err)
@@ -389,6 +388,7 @@ func TestConfig_RejectsUnsafeRedisTimeouts(t *testing.T) {
 		name   string
 		mutate func(*Redis)
 	}{
+		{name: "address", mutate: func(redis *Redis) { redis.Address = "" }},
 		{name: "dial timeout", mutate: func(redis *Redis) { redis.DialTimeout = 0 }},
 		{name: "read timeout", mutate: func(redis *Redis) { redis.ReadTimeout = 0 }},
 		{name: "write timeout", mutate: func(redis *Redis) { redis.WriteTimeout = 0 }},
@@ -397,7 +397,6 @@ func TestConfig_RejectsUnsafeRedisTimeouts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validDevelopmentConfig(t)
-			cfg.Redis.Enabled = true
 			test.mutate(&cfg.Redis)
 			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "positive timeouts") {
 				t.Fatalf("Validate() error = %v", err)
@@ -422,6 +421,29 @@ func TestConfig_RejectsUnboundedCacheTTLs(t *testing.T) {
 			cfg := validDevelopmentConfig(t)
 			test.mutate(&cfg)
 			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "24h") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_RejectsUnsafeDistributedLockBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*DistributedLock)
+	}{
+		{name: "short ttl", mutate: func(lock *DistributedLock) { lock.TTL = 299 * time.Millisecond }},
+		{name: "long ttl", mutate: func(lock *DistributedLock) { lock.TTL = 5*time.Minute + time.Millisecond }},
+		{name: "short retry", mutate: func(lock *DistributedLock) { lock.RetryDelay = 9 * time.Millisecond }},
+		{name: "long retry", mutate: func(lock *DistributedLock) { lock.RetryDelay = 5*time.Second + time.Millisecond }},
+		{name: "retry not below ttl", mutate: func(lock *DistributedLock) { lock.RetryDelay = lock.TTL }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			test.mutate(&cfg.DistributedLock)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "distributed_lock") {
 				t.Fatalf("Validate() error = %v", err)
 			}
 		})

@@ -200,8 +200,7 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 	if input.ID == "" || input.Name == "" || input.Version <= 0 || (input.ParentID != nil && *input.ParentID == input.ID) {
 		return Department{}, ErrInvalid
 	}
-	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(lockCtx context.Context) error {
-		ctx = lockCtx
+	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
 		return operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "tenant.department.update", ResourceType: "tenant_department", ResourceID: input.ID, Source: "backend", Protocol: "service", Request: input}, func() error {
 			return s.tx.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
@@ -238,8 +237,7 @@ func (s *DepartmentService) Delete(ctx context.Context, id string, version int64
 	if id == "" || version <= 0 {
 		return ErrInvalid
 	}
-	return s.withDepartmentLock(ctx, actor.TenantID, "tree", func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
 		return operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "tenant.department.delete", ResourceType: "tenant_department", ResourceID: id, Source: "backend", Protocol: "service"}, func() error {
 			return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 				if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
@@ -290,8 +288,7 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 		seen[assignment.MembershipID] = struct{}{}
 		ids[i] = assignment.MembershipID
 	}
-	return s.withDepartmentLock(ctx, actor.TenantID, departmentID+":members", func(lockCtx context.Context) error {
-		ctx = lockCtx
+	return s.withDepartmentLock(ctx, actor.TenantID, departmentID+":members", func(ctx context.Context) error {
 		return operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "tenant.department.members.set", ResourceType: "tenant_department", ResourceID: departmentID, Source: "backend", Protocol: "service", Request: assignments}, func() error {
 			return s.tx.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 				if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
@@ -415,7 +412,7 @@ func (s *DepartmentService) withDepartmentLock(ctx context.Context, tenantID, su
 		return fn(ctx)
 	}
 	var businessErr error
-	err := cache.WithLock(ctx, s.locker, "tenant:"+tenantID+":department:"+suffix, s.cfg.User.LockTTL, s.cfg.User.LockRetryDelay, func(lockCtx context.Context) error {
+	err := cache.WithLock(ctx, s.locker, "tenant:"+tenantID+":department:"+suffix, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, func(lockCtx context.Context) error {
 		businessErr = fn(lockCtx)
 		return businessErr
 	})

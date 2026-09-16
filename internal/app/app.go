@@ -129,9 +129,6 @@ func newDatabase(lc fx.Lifecycle, cfg config.Config) (*sqlx.DB, error) {
 }
 
 func newRedis(lc fx.Lifecycle, cfg config.Config, tracing *observability.Tracing) (*redis.Client, error) {
-	if !cfg.Redis.Enabled {
-		return nil, nil
-	}
 	client, err := cache.Open(context.Background(), cfg.Redis)
 	if err != nil {
 		return nil, err
@@ -178,9 +175,5 @@ var DatabaseModule = fx.Module("database", fx.Provide(newDatabase, database.NewT
 	}
 }))
 var MigrationModule = fx.Module("migration", fx.Invoke(runStartupMigration))
-var CacheModule = fx.Module("cache", fx.Provide(newRedis, newCacheStore, newLocker), fx.Invoke(func(client *redis.Client, logger *slog.Logger) {
-	if client == nil {
-		logger.Warn("redis is disabled")
-	}
-}))
+var CacheModule = fx.Module("cache", fx.Provide(newRedis, newCacheStore, newLocker))
 var ObjectStorageModule = fx.Module("object-storage", fx.Provide(newObjectStorage))

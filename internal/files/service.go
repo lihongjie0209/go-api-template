@@ -102,7 +102,7 @@ type Service struct {
 }
 
 func New(db *sqlx.DB, transactor *database.Transactor, storage objectstorage.Store, locker cache.Locker, operations operationlog.Recorder, logger *slog.Logger, cfg config.Config) *Service {
-	return &Service{enabled: cfg.Files.Enabled, db: db, transactor: transactor, storage: storage, locker: locker, operations: operations, logger: logger, cfg: cfg.Files, lockTTL: cfg.User.LockTTL, lockRetry: cfg.User.LockRetryDelay}
+	return &Service{enabled: cfg.Files.Enabled, db: db, transactor: transactor, storage: storage, locker: locker, operations: operations, logger: logger, cfg: cfg.Files, lockTTL: cfg.DistributedLock.TTL, lockRetry: cfg.DistributedLock.RetryDelay}
 }
 
 const recordColumns = `id, tenant_id, object_key, original_name, content_type, size_bytes, etag, checksum_sha256, created_at, created_by, updated_at, updated_by, version, deleted_at, deleted_by, object_deleted_at, object_delete_attempts, object_delete_error, object_delete_next_at`

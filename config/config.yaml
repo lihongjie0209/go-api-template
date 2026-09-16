@@ -46,7 +46,6 @@ database:
   conn_max_idle_time: 1m
   ping_timeout: 5s
 redis:
-  enabled: false
   # Effective namespace is "<environment>:<key_prefix>". Empty key_prefix
   # uses "<environment>:<app.name>:" to isolate services and environments.
   key_prefix: ""
@@ -57,6 +56,9 @@ redis:
   dial_timeout: 5s
   read_timeout: 3s
   write_timeout: 3s
+distributed_lock:
+  ttl: 10s
+  retry_delay: 100ms
 object_storage:
   enabled: false
   provider: s3 # s3 or oss
@@ -135,7 +137,7 @@ authentication:
   max_failed_attempts: 5
   lock_duration: 15m
 cron:
-  enabled: true
+  enabled: false
   timezone: Asia/Shanghai
   sample_spec: "0 */5 * * * *"
 migration:
@@ -147,8 +149,6 @@ migration:
 
 user:
   cache_ttl: 5m
-  lock_ttl: 10s
-  lock_retry_delay: 100ms
 
 tenant:
   cache_ttl: 5m

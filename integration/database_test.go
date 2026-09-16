@@ -287,7 +287,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 		t.Fatal(err)
 	}
 
-	cfg := config.Config{User: config.User{LockTTL: time.Second, LockRetryDelay: time.Millisecond}}
+	cfg := config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
 	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, cfg)
 	if err := service.SetTenantPermissions(actorCtx, tenantID, []string{permissionID}); err != nil {
 		t.Fatalf("set tenant permission ceiling: %v", err)
@@ -517,7 +517,7 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 
 func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
 	t.Helper()
-	cfg := config.Config{Menu: config.Menu{CacheTTL: time.Minute, MaxNodes: 10000}, User: config.User{LockTTL: time.Second, LockRetryDelay: time.Millisecond}}
+	cfg := config.Config{Menu: config.Menu{CacheTTL: time.Minute, MaxNodes: 10000}, DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
 	service := menu.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default(), cfg)
 	actorCtx := platformprincipal.SystemContext(ctx, "menu-integration")
 	root, err := service.Create(actorCtx, menu.Input{Key: "integration:menu", Name: "集成菜单", Type: "directory", Visible: true, Status: "active"})
@@ -614,7 +614,7 @@ func (*integrationStorage) Presign(_ context.Context, _ string, _ objectstorage.
 func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	storage := &integrationStorage{}
-	cfg := config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024, DeletionInterval: time.Minute, DeletionRetryDelay: time.Minute, DeletionBatchSize: 10}, User: config.User{LockTTL: time.Second, LockRetryDelay: time.Millisecond}}
+	cfg := config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024, DeletionInterval: time.Minute, DeletionRetryDelay: time.Minute, DeletionBatchSize: 10}, DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
 	service := files.New(db, appdb.NewTransactor(db), storage, nil, discardOperationRecorder{}, slog.Default(), cfg)
 	ownerCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "file-owner", Type: platformprincipal.TypeUser, TenantID: "file-tenant"})
 	created, err := service.Upload(ownerCtx, files.UploadInput{Name: "../report.txt", Size: 5, Body: bytes.NewBufferString("hello")})

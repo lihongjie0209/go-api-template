@@ -249,7 +249,7 @@ Distributed locks are advisory coordination, not a substitute for database const
 
 Every request accepts or generates `X-Request-ID`; it is returned in the response header and JSON envelope and correlated with OpenTelemetry trace/span IDs in logs. Request deadlines are propagated through `Request.Context`, so context-aware SQL and Redis calls stop after client cancellation or timeout.
 
-Redis-backed GCRA limits are configurable for IP, API route, authenticated user and login brute-force protection. Set `APP_REDIS_ENABLED=true` and `APP_RATE_LIMIT_ENABLED=true` to enable them. `rate_limit.fail_open` controls behavior when Redis is unavailable and defaults to secure fail-closed mode.
+Redis is a mandatory template dependency: startup pings it and fails before serving when it is unavailable. Redis-backed GCRA limits are configurable for IP, API route, authenticated user and login brute-force protection; set `APP_RATE_LIMIT_ENABLED=true` to enable rate limiting. `rate_limit.fail_open` controls request behavior after a runtime Redis failure and defaults to secure fail-closed mode.
 
 Configure `http.trusted_proxies` explicitly before trusting forwarding headers. CORS is deny-by-default, JSON bodies require `application/json`, and baseline browser security headers are enabled globally.
 

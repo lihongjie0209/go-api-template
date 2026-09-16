@@ -1,13 +1,11 @@
-# Local development is intentionally self-contained and keeps optional
-# infrastructure disabled until explicitly enabled through APP_* variables.
+# Local development keeps optional infrastructure disabled. Redis remains the
+# mandatory coordination dependency and uses the base localhost address.
 app:
   env: development
 database:
   enabled: false
   name: go_api_template_db
   schema: go_api_template
-redis:
-  enabled: false
 migration:
   auto_up: false
 log:

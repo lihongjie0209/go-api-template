@@ -208,7 +208,7 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		}
 		return created, nil
 	}
-	lockErr := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.User.LockTTL, s.cfg.User.LockRetryDelay, run)
+	lockErr := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run)
 	if businessErr != nil {
 		return Member{}, businessErr
 	}

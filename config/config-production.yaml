@@ -22,7 +22,7 @@ database:
   name: go_api_template_db
   schema: go_api_template
   dsn: ""
-redis:
+cron:
   enabled: true
 migration:
   auto_up: true
