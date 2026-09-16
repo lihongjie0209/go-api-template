@@ -82,7 +82,7 @@ func TestBoundedRouteAuditNamePreservesUTF8(t *testing.T) {
 	got := boundedRouteAuditName(value)
 	require.LessOrEqual(t, len(got), maxRouteAuditNameBytes)
 	require.True(t, utf8.ValidString(got))
-	require.Equal(t, value[:100], boundedRouteAuditName(value[:100]))
+	require.Equal(t, "http POST /short", boundedRouteAuditName("http POST /short"))
 }
 
 func TestSetRollsBackWhenTransactionalAuditFails(t *testing.T) {
