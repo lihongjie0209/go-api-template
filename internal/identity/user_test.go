@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -62,6 +64,21 @@ func TestPageRejectsReversedTimeRangeBeforeDatabase(t *testing.T) {
 	}
 }
 
+func TestUserInputsRejectUnboundedSearchAndProfileFields(t *testing.T) {
+	t.Parallel()
+	ctx := platformprincipal.SystemContext(t.Context(), "tester")
+	service := &Service{}
+	if _, err := service.Page(ctx, PageInput{Request: pagination.Request{Keyword: strings.Repeat("x", maxUserKeywordLength+1)}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Page() error = %v", err)
+	}
+	if _, err := service.Create(ctx, CreateInput{Username: "alice", DisplayName: strings.Repeat("x", maxDisplayNameLength+1)}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := service.Update(ctx, UpdateInput{ID: "user-1", DisplayName: "Alice", Email: strings.Repeat("x", maxEmailLength+1), Status: StatusActive, Version: 1}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Update() error = %v", err)
+	}
+}
+
 func TestDeleteRejectsTenantOwner(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
@@ -102,12 +119,75 @@ type operationStub struct{}
 
 func (operationStub) Enabled() bool                                    { return true }
 func (operationStub) Record(context.Context, operationlog.Entry) error { return nil }
+func (operationStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return nil
+}
+
+type failingOperationRecorder struct {
+	txErr      error
+	standalone []operationlog.Entry
+}
+
+func (*failingOperationRecorder) Enabled() bool { return true }
+func (r *failingOperationRecorder) Record(_ context.Context, entry operationlog.Entry) error {
+	r.standalone = append(r.standalone, entry)
+	return nil
+}
+func (r *failingOperationRecorder) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return r.txErr
+}
 
 type securityStub struct{}
 
 func (securityStub) Enabled() bool                                   { return true }
 func (securityStub) FailClosed() bool                                { return true }
 func (securityStub) Record(context.Context, securitylog.Entry) error { return nil }
+func (securityStub) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	return nil
+}
+
+type capturingSecurityRecorder struct{ standalone []securitylog.Entry }
+
+func (*capturingSecurityRecorder) Enabled() bool    { return true }
+func (*capturingSecurityRecorder) FailClosed() bool { return true }
+func (r *capturingSecurityRecorder) Record(_ context.Context, entry securitylog.Entry) error {
+	r.standalone = append(r.standalone, entry)
+	return nil
+}
+func (*capturingSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	return nil
+}
+
+func TestCreateRollsBackWhenTransactionalOperationLogFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	operations := &failingOperationRecorder{txErr: errors.New("outbox unavailable")}
+	security := &capturingSecurityRecorder{}
+	service := &Service{repository: NewRepository(db), transactor: database.NewTransactor(db), operations: operations, security: security, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO identity_users`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectRollback()
+
+	ctx := platformprincipal.SystemContext(t.Context(), "admin")
+	_, err = service.Create(ctx, CreateInput{Username: "alice", DisplayName: "Alice"})
+	if err == nil || !strings.Contains(err.Error(), "outbox unavailable") {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(operations.standalone) != 1 || operations.standalone[0].Succeeded {
+		t.Fatalf("operation failure entries = %+v", operations.standalone)
+	}
+	if len(security.standalone) != 1 || security.standalone[0].Succeeded {
+		t.Fatalf("security failure entries = %+v", security.standalone)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type memoryStore struct {
 	mu     sync.Mutex

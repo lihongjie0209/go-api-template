@@ -30,6 +30,14 @@ var (
 
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,63}$`)
 
+const (
+	maxUserIDLength      = 256
+	maxDisplayNameLength = 256
+	maxEmailLength       = 320
+	maxPhoneLength       = 64
+	maxUserKeywordLength = 256
+)
+
 type Status string
 
 const (
@@ -138,27 +146,27 @@ type Service struct {
 	repository *Repository
 	transactor *database.Transactor
 	cache      cache.Store
-	operations operationlog.Recorder
-	security   securitylog.Recorder
+	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 	logger     *slog.Logger
 	cacheTTL   time.Duration
 }
 
-func New(repository *Repository, transactor *database.Transactor, store cache.Store, operations operationlog.Recorder, security securitylog.Recorder, logger *slog.Logger, cfg config.Config) *Service {
+func New(repository *Repository, transactor *database.Transactor, store cache.Store, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{repository: repository, transactor: transactor, cache: store, operations: operations, security: security, logger: logger, cacheTTL: cfg.User.CacheTTL}
 }
 func (s *Service) Get(ctx context.Context, id string) (User, error) {
 	if _, err := actor(ctx); err != nil {
 		return User{}, err
 	}
-	if strings.TrimSpace(id) == "" {
+	if strings.TrimSpace(id) == "" || len(id) > maxUserIDLength {
 		return User{}, ErrInvalid
 	}
 	return s.cached(ctx, "id:"+id, func() (User, error) { return s.repository.Get(ctx, id) })
 }
 func (s *Service) ResolveUsername(ctx context.Context, username string) (User, error) {
 	username = normalizeUsername(username)
-	if username == "" {
+	if !usernamePattern.MatchString(username) {
 		return User{}, ErrInvalid
 	}
 	return s.cached(ctx, "username:"+username, func() (User, error) { return s.repository.ResolveUsername(ctx, username) })
@@ -169,7 +177,7 @@ func (s *Service) ResolveUsername(ctx context.Context, username string) (User, e
 // a disabled or deleted user to authenticate.
 func (s *Service) ResolveUsernameAuthoritative(ctx context.Context, username string) (User, error) {
 	username = normalizeUsername(username)
-	if username == "" {
+	if !usernamePattern.MatchString(username) {
 		return User{}, ErrInvalid
 	}
 	return s.repository.ResolveUsername(ctx, username)
@@ -183,7 +191,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	if e != nil {
 		return User{}, e
 	}
-	if !usernamePattern.MatchString(input.Username) || input.DisplayName == "" {
+	if !usernamePattern.MatchString(input.Username) || !validUserProfile(input.DisplayName, input.Email, input.Phone) {
 		return User{}, ErrInvalid
 	}
 	id := uuid.NewString()
@@ -210,10 +218,15 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 		return pagination.Result[User]{}, e
 	}
 	request, e := pagination.Normalize(input.Request)
-	if e != nil || len(input.IDs) > 200 || len(input.Usernames) > 200 || len(input.Emails) > 200 || len(input.Phones) > 200 || len(input.Statuses) > 20 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+	if e != nil || len(input.Keyword) > maxUserKeywordLength || len(input.IDs) > 200 || len(input.Usernames) > 200 || len(input.Emails) > 200 || len(input.Phones) > 200 || len(input.Statuses) > 20 || !validBoundedValues(input.IDs, maxUserIDLength, false) || !validBoundedValues(input.Usernames, 64, false) || !validBoundedValues(input.Emails, maxEmailLength, true) || !validBoundedValues(input.Phones, maxPhoneLength, true) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
 		return pagination.Result[User]{}, ErrInvalid
 	}
 	input.Keyword = strings.TrimSpace(input.Keyword)
+	for _, username := range input.Usernames {
+		if !usernamePattern.MatchString(normalizeUsername(username)) {
+			return pagination.Result[User]{}, ErrInvalid
+		}
+	}
 	for _, status := range input.Statuses {
 		if !validStatus(status) {
 			return pagination.Result[User]{}, ErrInvalid
@@ -228,7 +241,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (User, error) {
 	if e != nil {
 		return User{}, e
 	}
-	if input.ID == "" || input.Version <= 0 || strings.TrimSpace(input.DisplayName) == "" || !validStatus(input.Status) {
+	if input.ID == "" || len(input.ID) > maxUserIDLength || input.Version <= 0 || !validUserProfile(input.DisplayName, input.Email, input.Phone) || !validStatus(input.Status) {
 		return User{}, ErrInvalid
 	}
 	input.DisplayName, input.Email, input.Phone = strings.TrimSpace(input.DisplayName), strings.ToLower(strings.TrimSpace(input.Email)), strings.TrimSpace(input.Phone)
@@ -272,7 +285,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if e != nil {
 		return e
 	}
-	if id == "" || version <= 0 {
+	if id == "" || len(id) > maxUserIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	existing, e := s.repository.Get(ctx, id)
@@ -354,15 +367,31 @@ func (s *Service) invalidate(ctx context.Context, user User) {
 	}
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
-	committed := false
-	err := operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "identity_user", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		txErr := s.transactor.Within(ctx, nil, fn)
-		committed = txErr == nil
-		return txErr
+	started := time.Now()
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "identity_user", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventIdentityUserChanged, SubjectID: id, SubjectType: "identity_user", Metadata: map[string]any{"operation": operation}}
+	err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = true
+		if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+			return err
+		}
+		securityEntry.Succeeded = true
+		return s.security.RecordTx(ctx, tx, securityEntry)
 	})
-	entry := securitylog.Entry{EventType: securitylog.EventIdentityUserChanged, SubjectID: id, SubjectType: "identity_user", Succeeded: committed, Metadata: map[string]any{"operation": operation}}
-	if logErr := s.security.Record(ctx, entry); logErr != nil && err == nil && s.security.FailClosed() {
-		return logErr
+	if err != nil {
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = false
+		operationEntry.ErrorCode = "operation_failed"
+		operationEntry.ErrorMessage = "operation failed"
+		_ = s.operations.Record(ctx, operationEntry)
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		_ = s.security.Record(ctx, securityEntry)
 	}
 	return err
 }
@@ -390,6 +419,18 @@ func trimValues(v []string) []string {
 }
 func validStatus(v Status) bool {
 	return v == StatusActive || v == StatusDisabled || v == StatusLocked || v == StatusClosed
+}
+func validUserProfile(displayName, email, phone string) bool {
+	return strings.TrimSpace(displayName) != "" && len(displayName) <= maxDisplayNameLength && len(email) <= maxEmailLength && len(phone) <= maxPhoneLength
+}
+func validBoundedValues(values []string, maximum int, allowEmpty bool) bool {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if len(value) > maximum || (!allowEmpty && value == "") {
+			return false
+		}
+	}
+	return true
 }
 func uniqueViolation(err error) bool {
 	return database.IsUniqueViolation(err)

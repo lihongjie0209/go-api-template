@@ -25,6 +25,10 @@ type transactionalSecurityRecorder struct {
 
 func (*transactionalSecurityRecorder) Enabled() bool    { return true }
 func (*transactionalSecurityRecorder) FailClosed() bool { return true }
+func (r *transactionalSecurityRecorder) Record(_ context.Context, entry securitylog.Entry) error {
+	r.entries = append(r.entries, entry)
+	return r.err
+}
 func (r *transactionalSecurityRecorder) RecordTx(_ context.Context, _ *sqlx.Tx, entry securitylog.Entry) error {
 	r.entries = append(r.entries, entry)
 	return r.err

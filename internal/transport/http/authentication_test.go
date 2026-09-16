@@ -67,7 +67,7 @@ func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *te
 			AddRow("account-1", "client", "Client", "", serviceaccount.StatusActive, nil, nil, 0, nil, now, "admin", now, "admin", 1, hash))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", int64(1), sqlmock.AnyArg(), serviceaccount.StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	accounts := serviceaccount.New(db, database.NewTransactor(db), nil, nil, config.Config{})
 	recorder := &securityRecorderStub{}

@@ -102,8 +102,7 @@ type Recorder interface {
 }
 
 type TransactionalRecorder interface {
-	Enabled() bool
-	FailClosed() bool
+	Recorder
 	RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error
 }
 

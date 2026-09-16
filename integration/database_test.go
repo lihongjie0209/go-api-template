@@ -467,6 +467,9 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := service.Create(actorCtx, identity.CreateInput{Username: "alice.smith", DisplayName: "Reused Identity"}); !errors.Is(err, identity.ErrConflict) {
+		t.Fatalf("deleted username reuse error=%v", err)
+	}
 }
 
 type discardOperationRecorder struct{}
@@ -482,6 +485,9 @@ type discardSecurityRecorder struct{}
 func (discardSecurityRecorder) Enabled() bool                                   { return true }
 func (discardSecurityRecorder) FailClosed() bool                                { return true }
 func (discardSecurityRecorder) Record(context.Context, securitylog.Entry) error { return nil }
+func (discardSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	return nil
+}
 
 func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) string {
 	t.Helper()

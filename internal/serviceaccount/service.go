@@ -31,6 +31,11 @@ var (
 
 var clientIDPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,127}$`)
 
+const (
+	maxAccountIDLength = 256
+	maxAccountKeyword  = 256
+)
+
 type Status string
 
 const (
@@ -91,15 +96,15 @@ type Service struct {
 	db                *sqlx.DB
 	transactor        *database.Transactor
 	hasher            *auth.PasswordHasher
-	operations        operationlog.Recorder
-	security          securitylog.Recorder
+	operations        operationlog.TransactionalRecorder
+	security          securitylog.TransactionalRecorder
 	maxFailedAttempts int64
 	lockDuration      time.Duration
 }
 
 const accountColumns = `id,client_id,name,description,status,expires_at,last_used_at,failed_attempts,locked_until,created_at,created_by,updated_at,updated_by,version`
 
-func New(db *sqlx.DB, transactor *database.Transactor, operations operationlog.Recorder, security securitylog.Recorder, cfg config.Config) *Service {
+func New(db *sqlx.DB, transactor *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, cfg config.Config) *Service {
 	return &Service{db: db, transactor: transactor, hasher: auth.NewPasswordHasher(), operations: operations, security: security, maxFailedAttempts: cfg.Authentication.MaxFailedAttempts, lockDuration: cfg.Authentication.LockDuration}
 }
 
@@ -142,7 +147,7 @@ func (s *Service) Get(ctx context.Context, id string) (Account, error) {
 	if _, err := requireActor(ctx); err != nil {
 		return Account{}, err
 	}
-	if strings.TrimSpace(id) == "" {
+	if strings.TrimSpace(id) == "" || len(id) > maxAccountIDLength {
 		return Account{}, ErrInvalid
 	}
 	return s.get(ctx, "id=?", id)
@@ -153,7 +158,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 		return pagination.Result[Account]{}, err
 	}
 	request, err := pagination.Normalize(input.Request)
-	if err != nil || len(input.IDs) > 200 || len(input.ClientIDs) > 200 || len(input.Statuses) > 20 || invalidRange(input.CreatedAtFrom, input.CreatedAtTo) || invalidRange(input.ExpiresAtFrom, input.ExpiresAtTo) {
+	if err != nil || len(input.Keyword) > maxAccountKeyword || len(input.IDs) > 200 || len(input.ClientIDs) > 200 || len(input.Statuses) > 20 || !validAccountIDs(input.IDs) || !validClientIDs(input.ClientIDs) || invalidRange(input.CreatedAtFrom, input.CreatedAtTo) || invalidRange(input.ExpiresAtFrom, input.ExpiresAtTo) {
 		return pagination.Result[Account]{}, ErrInvalid
 	}
 	for _, status := range input.Statuses {
@@ -215,7 +220,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Account, error
 	if err != nil {
 		return Account{}, err
 	}
-	if input.ID == "" || input.Version <= 0 || input.Name == "" || len(input.Name) > 256 || len(input.Description) > 4096 || !validStatus(input.Status) || expired(input.ExpiresAt, time.Now()) {
+	if input.ID == "" || len(input.ID) > maxAccountIDLength || input.Version <= 0 || input.Name == "" || len(input.Name) > 256 || len(input.Description) > 4096 || !validStatus(input.Status) || expired(input.ExpiresAt, time.Now()) {
 		return Account{}, ErrInvalid
 	}
 	err = s.mutate(ctx, "identity.service-account.update", input.ID, safeRequest(input), func(tx *sqlx.Tx) error {
@@ -234,7 +239,7 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 	if err != nil {
 		return Created{}, err
 	}
-	if strings.TrimSpace(id) == "" || version <= 0 {
+	if strings.TrimSpace(id) == "" || len(id) > maxAccountIDLength || version <= 0 {
 		return Created{}, ErrInvalid
 	}
 	secret, err := newSecret()
@@ -262,7 +267,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(id) == "" || version <= 0 {
+	if strings.TrimSpace(id) == "" || len(id) > maxAccountIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	return s.mutate(ctx, "identity.service-account.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
@@ -291,15 +296,34 @@ func (s *Service) Authenticate(ctx context.Context, clientID, secret string) (Ac
 		s.recordFailure(ctx, value.Account)
 		return Account{}, ErrInvalidCredentials
 	}
-	// Authentication success must not fail because this diagnostic timestamp races
-	// or the database becomes unavailable after credential verification. Still use
-	// an actor-bound transaction so the shared audit trigger is never bypassed.
+	// Re-check the exact credential version while recording success. A concurrent
+	// secret rotation, disable, expiry, or lockout must make the old observation
+	// unusable rather than authenticating with stale credentials.
 	accountCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: value.ID, Type: platformprincipal.TypeServiceAccount})
-	_ = s.transactor.Within(accountCtx, nil, func(tx *sqlx.Tx) error {
+	var authenticatedAt time.Time
+	err = s.transactor.Within(accountCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
-		_, updateErr := tx.ExecContext(accountCtx, tx.Rebind(`UPDATE identity_service_accounts SET last_used_at=?,failed_attempts=0,locked_until=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NULL`), now, now, value.ID, value.ID)
-		return updateErr
+		result, updateErr := tx.ExecContext(accountCtx, tx.Rebind(`UPDATE identity_service_accounts SET last_used_at=?,failed_attempts=0,locked_until=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND secret_hash=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?) AND (locked_until IS NULL OR locked_until<=?)`), now, now, value.ID, value.ID, value.Version, value.SecretHash, StatusActive, now, now)
+		if updateErr != nil {
+			return updateErr
+		}
+		rows, updateErr := result.RowsAffected()
+		if updateErr != nil {
+			return updateErr
+		}
+		if rows != 1 {
+			return ErrInvalidCredentials
+		}
+		authenticatedAt = now
+		return nil
 	})
+	if err != nil {
+		return Account{}, ErrInvalidCredentials
+	}
+	value.LastUsedAt = &authenticatedAt
+	value.FailedAttempts = 0
+	value.LockedUntil = nil
+	value.Version++
 	return value.Account, nil
 }
 
@@ -330,15 +354,31 @@ func (s *Service) get(ctx context.Context, predicate string, args ...any) (Accou
 }
 
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
-	committed := false
-	err := operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "service_account", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		txErr := s.transactor.Within(ctx, nil, fn)
-		committed = txErr == nil
-		return txErr
+	started := time.Now()
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "service_account", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventServiceAccountChanged, SubjectID: id, SubjectType: "service_account", Metadata: map[string]any{"operation": operation}}
+	err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = true
+		if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+			return err
+		}
+		securityEntry.Succeeded = true
+		return s.security.RecordTx(ctx, tx, securityEntry)
 	})
-	logErr := s.security.Record(ctx, securitylog.Entry{EventType: securitylog.EventServiceAccountChanged, SubjectID: id, SubjectType: "service_account", Succeeded: committed, Metadata: map[string]any{"operation": operation}})
-	if logErr != nil && err == nil && s.security.FailClosed() {
-		return logErr
+	if err != nil {
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = false
+		operationEntry.ErrorCode = "operation_failed"
+		operationEntry.ErrorMessage = "operation failed"
+		_ = s.operations.Record(ctx, operationEntry)
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		_ = s.security.Record(ctx, securityEntry)
 	}
 	return err
 }
@@ -362,6 +402,22 @@ func normalizeClientIDs(values []string) []string {
 		result[index] = normalizeClientID(values[index])
 	}
 	return result
+}
+func validAccountIDs(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len(value) > maxAccountIDLength {
+			return false
+		}
+	}
+	return true
+}
+func validClientIDs(values []string) bool {
+	for _, value := range values {
+		if !clientIDPattern.MatchString(normalizeClientID(value)) {
+			return false
+		}
+	}
+	return true
 }
 func validStatus(value Status) bool { return value == StatusActive || value == StatusDisabled }
 func expired(value *time.Time, now time.Time) bool {
