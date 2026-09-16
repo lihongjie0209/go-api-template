@@ -81,6 +81,7 @@ func IdempotencyKey(logger *slog.Logger) gin.HandlerFunc {
 
 type idempotencyManager interface {
 	Enabled() bool
+	MaxResponseBytes() int
 	Begin(context.Context, string, string) (idempotency.Decision, error)
 	Complete(context.Context, string, string, any) error
 	Fail(context.Context, string, string, idempotency.Failure) error
@@ -90,17 +91,33 @@ type idempotencyManager interface {
 
 type responseCapture struct {
 	gin.ResponseWriter
-	body bytes.Buffer
+	body     bytes.Buffer
+	maxBytes int
+	overflow bool
 }
 
 func (w *responseCapture) Write(value []byte) (int, error) {
-	_, _ = w.body.Write(value)
+	w.capture(value)
 	return w.ResponseWriter.Write(value)
 }
 
 func (w *responseCapture) WriteString(value string) (int, error) {
-	_, _ = w.body.WriteString(value)
+	w.capture([]byte(value))
 	return w.ResponseWriter.WriteString(value)
+}
+
+func (w *responseCapture) capture(value []byte) {
+	remaining := w.maxBytes - w.body.Len()
+	if remaining <= 0 {
+		w.overflow = w.overflow || len(value) > 0
+		return
+	}
+	if len(value) > remaining {
+		_, _ = w.body.Write(value[:remaining])
+		w.overflow = true
+		return
+	}
+	_, _ = w.body.Write(value)
 }
 
 func IdempotencyExecution(manager idempotencyManager, paths []string, logger *slog.Logger) gin.HandlerFunc {
@@ -152,7 +169,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		}
 		c.Request = c.Request.WithContext(leaseCtx)
 
-		capture := &responseCapture{ResponseWriter: c.Writer}
+		capture := &responseCapture{ResponseWriter: c.Writer, maxBytes: manager.MaxResponseBytes()}
 		c.Writer = capture
 		c.Next()
 		if leaseErr := stopLease(); leaseErr != nil {
@@ -161,6 +178,12 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		}
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
 		defer cancel()
+		if capture.overflow {
+			if err := manager.Abort(persistCtx, key, decision.Owner); err != nil {
+				logger.ErrorContext(c.Request.Context(), "release oversized idempotency response", "error", err, "request_id", requestID(c))
+			}
+			return
+		}
 		var response Response
 		if err := json.Unmarshal(capture.body.Bytes(), &response); err != nil {
 			logger.ErrorContext(c.Request.Context(), "idempotency response was not unified JSON", "error", err, "request_id", requestID(c))

@@ -32,8 +32,6 @@ rate_limit:
   enabled: true
 idempotency:
   enabled: true
-  http_paths: [/api/v1/example/ping, /api/v1/users/create, /api/v1/users/update, /api/v1/users/delete, /api/v1/service-accounts/update, /api/v1/service-accounts/delete, /api/v1/platform/tenants/create, /api/v1/tenants/update, /api/v1/tenants/delete, /api/v1/platform/tenants/update, /api/v1/platform/tenants/delete, /api/v1/permissions/create, /api/v1/permissions/update, /api/v1/permissions/delete]
-  grpc_methods: [/hello.v1.HelloService/Ping]
 observability:
   metrics_enabled: true
   tracing_enabled: false

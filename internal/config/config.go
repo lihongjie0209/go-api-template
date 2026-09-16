@@ -737,8 +737,8 @@ func (c Config) Validate() error {
 	if c.Authentication.RefreshTTL <= 0 || c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
 		return errors.New("authentication refresh, failure, and lock settings must be positive")
 	}
-	if c.Idempotency.Enabled && ((len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL <= 0 || c.Idempotency.ResultTTL <= 0 || c.Idempotency.FailureTTL <= 0 || c.Idempotency.MaxResponseBytes <= 0 || c.Idempotency.MaxResponseBytes > 16<<20) {
-		return errors.New("enabled idempotency requires at least one route pattern, positive TTL values, and max_response_bytes no greater than 16 MiB")
+	if c.Idempotency.Enabled && ((len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL < time.Second || c.Idempotency.ProcessingTTL > 15*time.Minute || c.Idempotency.ProcessingTTL <= c.HTTP.RequestTimeout || c.Idempotency.ResultTTL < time.Minute || c.Idempotency.ResultTTL > 7*24*time.Hour || c.Idempotency.FailureTTL < time.Second || c.Idempotency.FailureTTL > 24*time.Hour || c.Idempotency.MaxResponseBytes <= 0 || c.Idempotency.MaxResponseBytes > 16<<20) {
+		return errors.New("enabled idempotency requires at least one route pattern, processing_ttl between 1s and 15m and greater than http.request_timeout, result_ttl between 1m and 7d, failure_ttl between 1s and 24h, and max_response_bytes no greater than 16 MiB")
 	}
 	for _, pattern := range c.Idempotency.HTTPPaths {
 		if !strings.HasPrefix(pattern, "/api/") {
@@ -746,6 +746,11 @@ func (c Config) Validate() error {
 		}
 		if _, err := path.Match(pattern, "/validation/target"); err != nil {
 			return fmt.Errorf("idempotency.http_paths contains invalid pattern %q: %w", pattern, err)
+		}
+		for _, forbidden := range idempotencyForbiddenHTTPRoutes {
+			if matched, _ := path.Match(pattern, forbidden); matched {
+				return fmt.Errorf("idempotency.http_paths pattern %q includes forbidden query or sensitive-response route %q", pattern, forbidden)
+			}
 		}
 	}
 	for _, pattern := range c.Idempotency.GRPCMethods {
@@ -811,6 +816,35 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// These endpoints either do not mutate authoritative state or return secrets,
+// tokens, signed URLs, or caller-controlled configuration values. Persisting
+// their responses in the idempotency store is prohibited by the SOP.
+var idempotencyForbiddenHTTPRoutes = []string{
+	"/api/v1/version",
+	"/api/v1/.well-known/jwks.json",
+	"/api/v1/auth/login",
+	"/api/v1/auth/user/login",
+	"/api/v1/auth/refresh",
+	"/api/v1/auth/sessions/page",
+	"/api/v1/me",
+	"/api/v1/example/ping",
+	"/api/v1/files/upload",
+	"/api/v1/files/get",
+	"/api/v1/files/page",
+	"/api/v1/files/download",
+	"/api/v1/service-accounts/create",
+	"/api/v1/service-accounts/get",
+	"/api/v1/service-accounts/page",
+	"/api/v1/service-accounts/secret/rotate",
+	"/api/v1/platform-configs/create",
+	"/api/v1/platform-configs/get",
+	"/api/v1/platform-configs/page",
+	"/api/v1/platform-configs/update",
+	"/api/v1/platform-configs/delete",
+	"/api/v1/public/platform-configs/get",
+	"/api/v1/public/platform-configs/list",
 }
 
 func validateClientPolicy(name string, auth ClientAuth, retry Retry, breaker Breaker, tls ClientTLS, production bool) error {

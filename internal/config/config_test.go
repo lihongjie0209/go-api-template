@@ -587,3 +587,48 @@ func TestConfig_RedisKeyPrefixAlwaysIncludesActiveEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigRejectsUnsafeIdempotencyRoutes(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{
+		"/api/v1/example/ping",
+		"/api/v1/auth/login",
+		"/api/v1/auth/refresh",
+		"/api/v1/service-accounts/secret/rotate",
+		"/api/v1/files/download",
+		"/api/v1/platform-configs/update",
+	} {
+		t.Run(route, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.Idempotency.Enabled = true
+			cfg.Idempotency.HTTPPaths = []string{route}
+			cfg.Idempotency.GRPCMethods = nil
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "forbidden query or sensitive-response route") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigRejectsUnsafeIdempotencyTTL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "processing does not cover request timeout", mutate: func(cfg *Config) { cfg.Idempotency.ProcessingTTL = cfg.HTTP.RequestTimeout }},
+		{name: "processing lease is excessive", mutate: func(cfg *Config) { cfg.Idempotency.ProcessingTTL = 16 * time.Minute }},
+		{name: "result retention is excessive", mutate: func(cfg *Config) { cfg.Idempotency.ResultTTL = 8 * 24 * time.Hour }},
+		{name: "failure retention is excessive", mutate: func(cfg *Config) { cfg.Idempotency.FailureTTL = 25 * time.Hour }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.Idempotency.Enabled = true
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "enabled idempotency") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}

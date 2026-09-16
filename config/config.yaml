@@ -162,8 +162,50 @@ platform_config:
 
 idempotency:
   enabled: false
-  http_paths: [/api/v1/example/ping, /api/v1/users/create, /api/v1/users/update, /api/v1/users/delete, /api/v1/service-accounts/update, /api/v1/service-accounts/delete, /api/v1/platform/tenants/create, /api/v1/tenants/update, /api/v1/tenants/delete, /api/v1/platform/tenants/update, /api/v1/platform/tenants/delete, /api/v1/permissions/create, /api/v1/permissions/update, /api/v1/permissions/delete]
-  grpc_methods: [/hello.v1.HelloService/Ping]
+  # Only bounded mutation responses belong here. Login/refresh, secret-returning,
+  # signed-URL, multipart upload, arbitrary configuration-value and query routes
+  # are intentionally excluded.
+  http_paths:
+    - /api/v1/auth/logout
+    - /api/v1/auth/password/reset
+    - /api/v1/auth/password/change
+    - /api/v1/auth/sessions/revoke
+    - /api/v1/auth/sessions/logout-all
+    - /api/v1/auth/sessions/force-logout-all
+    - /api/v1/files/delete
+    - /api/v1/users/create
+    - /api/v1/users/update
+    - /api/v1/users/delete
+    - /api/v1/service-accounts/update
+    - /api/v1/service-accounts/delete
+    - /api/v1/platform/tenants/create
+    - /api/v1/platform/tenants/update
+    - /api/v1/platform/tenants/delete
+    - /api/v1/tenants/update
+    - /api/v1/tenants/delete
+    - /api/v1/tenant-members/add
+    - /api/v1/tenant-members/status/update
+    - /api/v1/tenant-members/remove
+    - /api/v1/tenant-departments/create
+    - /api/v1/tenant-departments/update
+    - /api/v1/tenant-departments/delete
+    - /api/v1/tenant-departments/members/set
+    - /api/v1/tenant-authorization/permissions/set
+    - /api/v1/tenant-authorization/administrators/set
+    - /api/v1/tenant-roles/create
+    - /api/v1/tenant-roles/update
+    - /api/v1/tenant-roles/delete
+    - /api/v1/tenant-roles/permissions/set
+    - /api/v1/tenant-members/roles/set
+    - /api/v1/menus/create
+    - /api/v1/menus/update
+    - /api/v1/menus/delete
+    - /api/v1/permissions/create
+    - /api/v1/permissions/update
+    - /api/v1/permissions/delete
+    - /api/v1/route-policies/set
+    - /api/v1/operation-logs/frontend/record
+  grpc_methods: []
   processing_ttl: 30s
   result_ttl: 24h
   failure_ttl: 5m

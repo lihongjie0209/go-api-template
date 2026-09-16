@@ -2,6 +2,9 @@ package idempotency
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -20,9 +23,13 @@ type State = platformidempotency.State
 type Failure = platformidempotency.Failure
 type Decision = platformidempotency.Decision
 type Manager struct {
-	next    *platformidempotency.Manager
-	metrics *observability.Metrics
+	next             *platformidempotency.Manager
+	metrics          *observability.Metrics
+	maxResponseBytes int
+	fingerprintScope string
 }
+
+const defaultMaxResponseBytes = 1 << 20
 
 const (
 	StateAcquired   = platformidempotency.StateAcquired
@@ -33,25 +40,55 @@ const (
 )
 
 func New(client *redis.Client, cfg config.Config, metrics *observability.Metrics) *Manager {
+	// The SDK prepends its own "idempotency:" segment. Reuse the mandatory
+	// environment/service Redis namespace, without its delimiter, so a shared
+	// Redis deployment cannot replay results across environments.
+	serviceNamespace := strings.TrimSuffix(cfg.RedisKeyPrefix(), ":")
+	maxResponseBytes := cfg.Idempotency.MaxResponseBytes
+	if maxResponseBytes <= 0 {
+		maxResponseBytes = defaultMaxResponseBytes
+	}
+	profile := strings.ToLower(strings.TrimSpace(cfg.Runtime.ActiveProfile))
+	if profile == "" {
+		profile = strings.ToLower(strings.TrimSpace(cfg.App.Env))
+	}
+	if profile == "" {
+		profile = "development"
+	}
 	return &Manager{next: platformidempotency.New(client, platformidempotency.Config{
 		Enabled:          cfg.Idempotency.Enabled,
-		Service:          cfg.App.Name,
+		Service:          serviceNamespace,
 		ProcessingTTL:    cfg.Idempotency.ProcessingTTL,
 		ResultTTL:        cfg.Idempotency.ResultTTL,
 		FailureTTL:       cfg.Idempotency.FailureTTL,
 		MaxResponseBytes: cfg.Idempotency.MaxResponseBytes,
-	}), metrics: metrics}
+	}), metrics: metrics, maxResponseBytes: maxResponseBytes, fingerprintScope: profile + "\x00" + strings.TrimSpace(cfg.App.Name)}
 }
 
 func (m *Manager) Enabled() bool { return m != nil && m.next.Enabled() }
 
+func (m *Manager) MaxResponseBytes() int {
+	if m == nil || m.maxResponseBytes <= 0 {
+		return defaultMaxResponseBytes
+	}
+	return m.maxResponseBytes
+}
+
 func (m *Manager) Begin(ctx context.Context, key, fingerprint string) (Decision, error) {
 	started := time.Now()
 	ctx, span := tracer.Start(ctx, "idempotency.begin")
-	decision, err := m.next.Begin(ctx, key, fingerprint)
+	decision, err := m.next.Begin(ctx, key, m.scopedFingerprint(fingerprint))
 	m.observe("begin", decisionStatus(decision, err), started)
 	finishSpan(span, decisionStatus(decision, err), err)
 	return decision, err
+}
+
+func (m *Manager) scopedFingerprint(fingerprint string) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(m.fingerprintScope))
+	_, _ = hash.Write([]byte("\x00"))
+	_, _ = hash.Write([]byte(fingerprint))
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func (m *Manager) Complete(ctx context.Context, key, owner string, response any) error {

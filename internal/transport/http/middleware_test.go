@@ -30,6 +30,7 @@ type fakeIdempotencyManager struct {
 	failed       *idempotency.Failure
 	leaseStarted bool
 	aborted      bool
+	maxBytes     int
 }
 
 func TestEnvironmentInjectsActiveProfile(t *testing.T) {
@@ -54,6 +55,12 @@ func TestEnvironmentInjectsActiveProfile(t *testing.T) {
 }
 
 func (*fakeIdempotencyManager) Enabled() bool { return true }
+func (m *fakeIdempotencyManager) MaxResponseBytes() int {
+	if m.maxBytes > 0 {
+		return m.maxBytes
+	}
+	return 1 << 20
+}
 func (m *fakeIdempotencyManager) Begin(_ context.Context, key, fingerprint string) (idempotency.Decision, error) {
 	m.beginKey = key
 	m.fingerprint = fingerprint
@@ -248,6 +255,28 @@ func TestIdempotencyExecutionAbortsRetryableFailure(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable || !manager.aborted || manager.failed != nil {
 		t.Fatalf("status=%d aborted=%v failed=%+v", recorder.Code, manager.aborted, manager.failed)
+	}
+}
+
+func TestIdempotencyExecutionBoundsCapturedResponse(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{
+		decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"},
+		maxBytes: 32,
+	}
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, logger))
+	router.POST("/test", func(c *gin.Context) { OK(c, strings.Repeat("x", 128)) })
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	if recorder.Code != http.StatusOK || !manager.aborted || manager.completed != nil || manager.failed != nil {
+		t.Fatalf("status=%d aborted=%v completed=%+v failed=%+v", recorder.Code, manager.aborted, manager.completed, manager.failed)
 	}
 }
 
