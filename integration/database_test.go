@@ -457,6 +457,9 @@ type discardOperationRecorder struct{}
 
 func (discardOperationRecorder) Enabled() bool                                    { return true }
 func (discardOperationRecorder) Record(context.Context, operationlog.Entry) error { return nil }
+func (discardOperationRecorder) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return nil
+}
 
 type discardSecurityRecorder struct{}
 

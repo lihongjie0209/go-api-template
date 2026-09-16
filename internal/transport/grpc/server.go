@@ -14,6 +14,7 @@ import (
 
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
+	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/environment"
@@ -34,6 +35,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	grpchealth "google.golang.org/grpc/health"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
@@ -41,9 +43,10 @@ import (
 )
 
 type Server struct {
-	server  *grpc.Server
-	address string
-	logger  *slog.Logger
+	server          *grpc.Server
+	healthPublisher *grpcHealthPublisher
+	address         string
+	logger          *slog.Logger
 }
 
 func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, authorizer platformauthz.Authorizer, policies *routepolicy.Manager, routeRepository *routepolicy.Repository, healthService *apphealth.Service, identityService *identity.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
@@ -63,11 +66,12 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, au
 	grpcServer := grpc.NewServer(options...)
 	hellov1.RegisterHelloServiceServer(grpcServer, &helloServer{})
 	identityv1.RegisterIdentityServiceServer(grpcServer, &identityServer{service: identityService})
-	grpc_health_v1.RegisterHealthServer(grpcServer, &healthServer{health: healthService})
+	healthPublisher := newGRPCHealthPublisher(healthService, cfg.App.Name)
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthPublisher.server)
 	if cfg.GRPC.ReflectionEnabled {
 		reflection.Register(grpcServer)
 	}
-	server := &Server{server: grpcServer, address: cfg.GRPC.Address, logger: logger}
+	server := &Server{server: grpcServer, healthPublisher: healthPublisher, address: cfg.GRPC.Address, logger: logger}
 	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
 		if cfg.GRPC.Enabled && cfg.Authorization.Enabled {
 			routes, err := grpcBusinessRoutes(cfg.App.Name)
@@ -84,7 +88,13 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, au
 				logger.Warn("one or more gRPC methods have no active database policy; affected calls will be denied", "error", err)
 			}
 		}
-		return server.start(cfg.GRPC.Enabled)(ctx)
+		if err := server.start(cfg.GRPC.Enabled)(ctx); err != nil {
+			return err
+		}
+		if cfg.GRPC.Enabled {
+			healthPublisher.Start(ctx)
+		}
+		return nil
 	}, OnStop: server.stop})
 	return server, nil
 }
@@ -128,14 +138,18 @@ func (s *Server) start(enabled bool) func(context.Context) error {
 	}
 }
 func (s *Server) stop(ctx context.Context) error {
+	var healthErr error
+	if s.healthPublisher != nil {
+		healthErr = s.healthPublisher.Stop(ctx)
+	}
 	stopped := make(chan struct{})
 	go func() { s.server.GracefulStop(); close(stopped) }()
 	select {
 	case <-stopped:
-		return nil
+		return healthErr
 	case <-ctx.Done():
 		s.server.Stop()
-		return ctx.Err()
+		return errors.Join(healthErr, ctx.Err())
 	}
 }
 
@@ -153,26 +167,69 @@ func (*helloServer) Ping(ctx context.Context, request *hellov1.PingRequest) (*he
 	return &hellov1.PingResponse{Message: request.GetMessage(), Version: buildinfo.Version}, nil
 }
 
-type healthServer struct {
-	grpc_health_v1.UnimplementedHealthServer
+const grpcHealthRefreshInterval = time.Second
+
+// grpcHealthPublisher delegates protocol semantics (unknown services, List and
+// streaming Watch) to gRPC's maintained health implementation. One shared
+// worker probes dependencies, avoiding a database/Redis polling loop per Watch
+// client.
+type grpcHealthPublisher struct {
+	server *grpchealth.Server
 	health *apphealth.Service
+	names  []string
+	worker *background.Worker
 }
 
-func (s *healthServer) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
-	_, ready := s.health.Ready(ctx)
-	serving := grpc_health_v1.HealthCheckResponse_NOT_SERVING
-	if ready {
-		serving = grpc_health_v1.HealthCheckResponse_SERVING
+func newGRPCHealthPublisher(service *apphealth.Service, appName string) *grpcHealthPublisher {
+	publisher := &grpcHealthPublisher{
+		server: grpchealth.NewServer(),
+		health: service,
+		names: []string{
+			"",
+			appName,
+			hellov1.HelloService_ServiceDesc.ServiceName,
+			identityv1.IdentityService_ServiceDesc.ServiceName,
+		},
 	}
-	return &grpc_health_v1.HealthCheckResponse{Status: serving}, nil
+	for _, name := range publisher.names {
+		publisher.server.SetServingStatus(name, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	}
+	publisher.worker = background.New(publisher.run)
+	return publisher
 }
-func (s *healthServer) List(ctx context.Context, _ *grpc_health_v1.HealthListRequest) (*grpc_health_v1.HealthListResponse, error) {
-	_, ready := s.health.Ready(ctx)
+
+func (p *grpcHealthPublisher) Start(ctx context.Context) {
+	p.refresh(ctx)
+	p.worker.Start()
+}
+
+func (p *grpcHealthPublisher) Stop(ctx context.Context) error {
+	p.server.Shutdown()
+	return p.worker.Stop(ctx)
+}
+
+func (p *grpcHealthPublisher) run(ctx context.Context) {
+	ticker := time.NewTicker(grpcHealthRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.refresh(ctx)
+		}
+	}
+}
+
+func (p *grpcHealthPublisher) refresh(ctx context.Context) {
+	_, ready := p.health.Ready(ctx)
 	serving := grpc_health_v1.HealthCheckResponse_NOT_SERVING
 	if ready {
 		serving = grpc_health_v1.HealthCheckResponse_SERVING
 	}
-	return &grpc_health_v1.HealthListResponse{Statuses: map[string]*grpc_health_v1.HealthCheckResponse{"": {Status: serving}}}, nil
+	for _, name := range p.names {
+		p.server.SetServingStatus(name, serving)
+	}
 }
 
 func requestIDInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {

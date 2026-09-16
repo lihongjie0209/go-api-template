@@ -148,16 +148,10 @@ func redisKeyPrefix(cfg config.Config) string {
 }
 
 func newCacheStore(client *redis.Client, cfg config.Config, metrics *observability.Metrics) cache.Store {
-	if client == nil {
-		return nil
-	}
 	return cache.ObserveStore(cache.NewRedisStore(client, cache.WithKeyPrefix(redisKeyPrefix(cfg))), metrics, "redis")
 }
 
 func newLocker(client *redis.Client, cfg config.Config, metrics *observability.Metrics) cache.Locker {
-	if client == nil {
-		return nil
-	}
 	return cache.ObserveLocker(cache.NewLocker(client, cache.WithLockKeyPrefix(redisKeyPrefix(cfg)+"lock:")), metrics, "redis")
 }
 
@@ -166,6 +160,7 @@ func newObjectStorage(cfg config.Config, metrics *observability.Metrics) (object
 	if err != nil {
 		return nil, err
 	}
+	store = objectstorage.WithTimeout(store, cfg.ObjectStorage.Timeout)
 	return objectstorage.Observe(store, metrics, cfg.ObjectStorage.Provider), nil
 }
 

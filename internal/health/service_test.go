@@ -93,3 +93,26 @@ func TestService_ReadyFailsWhenMandatoryRedisClientIsMissing(t *testing.T) {
 		t.Fatalf("Ready() = %#v, %t", status, ready)
 	}
 }
+
+func TestService_ReadyHonorsParentCancellation(t *testing.T) {
+	t.Parallel()
+	database, _, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	client := redis.NewClient(&redis.Options{Addr: "192.0.2.1:6379", DialTimeout: time.Second})
+	t.Cleanup(func() { _ = client.Close() })
+	service := New(sqlx.NewDb(database, "sqlmock"), client, config.Config{Health: config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	started := time.Now()
+	status, ready := service.Ready(ctx)
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("Ready() took %s after parent cancellation", elapsed)
+	}
+	if ready || status.Dependencies["database"].Status != "down" || status.Dependencies["redis"].Status != "down" {
+		t.Fatalf("Ready() = %#v, %t", status, ready)
+	}
+}

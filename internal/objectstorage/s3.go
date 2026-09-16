@@ -38,7 +38,7 @@ func newS3(ctx context.Context, cfg config.ObjectStorage) (Store, error) {
 }
 
 func (s *s3Store) Put(ctx context.Context, input PutInput) (Info, error) {
-	if err := validateKey(input.Key); err != nil {
+	if err := validatePutInput(input); err != nil {
 		return Info{}, err
 	}
 	request := &s3.PutObjectInput{Bucket: &s.bucket, Key: &input.Key, Body: input.Body, Metadata: input.Metadata}
@@ -50,7 +50,7 @@ func (s *s3Store) Put(ctx context.Context, input PutInput) (Info, error) {
 	}
 	result, err := s.client.PutObject(ctx, request)
 	if err != nil {
-		return Info{}, fmt.Errorf("put S3 object %q: %w", input.Key, err)
+		return Info{}, fmt.Errorf("put S3 object: %w", err)
 	}
 	return Info{Key: input.Key, Size: input.Size, ContentType: input.ContentType, ETag: aws.ToString(result.ETag), LastModified: time.Now(), Metadata: input.Metadata}, nil
 }
@@ -61,7 +61,7 @@ func (s *s3Store) Get(ctx context.Context, key string) (*Object, error) {
 	}
 	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key})
 	if err != nil {
-		return nil, fmt.Errorf("get S3 object %q: %w", key, err)
+		return nil, fmt.Errorf("get S3 object: %w", err)
 	}
 	return &Object{Body: result.Body, Info: Info{Key: key, Size: aws.ToInt64(result.ContentLength), ContentType: aws.ToString(result.ContentType), ETag: aws.ToString(result.ETag), LastModified: aws.ToTime(result.LastModified), Metadata: result.Metadata}}, nil
 }
@@ -72,7 +72,7 @@ func (s *s3Store) Stat(ctx context.Context, key string) (Info, error) {
 	}
 	result, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &s.bucket, Key: &key})
 	if err != nil {
-		return Info{}, fmt.Errorf("stat S3 object %q: %w", key, err)
+		return Info{}, fmt.Errorf("stat S3 object: %w", err)
 	}
 	return Info{Key: key, Size: aws.ToInt64(result.ContentLength), ContentType: aws.ToString(result.ContentType), ETag: aws.ToString(result.ETag), LastModified: aws.ToTime(result.LastModified), Metadata: result.Metadata}, nil
 }
@@ -82,7 +82,7 @@ func (s *s3Store) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &key}); err != nil {
-		return fmt.Errorf("delete S3 object %q: %w", key, err)
+		return fmt.Errorf("delete S3 object: %w", err)
 	}
 	return nil
 }
@@ -116,7 +116,7 @@ func (s *s3Store) Presign(ctx context.Context, key string, operation Operation, 
 		return SignedURL{}, fmt.Errorf("unsupported presign operation %q", operation)
 	}
 	if err != nil {
-		return SignedURL{}, fmt.Errorf("presign S3 object %q: %w", key, err)
+		return SignedURL{}, fmt.Errorf("presign S3 object: %w", err)
 	}
 	return SignedURL{URL: url, Method: method, ExpiresAt: time.Now().Add(ttl)}, nil
 }

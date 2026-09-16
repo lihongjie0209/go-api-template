@@ -28,7 +28,7 @@ func newOSS(cfg config.ObjectStorage) Store {
 }
 
 func (s *ossStore) Put(ctx context.Context, input PutInput) (Info, error) {
-	if err := validateKey(input.Key); err != nil {
+	if err := validatePutInput(input); err != nil {
 		return Info{}, err
 	}
 	request := &oss.PutObjectRequest{Bucket: &s.bucket, Key: &input.Key, Body: input.Body, Metadata: input.Metadata}
@@ -40,7 +40,7 @@ func (s *ossStore) Put(ctx context.Context, input PutInput) (Info, error) {
 	}
 	result, err := s.client.PutObject(ctx, request)
 	if err != nil {
-		return Info{}, fmt.Errorf("put OSS object %q: %w", input.Key, err)
+		return Info{}, fmt.Errorf("put OSS object: %w", err)
 	}
 	return Info{Key: input.Key, Size: input.Size, ContentType: input.ContentType, ETag: oss.ToString(result.ETag), LastModified: time.Now(), Metadata: input.Metadata}, nil
 }
@@ -51,7 +51,7 @@ func (s *ossStore) Get(ctx context.Context, key string) (*Object, error) {
 	}
 	result, err := s.client.GetObject(ctx, &oss.GetObjectRequest{Bucket: &s.bucket, Key: &key})
 	if err != nil {
-		return nil, fmt.Errorf("get OSS object %q: %w", key, err)
+		return nil, fmt.Errorf("get OSS object: %w", err)
 	}
 	return &Object{Body: result.Body, Info: Info{Key: key, Size: result.ContentLength, ContentType: oss.ToString(result.ContentType), ETag: oss.ToString(result.ETag), LastModified: timeValue(result.LastModified), Metadata: result.Metadata}}, nil
 }
@@ -62,7 +62,7 @@ func (s *ossStore) Stat(ctx context.Context, key string) (Info, error) {
 	}
 	result, err := s.client.HeadObject(ctx, &oss.HeadObjectRequest{Bucket: &s.bucket, Key: &key})
 	if err != nil {
-		return Info{}, fmt.Errorf("stat OSS object %q: %w", key, err)
+		return Info{}, fmt.Errorf("stat OSS object: %w", err)
 	}
 	return Info{Key: key, Size: result.ContentLength, ContentType: oss.ToString(result.ContentType), ETag: oss.ToString(result.ETag), LastModified: timeValue(result.LastModified), Metadata: result.Metadata}, nil
 }
@@ -72,7 +72,7 @@ func (s *ossStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	if _, err := s.client.DeleteObject(ctx, &oss.DeleteObjectRequest{Bucket: &s.bucket, Key: &key}); err != nil {
-		return fmt.Errorf("delete OSS object %q: %w", key, err)
+		return fmt.Errorf("delete OSS object: %w", err)
 	}
 	return nil
 }
@@ -96,7 +96,7 @@ func (s *ossStore) Presign(ctx context.Context, key string, operation Operation,
 	}
 	result, err := s.client.Presign(ctx, request, func(options *oss.PresignOptions) { options.Expires = ttl })
 	if err != nil {
-		return SignedURL{}, fmt.Errorf("presign OSS object %q: %w", key, err)
+		return SignedURL{}, fmt.Errorf("presign OSS object: %w", err)
 	}
 	return SignedURL{URL: result.URL, Method: result.Method, ExpiresAt: result.Expiration, Headers: result.SignedHeaders}, nil
 }

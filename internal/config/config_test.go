@@ -192,6 +192,9 @@ func TestLoad_UsesDefaultsWhenCurrentDirectoryHasNoConfig(t *testing.T) {
 	if cfg.App.Name != "go-api-template" || cfg.App.Env != "development" {
 		t.Fatalf("app = %+v", cfg.App)
 	}
+	if cfg.Redis.Address != "127.0.0.1:6379" || cfg.Redis.DB != 0 || cfg.Redis.DialTimeout != 5*time.Second || cfg.Redis.ReadTimeout != 3*time.Second || cfg.Redis.WriteTimeout != 3*time.Second {
+		t.Fatalf("Redis = %+v, want mandatory localhost defaults", cfg.Redis)
+	}
 	if len(cfg.Runtime.ConfigFiles) != 0 {
 		t.Fatalf("ConfigFiles = %v, want no loaded files", cfg.Runtime.ConfigFiles)
 	}
@@ -399,6 +402,28 @@ func TestConfig_RejectsUnsafeRedisTimeouts(t *testing.T) {
 			cfg := validDevelopmentConfig(t)
 			test.mutate(&cfg.Redis)
 			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "positive timeouts") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_RejectsUnsafeHealthTimeouts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*Health)
+	}{
+		{name: "database zero", mutate: func(health *Health) { health.DatabaseTimeout = 0 }},
+		{name: "database unbounded", mutate: func(health *Health) { health.DatabaseTimeout = 30*time.Second + time.Millisecond }},
+		{name: "redis zero", mutate: func(health *Health) { health.RedisTimeout = 0 }},
+		{name: "redis unbounded", mutate: func(health *Health) { health.RedisTimeout = 30*time.Second + time.Millisecond }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			test.mutate(&cfg.Health)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "health dependency timeouts") {
 				t.Fatalf("Validate() error = %v", err)
 			}
 		})
@@ -659,6 +684,35 @@ func TestConfigRejectsUnsafeSecurityLogSettings(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validProductionConfig(t)
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigRejectsUnsafeObjectStorageAndFileSettings(t *testing.T) {
+	t.Parallel()
+	base := func(t *testing.T) Config {
+		cfg := validProductionConfig(t)
+		cfg.ObjectStorage = ObjectStorage{Enabled: true, Provider: "s3", Bucket: "files", Region: "cn-test-1", PresignTTL: time.Minute, Timeout: 30 * time.Second}
+		return cfg
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{name: "plaintext production endpoint", mutate: func(cfg *Config) { cfg.ObjectStorage.Endpoint = "http://minio:9000" }, want: "must use https"},
+		{name: "endpoint credentials", mutate: func(cfg *Config) { cfg.ObjectStorage.Endpoint = "https://user:pass@storage.example.com" }, want: "without credentials"},
+		{name: "S3 CNAME mode", mutate: func(cfg *Config) { cfg.ObjectStorage.UseCName = true }, want: "provider-compatible"},
+		{name: "unbounded provider timeout", mutate: func(cfg *Config) { cfg.ObjectStorage.Timeout = 5*time.Minute + time.Millisecond }, want: "object_storage requires"},
+		{name: "invalid allowed media type", mutate: func(cfg *Config) { cfg.Files.Enabled = true; cfg.Files.AllowedTypes = []string{"not a media type"} }, want: "allowed_types"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base(t)
 			test.mutate(&cfg)
 			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate() error = %v", err)

@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"mime"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -275,6 +277,7 @@ type ObjectStorage struct {
 	UsePathStyle    bool          `mapstructure:"use_path_style"`
 	UseCName        bool          `mapstructure:"use_cname"`
 	PresignTTL      time.Duration `mapstructure:"presign_ttl"`
+	Timeout         time.Duration `mapstructure:"timeout"`
 }
 type Files struct {
 	Enabled            bool          `mapstructure:"enabled"`
@@ -590,6 +593,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("object_storage.use_path_style", false)
 	v.SetDefault("object_storage.use_cname", false)
 	v.SetDefault("object_storage.presign_ttl", "15m")
+	v.SetDefault("object_storage.timeout", "30s")
 	v.SetDefault("files.enabled", false)
 	v.SetDefault("files.max_size_bytes", 10<<20)
 	v.SetDefault("files.allowed_types", []string{})
@@ -666,8 +670,8 @@ func (c Config) Validate() error {
 	if c.Redis.KeyPrefix != "" && !validRedisPrefix.MatchString(c.Redis.KeyPrefix) {
 		return errors.New("redis.key_prefix must be a bounded namespace ending in ':'")
 	}
-	if c.Health.DatabaseTimeout <= 0 || c.Health.RedisTimeout <= 0 {
-		return errors.New("http and health timeouts must be positive")
+	if c.Health.DatabaseTimeout <= 0 || c.Health.DatabaseTimeout > 30*time.Second || c.Health.RedisTimeout <= 0 || c.Health.RedisTimeout > 30*time.Second {
+		return errors.New("health dependency timeouts must be positive and no greater than 30 seconds")
 	}
 	if c.RateLimit.Enabled {
 		for name, rule := range map[string]RateLimitRule{"ip": c.RateLimit.IP, "api": c.RateLimit.API, "user": c.RateLimit.User, "login": c.RateLimit.Login} {
@@ -764,17 +768,37 @@ func (c Config) Validate() error {
 	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.ConsumerMaxDeliver > 100 || c.EventBus.DispatchInterval < 10*time.Millisecond || c.EventBus.DispatchInterval > time.Minute || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchBatchSize > 1000 || c.EventBus.DispatchLease <= c.EventBus.PublishTimeout || c.EventBus.DispatchLease > 10*time.Minute || c.EventBus.DispatchRetryDelay <= 0 || c.EventBus.DispatchRetryDelay > time.Hour) {
 		return errors.New("enabled event_bus requires URLs, stream, canonical platform.> subjects, valid storage, positive timeouts, delivery, and dispatch settings")
 	}
-	if c.ObjectStorage.Enabled && ((c.ObjectStorage.Provider != "s3" && c.ObjectStorage.Provider != "oss") || c.ObjectStorage.Bucket == "" || c.ObjectStorage.Region == "" || c.ObjectStorage.PresignTTL <= 0 || c.ObjectStorage.PresignTTL > 24*time.Hour) {
-		return errors.New("enabled object_storage requires provider s3 or oss, bucket, region, and presign_ttl no greater than 24h")
+	if c.ObjectStorage.Enabled && ((c.ObjectStorage.Provider != "s3" && c.ObjectStorage.Provider != "oss") || strings.TrimSpace(c.ObjectStorage.Bucket) == "" || len(c.ObjectStorage.Bucket) > 255 || strings.TrimSpace(c.ObjectStorage.Region) == "" || len(c.ObjectStorage.Region) > 255 || c.ObjectStorage.PresignTTL <= 0 || c.ObjectStorage.PresignTTL > 24*time.Hour || c.ObjectStorage.Timeout < time.Second || c.ObjectStorage.Timeout > 5*time.Minute || c.ObjectStorage.UseCName && c.ObjectStorage.Provider != "oss") {
+		return errors.New("enabled object_storage requires provider s3 or oss, bounded bucket/region, provider-compatible options, and presign_ttl no greater than 24h")
 	}
 	if (c.ObjectStorage.AccessKeyID == "") != (c.ObjectStorage.AccessKeySecret == "") {
 		return errors.New("object_storage access_key_id and access_key_secret must be configured together")
 	}
-	if c.Files.Enabled && (!c.Database.Enabled || !c.ObjectStorage.Enabled || c.Files.MaxSizeBytes <= 0 || c.Files.MaxSizeBytes > c.HTTP.MaxBodyBytes) {
+	if len(c.ObjectStorage.AccessKeyID) > 512 || len(c.ObjectStorage.AccessKeySecret) > 4096 || len(c.ObjectStorage.SessionToken) > 8192 {
+		return errors.New("object_storage credential fields exceed their bounds")
+	}
+	if c.ObjectStorage.Enabled && c.ObjectStorage.Endpoint != "" {
+		endpoint, err := url.Parse(c.ObjectStorage.Endpoint)
+		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return errors.New("object_storage.endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment")
+		}
+		if c.App.Env == "production" && endpoint.Scheme != "https" {
+			return errors.New("production object_storage.endpoint must use https")
+		}
+	}
+	if c.Files.Enabled && (!c.Database.Enabled || !c.ObjectStorage.Enabled || c.Files.MaxSizeBytes <= 0 || c.Files.MaxSizeBytes > 5<<30 || c.Files.MaxSizeBytes > c.HTTP.MaxBodyBytes) {
 		return errors.New("enabled files requires database, object_storage, and positive max_size_bytes not exceeding http.max_body_bytes")
 	}
-	if c.Files.Enabled && (c.Files.DeletionInterval <= 0 || c.Files.DeletionRetryDelay <= 0 || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000) {
+	if c.Files.Enabled && (c.Files.DeletionInterval < time.Second || c.Files.DeletionInterval > 24*time.Hour || c.Files.DeletionRetryDelay < time.Second || c.Files.DeletionRetryDelay > 24*time.Hour || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000 || len(c.Files.AllowedTypes) > 100) {
 		return errors.New("enabled files requires valid deletion retry settings")
+	}
+	for _, contentType := range c.Files.AllowedTypes {
+		if len(contentType) > 255 {
+			return errors.New("files.allowed_types contains an invalid media type")
+		}
+		if _, _, err := mime.ParseMediaType(contentType); err != nil {
+			return fmt.Errorf("files.allowed_types contains invalid media type %q", contentType)
+		}
 	}
 	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.OperationLog.Subject == "" || len(c.OperationLog.Subject) > 256 || c.OperationLog.Durable == "" || len(c.OperationLog.Durable) > 256 || c.OperationLog.MaxPayloadBytes < 256 || c.OperationLog.MaxPayloadBytes > 64<<10) {
 		return errors.New("enabled operation_log requires database, event_bus, subject and durable names no greater than 256 bytes, and max_payload_bytes between 256 bytes and 64 KiB")

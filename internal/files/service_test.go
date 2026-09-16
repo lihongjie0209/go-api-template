@@ -29,8 +29,30 @@ type storageStub struct {
 }
 type operationStub struct{}
 
+type failingTransactionalOperationStub struct{ records []operationlog.Entry }
+type failingReadOperationStub struct{ records []operationlog.Entry }
+
 func (operationStub) Enabled() bool                                    { return true }
 func (operationStub) Record(context.Context, operationlog.Entry) error { return nil }
+func (operationStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return nil
+}
+func (s *failingTransactionalOperationStub) Enabled() bool { return true }
+func (s *failingTransactionalOperationStub) Record(_ context.Context, entry operationlog.Entry) error {
+	s.records = append(s.records, entry)
+	return nil
+}
+func (*failingTransactionalOperationStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return errors.New("operation outbox unavailable")
+}
+func (*failingReadOperationStub) Enabled() bool { return true }
+func (s *failingReadOperationStub) Record(_ context.Context, entry operationlog.Entry) error {
+	s.records = append(s.records, entry)
+	return errors.New("operation outbox unavailable")
+}
+func (*failingReadOperationStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return nil
+}
 
 func (s *storageStub) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
 	s.putType = input.ContentType
@@ -117,6 +139,32 @@ func TestService_UploadCompensatesWhenDatabaseInsertFails(t *testing.T) {
 	}
 }
 
+func TestServiceUploadRollsBackMetadataWhenTransactionalLogFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO files .*object_delete_attempts, object_delete_error`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectRollback()
+	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
+	operations := &failingTransactionalOperationStub{}
+	service := New(db, database.NewTransactor(db), storage, nil, operations, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+
+	_, err = service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
+	if err == nil || len(storage.deleted) != 1 || len(operations.records) != 1 || operations.records[0].Succeeded {
+		t.Fatalf("error=%v deletes=%v operation_records=%+v", err, storage.deleted, operations.records)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestService_GetEnforcesTenant(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
@@ -132,6 +180,33 @@ func TestService_GetEnforcesTenant(t *testing.T) {
 	_, err = service.Get(ctx, "file-1")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get() error = %v, want ErrNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceDownloadFailsClosedWhenAccessLogCannotBeStored(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	now := time.Now()
+	columns := strings.Split(strings.ReplaceAll(recordColumns, " ", ""), ",")
+	mock.ExpectQuery(`SELECT id, tenant_id`).WithArgs("file-1", "tenant-1").WillReturnRows(sqlmock.NewRows(columns).AddRow(
+		"file-1", "tenant-1", "files/tenant-1/file-1/report.txt", "report.txt", "text/plain", int64(5), "etag", "checksum",
+		now, "user-1", now, "user-1", int64(1), nil, nil, nil, int64(0), "", nil,
+	))
+	operations := &failingReadOperationStub{}
+	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operations, slog.Default(), config.Config{Files: config.Files{Enabled: true}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+
+	download, err := service.Download(ctx, "file-1")
+	if err == nil || download.URL != "" || len(operations.records) != 1 || !operations.records[0].Succeeded {
+		t.Fatalf("download=%+v error=%v operation_records=%+v", download, err, operations.records)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

@@ -180,16 +180,16 @@ deleted_by text
 
 ## Object storage
 
-`internal/objectstorage.Store` provides a provider-neutral streaming API for upload, download, metadata lookup, delete, and GET/PUT presigned URLs. The first adapters use the official AWS SDK for Go v2 and Alibaba Cloud OSS SDK v2. Select `s3` or `oss` with `object_storage.provider`; credentials should be injected through `APP_OBJECT_STORAGE_ACCESS_KEY_ID` and `APP_OBJECT_STORAGE_ACCESS_KEY_SECRET`, or omitted to use the SDK's workload/environment credential chain. S3 custom endpoints and path-style addressing are supported for compatible services.
+`internal/objectstorage.Store` provides a provider-neutral streaming API for upload, download, metadata lookup, delete, and GET/PUT presigned URLs. The first adapters use the official AWS SDK for Go v2 and Alibaba Cloud OSS SDK v2. Select `s3` or `oss` with `object_storage.provider`; credentials should be injected through `APP_OBJECT_STORAGE_ACCESS_KEY_ID` and `APP_OBJECT_STORAGE_ACCESS_KEY_SECRET`, or omitted to use the SDK's workload/environment credential chain. S3 custom endpoints and path-style addressing are supported for compatible services. Every SDK call receives the caller cancellation plus `object_storage.timeout` (default 30 seconds); GET retains that deadline until its body closes. Keys, single-PUT size, content type and metadata count/bytes are bounded before either provider is called. Production custom endpoints require HTTPS, and provider errors omit object keys from exported traces.
 
 Enable `files.enabled` together with the database and object storage to expose the unified file API:
 
-- `POST /api/v1/files/upload`: streaming `multipart/form-data` upload using field `file`
+- `POST /api/v1/files/upload`: bounded `multipart/form-data` upload using field `file`
 - `POST /api/v1/files/get`: query metadata with JSON `{"id":"..."}`
 - `POST /api/v1/files/download`: return a short-lived signed download URL
 - `POST /api/v1/files/delete`: logical delete with JSON `{"id":"...","version":1}`
 
-Object keys use generated UUIDs rather than trusting client filenames. The `files` table records tenant, original name, MIME type, byte size, ETag, SHA-256 and all mandatory audit fields. Access is tenant-scoped, uploads compensate by deleting the object when the metadata transaction fails, and deletion uses optimistic locking. Configure the upload ceiling with `files.max_size_bytes`; it must not exceed `http.max_body_bytes`. An optional exact MIME allowlist is available through `files.allowed_types`.
+Object keys use generated UUIDs and validated tenant segments rather than trusting client paths. The service reads at most the configured upload ceiling, verifies declared size, detects MIME from content, optionally applies an exact MIME allowlist, and records SHA-256. The `files` table records tenant, original name, MIME type, byte size, ETag and all mandatory audit fields. Access is tenant-scoped (platform-owned files are additionally creator-scoped). Upload metadata and its successful operation event share one transaction; failure compensates by deleting the object. Delete uses the submitted optimistic version, then an idempotent per-file locked worker removes the object and durably schedules bounded-backoff retries on failure. Signed-download creation is operation-logged before its URL is disclosed. Configure `files.max_size_bytes`; it must not exceed the HTTP body limit or the providers' 5 GiB single-PUT ceiling.
 
 ## Operation logs
 
@@ -232,7 +232,7 @@ The public platform SDK owns the backend-independent cache and lock contracts; `
 
 Distributed locking is implemented with the mature [`go-redsync/redsync/v4`](https://github.com/go-redsync/redsync) component. The `cache.Locker` interface provides non-blocking `TryLock`, context-aware retrying `Lock`, ownership-safe `Unlock`, explicit `Extend`, and the lock validity deadline through `Until`. The sample six-field cron job uses the shared renewable `TryWithLock` lifecycle: another replica reports the run as skipped, while Redis failure or lease loss fails closed and cancels the job context.
 
-Both abstractions are registered in Fx and should be constructor-injected into services as `cache.Store` or `cache.Locker`, rather than depending on `*redis.Client`. Keys default to the `<environment>:<app.name>:` namespace. An explicit `redis.key_prefix` or `APP_REDIS_KEY_PREFIX` replaces the service portion but remains environment-prefixed. Lock keys use `<namespace>lock:`. A zero cache TTL means no expiration; negative TTLs and blank keys are rejected.
+Both abstractions are registered in Fx and should be constructor-injected into services as `cache.Store` or `cache.Locker`, rather than depending on `*redis.Client`. Redis is always required and has no enable switch. No Redis section is needed for local defaults (`127.0.0.1:6379`, DB 0); deployments only override connection details with `APP_REDIS_*` when necessary. Startup pings Redis and fails before opening transports when it is unavailable. Keys default to the `<environment>:<app.name>:` namespace. An explicit `redis.key_prefix` or `APP_REDIS_KEY_PREFIX` replaces the service portion but remains environment-prefixed. Lock keys use `<namespace>lock:`. A zero cache TTL means no expiration; negative TTLs and blank keys are rejected.
 
 Protected work uses `cache.WithLock`. It renews the Redsync lease at a bounded interval, cancels the callback context when ownership is lost, and always attempts an ownership-safe release. The callback must pass that supplied context to database, Redis and upstream operations; using the original request context would ignore lease loss. Direct `Lock`/`Extend` use is reserved for code that explicitly owns and tests the complete lease lifecycle.
 
@@ -283,7 +283,7 @@ The gRPC server listens independently on `127.0.0.1:9090` and is managed by the 
 
 - `hello.v1.HelloService/Ping`: authenticated example RPC
 - `hello.v1.UserService/*`: CRUD RPCs backed by the same service as HTTP
-- `grpc.health.v1.Health/Check`: unauthenticated standard readiness check
+- `grpc.health.v1.Health/Check|List|Watch`: unauthenticated standard readiness protocol for the overall server, application name, and registered business services; unknown service names follow the gRPC health specification
 - JWT is passed as `authorization: Bearer <token>` metadata
 - `x-request-id` and W3C trace context propagate across HTTP-to-gRPC calls
 - reflection is enabled for development and forbidden in production

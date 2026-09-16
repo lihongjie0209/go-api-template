@@ -12,8 +12,11 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -33,6 +36,8 @@ var (
 	ErrVersionConflict = errors.New("file version conflict")
 	ErrInvalidInput    = errors.New("invalid file input")
 )
+
+var safeObjectSegment = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Record struct {
 	ID                   string     `db:"id" json:"id"`
@@ -94,14 +99,14 @@ type Service struct {
 	transactor *database.Transactor
 	storage    objectstorage.Store
 	locker     cache.Locker
-	operations operationlog.Recorder
+	operations operationlog.TransactionalRecorder
 	logger     *slog.Logger
 	cfg        config.Files
 	lockTTL    time.Duration
 	lockRetry  time.Duration
 }
 
-func New(db *sqlx.DB, transactor *database.Transactor, storage objectstorage.Store, locker cache.Locker, operations operationlog.Recorder, logger *slog.Logger, cfg config.Config) *Service {
+func New(db *sqlx.DB, transactor *database.Transactor, storage objectstorage.Store, locker cache.Locker, operations operationlog.TransactionalRecorder, logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{enabled: cfg.Files.Enabled, db: db, transactor: transactor, storage: storage, locker: locker, operations: operations, logger: logger, cfg: cfg.Files, lockTTL: cfg.DistributedLock.TTL, lockRetry: cfg.DistributedLock.RetryDelay}
 }
 
@@ -132,29 +137,29 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 	checksum := sha256.Sum256(content)
 	record := Record{ID: id, TenantID: actor.TenantID, ObjectKey: objectKey, OriginalName: name, ContentType: detectedType, SizeBytes: input.Size, ChecksumSHA256: hex.EncodeToString(checksum[:])}
 	request := map[string]any{"name": name, "content_type": detectedType, "size_bytes": input.Size, "checksum_sha256": record.ChecksumSHA256}
-	committed := false
-	err = operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		stored, putErr := s.storage.Put(ctx, objectstorage.PutInput{Key: objectKey, Body: bytes.NewReader(content), Size: input.Size, ContentType: detectedType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
-		if putErr != nil {
-			return fmt.Errorf("upload object: %w", putErr)
+	entry := operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	started := time.Now()
+	stored, err := s.storage.Put(ctx, objectstorage.PutInput{Key: objectKey, Body: bytes.NewReader(content), Size: input.Size, ContentType: detectedType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
+	if err != nil {
+		s.recordFailure(ctx, entry, started)
+		return Record{}, fmt.Errorf("upload object: %w", err)
+	}
+	record.ETag = stored.ETag
+	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		if err := insert(ctx, tx, record, actor.ID); err != nil {
+			return err
 		}
-		record.ETag = stored.ETag
-		insertErr := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error { return insert(ctx, tx, record, actor.ID) })
-		committed = insertErr == nil
-		return insertErr
+		entry.Duration = time.Since(started)
+		entry.Succeeded = true
+		return s.operations.RecordTx(ctx, tx, entry)
 	})
 	if err != nil {
-		if committed {
-			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "record file operation log after committed upload", "file_id", id, "error", err)
-			}
-			return s.Get(ctx, id)
-		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if cleanupErr := s.storage.Delete(cleanupCtx, objectKey); cleanupErr != nil && s.logger != nil {
-			s.logger.ErrorContext(cleanupCtx, "cleanup failed uploaded object", "object_key", objectKey, "error", cleanupErr)
+			s.logger.ErrorContext(cleanupCtx, "cleanup failed uploaded object", "file_id", id, "error", cleanupErr)
 		}
+		s.recordFailure(ctx, entry, started)
 		return Record{}, fmt.Errorf("record uploaded file: %w", err)
 	}
 	return s.Get(ctx, id)
@@ -169,7 +174,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 		return Page{}, err
 	}
 	request, err := pagination.Normalize(input.Request)
-	if err != nil || len(input.IDs) > 200 || len(input.ContentTypes) > 100 || len(input.CreatedByIDs) > 200 || (input.SizeFrom != nil && *input.SizeFrom < 0) || (input.SizeTo != nil && *input.SizeTo < 0) || (input.SizeFrom != nil && input.SizeTo != nil && *input.SizeFrom > *input.SizeTo) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+	if err != nil || invalidPageInput(input) {
 		return Page{}, ErrInvalidInput
 	}
 	where, args := fileActorScope(actor)
@@ -229,7 +234,7 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	if strings.TrimSpace(id) == "" {
+	if strings.TrimSpace(id) == "" || len(id) > 256 {
 		return Record{}, ErrInvalidInput
 	}
 	var record Record
@@ -245,13 +250,22 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 }
 
 func (s *Service) Download(ctx context.Context, id string) (Download, error) {
+	started := time.Now()
+	entry := operationlog.Entry{Operation: "file.download", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: map[string]any{"id": id}}
 	record, err := s.Get(ctx, id)
 	if err != nil {
+		s.recordFailure(ctx, entry, started)
 		return Download{}, err
 	}
 	signed, err := s.storage.Presign(ctx, record.ObjectKey, objectstorage.OperationGet, 0)
 	if err != nil {
+		s.recordFailure(ctx, entry, started)
 		return Download{}, fmt.Errorf("presign file download: %w", err)
+	}
+	entry.Duration = time.Since(started)
+	entry.Succeeded = true
+	if err := s.operations.Record(ctx, entry); err != nil {
+		return Download{}, fmt.Errorf("record file download: %w", err)
 	}
 	return Download{File: record, URL: signed.URL, ExpiresAt: signed.ExpiresAt}, nil
 }
@@ -272,43 +286,47 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		return fmt.Errorf("%w: version must be positive", ErrInvalidInput)
 	}
 	request := map[string]any{"version": version, "original_name": record.OriginalName}
-	committed := false
-	err = operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: "file.delete", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		businessErr := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
-			where, args := fileScope(actorValue, id)
-			query := tx.Rebind(`UPDATE files SET deleted_at=?,deleted_by=?,object_delete_next_at=?,object_delete_error='',updated_at=?,updated_by=?,version=version+1 WHERE ` + where + ` AND version=? AND deleted_at IS NULL`)
-			now := time.Now()
-			updateArgs := append([]any{now, actorValue.ID, now, now, actorValue.ID}, args...)
-			updateArgs = append(updateArgs, version)
-			result, execErr := tx.ExecContext(ctx, query, updateArgs...)
-			if execErr != nil {
-				return execErr
-			}
-			rows, execErr := result.RowsAffected()
-			if execErr != nil {
-				return execErr
-			}
-			if rows != 1 {
-				return ErrVersionConflict
-			}
-			return nil
-		})
-		committed = businessErr == nil
-		return businessErr
+	entry := operationlog.Entry{Operation: "file.delete", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	started := time.Now()
+	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		where, args := fileScope(actorValue, id)
+		query := tx.Rebind(`UPDATE files SET deleted_at=?,deleted_by=?,object_delete_next_at=?,object_delete_error='',updated_at=?,updated_by=?,version=version+1 WHERE ` + where + ` AND version=? AND deleted_at IS NULL`)
+		now := time.Now()
+		updateArgs := append([]any{now, actorValue.ID, now, now, actorValue.ID}, args...)
+		updateArgs = append(updateArgs, version)
+		result, execErr := tx.ExecContext(ctx, query, updateArgs...)
+		if execErr != nil {
+			return execErr
+		}
+		rows, execErr := result.RowsAffected()
+		if execErr != nil {
+			return execErr
+		}
+		if rows != 1 {
+			return ErrVersionConflict
+		}
+		entry.Duration = time.Since(started)
+		entry.Succeeded = true
+		return s.operations.RecordTx(ctx, tx, entry)
 	})
 	if err != nil {
-		if committed {
-			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "record file operation log after committed delete", "file_id", id, "error", err)
-			}
-		} else {
-			return fmt.Errorf("soft delete file: %w", err)
-		}
+		s.recordFailure(ctx, entry, started)
+		return fmt.Errorf("soft delete file: %w", err)
 	}
 	if err := s.withDeletionLock(ctx, record.ID, func(lockCtx context.Context) error { return s.processDeletion(lockCtx, record.ID, record.ObjectKey, 0) }); err != nil && s.logger != nil {
 		s.logger.WarnContext(ctx, "file object deletion queued for retry", "file_id", record.ID, "error", err)
 	}
 	return nil
+}
+
+func (s *Service) recordFailure(ctx context.Context, entry operationlog.Entry, started time.Time) {
+	entry.Duration = time.Since(started)
+	entry.Succeeded = false
+	entry.ErrorCode = "operation_failed"
+	entry.ErrorMessage = "operation failed"
+	if err := s.operations.Record(ctx, entry); err != nil && s.logger != nil {
+		s.logger.ErrorContext(ctx, "record failed file operation", "operation", entry.Operation, "file_id", entry.ResourceID, "error", err)
+	}
 }
 
 type pendingDeletion struct {
@@ -360,7 +378,9 @@ func (s *Service) RunDeletionWorker(ctx context.Context) {
 
 func (s *Service) processDeletion(ctx context.Context, id, objectKey string, attempts int64) error {
 	deleteErr := s.storage.Delete(ctx, objectKey)
-	workerCtx := platformprincipal.SystemContext(context.WithoutCancel(ctx), "file-deletion-worker")
+	workerBase, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	workerCtx := platformprincipal.SystemContext(workerBase, "file-deletion-worker")
 	txErr := s.transactor.Within(workerCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		if deleteErr == nil {
@@ -410,6 +430,8 @@ func deletionBackoff(base time.Duration, attempts int64) time.Duration {
 
 func (s *Service) withDeletionLock(ctx context.Context, id string, fn func(context.Context) error) error {
 	if s.locker == nil {
+		// Object deletion and the conditional database update are idempotent;
+		// the lock only suppresses duplicate work during tests or degraded repair.
 		return fn(ctx)
 	}
 	return cache.WithLock(ctx, s.locker, "file:deletion:"+id, s.lockTTL, s.lockRetry, fn)
@@ -423,7 +445,7 @@ func (s *Service) validateUpload(input UploadInput) error {
 		return fmt.Errorf("%w: invalid file size", ErrInvalidInput)
 	}
 	name := path.Base(strings.ReplaceAll(input.Name, "\\", "/"))
-	if strings.TrimSpace(input.Name) == "" || name == "." || name == "/" || len(name) > 255 || strings.ContainsRune(name, 0) {
+	if strings.TrimSpace(input.Name) == "" || name == "." || name == "/" || len(name) > 255 || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return fmt.Errorf("%w: file name is required", ErrInvalidInput)
 	}
 	return nil
@@ -449,11 +471,31 @@ func insert(ctx context.Context, tx *sqlx.Tx, record Record, actorID string) err
 }
 
 func actor(ctx context.Context) (platformprincipal.Principal, error) {
-	value, ok := platformprincipal.FromContext(ctx)
-	if !ok {
-		return platformprincipal.Principal{}, platformprincipal.ErrMissing
+	value, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return platformprincipal.Principal{}, err
+	}
+	if len(value.ID) > 256 || (value.TenantID != "" && !safeObjectSegment.MatchString(value.TenantID)) {
+		return platformprincipal.Principal{}, ErrForbidden
 	}
 	return value, nil
+}
+
+func invalidPageInput(input PageInput) bool {
+	if len(input.Keyword) > 256 || len(input.IDs) > 200 || len(input.ContentTypes) > 100 || len(input.CreatedByIDs) > 200 ||
+		(input.SizeFrom != nil && *input.SizeFrom < 0) || (input.SizeTo != nil && *input.SizeTo < 0) ||
+		(input.SizeFrom != nil && input.SizeTo != nil && *input.SizeFrom > *input.SizeTo) ||
+		(input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+		return true
+	}
+	for _, values := range [][]string{input.IDs, input.ContentTypes, input.CreatedByIDs} {
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" || len(value) > 256 || !utf8.ValidString(value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 func tenantSegment(value string) string {
 	if value == "" {

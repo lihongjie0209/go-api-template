@@ -103,6 +103,12 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 	}
 
 	baseURL := "http://" + httpAddress
+	if status := postJSON(t, baseURL+"/live", "", "", `{}`); status != http.StatusOK {
+		t.Fatalf("liveness status = %d", status)
+	}
+	if status := postJSON(t, baseURL+"/ready", "", "", `{}`); status != http.StatusOK {
+		t.Fatalf("readiness status = %d", status)
+	}
 	if status := postJSON(t, baseURL+"/api/v1/version", "", "", `{}`); status != http.StatusInternalServerError {
 		t.Fatalf("missing policy status = %d", status)
 	}
@@ -125,9 +131,18 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = connection.Close() })
-	healthResponse, err := grpc_health_v1.NewHealthClient(connection).Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+	healthClient := grpc_health_v1.NewHealthClient(connection)
+	healthResponse, err := healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
 	if err != nil || healthResponse.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 		t.Fatalf("health = %v, %v", healthResponse, err)
+	}
+	watch, err := healthClient.Watch(ctx, &grpc_health_v1.HealthCheckRequest{Service: cfg.App.Name})
+	if err != nil {
+		t.Fatalf("health watch: %v", err)
+	}
+	healthUpdate, err := watch.Recv()
+	if err != nil || healthUpdate.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		t.Fatalf("health watch = %v, %v", healthUpdate, err)
 	}
 	pskCtx := metadata.AppendToOutgoingContext(ctx, "authorization", "PSK "+secret)
 	if _, err := hellov1.NewHelloServiceClient(connection).Ping(pskCtx, &hellov1.PingRequest{Message: "hello"}); err != nil {

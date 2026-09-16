@@ -45,17 +45,6 @@ database:
   conn_max_lifetime: 5m
   conn_max_idle_time: 1m
   ping_timeout: 5s
-redis:
-  # Effective namespace is "<environment>:<key_prefix>". Empty key_prefix
-  # uses "<environment>:<app.name>:" to isolate services and environments.
-  key_prefix: ""
-  address: 127.0.0.1:6379
-  username: ""
-  password: ""
-  db: 0
-  dial_timeout: 5s
-  read_timeout: 3s
-  write_timeout: 3s
 distributed_lock:
   ttl: 10s
   retry_delay: 100ms
@@ -71,6 +60,7 @@ object_storage:
   use_path_style: false
   use_cname: false
   presign_ttl: 15m
+  timeout: 30s
 files:
   enabled: false
   max_size_bytes: 10485760

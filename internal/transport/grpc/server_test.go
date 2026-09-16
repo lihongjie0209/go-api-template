@@ -5,23 +5,77 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/jmoiron/sqlx"
 	hellov1 "github.com/lihongjie0209/go-api-template/gen/hello/v1"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/environment"
+	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
+
+func TestGRPCHealthPublisherImplementsStandardProtocol(t *testing.T) {
+	t.Parallel()
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := apphealth.New(nil, client, config.Config{Health: config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}})
+	publisher := newGRPCHealthPublisher(service, "test-service")
+	publisher.Start(t.Context())
+	t.Cleanup(func() {
+		if err := publisher.Stop(context.Background()); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
+
+	listener := bufconn.Listen(1 << 20)
+	server := grpc.NewServer()
+	grpc_health_v1.RegisterHealthServer(server, publisher.server)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	connection, err := grpc.NewClient("passthrough:///bufnet", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	clientAPI := grpc_health_v1.NewHealthClient(connection)
+
+	for _, name := range []string{"", "test-service", hellov1.HelloService_ServiceDesc.ServiceName} {
+		response, checkErr := clientAPI.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: name})
+		if checkErr != nil || response.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+			t.Fatalf("Check(%q) = %v, %v", name, response, checkErr)
+		}
+	}
+	if _, checkErr := clientAPI.Check(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: "unknown.Service"}); status.Code(checkErr) != codes.NotFound {
+		t.Fatalf("unknown Check() error = %v", checkErr)
+	}
+	list, err := clientAPI.List(t.Context(), &grpc_health_v1.HealthListRequest{})
+	if err != nil || list.GetStatuses()["test-service"].GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		t.Fatalf("List() = %v, %v", list, err)
+	}
+	watch, err := clientAPI.Watch(t.Context(), &grpc_health_v1.HealthCheckRequest{Service: "test-service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, err := watch.Recv()
+	if err != nil || update.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		t.Fatalf("Watch().Recv() = %v, %v", update, err)
+	}
+}
 
 func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	t.Parallel()

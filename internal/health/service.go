@@ -34,6 +34,8 @@ func New(db *sqlx.DB, client *redis.Client, cfg config.Config) *Service {
 func (s *Service) Live() Status { return Status{Status: "up"} }
 
 func (s *Service) Ready(ctx context.Context) (Status, bool) {
+	// Keep one slot per dependency so a cancelled caller can never leave a
+	// completed probe blocked while publishing its result.
 	results := make(chan result, 2)
 	go s.checkDatabase(ctx, results)
 	go s.checkRedis(ctx, results)
