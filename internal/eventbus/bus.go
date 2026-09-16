@@ -19,18 +19,19 @@ func New(ctx context.Context, cfg config.Config) (*Bus, error) {
 	}
 	eventCfg := cfg.EventBus
 	return platformeventbus.New(ctx, platformeventbus.Config{
-		URLs:               eventCfg.URLs,
-		ClientName:         cfg.App.Name,
-		StreamName:         eventCfg.StreamName,
-		Subjects:           eventCfg.Subjects,
-		Storage:            eventCfg.Storage,
-		MaxAge:             eventCfg.MaxAge,
-		DuplicateWindow:    eventCfg.DuplicateWindow,
-		ConnectTimeout:     eventCfg.ConnectTimeout,
-		ReconnectWait:      eventCfg.ReconnectWait,
-		PublishTimeout:     eventCfg.PublishTimeout,
-		ConsumerAckWait:    eventCfg.ConsumerAckWait,
-		ConsumerMaxDeliver: eventCfg.ConsumerMaxDeliver,
+		URLs:                   eventCfg.URLs,
+		ClientName:             cfg.App.Name,
+		StreamName:             eventCfg.StreamName,
+		Subjects:               eventCfg.Subjects,
+		Storage:                eventCfg.Storage,
+		MaxAge:                 eventCfg.MaxAge,
+		DuplicateWindow:        eventCfg.DuplicateWindow,
+		ConnectTimeout:         eventCfg.ConnectTimeout,
+		ReconnectWait:          eventCfg.ReconnectWait,
+		PublishTimeout:         eventCfg.PublishTimeout,
+		ConsumerAckWait:        eventCfg.ConsumerAckWait,
+		ConsumerHandlerTimeout: eventCfg.ConsumerHandlerTimeout,
+		ConsumerMaxDeliver:     eventCfg.ConsumerMaxDeliver,
 	})
 }
 

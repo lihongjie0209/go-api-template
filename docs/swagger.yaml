@@ -1662,6 +1662,8 @@ definitions:
     properties:
       actor_id:
         type: string
+      actor_name:
+        type: string
       actor_type:
         type: string
       application_id:
@@ -1671,6 +1673,8 @@ definitions:
       created_at:
         type: string
       created_by:
+        type: string
+      created_by_name:
         type: string
       duration_ms:
         type: integer
@@ -1711,6 +1715,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       user_agent:
         type: string
@@ -1998,6 +2004,8 @@ definitions:
     properties:
       actor_id:
         type: string
+      actor_name:
+        type: string
       actor_type:
         type: string
       client_ip:
@@ -2005,6 +2013,8 @@ definitions:
       created_at:
         type: string
       created_by:
+        type: string
+      created_by_name:
         type: string
       error_code:
         type: string
@@ -2039,6 +2049,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       user_agent:
         type: string

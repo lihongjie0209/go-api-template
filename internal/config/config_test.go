@@ -74,6 +74,9 @@ func TestLoad_UsesCanonicalPlatformEventStreamDefaults(t *testing.T) {
 	if cfg.EventBus.StreamName != "PLATFORM_EVENTS" || len(cfg.EventBus.Subjects) != 1 || cfg.EventBus.Subjects[0] != "platform.>" {
 		t.Fatalf("unexpected event stream defaults: %q %#v", cfg.EventBus.StreamName, cfg.EventBus.Subjects)
 	}
+	if cfg.EventBus.ConsumerAckWait != 30*time.Second || cfg.EventBus.ConsumerHandlerTimeout != 25*time.Second {
+		t.Fatalf("unexpected event consumer deadlines: %+v", cfg.EventBus)
+	}
 	if cfg.EventBus.DispatchInterval != time.Second || cfg.EventBus.DispatchBatchSize != 100 || cfg.EventBus.DispatchLease != 30*time.Second || cfg.EventBus.DispatchRetryDelay != 2*time.Second {
 		t.Fatalf("unexpected outbox dispatch defaults: %+v", cfg.EventBus)
 	}
@@ -426,6 +429,7 @@ func TestConfig_RejectsUnsafeOutboxBounds(t *testing.T) {
 		mutate func(*EventBus)
 	}{
 		{name: "delivery attempts", mutate: func(cfg *EventBus) { cfg.ConsumerMaxDeliver = 101 }},
+		{name: "handler reaches ack deadline", mutate: func(cfg *EventBus) { cfg.ConsumerHandlerTimeout = cfg.ConsumerAckWait }},
 		{name: "dispatch interval", mutate: func(cfg *EventBus) { cfg.DispatchInterval = time.Millisecond }},
 		{name: "batch size", mutate: func(cfg *EventBus) { cfg.DispatchBatchSize = 1001 }},
 		{name: "lease shorter than publish", mutate: func(cfg *EventBus) { cfg.DispatchLease = cfg.PublishTimeout }},

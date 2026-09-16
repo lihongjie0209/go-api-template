@@ -54,7 +54,7 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 		EventBus: config.EventBus{
 			Enabled: true, URLs: []string{natsURL}, StreamName: "INTEGRATION_EVENTS", Subjects: []string{"platform.>"}, Storage: "memory",
 			MaxAge: time.Hour, DuplicateWindow: time.Minute, ConnectTimeout: 10 * time.Second, ReconnectWait: 100 * time.Millisecond,
-			PublishTimeout: 5 * time.Second, ConsumerAckWait: 10 * time.Second, ConsumerMaxDeliver: 3,
+			PublishTimeout: 5 * time.Second, ConsumerAckWait: 10 * time.Second, ConsumerHandlerTimeout: 5 * time.Second, ConsumerMaxDeliver: 3,
 			DispatchInterval: 10 * time.Millisecond, DispatchBatchSize: 10, DispatchLease: 15 * time.Second, DispatchRetryDelay: 50 * time.Millisecond,
 		},
 	}

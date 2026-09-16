@@ -214,6 +214,7 @@ event_bus:
   reconnect_wait: 1s
   publish_timeout: 5s
   consumer_ack_wait: 30s
+  consumer_handler_timeout: 25s
   consumer_max_deliver: 10
   dispatch_interval: 1s
   dispatch_batch_size: 100

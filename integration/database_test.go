@@ -127,6 +127,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testTenantLifecycle(t, ctx, db)
 			testIdentityUserLifecycle(t, ctx, db)
 			testServiceAccountLifecycle(t, ctx, db)
+			testLogQueryPresentation(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
 			testRoutePolicyBootstrap(t, ctx, db)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
@@ -141,6 +142,55 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	const (
+		actorID  = "log-presentation-user"
+		tenantID = "log-presentation-tenant"
+	)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: actorID, Type: platformprincipal.TypeUser, TenantID: tenantID})
+	err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_users(id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), actorID, "log.presentation.user", "Log Presentation User", "", "", "active", now, actorID, now, actorID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,source,operation,protocol,duration_ms,succeeded,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "operation-presentation", tenantID, actorID, "user", "backend", "presentation.test", "service", 1, true, `{}`, now, now, actorID, now, actorID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_type,event_type,succeeded,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,?,1)`), "security-presentation", tenantID, actorID, "user", "login", true, `{}`, now, now, actorID, now, actorID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	operationService := operationlog.New(config.Config{}, nil, db, nil, nil, nil)
+	operationRecord, err := operationService.Get(actorCtx, "operation-presentation")
+	if err != nil {
+		t.Fatalf("get operation presentation: %v", err)
+	}
+	securityService := securitylog.New(config.Config{}, nil, db, nil, nil, nil)
+	securityRecord, err := securityService.Get(actorCtx, "security-presentation")
+	if err != nil {
+		t.Fatalf("get security presentation: %v", err)
+	}
+	for name, value := range map[string]struct {
+		actorName, createdByName, updatedByName string
+		occurredAt                              time.Time
+	}{
+		"operation": {operationRecord.ActorName, operationRecord.CreatedByName, operationRecord.UpdatedByName, operationRecord.OccurredAt},
+		"security":  {securityRecord.ActorName, securityRecord.CreatedByName, securityRecord.UpdatedByName, securityRecord.OccurredAt},
+	} {
+		if value.actorName != "Log Presentation User" || value.createdByName != "Log Presentation User" || value.updatedByName != "Log Presentation User" {
+			t.Fatalf("%s display names = %+v", name, value)
+		}
+		_, offset := value.occurredAt.Zone()
+		if offset != 8*60*60 || !value.occurredAt.Equal(now) {
+			t.Fatalf("%s occurred_at = %v", name, value.occurredAt)
+		}
 	}
 }
 

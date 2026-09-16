@@ -6704,6 +6704,9 @@
                 "actor_id": {
                     "type": "string"
                 },
+                "actor_name": {
+                    "type": "string"
+                },
                 "actor_type": {
                     "type": "string"
                 },
@@ -6717,6 +6720,9 @@
                     "type": "string"
                 },
                 "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
                     "type": "string"
                 },
                 "duration_ms": {
@@ -6777,6 +6783,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "user_agent": {
@@ -7194,6 +7203,9 @@
                 "actor_id": {
                     "type": "string"
                 },
+                "actor_name": {
+                    "type": "string"
+                },
                 "actor_type": {
                     "type": "string"
                 },
@@ -7204,6 +7216,9 @@
                     "type": "string"
                 },
                 "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
                     "type": "string"
                 },
                 "error_code": {
@@ -7255,6 +7270,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "user_agent": {

@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"time"
@@ -13,8 +14,15 @@ import (
 )
 
 type SecurityLogHandler struct {
-	service *securitylog.Service
+	service securityLogService
 	logger  *slog.Logger
+}
+
+type securityLogService interface {
+	Enabled() bool
+	Get(ctx context.Context, id string) (securitylog.Record, error)
+	Page(ctx context.Context, input securitylog.PageInput) (securitylog.Page, error)
+	Record(ctx context.Context, entry securitylog.Entry) error
 }
 
 func NewSecurityLogHandler(service *securitylog.Service, logger *slog.Logger) *SecurityLogHandler {

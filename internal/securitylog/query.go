@@ -10,6 +10,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -19,6 +20,7 @@ type Record struct {
 	ID             string          `db:"id" json:"id"`
 	TenantID       string          `db:"tenant_id" json:"tenant_id"`
 	ActorID        string          `db:"actor_id" json:"actor_id"`
+	ActorName      string          `db:"actor_name" json:"actor_name"`
 	ActorType      string          `db:"actor_type" json:"actor_type"`
 	SubjectID      string          `db:"subject_id" json:"subject_id"`
 	SubjectType    string          `db:"subject_type" json:"subject_type"`
@@ -38,8 +40,10 @@ type Record struct {
 	OccurredAt     time.Time       `db:"occurred_at" json:"occurred_at"`
 	CreatedAt      time.Time       `db:"created_at" json:"created_at"`
 	CreatedBy      string          `db:"created_by" json:"created_by"`
+	CreatedByName  string          `db:"created_by_name" json:"created_by_name"`
 	UpdatedAt      time.Time       `db:"updated_at" json:"updated_at"`
 	UpdatedBy      string          `db:"updated_by" json:"updated_by"`
+	UpdatedByName  string          `db:"updated_by_name" json:"updated_by_name"`
 	Version        int64           `db:"version" json:"version"`
 }
 
@@ -68,7 +72,12 @@ type Page struct {
 	Total    int64    `json:"total"`
 }
 
-const recordColumns = `id,tenant_id,actor_id,actor_type,subject_id,subject_type,event_type,succeeded,reason,error_code,error_message,identifier_hash,token_id_hash,session_id,request_id,trace_id,client_ip,user_agent,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version`
+const recordColumns = `l.id,l.tenant_id,l.actor_id,
+COALESCE((SELECT u.display_name FROM identity_users u WHERE u.id=l.actor_id AND u.deleted_at IS NULL),(SELECT a.name FROM identity_service_accounts a WHERE a.id=l.actor_id AND a.deleted_at IS NULL),l.actor_id) AS actor_name,
+l.actor_type,l.subject_id,l.subject_type,l.event_type,l.succeeded,l.reason,l.error_code,l.error_message,l.identifier_hash,l.token_id_hash,l.session_id,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.metadata,l.occurred_at,l.created_at,l.created_by,
+COALESCE((SELECT u.display_name FROM identity_users u WHERE u.id=l.created_by AND u.deleted_at IS NULL),(SELECT a.name FROM identity_service_accounts a WHERE a.id=l.created_by AND a.deleted_at IS NULL),l.created_by) AS created_by_name,
+l.updated_at,l.updated_by,
+COALESCE((SELECT u.display_name FROM identity_users u WHERE u.id=l.updated_by AND u.deleted_at IS NULL),(SELECT a.name FROM identity_service_accounts a WHERE a.id=l.updated_by AND a.deleted_at IS NULL),l.updated_by) AS updated_by_name,l.version`
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -79,18 +88,19 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if id == "" {
 		return Record{}, ErrInvalidEntry
 	}
-	where, args := "id=? AND deleted_at IS NULL", []any{id}
+	where, args := "l.id=? AND l.deleted_at IS NULL", []any{id}
 	if actor.TenantID != "" {
-		where += " AND tenant_id=?"
+		where += " AND l.tenant_id=?"
 		args = append(args, actor.TenantID)
 	}
 	var record Record
-	if err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+recordColumns+` FROM security_logs WHERE `+where), args...); err != nil {
+	if err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+recordColumns+` FROM security_logs l WHERE `+where), args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Record{}, ErrNotFound
 		}
 		return Record{}, err
 	}
+	present(&record)
 	return record, nil
 }
 
@@ -103,9 +113,9 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if err != nil || invalidPageInput(input) {
 		return Page{}, ErrInvalidEntry
 	}
-	where, args := "deleted_at IS NULL", []any{}
+	where, args := "l.deleted_at IS NULL", []any{}
 	if actor.TenantID != "" {
-		where += " AND tenant_id=?"
+		where += " AND l.tenant_id=?"
 		args = append(args, actor.TenantID)
 	} else if len(input.TenantIDs) > 0 {
 		where, args, err = appendIn(where, args, "tenant_id", input.TenantIDs)
@@ -115,7 +125,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
 		pattern := "%" + strings.ToLower(keyword) + "%"
-		where += ` AND (LOWER(actor_id) LIKE ? OR LOWER(subject_id) LIKE ? OR LOWER(session_id) LIKE ? OR LOWER(request_id) LIKE ? OR LOWER(error_code) LIKE ?)`
+		where += ` AND (LOWER(l.actor_id) LIKE ? OR LOWER(l.subject_id) LIKE ? OR LOWER(l.session_id) LIKE ? OR LOWER(l.request_id) LIKE ? OR LOWER(l.error_code) LIKE ?)`
 		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
 	filters := []struct {
@@ -155,15 +165,24 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 		args = append(args, *input.OccurredAtTo)
 	}
 	var total int64
-	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM security_logs WHERE `+where), args...); err != nil {
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM security_logs l WHERE `+where), args...); err != nil {
 		return Page{}, err
 	}
 	queryArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
 	items := []Record{}
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+recordColumns+` FROM security_logs WHERE `+where+` ORDER BY occurred_at DESC,id DESC LIMIT ? OFFSET ?`), queryArgs...); err != nil {
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+recordColumns+` FROM security_logs l WHERE `+where+` ORDER BY l.occurred_at DESC,l.id DESC LIMIT ? OFFSET ?`), queryArgs...); err != nil {
 		return Page{}, err
 	}
+	for index := range items {
+		present(&items[index])
+	}
 	return Page{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func present(record *Record) {
+	record.OccurredAt = presentation.Time(record.OccurredAt)
+	record.CreatedAt = presentation.Time(record.CreatedAt)
+	record.UpdatedAt = presentation.Time(record.UpdatedAt)
 }
 
 func invalidPageInput(input PageInput) bool {
