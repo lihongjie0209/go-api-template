@@ -24,6 +24,7 @@ func consumerOptions(service *Service, logger *slog.Logger) eventbusConsumerOpti
 
 type eventbusConsumerOptions = platformeventbus.ConsumerOptions
 
-func asRecorder(service *Service) Recorder { return service }
+func asRecorder(service *Service) Recorder                           { return service }
+func asTransactionalRecorder(service *Service) TransactionalRecorder { return service }
 
-var Module = fx.Module("operation-log", fx.Provide(New, asRecorder), fx.Invoke(start))
+var Module = fx.Module("operation-log", fx.Provide(New, asRecorder, asTransactionalRecorder), fx.Invoke(start))

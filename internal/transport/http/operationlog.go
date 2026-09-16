@@ -101,6 +101,10 @@ func (h *OperationLogHandler) RecordFrontend(c *gin.Context) {
 			Fail(c, h.logger, apperror.Invalid("invalid frontend event", err))
 			return
 		}
+		if errors.Is(err, platformprincipal.ErrMissing) {
+			Fail(c, h.logger, apperror.Unauthorized("authenticated principal is required"))
+			return
+		}
 		Fail(c, h.logger, apperror.Unavailable("enqueue operation log", err))
 		return
 	}

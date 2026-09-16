@@ -77,7 +77,7 @@ func TestHTTPAndGRPCEndToEnd(t *testing.T) {
 		Log:             config.Log{Level: "error", Format: "json", File: filepath.Join(t.TempDir(), "app.log"), MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
 		Database:        config.Database{Enabled: true, Type: "postgres", DSN: dsn, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second},
 		Migration:       config.Migration{AutoUp: true, Path: migrationPath, DatabaseURL: dsn, Table: "integration_e2e_schema_migrations"},
-		Redis:           config.Redis{Enabled: true, Address: redisOptions.Addr, DB: redisOptions.DB, DialTimeout: 5 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second},
+		Redis:           config.Redis{Address: redisOptions.Addr, DB: redisOptions.DB, DialTimeout: 5 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second},
 		Health:          config.Health{DatabaseTimeout: 2 * time.Second, RedisTimeout: 2 * time.Second},
 		Observability:   config.Observability{MetricsEnabled: true},
 		JWT:             jwtConfig,

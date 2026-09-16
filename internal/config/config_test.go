@@ -632,3 +632,14 @@ func TestConfigRejectsUnsafeIdempotencyTTL(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigRejectsUnboundedOperationLogPayload(t *testing.T) {
+	t.Parallel()
+	for _, size := range []int{255, 64<<10 + 1} {
+		cfg := validProductionConfig(t)
+		cfg.OperationLog.MaxPayloadBytes = size
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "max_payload_bytes") {
+			t.Fatalf("size=%d Validate() error = %v", size, err)
+		}
+	}
+}

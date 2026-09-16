@@ -776,8 +776,8 @@ func (c Config) Validate() error {
 	if c.Files.Enabled && (c.Files.DeletionInterval <= 0 || c.Files.DeletionRetryDelay <= 0 || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000) {
 		return errors.New("enabled files requires valid deletion retry settings")
 	}
-	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.OperationLog.Subject == "" || c.OperationLog.Durable == "" || c.OperationLog.MaxPayloadBytes <= 0) {
-		return errors.New("enabled operation_log requires database, event_bus, subject, durable, and positive payload limit")
+	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.OperationLog.Subject == "" || len(c.OperationLog.Subject) > 256 || c.OperationLog.Durable == "" || len(c.OperationLog.Durable) > 256 || c.OperationLog.MaxPayloadBytes < 256 || c.OperationLog.MaxPayloadBytes > 64<<10) {
+		return errors.New("enabled operation_log requires database, event_bus, subject and durable names no greater than 256 bytes, and max_payload_bytes between 256 bytes and 64 KiB")
 	}
 	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || c.SecurityLog.Durable == "" || c.SecurityLog.MaxPayloadBytes <= 0 || len(c.SecurityLog.HashKey) < 32) {
 		return errors.New("enabled security_log requires database, event_bus, subject, durable, positive payload limit, and a hash_key of at least 32 bytes")

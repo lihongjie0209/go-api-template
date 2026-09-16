@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -63,6 +64,15 @@ type Recorder interface {
 	Record(ctx context.Context, entry Entry) error
 }
 
+type TransactionalRecorder interface {
+	Recorder
+	RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error
+}
+
+type outboxStore interface {
+	Store(context.Context, *sqlx.Tx, string, *commonv1.EventEnvelope) error
+}
+
 // Do measures a business operation and enqueues its result after fn returns.
 // The business error is returned unchanged; an enqueue failure is returned only
 // when the business operation itself succeeded.
@@ -86,13 +96,14 @@ type Service struct {
 	cfg        config.OperationLog
 	appName    string
 	bus        *eventbus.Bus
+	outbox     outboxStore
 	db         *sqlx.DB
 	transactor *database.Transactor
 	metrics    *observability.Metrics
 }
 
-func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics) *Service {
-	return &Service{enabled: cfg.OperationLog.Enabled, cfg: cfg.OperationLog, appName: cfg.App.Name, bus: bus, db: db, transactor: transactor, metrics: metrics}
+func New(cfg config.Config, bus *eventbus.Bus, db *sqlx.DB, transactor *database.Transactor, metrics *observability.Metrics, outbox *eventbus.Outbox) *Service {
+	return &Service{enabled: cfg.OperationLog.Enabled, cfg: cfg.OperationLog, appName: cfg.App.Name, bus: bus, outbox: outbox, db: db, transactor: transactor, metrics: metrics}
 }
 
 func (s *Service) Enabled() bool { return s.enabled }
@@ -101,20 +112,64 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 	if !s.enabled {
 		return nil
 	}
-	if strings.TrimSpace(entry.Operation) == "" || entry.Duration < 0 {
-		return fmt.Errorf("%w: operation and non-negative duration are required", ErrInvalidEntry)
+	if s.transactor == nil || s.outbox == nil {
+		return errors.New("operation log outbox is unavailable")
+	}
+	envelope, err := s.envelope(ctx, entry)
+	if err != nil {
+		return err
+	}
+	started := time.Now()
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	err = s.transactor.Within(persistCtx, nil, func(tx *sqlx.Tx) error {
+		return s.outbox.Store(persistCtx, tx, s.cfg.Subject, envelope)
+	})
+	s.observeEnqueue(started, err)
+	if err != nil {
+		return fmt.Errorf("store operation log in outbox: %w", err)
+	}
+	return nil
+}
+
+// RecordTx atomically stores the operation event with a caller-owned domain
+// transaction. Successful mutations should prefer this boundary; a rollback
+// removes both the domain write and its pending event.
+func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error {
+	if !s.enabled {
+		return nil
+	}
+	if tx == nil || s.outbox == nil {
+		return errors.New("operation log transactional outbox is unavailable")
+	}
+	envelope, err := s.envelope(ctx, entry)
+	if err != nil {
+		return err
+	}
+	started := time.Now()
+	err = s.outbox.Store(ctx, tx, s.cfg.Subject, envelope)
+	s.observeEnqueue(started, err)
+	if err != nil {
+		return fmt.Errorf("store operation log in outbox: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnvelope, error) {
+	if err := validateEntry(entry); err != nil {
+		return nil, err
 	}
 	principal, ok := platformprincipal.FromContext(ctx)
-	if !ok {
-		return platformprincipal.ErrMissing
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return nil, platformprincipal.ErrMissing
 	}
 	requestPayload, err := sanitizedJSON(entry.Request, s.cfg.MaxPayloadBytes)
 	if err != nil {
-		return fmt.Errorf("%w: sanitize operation request: %v", ErrInvalidEntry, err)
+		return nil, fmt.Errorf("%w: sanitize operation request: %v", ErrInvalidEntry, err)
 	}
 	extension, err := sanitizedRawJSON(entry.Extension, s.cfg.MaxPayloadBytes)
 	if err != nil {
-		return fmt.Errorf("%w: sanitize operation extension: %v", ErrInvalidEntry, err)
+		return nil, fmt.Errorf("%w: sanitize operation extension: %v", ErrInvalidEntry, err)
 	}
 	requestID, _ := requestid.FromContext(ctx)
 	span := trace.SpanContextFromContext(ctx)
@@ -124,20 +179,19 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 	payload.Entry.Extension = nil
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encode operation log: %w", err)
+		return nil, fmt.Errorf("encode operation log: %w", err)
 	}
-	envelope := &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: eventType, AggregateId: entry.ResourceID, AggregateType: "operation_log", TenantId: principal.TenantID, ApplicationId: entry.ApplicationID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: principal.ID, ActorType: string(principal.Type), TenantId: principal.TenantID, MembershipId: principal.MembershipID}, Payload: data}
-	started := time.Now()
-	err = eventbus.Publish(ctx, s.bus, s.cfg.Subject, envelope)
+	return &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: eventType, AggregateId: entry.ResourceID, AggregateType: "operation_log", TenantId: principal.TenantID, ApplicationId: entry.ApplicationID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: principal.ID, ActorType: string(principal.Type), TenantId: principal.TenantID, MembershipId: principal.MembershipID}, Payload: data}, nil
+}
+
+func (s *Service) observeEnqueue(started time.Time, err error) {
 	status := "success"
 	if err != nil {
 		status = "error"
 	}
-	s.metrics.ObserveInfrastructure("operation_log", "jetstream", "enqueue", status, started)
-	if err != nil {
-		return fmt.Errorf("enqueue operation log: %w", err)
+	if s.metrics != nil {
+		s.metrics.ObserveInfrastructure("operation_log", "database", "enqueue", status, started)
 	}
-	return nil
 }
 
 func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope) error {
@@ -147,6 +201,9 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 	var payload eventPayload
 	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
 		return fmt.Errorf("decode operation log event: %w", err)
+	}
+	if err := s.validateConsumedEvent(envelope, payload); err != nil {
+		return err
 	}
 	actorID := payload.ActorID
 	if actorID == "" {
@@ -159,8 +216,41 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 	if err != nil {
 		status = "error"
 	}
-	s.metrics.ObserveInfrastructure("operation_log", "database", "persist", status, started)
+	if s.metrics != nil {
+		s.metrics.ObserveInfrastructure("operation_log", "database", "persist", status, started)
+	}
 	return err
+}
+
+func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, payload eventPayload) error {
+	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 256 || envelope.EventType != eventType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
+		return fmt.Errorf("%w: invalid operation log envelope", ErrInvalidEntry)
+	}
+	if err := envelope.OccurredAt.CheckValid(); err != nil || !envelope.OccurredAt.AsTime().Equal(payload.OccurredAt) {
+		return fmt.Errorf("%w: inconsistent operation log occurrence time", ErrInvalidEntry)
+	}
+	if envelope.TenantId != payload.TenantID || envelope.ApplicationId != payload.ApplicationID ||
+		envelope.Context.ActorId != payload.ActorID || envelope.Context.ActorType != payload.ActorType ||
+		envelope.Context.TenantId != payload.TenantID || envelope.Context.RequestId != payload.RequestID ||
+		envelope.Context.TraceId != payload.TraceID {
+		return fmt.Errorf("%w: inconsistent operation log envelope context", ErrInvalidEntry)
+	}
+	if payload.DurationMS < 0 || payload.DurationMS > int64((24*time.Hour)/time.Millisecond) {
+		return fmt.Errorf("%w: invalid operation log duration", ErrInvalidEntry)
+	}
+	entry := payload.Entry
+	entry.Duration = time.Duration(payload.DurationMS) * time.Millisecond
+	if err := validateEntry(entry); err != nil || payload.ActorID == "" || len(payload.ActorID) > 256 || len(payload.ActorType) > 64 || len(payload.TenantID) > 256 || len(payload.RequestID) > 256 || len(payload.TraceID) > 64 || len(payload.RequestPayload) > s.cfg.MaxPayloadBytes || len(payload.Extension) > s.cfg.MaxPayloadBytes || !json.Valid(payload.Extension) {
+		return fmt.Errorf("%w: invalid operation log event payload", ErrInvalidEntry)
+	}
+	var extension map[string]any
+	if err := json.Unmarshal(payload.Extension, &extension); err != nil || extension == nil {
+		return fmt.Errorf("%w: extension must be a JSON object", ErrInvalidEntry)
+	}
+	if payload.RequestPayload != "" && !json.Valid([]byte(payload.RequestPayload)) {
+		return fmt.Errorf("%w: request payload must be valid JSON", ErrInvalidEntry)
+	}
+	return nil
 }
 
 func (s *Service) insert(ctx context.Context, tx *sqlx.Tx, id string, value eventPayload) error {
@@ -192,7 +282,17 @@ func sanitizedJSON(value any, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return truncate(string(data), limit), nil
+	if len(data) <= limit {
+		return string(data), nil
+	}
+	marker, err := json.Marshal(map[string]any{"original_bytes": len(data), "truncated": true})
+	if err != nil {
+		return "", err
+	}
+	if len(marker) > limit {
+		return "", fmt.Errorf("payload limit %d is too small for truncation marker", limit)
+	}
+	return string(marker), nil
 }
 
 func sanitizedRawJSON(value any, limit int) (json.RawMessage, error) {
@@ -221,4 +321,29 @@ func truncate(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+func validateEntry(entry Entry) error {
+	if strings.TrimSpace(entry.Operation) == "" || entry.Duration < 0 || entry.Duration > 24*time.Hour {
+		return fmt.Errorf("%w: operation and duration from zero through 24h are required", ErrInvalidEntry)
+	}
+	for name, value := range map[string]string{
+		"operation": entry.Operation, "resource_type": entry.ResourceType, "resource_id": entry.ResourceID,
+		"application_id": entry.ApplicationID, "source": entry.Source, "protocol": entry.Protocol,
+		"method": entry.Method, "route": entry.Route, "error_code": entry.ErrorCode,
+		"error_message": entry.ErrorMessage, "client_ip": entry.ClientIP, "user_agent": entry.UserAgent,
+	} {
+		if !utf8.ValidString(value) {
+			return fmt.Errorf("%w: %s must be valid UTF-8", ErrInvalidEntry, name)
+		}
+	}
+	if strings.TrimSpace(entry.Source) == "" || strings.TrimSpace(entry.Protocol) == "" ||
+		len(entry.Operation) > 256 || len(entry.ResourceType) > 128 || len(entry.ResourceID) > 256 ||
+		len(entry.ApplicationID) > 128 || len(entry.Source) > 32 || len(entry.Protocol) > 32 ||
+		len(entry.Method) > 32 || len(entry.Route) > 1024 || len(entry.ErrorCode) > 128 ||
+		len(entry.ErrorMessage) > 2048 || len(entry.ClientIP) > 128 || len(entry.UserAgent) > 4096 {
+		return fmt.Errorf("%w: operation log fields exceed their bounds", ErrInvalidEntry)
+	}
+	return nil
+}
+
 var _ Recorder = (*Service)(nil)
+var _ TransactionalRecorder = (*Service)(nil)
