@@ -1579,6 +1579,8 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       external_url:
         type: string
       icon:
@@ -1606,6 +1608,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer
@@ -1620,6 +1624,8 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       external_url:
         type: string
       icon:
@@ -1647,6 +1653,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer
@@ -1847,6 +1855,8 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       description:
         type: string
       id:
@@ -1862,6 +1872,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       value:
         type: object

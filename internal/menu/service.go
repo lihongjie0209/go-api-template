@@ -18,6 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
@@ -52,25 +53,27 @@ const (
 )
 
 type Record struct {
-	ID           string          `db:"id" json:"id"`
-	ParentID     *string         `db:"parent_id" json:"parent_id"`
-	Key          string          `db:"menu_key" json:"menu_key"`
-	Name         string          `db:"name" json:"name"`
-	Type         string          `db:"menu_type" json:"menu_type"`
-	RoutePath    string          `db:"route_path" json:"route_path"`
-	Component    string          `db:"component" json:"component"`
-	ExternalURL  string          `db:"external_url" json:"external_url"`
-	Icon         string          `db:"icon" json:"icon"`
-	PermissionID *string         `db:"permission_id" json:"permission_id"`
-	Visible      bool            `db:"visible" json:"visible"`
-	Status       string          `db:"status" json:"status"`
-	SortOrder    int64           `db:"sort_order" json:"sort_order"`
-	Metadata     json.RawMessage `db:"metadata" json:"metadata" swaggertype:"object"`
-	CreatedAt    time.Time       `db:"created_at" json:"created_at"`
-	CreatedBy    string          `db:"created_by" json:"created_by"`
-	UpdatedAt    time.Time       `db:"updated_at" json:"updated_at"`
-	UpdatedBy    string          `db:"updated_by" json:"updated_by"`
-	Version      int64           `db:"version" json:"version"`
+	ID            string          `db:"id" json:"id"`
+	ParentID      *string         `db:"parent_id" json:"parent_id"`
+	Key           string          `db:"menu_key" json:"menu_key"`
+	Name          string          `db:"name" json:"name"`
+	Type          string          `db:"menu_type" json:"menu_type"`
+	RoutePath     string          `db:"route_path" json:"route_path"`
+	Component     string          `db:"component" json:"component"`
+	ExternalURL   string          `db:"external_url" json:"external_url"`
+	Icon          string          `db:"icon" json:"icon"`
+	PermissionID  *string         `db:"permission_id" json:"permission_id"`
+	Visible       bool            `db:"visible" json:"visible"`
+	Status        string          `db:"status" json:"status"`
+	SortOrder     int64           `db:"sort_order" json:"sort_order"`
+	Metadata      json.RawMessage `db:"metadata" json:"metadata" swaggertype:"object"`
+	CreatedAt     time.Time       `db:"created_at" json:"created_at"`
+	CreatedBy     string          `db:"created_by" json:"created_by"`
+	CreatedByName string          `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time       `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string          `db:"updated_by" json:"updated_by"`
+	UpdatedByName string          `db:"-" json:"updated_by_name"`
+	Version       int64           `db:"version" json:"version"`
 }
 type Node struct {
 	Record
@@ -108,13 +111,14 @@ type Service struct {
 	cache         cache.Store
 	operations    operationlog.TransactionalRecorder
 	security      securitylog.TransactionalRecorder
+	actors        presentation.ActorResolver
 	authorization *authorization.TenantAuthorizationService
 	logger        *slog.Logger
 	cfg           config.Config
 }
 
-func New(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, store cache.Store, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, authorizationService *authorization.TenantAuthorizationService, logger *slog.Logger, cfg config.Config) *Service {
-	return &Service{db: db, tx: tx, locker: locker, cache: store, operations: operations, security: security, authorization: authorizationService, logger: logger, cfg: cfg}
+func New(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, store cache.Store, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, authorizationService *authorization.TenantAuthorizationService, logger *slog.Logger, cfg config.Config) *Service {
+	return &Service{db: db, tx: tx, locker: locker, cache: store, operations: operations, security: security, actors: actors, authorization: authorizationService, logger: logger, cfg: cfg}
 }
 
 const columns = `id,parent_id,menu_key,name,menu_type,route_path,component,external_url,icon,permission_id,visible,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version`
@@ -209,7 +213,14 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return record, ErrNotFound
 	}
-	return record, err
+	if err != nil {
+		return record, err
+	}
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, err
+	}
+	return records[0], nil
 }
 func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*Node, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
@@ -222,7 +233,11 @@ func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return build(filterRecords(records, input))
+	records = filterRecords(records, input)
+	if err := s.present(ctx, records); err != nil {
+		return nil, err
+	}
+	return build(records)
 }
 
 func validateTreeInput(input TreeInput) error {
@@ -324,7 +339,11 @@ func (s *Service) CurrentTree(ctx context.Context) ([]*Node, error) {
 	for _, id := range permissionIDs {
 		permissions[id] = struct{}{}
 	}
-	return build(filterByPermissions(records, permissions))
+	records = filterByPermissions(records, permissions)
+	if err := s.present(ctx, records); err != nil {
+		return nil, err
+	}
+	return build(records)
 }
 func filterByPermissions(records []Record, permissions map[string]struct{}) []Record {
 	byID := make(map[string]Record, len(records))
@@ -357,7 +376,6 @@ func filterByPermissions(records []Record, permissions map[string]struct{}) []Re
 			if parent.PermissionID != nil {
 				if _, ok := permissions[*parent.PermissionID]; !ok {
 					valid = false
-					break
 				}
 			}
 			chain = append(chain, parent.ID)
@@ -376,6 +394,35 @@ func filterByPermissions(records []Record, permissions map[string]struct{}) []Re
 		}
 	}
 	return filtered
+}
+
+func (s *Service) present(ctx context.Context, records []Record) error {
+	ids := make([]string, 0, len(records)*2)
+	names := make(map[string]string, len(records)*2)
+	for _, record := range records {
+		for _, id := range []string{record.CreatedBy, record.UpdatedBy} {
+			if id = strings.TrimSpace(id); id != "" {
+				names[id] = id
+				ids = append(ids, id)
+			}
+		}
+	}
+	if s.actors != nil {
+		resolved, err := s.actors.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+	}
+	return nil
 }
 func (s *Service) list(ctx context.Context, visibleOnly bool) ([]Record, error) {
 	cacheKey := menuCacheAll

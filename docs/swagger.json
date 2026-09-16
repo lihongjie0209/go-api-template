@@ -6578,6 +6578,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "external_url": {
                     "type": "string"
                 },
@@ -6618,6 +6621,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {
@@ -6640,6 +6646,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "external_url": {
                     "type": "string"
                 },
@@ -6680,6 +6689,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {
@@ -6984,6 +6996,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -7006,6 +7021,9 @@
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "value": {

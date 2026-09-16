@@ -17,6 +17,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
@@ -43,20 +44,22 @@ var (
 )
 
 type Record struct {
-	ID          string          `db:"id" json:"id"`
-	Key         string          `db:"config_key" json:"key"`
-	Name        string          `db:"name" json:"name"`
-	Category    string          `db:"category" json:"category"`
-	ValueType   string          `db:"value_type" json:"value_type"`
-	Value       json.RawMessage `db:"value" json:"value" swaggertype:"object"`
-	Description string          `db:"description" json:"description"`
-	IsPublic    bool            `db:"is_public" json:"is_public"`
-	Status      string          `db:"status" json:"status"`
-	CreatedAt   time.Time       `db:"created_at" json:"created_at"`
-	CreatedBy   string          `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time       `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string          `db:"updated_by" json:"updated_by"`
-	Version     int64           `db:"version" json:"version"`
+	ID            string          `db:"id" json:"id"`
+	Key           string          `db:"config_key" json:"key"`
+	Name          string          `db:"name" json:"name"`
+	Category      string          `db:"category" json:"category"`
+	ValueType     string          `db:"value_type" json:"value_type"`
+	Value         json.RawMessage `db:"value" json:"value" swaggertype:"object"`
+	Description   string          `db:"description" json:"description"`
+	IsPublic      bool            `db:"is_public" json:"is_public"`
+	Status        string          `db:"status" json:"status"`
+	CreatedAt     time.Time       `db:"created_at" json:"created_at"`
+	CreatedBy     string          `db:"created_by" json:"created_by"`
+	CreatedByName string          `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time       `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string          `db:"updated_by" json:"updated_by"`
+	UpdatedByName string          `db:"-" json:"updated_by_name"`
+	Version       int64           `db:"version" json:"version"`
 }
 type PublicView struct {
 	Key       string          `db:"config_key" json:"key"`
@@ -100,12 +103,13 @@ type Service struct {
 	locker     cache.Locker
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
+	actors     presentation.ActorResolver
 	logger     *slog.Logger
 	cfg        config.Config
 }
 
-func New(db *sqlx.DB, tx *database.Transactor, store cache.Store, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger, cfg config.Config) *Service {
-	return &Service{db: db, tx: tx, cache: store, locker: locker, operations: operations, security: security, logger: logger, cfg: cfg}
+func New(db *sqlx.DB, tx *database.Transactor, store cache.Store, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger, cfg config.Config) *Service {
+	return &Service{db: db, tx: tx, cache: store, locker: locker, operations: operations, security: security, actors: actors, logger: logger, cfg: cfg}
 }
 
 const columns = `id,config_key,name,category,value_type,value,description,is_public,status,created_at,created_by,updated_at,updated_by,version`
@@ -222,7 +226,14 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return record, ErrNotFound
 	}
-	return record, err
+	if err != nil {
+		return record, err
+	}
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, err
+	}
+	return records[0], nil
 }
 func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
@@ -294,7 +305,39 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+columns+` FROM platform_configs WHERE `+where+` ORDER BY category,config_key LIMIT ? OFFSET ?`), queryArgs...); err != nil {
 		return Page{}, err
 	}
+	if err := s.present(ctx, items); err != nil {
+		return Page{}, err
+	}
 	return Page{items, request.Page, request.PageSize, total}, nil
+}
+
+func (s *Service) present(ctx context.Context, records []Record) error {
+	ids := make([]string, 0, len(records)*2)
+	names := make(map[string]string, len(records)*2)
+	for _, record := range records {
+		for _, id := range []string{record.CreatedBy, record.UpdatedBy} {
+			if id = strings.TrimSpace(id); id != "" {
+				names[id] = id
+				ids = append(ids, id)
+			}
+		}
+	}
+	if s.actors != nil {
+		resolved, err := s.actors.ResolveUserIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for id, name := range resolved {
+			names[id] = name
+		}
+	}
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+	}
+	return nil
 }
 func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)

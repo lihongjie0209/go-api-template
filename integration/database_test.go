@@ -654,7 +654,7 @@ func testRoutePolicyBootstrap(t *testing.T, ctx context.Context, db *sqlx.DB) {
 func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
 	t.Helper()
 	cfg := config.Config{Menu: config.Menu{CacheTTL: time.Minute, MaxNodes: 10000}, DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	service := menu.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default(), cfg)
+	service := menu.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, nil, slog.Default(), cfg)
 	actorCtx := platformprincipal.SystemContext(ctx, "menu-integration")
 	root, err := service.Create(actorCtx, menu.Input{Key: "integration:menu", Name: "集成菜单", Type: "directory", Visible: true, Status: "active"})
 	if err != nil {
@@ -702,7 +702,7 @@ func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissio
 
 func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
-	service := platformconfig.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default(), config.Config{PlatformConfig: config.PlatformConfig{CacheTTL: time.Minute}})
+	service := platformconfig.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, slog.Default(), config.Config{PlatformConfig: config.PlatformConfig{CacheTTL: time.Minute}})
 	actorCtx := platformprincipal.SystemContext(ctx, "config-integration")
 	created, err := service.Create(actorCtx, platformconfig.Input{Key: "integration.feature", Name: "集成功能", Category: "feature", Value: []byte(`{"enabled":true}`), IsPublic: true, Status: "active"})
 	if err != nil {
