@@ -4793,7 +4793,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "version": {
                     "type": "integer"
@@ -5440,7 +5441,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -5454,31 +5456,40 @@ const docTemplate = `{
             ],
             "properties": {
                 "action": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                 },
                 "id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "node_type": {
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "permission_key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 },
                 "resource": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                 },
                 "sort_order": {
-                    "type": "integer"
+                    "type": "integer",
+                    "maximum": 1000000000,
+                    "minimum": -1000000000
                 },
                 "status": {
                     "type": "string"

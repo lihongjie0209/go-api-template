@@ -352,6 +352,7 @@ definitions:
   httptransport.DeletePermissionRequest:
     properties:
       id:
+        maxLength: 128
         type: string
       version:
         type: integer
@@ -787,6 +788,7 @@ definitions:
   httptransport.PermissionIDRequest:
     properties:
       id:
+        maxLength: 128
         type: string
     required:
     - id
@@ -794,22 +796,31 @@ definitions:
   httptransport.PermissionMutationRequest:
     properties:
       action:
+        maxLength: 256
         type: string
       description:
+        maxLength: 4096
         type: string
       id:
+        maxLength: 128
         type: string
       name:
+        maxLength: 256
         type: string
       node_type:
         type: string
       parent_id:
+        maxLength: 128
         type: string
       permission_key:
+        maxLength: 128
         type: string
       resource:
+        maxLength: 256
         type: string
       sort_order:
+        maximum: 1000000000
+        minimum: -1000000000
         type: integer
       status:
         type: string

@@ -68,6 +68,16 @@ func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
 const columns = `id, parent_id, permission_key, name, node_type, resource, action, description, sort_order, status, is_system, created_at, created_by, updated_at, updated_by, version`
 
+const (
+	maxIDLength          = 128
+	maxNameLength        = 256
+	maxResourceLength    = 256
+	maxActionLength      = 256
+	maxDescriptionLength = 4096
+	maxTreeNodes         = 10000
+	maxSortOrder         = 1_000_000_000
+)
+
 func (r *Repository) Get(ctx context.Context, id string) (Record, error) {
 	var v Record
 	if err := r.db.GetContext(ctx, &v, r.db.Rebind(`SELECT `+columns+` FROM permissions WHERE id=? AND deleted_at IS NULL`), id); err != nil {
@@ -80,7 +90,7 @@ func (r *Repository) Get(ctx context.Context, id string) (Record, error) {
 }
 func (r *Repository) List(ctx context.Context) ([]Record, error) {
 	var v []Record
-	if err := r.db.SelectContext(ctx, &v, `SELECT `+columns+` FROM permissions WHERE deleted_at IS NULL ORDER BY sort_order,id`); err != nil {
+	if err := r.db.SelectContext(ctx, &v, `SELECT `+columns+` FROM permissions WHERE deleted_at IS NULL ORDER BY sort_order,id LIMIT 10001`); err != nil {
 		return nil, fmt.Errorf("list permissions: %w", err)
 	}
 	return v, nil
@@ -90,8 +100,8 @@ type Service struct {
 	repository *Repository
 	transactor *database.Transactor
 	policies   policyRefresher
-	operations operationlog.Recorder
-	security   securitylog.Recorder
+	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 	logger     *slog.Logger
 }
 
@@ -101,22 +111,27 @@ type policyRefresher interface {
 	Invalidate()
 }
 
-func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.Recorder, security securitylog.Recorder, logger *slog.Logger) *Service {
+func New(repository *Repository, transactor *database.Transactor, policies *routepolicy.Manager, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, logger *slog.Logger) *Service {
 	return &Service{repository: repository, transactor: transactor, policies: policies, operations: operations, security: security, logger: logger}
 }
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxIDLength {
+		return Record{}, ErrInvalid
+	}
 	return s.repository.Get(ctx, id)
 }
 func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*TreeNode, error) {
-	if len(input.NodeTypes) > 20 || len(input.Statuses) > 20 || !validFilters(input) {
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	if len(input.Keyword) > 256 || len(input.NodeTypes) > 20 || len(input.Statuses) > 20 || !validFilters(input) {
 		return nil, ErrInvalid
 	}
 	records, err := s.repository.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(records) > 10000 {
-		return nil, fmt.Errorf("%w: tree exceeds 10000 nodes", ErrInvalid)
+	if len(records) > maxTreeNodes {
+		return nil, fmt.Errorf("%w: tree exceeds %d nodes", ErrInvalid, maxTreeNodes)
 	}
 	records = filterRecords(records, input)
 	forest, err := platformtree.Build(records, func(v Record) string { return v.ID }, func(v Record) (string, bool) {
@@ -203,8 +218,10 @@ func mapTree(nodes []*platformtree.Node[Record]) []*TreeNode {
 	return out
 }
 func validate(input Input) error {
-	input.Key = strings.TrimSpace(input.Key)
-	if !validKey.MatchString(input.Key) || strings.TrimSpace(input.Name) == "" || (input.NodeType != "group" && input.NodeType != "permission") || (input.Status != "active" && input.Status != "disabled") {
+	if !validKey.MatchString(input.Key) || input.Name == "" || len(input.Name) > maxNameLength ||
+		len(input.Resource) > maxResourceLength || len(input.Action) > maxActionLength || len(input.Description) > maxDescriptionLength ||
+		input.SortOrder < -maxSortOrder || input.SortOrder > maxSortOrder || !validPermissionID(input.ParentID) ||
+		(input.NodeType != "group" && input.NodeType != "permission") || (input.Status != "active" && input.Status != "disabled") {
 		return ErrInvalid
 	}
 	if input.NodeType == "permission" && (input.Resource == "" || input.Action == "") {
@@ -227,10 +244,10 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if e != nil {
 		return Record{}, e
 	}
+	input = normalize(input)
 	if e = validate(input); e != nil {
 		return Record{}, e
 	}
-	input = normalize(input)
 	id := uuid.NewString()
 	now := time.Now()
 	e = s.mutate(ctx, "permission.create", id, input, func(tx *sqlx.Tx) error {
@@ -248,9 +265,12 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 }
 func (s *Service) validateTreeTx(ctx context.Context, tx *sqlx.Tx, id string, parent *string) error {
 	var records []Record
-	e := tx.SelectContext(ctx, &records, `SELECT `+columns+` FROM permissions WHERE deleted_at IS NULL ORDER BY sort_order,id`)
+	e := tx.SelectContext(ctx, &records, `SELECT `+columns+` FROM permissions WHERE deleted_at IS NULL ORDER BY sort_order,id LIMIT 10001`)
 	if e != nil {
 		return e
+	}
+	if len(records) > maxTreeNodes {
+		return fmt.Errorf("%w: tree exceeds %d nodes", ErrInvalid, maxTreeNodes)
 	}
 	if parent != nil {
 		validParent := false
@@ -309,20 +329,21 @@ func hasValidParentTypes(records []Record) bool {
 	return true
 }
 func (s *Service) Update(ctx context.Context, id string, version int64, input Input) (Record, error) {
+	id = strings.TrimSpace(id)
 	a, e := actor(ctx)
 	if e != nil {
 		return Record{}, e
 	}
-	if version <= 0 {
+	if id == "" || len(id) > maxIDLength || version <= 0 {
 		return Record{}, ErrInvalid
 	}
+	input = normalize(input)
 	if e = validate(input); e != nil {
 		return Record{}, e
 	}
 	if input.ParentID != nil && *input.ParentID == id {
 		return Record{}, ErrInvalid
 	}
-	input = normalize(input)
 	e = s.mutate(ctx, "permission.update", id, input, func(tx *sqlx.Tx) error {
 		current, err := getForUpdate(ctx, tx, id)
 		if err != nil {
@@ -334,7 +355,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		if err := s.validateTreeTx(ctx, tx, id, input.ParentID); err != nil {
 			return err
 		}
-		if current.Key != input.Key || current.NodeType != input.NodeType || (current.Status == "active" && input.Status != "active") {
+		if current.Key != input.Key || current.NodeType != input.NodeType || current.Resource != input.Resource || current.Action != input.Action || (current.Status == "active" && input.Status != "active") {
 			used, refErr := routePolicyReferenceCount(ctx, tx, id)
 			if refErr != nil {
 				return refErr
@@ -363,11 +384,12 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 	return s.repository.Get(ctx, id)
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
+	id = strings.TrimSpace(id)
 	a, e := actor(ctx)
 	if e != nil {
 		return e
 	}
-	if id == "" || version <= 0 {
+	if id == "" || len(id) > maxIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	return s.mutate(ctx, "permission.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
@@ -425,6 +447,10 @@ func normalize(input Input) Input {
 	}
 	return input
 }
+
+func validPermissionID(id *string) bool {
+	return id == nil || (*id != "" && len(*id) <= maxIDLength)
+}
 func getForUpdate(ctx context.Context, tx *sqlx.Tx, id string) (Record, error) {
 	var record Record
 	err := tx.GetContext(ctx, &record, tx.Rebind(`SELECT `+columns+` FROM permissions WHERE id=? AND deleted_at IS NULL FOR UPDATE`), id)
@@ -465,15 +491,43 @@ func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int,
 	return 0, nil
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
-	committed := false
-	err := operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "permission", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		txErr := s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, fn)
-		committed = txErr == nil
-		return txErr
+	started := time.Now()
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "permission", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventPermissionChanged, SubjectID: id, SubjectType: "permission", Metadata: map[string]any{"operation": operation}}
+	err := s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = true
+		if s.operations != nil {
+			if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+				return err
+			}
+		}
+		securityEntry.Succeeded = true
+		if s.security != nil {
+			return s.security.RecordTx(ctx, tx, securityEntry)
+		}
+		return nil
 	})
-	entry := securitylog.Entry{EventType: securitylog.EventPermissionChanged, SubjectID: id, SubjectType: "permission", Succeeded: committed, Metadata: map[string]any{"operation": operation}}
-	securityErr := s.security.Record(ctx, entry)
-	if !committed {
+	if database.IsUniqueViolation(err) {
+		err = ErrConflict
+	}
+	if err != nil {
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = false
+		operationEntry.ErrorCode = "operation_failed"
+		operationEntry.ErrorMessage = "operation failed"
+		if s.operations != nil {
+			_ = s.operations.Record(ctx, operationEntry)
+		}
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		if s.security != nil {
+			_ = s.security.Record(ctx, securityEntry)
+		}
 		return err
 	}
 	if refreshErr := s.policies.Refresh(ctx); refreshErr != nil {
@@ -483,8 +537,5 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 	if notifyErr := s.policies.Notify(ctx); notifyErr != nil {
 		s.logger.Warn("publish permission policy refresh", "permission_id", id, "error", notifyErr)
 	}
-	if securityErr != nil && err == nil && s.security.FailClosed() {
-		return securityErr
-	}
-	return err
+	return nil
 }

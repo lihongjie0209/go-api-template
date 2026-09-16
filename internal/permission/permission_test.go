@@ -75,6 +75,41 @@ func TestTreeFiltersAreBoundedAndEnumerated(t *testing.T) {
 	require.False(t, validFilters(TreeInput{Statuses: []string{"deleted"}}))
 }
 
+func TestValidateRejectsOversizedFieldsAndSortOrder(t *testing.T) {
+	t.Parallel()
+	base := Input{Key: "platform.users.read", Name: "read users", NodeType: "permission", Resource: "users", Action: "read", Status: "active"}
+	tests := []Input{
+		func() Input { value := base; value.Name = string(make([]byte, maxNameLength+1)); return value }(),
+		func() Input { value := base; value.Resource = string(make([]byte, maxResourceLength+1)); return value }(),
+		func() Input { value := base; value.SortOrder = maxSortOrder + 1; return value }(),
+	}
+	for _, input := range tests {
+		require.ErrorIs(t, validate(input), ErrInvalid)
+	}
+}
+
+func TestMutationRollsBackWhenTransactionalAuditFails(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	recorder := &failingOperationRecorder{err: errors.New("outbox unavailable")}
+	service := &Service{
+		transactor: database.NewTransactor(sqlxDB), policies: &policyStub{},
+		operations: recorder, security: securityRecorderStub{},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	err = service.mutate(platformprincipal.SystemContext(t.Context(), "actor-1"), "permission.update", "permission-1", nil, func(*sqlx.Tx) error { return nil })
+	require.ErrorContains(t, err, "outbox unavailable")
+	require.Equal(t, 1, recorder.transactionalCalls)
+	require.Equal(t, 1, recorder.failureCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
+	_ = db.Close()
+}
+
 func TestUpdateRejectsChangingKeyReferencedByActiveRoutePolicy(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
@@ -105,12 +140,36 @@ type operationRecorderStub struct{}
 
 func (operationRecorderStub) Enabled() bool                                    { return true }
 func (operationRecorderStub) Record(context.Context, operationlog.Entry) error { return nil }
+func (operationRecorderStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return nil
+}
+
+type failingOperationRecorder struct {
+	err                error
+	transactionalCalls int
+	failureCalls       int
+}
+
+func (*failingOperationRecorder) Enabled() bool { return true }
+func (r *failingOperationRecorder) Record(_ context.Context, entry operationlog.Entry) error {
+	if !entry.Succeeded {
+		r.failureCalls++
+	}
+	return nil
+}
+func (r *failingOperationRecorder) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	r.transactionalCalls++
+	return r.err
+}
 
 type securityRecorderStub struct{}
 
 func (securityRecorderStub) Enabled() bool                                   { return true }
 func (securityRecorderStub) FailClosed() bool                                { return true }
 func (securityRecorderStub) Record(context.Context, securitylog.Entry) error { return nil }
+func (securityRecorderStub) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	return nil
+}
 
 type policyStub struct{}
 

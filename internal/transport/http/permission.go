@@ -14,23 +14,23 @@ type PermissionHandler struct {
 	logger  *slog.Logger
 }
 type PermissionIDRequest struct {
-	ID string `json:"id" binding:"required"`
+	ID string `json:"id" binding:"required,max=128"`
 }
 type PermissionMutationRequest struct {
-	ID            string  `json:"id"`
-	ParentID      *string `json:"parent_id"`
-	PermissionKey string  `json:"permission_key" binding:"required"`
-	Name          string  `json:"name" binding:"required"`
+	ID            string  `json:"id" binding:"omitempty,max=128"`
+	ParentID      *string `json:"parent_id" binding:"omitempty,max=128"`
+	PermissionKey string  `json:"permission_key" binding:"required,max=128"`
+	Name          string  `json:"name" binding:"required,max=256"`
 	NodeType      string  `json:"node_type" binding:"required"`
-	Resource      string  `json:"resource"`
-	Action        string  `json:"action"`
-	Description   string  `json:"description"`
-	SortOrder     int64   `json:"sort_order"`
+	Resource      string  `json:"resource" binding:"max=256"`
+	Action        string  `json:"action" binding:"max=256"`
+	Description   string  `json:"description" binding:"max=4096"`
+	SortOrder     int64   `json:"sort_order" binding:"gte=-1000000000,lte=1000000000"`
 	Status        string  `json:"status" binding:"required"`
 	Version       int64   `json:"version"`
 }
 type DeletePermissionRequest struct {
-	ID      string `json:"id" binding:"required"`
+	ID      string `json:"id" binding:"required,max=128"`
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
 type PermissionTreeRequest struct {
