@@ -1,7 +1,6 @@
 package files
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -11,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -71,6 +71,75 @@ type UploadInput struct {
 	Body        io.Reader
 }
 
+type stagedUpload struct {
+	file        *os.File
+	contentType string
+	checksum    string
+}
+
+func (s *stagedUpload) Close() {
+	if s == nil || s.file == nil {
+		return
+	}
+	name := s.file.Name()
+	_ = s.file.Close()
+	_ = os.Remove(name)
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	count, err := r.reader.Read(buffer)
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return count, ctxErr
+	}
+	return count, err
+}
+
+func stageUpload(ctx context.Context, body io.Reader, declaredSize int64) (_ *stagedUpload, resultErr error) {
+	file, err := os.CreateTemp("", "go-api-upload-*")
+	if err != nil {
+		return nil, fmt.Errorf("stage upload: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			name := file.Name()
+			_ = file.Close()
+			_ = os.Remove(name)
+		}
+	}()
+	digest := sha256.New()
+	read := contextReader{ctx: ctx, reader: body}
+	written, err := io.Copy(io.MultiWriter(file, digest), io.LimitReader(read, declaredSize+1))
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("%w: read upload: %v", ErrInvalidInput, err)
+	}
+	if written != declaredSize {
+		return nil, fmt.Errorf("%w: declared size %d does not match content size %d", ErrInvalidInput, declaredSize, written)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind staged upload: %w", err)
+	}
+	header := make([]byte, 512)
+	headerSize, err := io.ReadFull(file, header)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, fmt.Errorf("inspect staged upload: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind staged upload: %w", err)
+	}
+	return &stagedUpload{file: file, contentType: http.DetectContentType(header[:headerSize]), checksum: hex.EncodeToString(digest.Sum(nil))}, nil
+}
+
 type Download struct {
 	File      Record    `json:"file"`
 	URL       string    `json:"url"`
@@ -125,22 +194,18 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 		return Record{}, err
 	}
 	name := path.Base(strings.ReplaceAll(input.Name, "\\", "/"))
-	content, err := io.ReadAll(io.LimitReader(input.Body, input.Size+1))
+	staged, err := stageUpload(ctx, input.Body, input.Size)
 	if err != nil {
-		return Record{}, fmt.Errorf("%w: read upload: %v", ErrInvalidInput, err)
+		return Record{}, err
 	}
-	if int64(len(content)) != input.Size {
-		return Record{}, fmt.Errorf("%w: declared size %d does not match content size %d", ErrInvalidInput, input.Size, len(content))
-	}
-	detectedType := http.DetectContentType(content)
-	if err := s.validateContentType(detectedType); err != nil {
+	defer staged.Close()
+	if err := s.validateContentType(staged.contentType); err != nil {
 		return Record{}, err
 	}
 	id := uuid.NewString()
 	objectKey := fmt.Sprintf("files/%s/%s/%s", tenantSegment(actor.TenantID), id, name)
-	checksum := sha256.Sum256(content)
-	record := Record{ID: id, TenantID: actor.TenantID, ObjectKey: objectKey, OriginalName: name, ContentType: detectedType, SizeBytes: input.Size, ChecksumSHA256: hex.EncodeToString(checksum[:])}
-	request := map[string]any{"name": name, "content_type": detectedType, "size_bytes": input.Size, "checksum_sha256": record.ChecksumSHA256}
+	record := Record{ID: id, TenantID: actor.TenantID, ObjectKey: objectKey, OriginalName: name, ContentType: staged.contentType, SizeBytes: input.Size, ChecksumSHA256: staged.checksum}
+	request := map[string]any{"name": name, "content_type": staged.contentType, "size_bytes": input.Size, "checksum_sha256": record.ChecksumSHA256}
 	entry := operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
 	started := time.Now()
 	if err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
@@ -149,7 +214,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 		s.recordFailure(ctx, entry, started)
 		return Record{}, fmt.Errorf("record file upload intent: %w", err)
 	}
-	stored, err := s.storage.Put(ctx, objectstorage.PutInput{Key: objectKey, Body: bytes.NewReader(content), Size: input.Size, ContentType: detectedType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
+	stored, err := s.storage.Put(ctx, objectstorage.PutInput{Key: objectKey, Body: staged.file, Size: input.Size, ContentType: staged.contentType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
 	if err != nil {
 		s.repairUploadAfterFailure(ctx, id)
 		s.recordFailure(ctx, entry, started)

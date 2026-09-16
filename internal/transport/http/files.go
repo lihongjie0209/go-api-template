@@ -1,11 +1,8 @@
 package httptransport
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -63,14 +60,7 @@ func (h *FileHandler) Upload(c *gin.Context) {
 		return
 	}
 	defer func() { _ = file.Close() }()
-	sniff := make([]byte, 512)
-	read, err := io.ReadFull(file, sniff)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		Fail(c, h.logger, apperror.Invalid("inspect uploaded file", err))
-		return
-	}
-	body := io.MultiReader(bytes.NewReader(sniff[:read]), file)
-	record, err := h.service.Upload(c.Request.Context(), files.UploadInput{Name: header.Filename, ContentType: http.DetectContentType(sniff[:read]), Size: header.Size, Body: body})
+	record, err := h.service.Upload(c.Request.Context(), files.UploadInput{Name: header.Filename, Size: header.Size, Body: file})
 	if err != nil {
 		h.fail(c, err)
 		return

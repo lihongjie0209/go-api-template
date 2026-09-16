@@ -115,6 +115,8 @@ spec:
           volumeMounts:
             - name: logs
               mountPath: /app/logs
+            - name: upload-staging
+              mountPath: /tmp
             - name: tls
               mountPath: /run/secrets/tls
               readOnly: true
@@ -122,9 +124,11 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
+              ephemeral-storage: 128Mi
             limits:
               cpu: "1"
               memory: 512Mi
+              ephemeral-storage: 6Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -133,6 +137,9 @@ spec:
       volumes:
         - name: logs
           emptyDir: {}
+        - name: upload-staging
+          emptyDir:
+            sizeLimit: 6Gi
         - name: tls
           secret:
             secretName: go-api-template-tls

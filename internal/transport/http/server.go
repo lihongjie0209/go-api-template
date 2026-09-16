@@ -36,6 +36,10 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.New()
+	// Multipart parsing may retain form data in memory before spilling to disk.
+	// Keep that independent ceiling small even when the request limit permits
+	// multi-gigabyte object uploads.
+	router.MaxMultipartMemory = 8 << 20
 	if err := router.SetTrustedProxies(cfg.HTTP.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("configure trusted proxies: %w", err)
 	}

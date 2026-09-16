@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -32,6 +33,8 @@ type storageStub struct {
 	deleted   []string
 	putType   string
 	putBody   []byte
+	putPath   string
+	putSeeker bool
 	deleteErr error
 }
 type operationStub struct{}
@@ -63,6 +66,10 @@ func (*failingReadOperationStub) RecordTx(context.Context, *sqlx.Tx, operationlo
 
 func (s *storageStub) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
 	s.putType = input.ContentType
+	_, s.putSeeker = input.Body.(io.Seeker)
+	if file, ok := input.Body.(*os.File); ok {
+		s.putPath = file.Name()
+	}
 	s.putBody, _ = io.ReadAll(input.Body)
 	return s.putInfo, s.putErr
 }
@@ -85,6 +92,38 @@ func TestServiceUploadRejectsDeclaredSizeMismatchBeforeStorage(t *testing.T) {
 	}
 	if len(storage.putBody) != 0 {
 		t.Fatal("storage Put was called for a size-mismatched upload")
+	}
+}
+
+func TestStageUploadProducesSeekableFileAndRemovesIt(t *testing.T) {
+	content := strings.Repeat("streamed-content-", 128)
+	staged, err := stageUpload(t.Context(), strings.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := staged.file.Name()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("staged file stat: %v", err)
+	}
+	got, err := io.ReadAll(staged.file)
+	if err != nil || string(got) != content {
+		t.Fatalf("staged content length=%d err=%v", len(got), err)
+	}
+	if _, err := staged.file.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	staged.Close()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary upload still exists: %v", err)
+	}
+}
+
+func TestStageUploadPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	staged, err := stageUpload(ctx, strings.NewReader("hello"), 5)
+	if staged != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("staged=%v error=%v", staged, err)
 	}
 }
 
@@ -139,8 +178,11 @@ func TestServiceUploadPersistsCleanupRetryWhenObjectStoreFails(t *testing.T) {
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
 
 	_, err = service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
-	if err == nil || !strings.Contains(err.Error(), "upload unavailable") || len(storage.deleted) != 1 {
-		t.Fatalf("error=%v deleted=%v", err, storage.deleted)
+	if err == nil || !strings.Contains(err.Error(), "upload unavailable") || len(storage.deleted) != 1 || !storage.putSeeker {
+		t.Fatalf("error=%v deleted=%v put_seeker=%v", err, storage.deleted, storage.putSeeker)
+	}
+	if _, statErr := os.Stat(storage.putPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("staged upload was not removed: %v", statErr)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
