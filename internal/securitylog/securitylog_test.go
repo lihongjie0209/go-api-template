@@ -2,6 +2,7 @@ package securitylog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -140,6 +141,41 @@ func TestRecordTxUsesCallerTransaction(t *testing.T) {
 	}
 	if !outbox.called {
 		t.Fatal("RecordTx() did not use caller transaction")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecordTxEnrichesClientContext(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	mock.ExpectBegin()
+	tx, err := sqlxDB.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	outbox := &outboxStub{}
+	service := &Service{cfg: config.SecurityLog{Enabled: true, Subject: "platform.security-log.v1", MaxPayloadBytes: 1024, HashKey: strings.Repeat("h", 32)}, outbox: outbox}
+	ctx := WithClient(platformprincipal.SystemContext(t.Context(), "actor-1"), "203.0.113.10", "integration-agent")
+	if err := service.RecordTx(ctx, tx, Entry{EventType: EventLogin, Succeeded: true}); err != nil {
+		t.Fatal(err)
+	}
+	var recorded payload
+	if err := json.Unmarshal(outbox.event.Payload, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded.ClientIP != "203.0.113.10" || recorded.UserAgent != "integration-agent" {
+		t.Fatalf("client context = %q/%q", recorded.ClientIP, recorded.UserAgent)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

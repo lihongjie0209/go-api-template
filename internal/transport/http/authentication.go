@@ -1,25 +1,23 @@
 package httptransport
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
-	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
-	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 type AuthenticationHandler struct {
 	auth     *auth.Service
 	accounts *serviceaccount.Service
-	security securitylog.Recorder
 	logger   *slog.Logger
 }
 
-func NewAuthenticationHandler(authService *auth.Service, accounts *serviceaccount.Service, securityRecorder securitylog.Recorder, logger *slog.Logger) *AuthenticationHandler {
-	return &AuthenticationHandler{auth: authService, accounts: accounts, security: securityRecorder, logger: logger}
+func NewAuthenticationHandler(authService *auth.Service, accounts *serviceaccount.Service, logger *slog.Logger) *AuthenticationHandler {
+	return &AuthenticationHandler{auth: authService, accounts: accounts, logger: logger}
 }
 
 type LoginRequest struct {
@@ -49,37 +47,24 @@ func (h *AuthenticationHandler) Login(c *gin.Context) {
 		Fail(c, h.logger, apperror.Invalid("invalid login request", err))
 		return
 	}
-	entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: request.ClientID, SubjectType: string(platformprincipal.TypeServiceAccount), ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent()}
-	account, authenticateErr := h.accounts.Authenticate(c.Request.Context(), request.ClientID, request.ClientSecret)
+	_, token, authenticateErr := h.accounts.AuthenticateAndIssue(c.Request.Context(), request.ClientID, request.ClientSecret, func(accountID string) (string, string, error) {
+		issued, err := h.auth.Issue(accountID)
+		if err != nil {
+			return "", "", err
+		}
+		claims, err := h.auth.Parse(issued)
+		if err != nil {
+			return "", "", err
+		}
+		return issued, claims.ID, nil
+	})
 	if authenticateErr != nil {
-		entry.Succeeded = false
-		entry.Reason = "invalid_credentials"
-		entry.ErrorCode = "invalid_credentials"
-		if err := h.security.Record(c.Request.Context(), entry); err != nil {
-			h.logger.ErrorContext(c.Request.Context(), "record failed login security event", "error", err, "request_id", requestID(c))
+		if errors.Is(authenticateErr, serviceaccount.ErrSecurityUnavailable) {
+			Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", authenticateErr))
+			return
 		}
 		Fail(c, h.logger, apperror.Unauthorized("invalid credentials"))
 		return
-	}
-	token, err := h.auth.Issue(account.ID)
-	if err != nil {
-		Fail(c, h.logger, apperror.Internal(err))
-		return
-	}
-	claims, err := h.auth.Parse(token)
-	if err != nil {
-		Fail(c, h.logger, apperror.Internal(err))
-		return
-	}
-	entry.SubjectID = account.ID
-	entry.TokenID = claims.ID
-	entry.Succeeded = true
-	if err := h.security.Record(c.Request.Context(), entry); err != nil {
-		if h.security.FailClosed() {
-			Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", err))
-			return
-		}
-		h.logger.ErrorContext(c.Request.Context(), "record successful login security event", "error", err, "request_id", requestID(c))
 	}
 	OK(c, LoginResponseBody{AccessToken: token, TokenType: "Bearer"})
 }

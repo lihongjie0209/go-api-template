@@ -239,6 +239,41 @@ func TestService_AuthenticateRejectsCredentialChangedAfterVerification(t *testin
 	}
 }
 
+func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	security := &failingTransactionalSecurityRecorder{txErr: errors.New("security outbox unavailable")}
+	service := New(db, database.NewTransactor(db), &operationRecorder{}, security, config.Config{})
+	hash, err := service.hasher.Hash("correct-secret-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "updated_at", "updated_by", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", now, "admin", 4, hash))
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", int64(4), hash, StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+
+	account, credential, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string) (string, string, error) {
+		return "issued-but-not-returned", "token-1", nil
+	})
+	if !errors.Is(err, ErrSecurityUnavailable) || account.ID != "" || credential != "" {
+		t.Fatalf("AuthenticateAndIssue() account=%+v credential=%q error=%v", account, credential, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func containsCredential(payload, secret string) bool {
 	return strings.Contains(payload, secret) || strings.Contains(payload, "secret_hash")
 }

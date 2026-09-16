@@ -33,6 +33,10 @@ func (s *securityRecorderStub) Record(_ context.Context, entry securitylog.Entry
 	s.entry = entry
 	return nil
 }
+func (s *securityRecorderStub) RecordTx(_ context.Context, _ *sqlx.Tx, entry securitylog.Entry) error {
+	s.entry = entry
+	return nil
+}
 
 func TestAuthenticationFailureCodeDoesNotExposeTechnicalErrors(t *testing.T) {
 	t.Parallel()
@@ -69,11 +73,11 @@ func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *te
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", int64(1), sqlmock.AnyArg(), serviceaccount.StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	accounts := serviceaccount.New(db, database.NewTransactor(db), nil, nil, config.Config{})
 	recorder := &securityRecorderStub{}
-	handler := NewAuthenticationHandler(authService, accounts, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	accounts := serviceaccount.New(db, database.NewTransactor(db), nil, recorder, config.Config{})
+	handler := NewAuthenticationHandler(authService, accounts, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	router := gin.New()
-	router.Use(RequestID())
+	router.Use(RequestID(), SecurityClientContext())
 	router.POST("/api/v1/auth/login", handler.Login)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"client_id":"client","client_secret":"password-long-enough"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -84,7 +88,7 @@ func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *te
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if recorder.entry.EventType != securitylog.EventLogin || !recorder.entry.Succeeded || recorder.entry.SubjectID != "account-1" || recorder.entry.Identifier != "client" || recorder.entry.UserAgent != "frontend-test" || recorder.entry.ClientIP == "" {
+	if recorder.entry.EventType != securitylog.EventLogin || !recorder.entry.Succeeded || recorder.entry.SubjectID != "account-1" || recorder.entry.Identifier != "client" || recorder.entry.TokenID == "" {
 		t.Fatalf("security entry = %+v", recorder.entry)
 	}
 	encoded, err := json.Marshal(recorder.entry)

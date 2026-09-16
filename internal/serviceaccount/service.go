@@ -23,10 +23,11 @@ import (
 )
 
 var (
-	ErrInvalid            = errors.New("invalid service account")
-	ErrNotFound           = errors.New("service account not found")
-	ErrConflict           = errors.New("service account conflict")
-	ErrInvalidCredentials = errors.New("invalid service account credentials")
+	ErrInvalid             = errors.New("invalid service account")
+	ErrNotFound            = errors.New("service account not found")
+	ErrConflict            = errors.New("service account conflict")
+	ErrInvalidCredentials  = errors.New("invalid service account credentials")
+	ErrSecurityUnavailable = errors.New("service account security audit unavailable")
 )
 
 var clientIDPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,127}$`)
@@ -279,22 +280,47 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 }
 
 func (s *Service) Authenticate(ctx context.Context, clientID, secret string) (Account, error) {
+	account, _, err := s.authenticateAndIssue(ctx, clientID, secret, nil)
+	return account, err
+}
+
+// AuthenticateAndIssue verifies a service account, creates its stateless
+// credential, then atomically records both successful use and the security
+// event before the credential can be returned to the caller.
+func (s *Service) AuthenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string) (string, string, error)) (Account, string, error) {
+	return s.authenticateAndIssue(ctx, clientID, secret, issue)
+}
+
+func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string) (string, string, error)) (Account, string, error) {
 	clientID = normalizeClientID(clientID)
+	failedEntry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: clientID, SubjectType: string(platformprincipal.TypeServiceAccount), Succeeded: false, Reason: "invalid_credentials", ErrorCode: "invalid_credentials"}
 	if !clientIDPattern.MatchString(clientID) || secret == "" || len(secret) > 1024 {
-		return Account{}, ErrInvalidCredentials
+		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
 	var value credential
 	query := s.db.Rebind(`SELECT ` + accountColumns + `,secret_hash FROM identity_service_accounts WHERE client_id=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
 	if err := s.db.GetContext(ctx, &value, query, clientID, StatusActive, time.Now()); err != nil {
-		return Account{}, ErrInvalidCredentials
+		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
+	failedEntry.SubjectID = value.ID
 	if value.LockedUntil != nil && value.LockedUntil.After(time.Now()) {
-		return Account{}, ErrInvalidCredentials
+		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
 	valid, err := s.hasher.Verify(secret, value.SecretHash)
 	if err != nil || !valid {
-		s.recordFailure(ctx, value.Account)
-		return Account{}, ErrInvalidCredentials
+		if recordErr := s.recordFailure(ctx, value.Account, failedEntry); recordErr != nil && s.security.FailClosed() {
+			return Account{}, "", fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
+		}
+		return Account{}, "", ErrInvalidCredentials
+	}
+	issuedCredential, tokenID := "", ""
+	if issue != nil {
+		issuedCredential, tokenID, err = issue(value.ID)
+		if err != nil {
+			failedEntry.Reason = "credential_issue_failed"
+			failedEntry.ErrorCode = "credential_issue_failed"
+			return Account{}, "", s.rejectAuthentication(ctx, failedEntry, err)
+		}
 	}
 	// Re-check the exact credential version while recording success. A concurrent
 	// secret rotation, disable, expiry, or lockout must make the old observation
@@ -314,30 +340,46 @@ func (s *Service) Authenticate(ctx context.Context, clientID, secret string) (Ac
 		if rows != 1 {
 			return ErrInvalidCredentials
 		}
+		entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: clientID, SubjectID: value.ID, SubjectType: string(platformprincipal.TypeServiceAccount), TokenID: tokenID, Succeeded: true}
+		if recordErr := s.security.RecordTx(accountCtx, tx, entry); recordErr != nil {
+			return fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
+		}
 		authenticatedAt = now
 		return nil
 	})
 	if err != nil {
-		return Account{}, ErrInvalidCredentials
+		if errors.Is(err, ErrSecurityUnavailable) {
+			return Account{}, "", err
+		}
+		return Account{}, "", ErrInvalidCredentials
 	}
 	value.LastUsedAt = &authenticatedAt
 	value.FailedAttempts = 0
 	value.LockedUntil = nil
 	value.Version++
-	return value.Account, nil
+	return value.Account, issuedCredential, nil
 }
 
-func (s *Service) recordFailure(ctx context.Context, account Account) {
+func (s *Service) rejectAuthentication(ctx context.Context, entry securitylog.Entry, authenticationErr error) error {
+	if recordErr := s.security.Record(ctx, entry); recordErr != nil && s.security.FailClosed() {
+		return fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
+	}
+	return authenticationErr
+}
+
+func (s *Service) recordFailure(ctx context.Context, account Account, entry securitylog.Entry) error {
 	if s.maxFailedAttempts <= 0 || s.lockDuration <= 0 {
-		return
+		return s.security.Record(ctx, entry)
 	}
 	accountCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: account.ID, Type: platformprincipal.TypeServiceAccount})
-	_ = s.transactor.Within(accountCtx, nil, func(tx *sqlx.Tx) error {
+	return s.transactor.Within(accountCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		lockedUntil := now.Add(s.lockDuration)
 		query := tx.Rebind(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts+1,locked_until=CASE WHEN failed_attempts+1>=? THEN ? ELSE locked_until END,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NULL`)
-		_, err := tx.ExecContext(accountCtx, query, s.maxFailedAttempts, lockedUntil, now, account.ID, account.ID)
-		return err
+		if _, err := tx.ExecContext(accountCtx, query, s.maxFailedAttempts, lockedUntil, now, account.ID, account.ID); err != nil {
+			return err
+		}
+		return s.security.RecordTx(accountCtx, tx, entry)
 	})
 }
 
