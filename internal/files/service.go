@@ -143,8 +143,15 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 	request := map[string]any{"name": name, "content_type": detectedType, "size_bytes": input.Size, "checksum_sha256": record.ChecksumSHA256}
 	entry := operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
 	started := time.Now()
+	if err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		return insertUploadIntent(ctx, tx, record, actor.ID, started.Add(s.cfg.UploadStaleAfter))
+	}); err != nil {
+		s.recordFailure(ctx, entry, started)
+		return Record{}, fmt.Errorf("record file upload intent: %w", err)
+	}
 	stored, err := s.storage.Put(ctx, objectstorage.PutInput{Key: objectKey, Body: bytes.NewReader(content), Size: input.Size, ContentType: detectedType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
 	if err != nil {
+		s.repairUploadAfterFailure(ctx, id)
 		s.recordFailure(ctx, entry, started)
 		return Record{}, fmt.Errorf("upload object: %w", err)
 	}
@@ -153,16 +160,23 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 		if err := insert(ctx, tx, record, actor.ID); err != nil {
 			return err
 		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE file_upload_intents SET status='completed',deleted_at=?,deleted_by=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), time.Now(), actor.ID, id)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errors.New("file upload intent is no longer pending")
+		}
 		entry.Duration = time.Since(started)
 		entry.Succeeded = true
 		return s.operations.RecordTx(ctx, tx, entry)
 	})
 	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if cleanupErr := s.storage.Delete(cleanupCtx, objectKey); cleanupErr != nil && s.logger != nil {
-			s.logger.ErrorContext(cleanupCtx, "cleanup failed uploaded object", "file_id", id, "error", cleanupErr)
-		}
+		s.repairUploadAfterFailure(ctx, id)
 		s.recordFailure(ctx, entry, started)
 		return Record{}, fmt.Errorf("record uploaded file: %w", err)
 	}
@@ -364,6 +378,35 @@ type pendingDeletion struct {
 	Attempts  int64  `db:"object_delete_attempts"`
 }
 
+type pendingUpload struct {
+	ID        string `db:"id"`
+	ObjectKey string `db:"object_key"`
+	Attempts  int64  `db:"attempts"`
+}
+
+// ProcessPendingUploads reclaims objects whose durable upload intent was not
+// completed before its stale deadline. An existing file row always wins so an
+// ambiguous transaction commit can never cause a completed object to be removed.
+func (s *Service) ProcessPendingUploads(ctx context.Context) error {
+	if !s.enabled {
+		return nil
+	}
+	items := []pendingUpload{}
+	query := s.db.Rebind(`SELECT id,object_key,attempts FROM file_upload_intents WHERE status='pending' AND deleted_at IS NULL AND next_attempt_at<=? ORDER BY next_attempt_at,id LIMIT ?`)
+	if err := s.db.SelectContext(ctx, &items, query, time.Now(), s.cfg.DeletionBatchSize); err != nil {
+		return fmt.Errorf("list pending file uploads: %w", err)
+	}
+	var result error
+	for _, item := range items {
+		if err := s.withUploadLock(ctx, item.ID, func(lockCtx context.Context) error {
+			return s.processUploadIntent(lockCtx, item.ID, item.Attempts)
+		}); err != nil {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+
 // ProcessPendingDeletions retries object deletion for logically deleted files.
 // The row remains the durable queue; per-file distributed locks prevent two
 // replicas from deleting and updating the same item concurrently.
@@ -394,8 +437,8 @@ func (s *Service) RunDeletionWorker(ctx context.Context) {
 	ticker := time.NewTicker(s.cfg.DeletionInterval)
 	defer ticker.Stop()
 	for {
-		if err := s.ProcessPendingDeletions(ctx); err != nil && !errors.Is(err, context.Canceled) && s.logger != nil {
-			s.logger.WarnContext(ctx, "process pending file object deletions", "error", err)
+		if err := errors.Join(s.ProcessPendingUploads(ctx), s.ProcessPendingDeletions(ctx)); err != nil && !errors.Is(err, context.Canceled) && s.logger != nil {
+			s.logger.WarnContext(ctx, "process pending file repairs", "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -403,6 +446,76 @@ func (s *Service) RunDeletionWorker(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Service) repairUploadAfterFailure(ctx context.Context, id string) {
+	repairBase, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	repairCtx := platformprincipal.SystemContext(repairBase, "file-upload-repair-worker")
+	if err := s.withUploadLock(repairCtx, id, func(lockCtx context.Context) error {
+		return s.processUploadIntent(lockCtx, id, 0)
+	}); err != nil && s.logger != nil {
+		s.logger.WarnContext(repairCtx, "file upload cleanup queued for retry", "file_id", id, "error", err)
+	}
+}
+
+func (s *Service) processUploadIntent(ctx context.Context, id string, attempts int64) error {
+	ctx = platformprincipal.SystemContext(ctx, "file-upload-repair-worker")
+	var intent pendingUpload
+	query := s.db.Rebind(`SELECT id,object_key,attempts FROM file_upload_intents WHERE id=? AND status='pending' AND deleted_at IS NULL`)
+	if err := s.db.GetContext(ctx, &intent, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("get pending file upload: %w", err)
+	}
+	if attempts < intent.Attempts {
+		attempts = intent.Attempts
+	}
+	var completed int
+	if err := s.db.GetContext(ctx, &completed, s.db.Rebind(`SELECT count(*) FROM files WHERE id=? AND deleted_at IS NULL`), id); err != nil {
+		return fmt.Errorf("check completed file upload: %w", err)
+	}
+	if completed > 0 {
+		return s.finishUploadIntent(ctx, id, "completed")
+	}
+	deleteErr := s.storage.Delete(ctx, intent.ObjectKey)
+	if deleteErr == nil {
+		return s.finishUploadIntent(ctx, id, "abandoned")
+	}
+	next := time.Now().Add(deletionBackoff(s.cfg.DeletionRetryDelay, attempts))
+	txErr := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE file_upload_intents SET attempts=attempts+1,last_error=?,next_attempt_at=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), boundedError(deleteErr), next, id)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows > 1 {
+			return fmt.Errorf("reschedule file upload cleanup affected %d rows", rows)
+		}
+		return nil
+	})
+	return errors.Join(deleteErr, txErr)
+}
+
+func (s *Service) finishUploadIntent(ctx context.Context, id, status string) error {
+	return s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE file_upload_intents SET status=?,last_error='',deleted_at=?,deleted_by=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), status, time.Now(), "file-upload-repair-worker", id)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows > 1 {
+			return fmt.Errorf("finish file upload intent affected %d rows", rows)
+		}
+		return nil
+	})
 }
 
 func (s *Service) processDeletion(ctx context.Context, id, objectKey string, attempts int64) error {
@@ -427,10 +540,7 @@ func (s *Service) processDeletion(ctx context.Context, id, objectKey string, att
 			return nil
 		}
 		next := now.Add(deletionBackoff(s.cfg.DeletionRetryDelay, attempts))
-		message := deleteErr.Error()
-		if len(message) > 2000 {
-			message = message[:2000]
-		}
+		message := boundedError(deleteErr)
 		result, updateErr := tx.ExecContext(workerCtx, tx.Rebind(`UPDATE files SET object_delete_attempts=object_delete_attempts+1,object_delete_error=?,object_delete_next_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL AND object_deleted_at IS NULL`), message, next, now, "file-deletion-worker", id)
 		if updateErr != nil {
 			return updateErr
@@ -457,6 +567,14 @@ func deletionBackoff(base time.Duration, attempts int64) time.Duration {
 	return base * time.Duration(1<<attempts)
 }
 
+func boundedError(err error) string {
+	message := err.Error()
+	if len(message) > 2000 {
+		return message[:2000]
+	}
+	return message
+}
+
 func (s *Service) withDeletionLock(ctx context.Context, id string, fn func(context.Context) error) error {
 	if s.locker == nil {
 		// Object deletion and the conditional database update are idempotent;
@@ -464,6 +582,13 @@ func (s *Service) withDeletionLock(ctx context.Context, id string, fn func(conte
 		return fn(ctx)
 	}
 	return cache.WithLock(ctx, s.locker, "file:deletion:"+id, s.lockTTL, s.lockRetry, fn)
+}
+
+func (s *Service) withUploadLock(ctx context.Context, id string, fn func(context.Context) error) error {
+	if s.locker == nil {
+		return fn(ctx)
+	}
+	return cache.WithLock(ctx, s.locker, "file:upload:"+id, s.lockTTL, s.lockRetry, fn)
 }
 
 func (s *Service) validateUpload(input UploadInput) error {
@@ -496,6 +621,13 @@ func insert(ctx context.Context, tx *sqlx.Tx, record Record, actorID string) err
 	now := time.Now()
 	query := tx.Rebind(`INSERT INTO files (id, tenant_id, object_key, original_name, content_type, size_bytes, etag, checksum_sha256, created_at, created_by, updated_at, updated_by, version, object_delete_attempts, object_delete_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := tx.ExecContext(ctx, query, record.ID, record.TenantID, record.ObjectKey, record.OriginalName, record.ContentType, record.SizeBytes, record.ETag, record.ChecksumSHA256, now, actorID, now, actorID, 1, 0, "")
+	return err
+}
+
+func insertUploadIntent(ctx context.Context, tx *sqlx.Tx, record Record, actorID string, nextAttemptAt time.Time) error {
+	now := time.Now()
+	query := tx.Rebind(`INSERT INTO file_upload_intents (id,tenant_id,object_key,status,attempts,last_error,next_attempt_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+	_, err := tx.ExecContext(ctx, query, record.ID, record.TenantID, record.ObjectKey, "pending", 0, "", nextAttemptAt, now, actorID, now, actorID, 1)
 	return err
 }
 

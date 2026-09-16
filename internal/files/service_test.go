@@ -28,6 +28,7 @@ func (actorResolverStub) ResolveUserIDs(context.Context, []string) (map[string]s
 
 type storageStub struct {
 	putInfo   objectstorage.Info
+	putErr    error
 	deleted   []string
 	putType   string
 	putBody   []byte
@@ -63,7 +64,7 @@ func (*failingReadOperationStub) RecordTx(context.Context, *sqlx.Tx, operationlo
 func (s *storageStub) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
 	s.putType = input.ContentType
 	s.putBody, _ = io.ReadAll(input.Body)
-	return s.putInfo, nil
+	return s.putInfo, s.putErr
 }
 func (s *storageStub) Get(context.Context, string) (*objectstorage.Object, error) { return nil, nil }
 func (s *storageStub) Stat(context.Context, string) (objectstorage.Info, error) {
@@ -111,6 +112,69 @@ func TestProcessDeletionPersistsRetryAfterStorageFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestServiceUploadPersistsCleanupRetryWhenObjectStoreFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO file_upload_intents`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "object_key", "attempts"}).AddRow("file-1", "files/tenant-1/file-1/report.txt", 0),
+	)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM files`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("file-upload-repair-worker").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE file_upload_intents SET attempts=attempts\+1`).
+		WithArgs("object storage unavailable", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	storage := &storageStub{putErr: errors.New("upload unavailable"), deleteErr: errors.New("object storage unavailable")}
+	service := New(db, database.NewTransactor(db), storage, nil, operationStub{}, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024, UploadStaleAfter: time.Minute, DeletionRetryDelay: time.Minute}})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+
+	_, err = service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
+	if err == nil || !strings.Contains(err.Error(), "upload unavailable") || len(storage.deleted) != 1 {
+		t.Fatalf("error=%v deleted=%v", err, storage.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessUploadIntentPreservesCompletedFileAfterAmbiguousCommit(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).WithArgs("file-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "object_key", "attempts"}).AddRow("file-1", "files/tenant-1/file-1/report.txt", 0),
+	)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM files`).WithArgs("file-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("file-upload-repair-worker").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE file_upload_intents SET status=`).WithArgs("completed", sqlmock.AnyArg(), "file-upload-repair-worker", "file-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	storage := &storageStub{}
+	service := &Service{enabled: true, db: db, transactor: database.NewTransactor(db), storage: storage, cfg: config.Files{DeletionRetryDelay: time.Minute}}
+
+	if err := service.processUploadIntent(t.Context(), "file-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(storage.deleted) != 0 {
+		t.Fatalf("completed object was deleted: %v", storage.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 func (s *storageStub) Presign(context.Context, string, objectstorage.Operation, time.Duration) (objectstorage.SignedURL, error) {
 	return objectstorage.SignedURL{URL: "https://download.example/file", ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
@@ -125,10 +189,26 @@ func TestService_UploadCompensatesWhenDatabaseInsertFails(t *testing.T) {
 	db := sqlx.NewDb(raw, "pgx")
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO file_upload_intents`).
+		WithArgs(sqlmock.AnyArg(), "tenant-1", sqlmock.AnyArg(), "pending", 0, "", sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), "user-1", 1).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO files .*object_delete_attempts, object_delete_error`).
 		WithArgs(sqlmock.AnyArg(), "tenant-1", sqlmock.AnyArg(), "report.txt", "text/plain; charset=utf-8", int64(5), "etag-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), "user-1", 1, 0, "").
 		WillReturnError(errors.New("database unavailable"))
 	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "object_key", "attempts"}).AddRow("file-1", "ignored", 0),
+	)
+	// The generated ID is not known to the test, so use a callback-independent
+	// row and accept the actual ID in both recovery queries.
+	mock.ExpectQuery(`SELECT count\(\*\) FROM files`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("file-upload-repair-worker").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE file_upload_intents SET status=`).WithArgs("abandoned", sqlmock.AnyArg(), "file-upload-repair-worker", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
 	service := New(db, database.NewTransactor(db), storage, nil, operationStub{}, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
@@ -155,8 +235,21 @@ func TestServiceUploadRollsBackMetadataWhenTransactionalLogFails(t *testing.T) {
 	db := sqlx.NewDb(raw, "pgx")
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO file_upload_intents`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO files .*object_delete_attempts, object_delete_error`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE file_upload_intents SET status='completed'`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "object_key", "attempts"}).AddRow("file-1", "ignored", 0),
+	)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM files`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("file-upload-repair-worker").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE file_upload_intents SET status=`).WithArgs("abandoned", sqlmock.AnyArg(), "file-upload-repair-worker", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
 	operations := &failingTransactionalOperationStub{}
 	service := New(db, database.NewTransactor(db), storage, nil, operations, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})

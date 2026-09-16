@@ -286,6 +286,7 @@ type Files struct {
 	Enabled            bool          `mapstructure:"enabled"`
 	MaxSizeBytes       int64         `mapstructure:"max_size_bytes"`
 	AllowedTypes       []string      `mapstructure:"allowed_types"`
+	UploadStaleAfter   time.Duration `mapstructure:"upload_stale_after"`
 	DeletionInterval   time.Duration `mapstructure:"deletion_interval"`
 	DeletionRetryDelay time.Duration `mapstructure:"deletion_retry_delay"`
 	DeletionBatchSize  int           `mapstructure:"deletion_batch_size"`
@@ -665,6 +666,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("files.enabled", false)
 	v.SetDefault("files.max_size_bytes", 10<<20)
 	v.SetDefault("files.allowed_types", []string{})
+	v.SetDefault("files.upload_stale_after", "15m")
 	v.SetDefault("files.deletion_interval", "30s")
 	v.SetDefault("files.deletion_retry_delay", "1m")
 	v.SetDefault("files.deletion_batch_size", 100)
@@ -870,8 +872,8 @@ func (c Config) Validate() error {
 	if c.Files.Enabled && (!c.Database.Enabled || !c.ObjectStorage.Enabled || c.Files.MaxSizeBytes <= 0 || c.Files.MaxSizeBytes > 5<<30 || c.Files.MaxSizeBytes > c.HTTP.MaxBodyBytes) {
 		return errors.New("enabled files requires database, object_storage, and positive max_size_bytes not exceeding http.max_body_bytes")
 	}
-	if c.Files.Enabled && (c.Files.DeletionInterval < time.Second || c.Files.DeletionInterval > 24*time.Hour || c.Files.DeletionRetryDelay < time.Second || c.Files.DeletionRetryDelay > 24*time.Hour || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000 || len(c.Files.AllowedTypes) > 100) {
-		return errors.New("enabled files requires valid deletion retry settings")
+	if c.Files.Enabled && (c.Files.UploadStaleAfter < time.Minute || c.Files.UploadStaleAfter > 24*time.Hour || c.Files.DeletionInterval < time.Second || c.Files.DeletionInterval > 24*time.Hour || c.Files.DeletionRetryDelay < time.Second || c.Files.DeletionRetryDelay > 24*time.Hour || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000 || len(c.Files.AllowedTypes) > 100) {
+		return errors.New("enabled files requires valid upload recovery and deletion retry settings")
 	}
 	for _, contentType := range c.Files.AllowedTypes {
 		if len(contentType) > 255 {

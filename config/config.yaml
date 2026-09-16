@@ -65,6 +65,7 @@ files:
   enabled: false
   max_size_bytes: 10485760
   allowed_types: [] # Empty allows all detected MIME types.
+  upload_stale_after: 15m # Pending upload intents older than this are reclaimed.
   deletion_interval: 30s
   deletion_retry_delay: 1m
   deletion_batch_size: 100

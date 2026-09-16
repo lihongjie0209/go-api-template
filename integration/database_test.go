@@ -197,19 +197,20 @@ func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
 
 func assertFileQueryIndexes(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string) {
 	t.Helper()
-	wanted := []string{
-		"files_object_delete_pending_idx",
-		"files_tenant_content_created_idx",
-		"files_tenant_creator_created_idx",
-		"files_tenant_size_created_idx",
+	wanted := map[string]string{
+		"files_object_delete_pending_idx":  "files",
+		"files_tenant_content_created_idx": "files",
+		"files_tenant_creator_created_idx": "files",
+		"files_tenant_size_created_idx":    "files",
+		"file_upload_intents_pending_idx":  "file_upload_intents",
 	}
-	for _, index := range wanted {
+	for index, table := range wanted {
 		var count int
 		if databaseType == "postgres" {
-			if err := db.GetContext(ctx, &count, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND tablename='files' AND indexname=$1`, index); err != nil {
+			if err := db.GetContext(ctx, &count, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND tablename=$1 AND indexname=$2`, table, index); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := db.GetContext(ctx, &count, `SELECT count(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='files' AND index_name=?`, index); err != nil {
+		} else if err := db.GetContext(ctx, &count, `SELECT count(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?`, table, index); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
@@ -772,6 +773,11 @@ func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || created.OriginalName != "report.txt" || created.ContentType != "text/plain; charset=utf-8" || created.Version != 1 {
 		t.Fatalf("uploaded file=%+v err=%v", created, err)
 	}
+	var uploadStatus string
+	var uploadIntentDeletedAt *time.Time
+	if err := db.QueryRowxContext(ctx, db.Rebind(`SELECT status,deleted_at FROM file_upload_intents WHERE id=?`), created.ID).Scan(&uploadStatus, &uploadIntentDeletedAt); err != nil || uploadStatus != "completed" || uploadIntentDeletedAt == nil {
+		t.Fatalf("upload intent status=%q deleted_at=%v err=%v", uploadStatus, uploadIntentDeletedAt, err)
+	}
 	page, err := service.Page(ownerCtx, files.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, Keyword: "report", ContentTypes: []string{created.ContentType}})
 	if err != nil || page.Total != 1 || len(page.Items) != 1 {
 		t.Fatalf("file page=%+v err=%v", page, err)
@@ -789,6 +795,24 @@ func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	var deletedAt *time.Time
 	if err := db.GetContext(ctx, &deletedAt, db.Rebind(`SELECT object_deleted_at FROM files WHERE id=?`), created.ID); err != nil || deletedAt == nil {
 		t.Fatalf("object_deleted_at=%v err=%v", deletedAt, err)
+	}
+	orphanID := "orphan-" + created.ID
+	orphanKey := "files/file-tenant/" + orphanID + "/orphan.txt"
+	if err := appdb.NewTransactor(db).Within(ownerCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(ownerCtx, tx.Rebind(`INSERT INTO file_upload_intents (id,tenant_id,object_key,status,attempts,last_error,next_attempt_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`), orphanID, "file-tenant", orphanKey, "pending", 0, "", now.Add(-time.Minute), now, "file-owner", now, "file-owner", 1)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessPendingUploads(ownerCtx); err != nil {
+		t.Fatal(err)
+	}
+	if len(storage.deleted) != 2 || storage.deleted[1] != orphanKey {
+		t.Fatalf("recovered orphan objects=%v", storage.deleted)
+	}
+	if err := db.QueryRowxContext(ctx, db.Rebind(`SELECT status,deleted_at FROM file_upload_intents WHERE id=?`), orphanID).Scan(&uploadStatus, &uploadIntentDeletedAt); err != nil || uploadStatus != "abandoned" || uploadIntentDeletedAt == nil {
+		t.Fatalf("recovered upload intent status=%q deleted_at=%v err=%v", uploadStatus, uploadIntentDeletedAt, err)
 	}
 }
 

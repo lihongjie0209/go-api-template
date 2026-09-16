@@ -875,6 +875,8 @@ func TestConfigRejectsUnsafeObjectStorageAndFileSettings(t *testing.T) {
 		{name: "S3 CNAME mode", mutate: func(cfg *Config) { cfg.ObjectStorage.UseCName = true }, want: "provider-compatible"},
 		{name: "unbounded provider timeout", mutate: func(cfg *Config) { cfg.ObjectStorage.Timeout = 5*time.Minute + time.Millisecond }, want: "object_storage requires"},
 		{name: "invalid allowed media type", mutate: func(cfg *Config) { cfg.Files.Enabled = true; cfg.Files.AllowedTypes = []string{"not a media type"} }, want: "allowed_types"},
+		{name: "upload intent reclaimed too early", mutate: func(cfg *Config) { cfg.Files.Enabled = true; cfg.Files.UploadStaleAfter = time.Second }, want: "upload recovery"},
+		{name: "upload intent retained too long", mutate: func(cfg *Config) { cfg.Files.Enabled = true; cfg.Files.UploadStaleAfter = 24*time.Hour + time.Second }, want: "upload recovery"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
