@@ -8,20 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
-	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 type TenantMemberHandler struct {
 	service  *tenant.MembershipService
 	contexts *tenant.ContextService
 	logger   *slog.Logger
-	security securitylog.Recorder
 }
 
-func NewTenantMemberHandler(service *tenant.MembershipService, contexts *tenant.ContextService, logger *slog.Logger, security securitylog.Recorder) *TenantMemberHandler {
-	return &TenantMemberHandler{service: service, contexts: contexts, logger: logger, security: security}
+func NewTenantMemberHandler(service *tenant.MembershipService, contexts *tenant.ContextService, logger *slog.Logger) *TenantMemberHandler {
+	return &TenantMemberHandler{service: service, contexts: contexts, logger: logger}
 }
 
 type AddTenantMemberRequest struct {
@@ -183,24 +180,9 @@ func (h *TenantMemberHandler) SwitchTenant(c *gin.Context) {
 		return
 	}
 	v, e := h.contexts.Switch(c.Request.Context(), r.TenantID)
-	entry := securitylog.Entry{EventType: securitylog.EventTenantContextSwitch, TenantID: r.TenantID, Succeeded: e == nil, ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent()}
-	if actor, ok := platformprincipal.FromContext(c.Request.Context()); ok {
-		entry.SubjectID, entry.SubjectType, entry.SessionID = actor.ID, string(actor.Type), actor.SessionID
-	}
-	logErr := h.security.Record(c.Request.Context(), entry)
 	if e != nil {
-		if logErr != nil {
-			h.logger.ErrorContext(c.Request.Context(), "record failed tenant context switch", "error", logErr, "request_id", requestID(c))
-		}
 		h.fail(c, e)
 		return
-	}
-	if logErr != nil {
-		if h.security.FailClosed() {
-			Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", logErr))
-			return
-		}
-		h.logger.ErrorContext(c.Request.Context(), "record tenant context switch", "error", logErr, "request_id", requestID(c))
 	}
 	OK(c, v)
 }
@@ -238,6 +220,8 @@ func (h *TenantMemberHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Conflict("tenant member conflict", e))
 	case errors.Is(e, tenant.ErrIdentityUnavailable):
 		Fail(c, h.logger, apperror.Unavailable("identity service unavailable", e))
+	case errors.Is(e, tenant.ErrSecurityUnavailable):
+		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", e))
 	default:
 		Fail(c, h.logger, apperror.Internal(e))
 	}

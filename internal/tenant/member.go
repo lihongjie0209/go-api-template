@@ -158,11 +158,11 @@ type MembershipService struct {
 	users      UserResolver
 	locker     cache.Locker
 	cfg        config.Config
-	operations operationlog.Recorder
-	security   securitylog.Recorder
+	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 }
 
-func NewMembershipService(r *Repository, t *database.Transactor, u UserResolver, l cache.Locker, c config.Config, operations operationlog.Recorder, security securitylog.Recorder) *MembershipService {
+func NewMembershipService(r *Repository, t *database.Transactor, u UserResolver, l cache.Locker, c config.Config, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder) *MembershipService {
 	return &MembershipService{repository: r, transactor: t, users: u, locker: l, cfg: c, operations: operations, security: security}
 }
 func (s *MembershipService) Add(ctx context.Context, username string) (Member, error) {
@@ -183,18 +183,16 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 	var created Member
 	var businessErr error
 	run := func(runCtx context.Context) error {
-		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectType: "user", TenantID: actor.TenantID}, func() error {
-			return s.transactor.Within(runCtx, nil, func(tx *sqlx.Tx) error {
-				if err := ensureActiveTenant(runCtx, tx, actor.TenantID); err != nil {
-					return err
-				}
-				q := tx.Rebind(`INSERT INTO tenant_memberships (id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`)
-				_, err := tx.ExecContext(runCtx, q, id, actor.TenantID, user.ID, user.Username, user.DisplayName, StatusActive, now, now, actor.ID, now, actor.ID)
-				if isUniqueViolation(err) {
-					return ErrConflict
-				}
+		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
+			if err := ensureActiveTenant(runCtx, tx, actor.TenantID); err != nil {
 				return err
-			})
+			}
+			q := tx.Rebind(`INSERT INTO tenant_memberships (id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`)
+			_, err := tx.ExecContext(runCtx, q, id, actor.TenantID, user.ID, user.Username, user.DisplayName, StatusActive, now, now, actor.ID, now, actor.ID)
+			if isUniqueViolation(err) {
+				return ErrConflict
+			}
+			return err
 		})
 		if businessErr != nil {
 			return businessErr
@@ -223,7 +221,8 @@ func (s *MembershipService) Get(ctx context.Context, id string) (Member, error) 
 	if e != nil {
 		return Member{}, e
 	}
-	if actor.TenantID == "" || id == "" {
+	id = strings.TrimSpace(id)
+	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength {
 		return Member{}, ErrInvalid
 	}
 	return s.repository.GetMember(ctx, actor.TenantID, id)
@@ -233,32 +232,31 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if e != nil {
 		return Member{}, e
 	}
-	if actor.TenantID == "" || id == "" || version <= 0 || (status != StatusActive && status != StatusDisabled) {
+	id = strings.TrimSpace(id)
+	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength || version <= 0 || (status != StatusActive && status != StatusDisabled) {
 		return Member{}, ErrInvalid
 	}
-	e = s.mutate(ctx, "tenant.member.status.update", id, map[string]any{"status": status, "version": version}, securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: id, SubjectType: "tenant_membership", TenantID: actor.TenantID, Metadata: map[string]any{"status": status}}, func() error {
-		return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+	e = s.mutate(ctx, "tenant.member.status.update", id, map[string]any{"status": status, "version": version}, securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: id, SubjectType: "tenant_membership", TenantID: actor.TenantID, Metadata: map[string]any{"status": status}}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+			return err
+		}
+		if status == StatusDisabled {
+			if err := protectLastAdministrator(ctx, tx, actor.TenantID, id); err != nil {
 				return err
 			}
-			if status == StatusDisabled {
-				if err := protectLastAdministrator(ctx, tx, actor.TenantID, id); err != nil {
-					return err
-				}
-			}
-			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET status=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), status, time.Now(), actor.ID, actor.TenantID, id, version)
-			if err != nil {
-				return err
-			}
-			rows, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				return fmt.Errorf("update membership affected rows: %w", rowsErr)
-			}
-			if rows != 1 {
-				return ErrConflict
-			}
-			return nil
-		})
+		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET status=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), status, time.Now(), actor.ID, actor.TenantID, id, version)
+		if err != nil {
+			return err
+		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("update membership affected rows: %w", rowsErr)
+		}
+		if rows != 1 {
+			return ErrConflict
+		}
+		return nil
 	})
 	if e != nil {
 		return Member{}, e
@@ -270,36 +268,35 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 	if e != nil {
 		return e
 	}
-	if actor.TenantID == "" || id == "" || version <= 0 {
+	id = strings.TrimSpace(id)
+	if actor.TenantID == "" || id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	e = s.mutate(ctx, "tenant.member.remove", id, map[string]any{"version": version}, securitylog.Entry{EventType: securitylog.EventMembershipRemoved, SubjectID: id, SubjectType: "tenant_membership", TenantID: actor.TenantID}, func() error {
-		return s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+	e = s.mutate(ctx, "tenant.member.remove", id, map[string]any{"version": version}, securitylog.Entry{EventType: securitylog.EventMembershipRemoved, SubjectID: id, SubjectType: "tenant_membership", TenantID: actor.TenantID}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+		if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
+			return err
+		}
+		if err := protectLastAdministrator(ctx, tx, actor.TenantID, id); err != nil {
+			return err
+		}
+		now := time.Now()
+		for _, table := range []string{"tenant_member_roles", "tenant_department_members", "tenant_administrators"} {
+			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id); err != nil {
 				return err
 			}
-			if err := protectLastAdministrator(ctx, tx, actor.TenantID, id); err != nil {
-				return err
-			}
-			now := time.Now()
-			for _, table := range []string{"tenant_member_roles", "tenant_department_members", "tenant_administrators"} {
-				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id); err != nil {
-					return err
-				}
-			}
-			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id, version)
-			if err != nil {
-				return err
-			}
-			rows, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				return fmt.Errorf("remove membership affected rows: %w", rowsErr)
-			}
-			if rows != 1 {
-				return ErrConflict
-			}
-			return nil
-		})
+		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id, version)
+		if err != nil {
+			return err
+		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("remove membership affected rows: %w", rowsErr)
+		}
+		if rows != 1 {
+			return ErrConflict
+		}
+		return nil
 	})
 	return e
 }
@@ -314,6 +311,13 @@ func ensureActiveTenant(ctx context.Context, tx *sqlx.Tx, tenantID string) error
 	return nil
 }
 func protectLastAdministrator(ctx context.Context, tx *sqlx.Tx, tenantID, membershipID string) error {
+	var lockedTenantID string
+	if err := tx.GetContext(ctx, &lockedTenantID, tx.Rebind(`SELECT id FROM tenants WHERE id=? AND deleted_at IS NULL FOR UPDATE`), tenantID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrForbidden
+		}
+		return err
+	}
 	var isAdmin, count int
 	if err := tx.GetContext(ctx, &isAdmin, tx.Rebind(`SELECT count(*) FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), tenantID, membershipID); err != nil {
 		return err
@@ -330,17 +334,40 @@ func protectLastAdministrator(ctx context.Context, tx *sqlx.Tx, tenantID, member
 	}
 	return nil
 }
-func (s *MembershipService) mutate(ctx context.Context, operation, id string, request any, securityEntry securitylog.Entry, fn func() error) error {
-	committed := false
-	err := operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "tenant_membership", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		businessErr := fn()
-		committed = businessErr == nil
-		return businessErr
+func (s *MembershipService) mutate(ctx context.Context, operation, id string, request any, securityEntry securitylog.Entry, options *sql.TxOptions, fn func(*sqlx.Tx) error) error {
+	started := time.Now()
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant_membership", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	err := s.transactor.Within(ctx, options, func(tx *sqlx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = true
+		if s.operations != nil {
+			if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+				return err
+			}
+		}
+		securityEntry.Succeeded = true
+		if s.security != nil {
+			return s.security.RecordTx(ctx, tx, securityEntry)
+		}
+		return nil
 	})
-	securityEntry.Succeeded = committed
-	securityErr := s.security.Record(ctx, securityEntry)
-	if securityErr != nil && committed && err == nil && s.security.FailClosed() {
-		return securityErr
+	if err != nil {
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = false
+		operationEntry.ErrorCode = "operation_failed"
+		operationEntry.ErrorMessage = "operation failed"
+		if s.operations != nil {
+			_ = s.operations.Record(ctx, operationEntry)
+		}
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		if s.security != nil {
+			_ = s.security.Record(ctx, securityEntry)
+		}
 	}
 	return err
 }
@@ -350,7 +377,8 @@ func (s *MembershipService) Page(ctx context.Context, input MemberPageInput) (pa
 		return pagination.Result[Member]{}, e
 	}
 	request, e := pagination.Normalize(input.Request)
-	if e != nil || actor.TenantID == "" || len(input.IDs) > 200 || len(input.UserIDs) > 200 || len(input.Usernames) > 200 || len(input.Statuses) > 20 || (input.JoinedFrom != nil && input.JoinedTo != nil && !input.JoinedFrom.Before(*input.JoinedTo)) {
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	if e != nil || actor.TenantID == "" || len(input.Keyword) > maxTenantKeywordLength || len(input.IDs) > 200 || len(input.UserIDs) > 200 || len(input.Usernames) > 200 || len(input.Statuses) > 20 || !boundedStrings(input.IDs, maxTenantIDLength) || !boundedStrings(input.UserIDs, maxTenantIDLength) || !boundedStrings(input.Usernames, 256) || (input.JoinedFrom != nil && input.JoinedTo != nil && !input.JoinedFrom.Before(*input.JoinedTo)) {
 		return pagination.Result[Member]{}, ErrInvalid
 	}
 	for _, status := range input.Statuses {
@@ -359,7 +387,6 @@ func (s *MembershipService) Page(ctx context.Context, input MemberPageInput) (pa
 		}
 	}
 	input.Request = request
-	input.Keyword = strings.TrimSpace(input.Keyword)
 	items, total, e := s.repository.PageMembers(ctx, actor.TenantID, input)
 	return pagination.Result[Member]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, e
 }

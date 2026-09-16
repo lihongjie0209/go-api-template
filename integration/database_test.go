@@ -713,6 +713,28 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatal(err)
 	}
 	departmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID, MembershipID: membershipID})
+	members := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{})
+	addedMember, err := members.Add(departmentCtx, "member.two")
+	if err != nil || addedMember.UserID != "member-2" || addedMember.Version != 1 {
+		t.Fatalf("added tenant member=%+v err=%v", addedMember, err)
+	}
+	memberPage, err := members.Page(departmentCtx, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "member.two"}, UserIDs: []string{"member-2"}, Statuses: []tenant.Status{tenant.StatusActive}})
+	if err != nil || memberPage.Total != 1 || len(memberPage.Items) != 1 {
+		t.Fatalf("tenant member page=%+v err=%v", memberPage, err)
+	}
+	if err := members.Remove(departmentCtx, membershipID, 1); !errors.Is(err, tenant.ErrConflict) {
+		t.Fatalf("remove final tenant administrator error=%v", err)
+	}
+	disabledMember, err := members.UpdateStatus(departmentCtx, addedMember.ID, tenant.StatusDisabled, addedMember.Version)
+	if err != nil || disabledMember.Version != addedMember.Version+1 {
+		t.Fatalf("disabled tenant member=%+v err=%v", disabledMember, err)
+	}
+	if _, err := members.UpdateStatus(departmentCtx, addedMember.ID, tenant.StatusActive, addedMember.Version); !errors.Is(err, tenant.ErrConflict) {
+		t.Fatalf("stale tenant member update error=%v", err)
+	}
+	if err := members.Remove(departmentCtx, addedMember.ID, disabledMember.Version); err != nil {
+		t.Fatalf("remove tenant member: %v", err)
+	}
 	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, config.Config{})
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
 	if err != nil {

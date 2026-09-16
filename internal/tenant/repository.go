@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("tenant not found")
-	ErrConflict = errors.New("tenant conflict")
+	ErrNotFound            = errors.New("tenant not found")
+	ErrConflict            = errors.New("tenant conflict")
+	ErrSecurityUnavailable = errors.New("tenant security audit unavailable")
 )
 
 type Repository struct{ db *sqlx.DB }

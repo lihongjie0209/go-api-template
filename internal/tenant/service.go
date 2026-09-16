@@ -23,6 +23,13 @@ import (
 
 var validCode = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 
+const (
+	maxTenantIDLength          = 128
+	maxTenantNameLength        = 256
+	maxTenantDescriptionLength = 4096
+	maxTenantKeywordLength     = 256
+)
+
 type CreateInput struct{ Code, Name, Description, OwnerUsername string }
 type UpdateInput struct {
 	ID, Name, Description string
@@ -41,14 +48,14 @@ type Service struct {
 	repository *Repository
 	transactor *database.Transactor
 	cache      cache.Store
-	operations operationlog.Recorder
-	security   securitylog.Recorder
+	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 	users      UserResolver
 	logger     *slog.Logger
 	cacheTTL   time.Duration
 }
 
-func New(repository *Repository, transactor *database.Transactor, store cache.Store, operations operationlog.Recorder, security securitylog.Recorder, users UserResolver, logger *slog.Logger, cfg config.Config) *Service {
+func New(repository *Repository, transactor *database.Transactor, store cache.Store, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, users UserResolver, logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{repository: repository, transactor: transactor, cache: store, operations: operations, security: security, users: users, logger: logger, cacheTTL: cfg.Tenant.CacheTTL}
 }
 
@@ -59,8 +66,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
 	}
 	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
 	input.Name = strings.TrimSpace(input.Name)
+	input.Description = strings.TrimSpace(input.Description)
 	input.OwnerUsername = strings.ToLower(strings.TrimSpace(input.OwnerUsername))
-	if !validCode.MatchString(input.Code) || input.Name == "" || input.OwnerUsername == "" {
+	if !validCode.MatchString(input.Code) || input.Name == "" || len(input.Name) > maxTenantNameLength || len(input.Description) > maxTenantDescriptionLength || input.OwnerUsername == "" || len(input.OwnerUsername) > 256 {
 		return View{}, fmt.Errorf("%w: code, name and owner_username are required", ErrInvalid)
 	}
 	owner, err := s.users.ResolveUsername(ctx, input.OwnerUsername)
@@ -93,7 +101,8 @@ func (s *Service) AdminGet(ctx context.Context, id string) (View, error) {
 	if _, err := requirePlatformActor(ctx); err != nil {
 		return View{}, err
 	}
-	if strings.TrimSpace(id) == "" {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength {
 		return View{}, fmt.Errorf("%w: id is required", ErrInvalid)
 	}
 	record, err := s.repository.AdminGet(ctx, id)
@@ -130,7 +139,8 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	if id == "" {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength {
 		return View{}, fmt.Errorf("%w: id is required", ErrInvalid)
 	}
 	if actor.TenantID == "" {
@@ -197,11 +207,14 @@ func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, err
 	if err != nil {
 		return View{}, err
 	}
-	if input.ID == "" || strings.TrimSpace(input.Name) == "" || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
+	input.ID = strings.TrimSpace(input.ID)
+	input.Name = strings.TrimSpace(input.Name)
+	input.Description = strings.TrimSpace(input.Description)
+	if input.ID == "" || len(input.ID) > maxTenantIDLength || input.Name == "" || len(input.Name) > maxTenantNameLength || len(input.Description) > maxTenantDescriptionLength || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
 		return View{}, ErrInvalid
 	}
 	err = s.mutate(ctx, "platform.tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
-		return updateTenant(ctx, tx, input.ID, strings.TrimSpace(input.Name), input.Description, input.Status, input.Version, actor.ID)
+		return updateTenant(ctx, tx, input.ID, input.Name, input.Description, input.Status, input.Version, actor.ID)
 	})
 	if err != nil {
 		return View{}, err
@@ -215,7 +228,8 @@ func (s *Service) AdminDelete(ctx context.Context, id string, version int64) err
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(id) == "" || version <= 0 {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	err = s.mutate(ctx, "platform.tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
@@ -235,11 +249,14 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (View, error) {
 	if err := authorizeTenant(actor, input.ID); err != nil {
 		return View{}, err
 	}
-	if input.ID == "" || strings.TrimSpace(input.Name) == "" || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
+	input.ID = strings.TrimSpace(input.ID)
+	input.Name = strings.TrimSpace(input.Name)
+	input.Description = strings.TrimSpace(input.Description)
+	if input.ID == "" || len(input.ID) > maxTenantIDLength || input.Name == "" || len(input.Name) > maxTenantNameLength || len(input.Description) > maxTenantDescriptionLength || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
 		return View{}, ErrInvalid
 	}
 	err = s.mutate(ctx, "tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
-		return updateTenant(ctx, tx, input.ID, strings.TrimSpace(input.Name), input.Description, input.Status, input.Version, actor.ID)
+		return updateTenant(ctx, tx, input.ID, input.Name, input.Description, input.Status, input.Version, actor.ID)
 	})
 	if err != nil {
 		return View{}, err
@@ -257,7 +274,8 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err := authorizeTenant(actor, id); err != nil {
 		return err
 	}
-	if id == "" || version <= 0 {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength || version <= 0 {
 		return ErrInvalid
 	}
 	err = s.mutate(ctx, "tenant.delete", id, map[string]any{"version": version}, func(tx *sqlx.Tx) error { return deleteTenant(ctx, tx, id, version, actor.ID) })
@@ -294,7 +312,8 @@ func normalizePageInput(input *PageInput) (pagination.Request, error) {
 	if err != nil {
 		return pagination.Request{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	if len(input.IDs) > 200 || len(input.Statuses) > 20 || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	if len(input.Keyword) > maxTenantKeywordLength || len(input.IDs) > 200 || len(input.Statuses) > 20 || !boundedStrings(input.IDs, maxTenantIDLength) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
 		return pagination.Request{}, fmt.Errorf("%w: invalid tenant filters", ErrInvalid)
 	}
 	for _, status := range input.Statuses {
@@ -303,8 +322,16 @@ func normalizePageInput(input *PageInput) (pagination.Request, error) {
 		}
 	}
 	input.Request = request
-	input.Keyword = strings.TrimSpace(input.Keyword)
 	return request, nil
+}
+
+func boundedStrings(values []string, maxLength int) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len(value) > maxLength {
+			return false
+		}
+	}
+	return true
 }
 func authorizeTenant(actor platformprincipal.Principal, tenantID string) error {
 	if actor.TenantID == "" || actor.TenantID != tenantID {
@@ -322,15 +349,40 @@ func (s *Service) invalidate(ctx context.Context, id string) {
 	}
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
-	committed := false
-	err := operationlog.Do(ctx, s.operations, operationlog.Entry{Operation: operation, ResourceType: "tenant", ResourceID: id, Source: "backend", Protocol: "service", Request: request}, func() error {
-		txErr := s.transactor.Within(ctx, nil, fn)
-		committed = txErr == nil
-		return txErr
+	started := time.Now()
+	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "tenant", ResourceID: id, Source: "backend", Protocol: "service", Request: request}
+	securityEntry := securitylog.Entry{EventType: securitylog.EventTenantChanged, SubjectID: id, SubjectType: "tenant", TenantID: id, Metadata: map[string]any{"operation": operation}}
+	err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = true
+		if s.operations != nil {
+			if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+				return err
+			}
+		}
+		securityEntry.Succeeded = true
+		if s.security != nil {
+			return s.security.RecordTx(ctx, tx, securityEntry)
+		}
+		return nil
 	})
-	securityErr := s.security.Record(ctx, securitylog.Entry{EventType: securitylog.EventTenantChanged, SubjectID: id, SubjectType: "tenant", TenantID: id, Succeeded: committed, Metadata: map[string]any{"operation": operation}})
-	if securityErr != nil && committed && err == nil && s.security.FailClosed() {
-		return securityErr
+	if err != nil {
+		operationEntry.Duration = time.Since(started)
+		operationEntry.Succeeded = false
+		operationEntry.ErrorCode = "operation_failed"
+		operationEntry.ErrorMessage = "operation failed"
+		if s.operations != nil {
+			_ = s.operations.Record(ctx, operationEntry)
+		}
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		if s.security != nil {
+			_ = s.security.Record(ctx, securityEntry)
+		}
 	}
 	return err
 }
