@@ -75,9 +75,13 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	}, logger))
 	api.Use(IdempotencyExecution(idempotencyManager, cfg.Idempotency.HTTPPaths, logger))
 	var registrationErr error
+	definitions := make([]accesscontrol.Endpoint, 0, 128)
 	post := func(endpoint accesscontrol.Endpoint, handlers ...gin.HandlerFunc) {
 		if registrationErr == nil {
 			registrationErr = registerPOST(api, resources, schemas, authorizer, logger, endpoint, handlers...)
+			if registrationErr == nil {
+				definitions = append(definitions, endpoint)
+			}
 		}
 	}
 	public := func(path string, handlers ...gin.HandlerFunc) { post(publicEndpoint("/api/v1"+path), handlers...) }
@@ -220,6 +224,13 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	if registrationErr != nil {
 		return nil, fmt.Errorf("register HTTP authorization descriptor: %w", registrationErr)
 	}
+	endpointRegistry, err := accesscontrol.NewEndpointRegistry(resources, definitions)
+	if err != nil {
+		return nil, fmt.Errorf("build HTTP authorization registry: %w", err)
+	}
+	if err := endpointRegistry.ValidateCoverage(httpBusinessOperations(router)); err != nil {
+		return nil, fmt.Errorf("validate HTTP authorization descriptor coverage: %w", err)
+	}
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
 	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
@@ -237,6 +248,19 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		return nil
 	}, OnStop: server.Shutdown})
 	return server, nil
+}
+
+func httpBusinessOperations(router *gin.Engine) []accesscontrol.Operation {
+	if router == nil {
+		return nil
+	}
+	operations := []accesscontrol.Operation{}
+	for _, route := range router.Routes() {
+		if strings.HasPrefix(route.Path, "/api/v1/") {
+			operations = append(operations, accesscontrol.Operation{Transport: accesscontrol.TransportHTTP, Name: route.Method + " " + route.Path})
+		}
+	}
+	return operations
 }
 
 func configureRouterContract(router *gin.Engine, logger *slog.Logger) {

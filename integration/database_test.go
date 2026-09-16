@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
@@ -985,6 +986,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || addedMember.UserID != "member-2" || addedMember.Version != 1 {
 		t.Fatalf("added tenant member=%+v err=%v", addedMember, err)
 	}
+	testMemberDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, addedMember)
 	memberRepository := tenant.NewRepository(db)
 	visible, visibleTotal, err := memberRepository.PageMembers(ctx, created.ID, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}}, datapermission.SQLPredicate{Clause: "(tm.user_id = ?)", Args: []any{"member-2"}})
 	if err != nil || visibleTotal != 1 || len(visible) != 1 || visible[0].ID != addedMember.ID {
@@ -1000,16 +1002,6 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if err := members.Remove(departmentCtx, membershipID, 1); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("remove final tenant administrator error=%v", err)
-	}
-	disabledMember, err := members.UpdateStatus(departmentCtx, addedMember.ID, tenant.StatusDisabled, addedMember.Version)
-	if err != nil || disabledMember.Version != addedMember.Version+1 {
-		t.Fatalf("disabled tenant member=%+v err=%v", disabledMember, err)
-	}
-	if _, err := members.UpdateStatus(departmentCtx, addedMember.ID, tenant.StatusActive, addedMember.Version); !errors.Is(err, tenant.ErrConflict) {
-		t.Fatalf("stale tenant member update error=%v", err)
-	}
-	if err := members.Remove(departmentCtx, addedMember.ID, disabledMember.Version); err != nil {
-		t.Fatalf("remove tenant member: %v", err)
 	}
 	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{}, nil)
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
@@ -1044,6 +1036,67 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if _, err := service.Get(tenantCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("get deleted tenant error = %v", err)
+	}
+}
+
+func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, tenantID, ownerMembershipID string, member tenant.Member) {
+	t.Helper()
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := datapermission.NewSchemaRegistry(tenant.NewMemberDataPermissionSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated := true
+	engine, err := datapermission.NewEngine(schemas, resources, []datapermission.Policy{{
+		APIVersion: datapermission.PolicyAPIVersion,
+		Kind:       datapermission.PolicyKind,
+		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-self", Name: "Integration member self scope"},
+		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
+		Spec: datapermission.PolicySpec{
+			Subject:   pbac.SubjectMatcher{Authenticated: &authenticated},
+			Resource:  "tenant.member",
+			Actions:   []string{"read", "list", "update", "remove"},
+			Condition: "resource.owner_id == subject.id",
+			Effect:    datapermission.EffectAllow,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes := datapermission.NewService(db, engine)
+	service := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: member.UserID, username: member.Username, name: member.DisplayName}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{}, scopes)
+	principal := platformprincipal.Principal{ID: member.UserID, Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: member.ID}
+	endpointContext := func(action string, mode accesscontrol.DataPermissionMode) context.Context {
+		requestCtx := platformprincipal.WithContext(ctx, principal)
+		return accesscontrol.WithEndpoint(requestCtx, accesscontrol.Endpoint{Resource: "tenant.member", Action: action, DataPermission: mode})
+	}
+
+	visible, err := service.Get(endpointContext("read", accesscontrol.DataPermissionRequired), member.ID)
+	if err != nil || visible.ID != member.ID {
+		t.Fatalf("data-scoped member get=%+v err=%v", visible, err)
+	}
+	if _, err := service.Get(endpointContext("read", accesscontrol.DataPermissionRequired), ownerMembershipID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden member get error=%v", err)
+	}
+	page, err := service.Page(endpointContext("list", accesscontrol.DataPermissionRequired), tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != member.ID {
+		t.Fatalf("data-scoped member page=%+v err=%v", page, err)
+	}
+	if _, err := service.UpdateStatus(endpointContext("update", accesscontrol.DataPermissionRequired), ownerMembershipID, tenant.StatusDisabled, 1); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden member update error=%v", err)
+	}
+	updated, err := service.UpdateStatus(endpointContext("update", accesscontrol.DataPermissionRequired), member.ID, tenant.StatusActive, member.Version)
+	if err != nil || updated.Version != member.Version+1 {
+		t.Fatalf("data-scoped member update=%+v err=%v", updated, err)
+	}
+	if err := service.Remove(endpointContext("remove", accesscontrol.DataPermissionRequired), ownerMembershipID, 1); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden member remove error=%v", err)
+	}
+	if err := service.Remove(endpointContext("remove", accesscontrol.DataPermissionRequired), member.ID, updated.Version); err != nil {
+		t.Fatalf("data-scoped member remove: %v", err)
 	}
 }
 

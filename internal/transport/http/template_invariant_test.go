@@ -8,6 +8,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 )
 
 func TestTemplateHandlerDocumentsOnlyImplementedEndpoints(t *testing.T) {
@@ -77,6 +81,35 @@ func TestEveryRegisteredBusinessPOSTRouteIsInSwagger(t *testing.T) {
 		if !unified {
 			t.Errorf("POST %s has no documented successful common response envelope", route)
 		}
+	}
+}
+
+func TestHTTPAuthorizationDescriptorsExactlyCoverRuntimeBusinessRoutes(t *testing.T) {
+	t.Parallel()
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.POST("/api/v1/public", func(*gin.Context) {})
+	definitions := []accesscontrol.Endpoint{{
+		Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/public",
+		Authentication: accesscontrol.AuthenticationPublic, DataPermission: accesscontrol.DataPermissionNone,
+	}}
+	registry, err := accesscontrol.NewEndpointRegistry(resources, definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ValidateCoverage(httpBusinessOperations(router)); err != nil {
+		t.Fatalf("expected exact runtime coverage: %v", err)
+	}
+	router.POST("/api/v1/undeclared", func(*gin.Context) {})
+	if err := registry.ValidateCoverage(httpBusinessOperations(router)); err == nil {
+		t.Fatal("undeclared runtime route passed authorization coverage validation")
+	}
+	router.GET("/api/v1/wrong-method", func(*gin.Context) {})
+	if err := registry.ValidateCoverage(httpBusinessOperations(router)); err == nil {
+		t.Fatal("undeclared non-POST business route passed authorization coverage validation")
 	}
 }
 
