@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
@@ -72,6 +74,15 @@ func TestServicePageRejectsUnboundedFilters(t *testing.T) {
 	protocols := make([]string, 21)
 	_, err := service.Page(platformprincipal.SystemContext(t.Context(), "admin"), PageInput{Protocols: protocols})
 	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestBoundedRouteAuditNamePreservesUTF8(t *testing.T) {
+	t.Parallel()
+	value := "http POST /" + strings.Repeat("界", 300)
+	got := boundedRouteAuditName(value)
+	require.LessOrEqual(t, len(got), maxRouteAuditNameBytes)
+	require.True(t, utf8.ValidString(got))
+	require.Equal(t, value[:100], boundedRouteAuditName(value[:100]))
 }
 
 func TestSetRollsBackWhenTransactionalAuditFails(t *testing.T) {

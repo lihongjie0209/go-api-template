@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -27,6 +28,7 @@ const (
 	maxRoutePolicyIDLength          = 128
 	maxRoutePolicyDescriptionLength = 4096
 	maxRoutePolicyKeywordLength     = 256
+	maxRouteAuditNameBytes          = 512
 )
 
 type ReferenceInput struct {
@@ -361,7 +363,18 @@ func ensureRoute(ctx context.Context, tx *sqlx.Tx, routeID string) (string, erro
 		}
 		return "", fmt.Errorf("get route definition: %w", err)
 	}
-	return strings.TrimSpace(route.Protocol + " " + strings.ToUpper(route.Method) + " " + route.Path), nil
+	return boundedRouteAuditName(strings.TrimSpace(route.Protocol + " " + strings.ToUpper(route.Method) + " " + route.Path)), nil
+}
+
+func boundedRouteAuditName(value string) string {
+	if len(value) <= maxRouteAuditNameBytes {
+		return value
+	}
+	end := maxRouteAuditNameBytes
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end]
 }
 
 func setPolicy(ctx context.Context, tx *sqlx.Tx, actor string, input SetInput) error {
