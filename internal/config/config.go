@@ -38,7 +38,6 @@ type Config struct {
 	Migration       Migration       `mapstructure:"migration"`
 	User            User            `mapstructure:"user"`
 	Tenant          Tenant          `mapstructure:"tenant"`
-	Menu            Menu            `mapstructure:"menu"`
 	PlatformConfig  PlatformConfig  `mapstructure:"platform_config"`
 	Dictionary      Dictionary      `mapstructure:"dictionary"`
 	Idempotency     Idempotency     `mapstructure:"idempotency"`
@@ -234,10 +233,6 @@ type PolicySync struct {
 }
 type Tenant struct {
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
-}
-type Menu struct {
-	CacheTTL time.Duration `mapstructure:"cache_ttl"`
-	MaxNodes int           `mapstructure:"max_nodes"`
 }
 type PlatformConfig struct {
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
@@ -629,8 +624,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("policy_sync.poll_interval", "30s")
 	v.SetDefault("policy_sync.timeout", "5s")
 	v.SetDefault("tenant.cache_ttl", "5m")
-	v.SetDefault("menu.cache_ttl", "5m")
-	v.SetDefault("menu.max_nodes", 10000)
 	v.SetDefault("platform_config.cache_ttl", "5m")
 	v.SetDefault("dictionary.cache_ttl", "5m")
 	v.SetDefault("dictionary.max_tree_nodes", 10000)
@@ -811,9 +804,6 @@ func (c Config) Validate() error {
 	}
 	if c.Tenant.CacheTTL <= 0 || c.Tenant.CacheTTL > maxCacheTTL {
 		return errors.New("tenant cache duration must be positive and no greater than 24h")
-	}
-	if c.Menu.CacheTTL <= 0 || c.Menu.CacheTTL > maxCacheTTL || c.Menu.MaxNodes <= 0 || c.Menu.MaxNodes > 100000 {
-		return errors.New("menu cache duration must be positive and no greater than 24h; max_nodes must be valid")
 	}
 	if c.PlatformConfig.CacheTTL <= 0 || c.PlatformConfig.CacheTTL > maxCacheTTL {
 		return errors.New("platform config cache duration must be positive and no greater than 24h")

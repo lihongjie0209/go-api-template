@@ -373,27 +373,25 @@ Status values:
 | Cache and presentation | Permission administration reads directly from the bounded indexed table; the authorization hot path uses the separately audited immutable policy snapshot and Redis notification/revision recovery, so adding a second general-purpose permission cache would create unnecessary invalidation states. Get/tree collect creator/updater IDs and use the shared Identity resolver, which deduplicates IDs, enforces a 20,000-ID response bound and issues RPC batches of at most 200. Missing system/service identities retain a stable-ID fallback and timestamps explicitly render in `Asia/Shanghai`. |
 | Tests | Unit coverage exercises validation, registered Resource/Action enforcement, ancestor-preserving filtering, parent-type rules, bounded actor batching, presentation fallback/+08 conversion and rollback when transactional audit storage fails. The service-contained PostgreSQL/MySQL lifecycle covers create, nested filtered tree and referenced-update rejection; GitHub Actions run `35065952569` passed. |
 
-## Platform menu audit decisions
+## Retired platform menu model
 
 | Concern | Current decision and evidence |
 | --- | --- |
 | Stable identity and contract | Menu keys are canonical bounded business identifiers and runtime IDs use the shared UUIDv5 helper with a pinned namespace/golden mapping. Deleting and recreating the same key restores the logically deleted row and retains the same ID, while an active duplicate maps to conflict. Names, paths, components, URLs, icons, metadata, sort values, IDs, filter lists and time ranges are bounded in both HTTP and service layers. Metadata must be a JSON object; component and route paths reject traversal/ambiguous separators, and external URLs require an absolute HTTP(S) host without user information. |
 | Tree integrity | Directory/page/external/button parent rules are validated across the complete candidate tree, so changing a directory with descendants into an incompatible node type is rejected. Buttons require a page parent and active permission; all other children require a directory parent. The shared tree utility detects duplicate/orphan/cycle corruption. Reads are deterministically ordered and database-limited to `max_nodes + 1` before rejecting an oversized tree; searches retain ancestors. |
-| Authorization and tenant behavior | Administration uses the platform-scope `menu` PBAC Resource. Current-user navigation uses the separate tenant-scope `menu.current:read` Resource, then obtains authoritative effective tenant permissions and includes only active/visible nodes whose own and ancestor requirements are satisfied. It never trusts permission IDs supplied by the frontend and does not query another service's owned tables. Platform menu definitions are global; tenant-specific visibility is a derived authorization view. |
+| Authorization and tenant behavior | Historical behavior only. Migration `000031` and the application/navigation cutover remove the old `menu` and `menu.current` Resources, routes, DI and table. |
 | Concurrency, cache and audit | Structural mutations use the shared renewable `menu:tree` lease plus a serializable transaction, unique constraints and expected versions. Successful writes invalidate both bounded source-tree cache variants only after commit. The cached value is never a principal-specific authorization result. Domain writes plus operation and privilege-security events share one transaction; either outbox failure rolls back the menu change, while failed attempts are recorded separately. Database triggers maintain all mandatory audit/version/delete fields. |
 
 ## Application and navigation replacement
 
 | Area | Status | Evidence and remaining work |
 | --- | --- | --- |
-| Application registry | in_progress | Migration `000030` defines platform-scoped applications with deterministic business identity, full audit fields, status/order metadata and PostgreSQL/Kingbase/MySQL audit enforcement. The Go domain module validates normalized codes, paths, JSON bounds and UUIDv5 generation. CRUD/page transport and transactional operation-log wiring remain. |
-| Navigation tree | in_progress | Migration `000030` defines application-owned `directory/menu` nodes. The domain module enforces the type matrix, same-application trees, directory-only parents, stable UUIDv5 identity and canonical PBAC Resource/Action resolution for menu leaves. CRUD/tree transport, current-user batch capability projection, cache and removal of the legacy `menus.permission_id` model remain. |
+| Application registry | complete | Migration `000030` defines platform-scoped applications with deterministic business identity, full audit fields, status/order metadata and PostgreSQL/Kingbase/MySQL audit enforcement. POST CRUD/page interfaces use platform PBAC descriptors, optimistic versions, soft delete, transactional operation logs, bounded filters and shared presentation rules. |
+| Navigation tree | complete | Migration `000030` defines application-owned `directory/menu` nodes. Management CRUD/tree validates the complete same-application tree and canonical Resource/Action pairs. `/me/navigations` batch-evaluates menu targets and returns only active/visible allowed leaves plus required ancestors. Migration `000031` removes the legacy table and code path. |
 
-The new navigation model is intentionally parallel to the legacy menu table
-until an explicit data conversion can map every legacy permission ID to one
-canonical Resource/Action. No route may expose both models as competing
-authorization sources. The legacy section above remains authoritative for the
-currently exposed `/menus` routes until that cutover is completed.
+The cutover is intentionally non-compatible: legacy permission-ID menus are not
+copied because a permission database ID is not a canonical Resource/Action
+contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Presentation | Stable key/ID, name, route, component, icon and permission reference give the frontend display/navigation contract without exposing ID-only relationships. Get/admin/current trees resolve creator/updater names through the shared bounded Identity adapter only after source-cache reads and authorization filtering, so cached data remains principal-independent. Missing system/service actors retain stable-ID fallback and timestamps render in `Asia/Shanghai`. |
 | Tests | Unit tests cover stable UUID mapping, validation, traversal rejection, cycle/parent-type rules, ancestor filtering, protected ancestors, cache population/invalidation, actor presentation fallback/+08 conversion and transactional-audit rollback. The service-contained PostgreSQL/MySQL lifecycle covers nested create/filter/update/stale conflict/dependent delete/logical delete and stable-ID restore; GitHub Actions run `35065952569` passed. |
 

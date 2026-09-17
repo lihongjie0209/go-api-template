@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/application"
 	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
 	"github.com/lihongjie0209/go-api-template/internal/background"
@@ -22,8 +23,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/logging"
-	"github.com/lihongjie0209/go-api-template/internal/menu"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
+	"github.com/lihongjie0209/go-api-template/internal/navigation"
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
@@ -68,8 +69,9 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(newDataPermissionSchemas, datapermission.NewRuntimeEngine, datapermission.NewRepository, newDataPermissionRuntimeLoader, datapermission.NewLifecycleService, datapermission.NewService, datapermission.NewSimulator),
 		fx.Invoke(startDataPermissionRuntime),
 		fx.Provide(platformconfig.New),
+		fx.Provide(application.New),
+		fx.Provide(navigation.New),
 		fx.Provide(dictionary.New, dictionary.NewProviderRegistry),
-		fx.Provide(menu.New),
 		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), tenant.NewMembershipService, tenant.NewContextService),
 		fx.Provide(tenant.NewDepartmentService),
 		fx.Provide(idempotency.New),

@@ -14,6 +14,14 @@ type Request struct {
 	Keyword  string `json:"keyword,omitempty"`
 }
 
+// Sort is the shared API shape for allowlisted server-side sorting. Services
+// must map Field to a constant SQL identifier and never interpolate it before
+// validation.
+type Sort struct {
+	Field     string `json:"field"`
+	Direction string `json:"direction"`
+}
+
 type Result[T any] struct {
 	Items    []T   `json:"items"`
 	Page     int   `json:"page"`

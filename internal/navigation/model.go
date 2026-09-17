@@ -155,6 +155,35 @@ func Build(records []Record) ([]*Node, error) {
 	return convert(forest), nil
 }
 
+// PruneVisible returns a new tree containing allowed menus and the directories
+// required to reach them. Management-only fields remain unchanged, and the
+// input tree is never mutated.
+func PruneVisible(nodes []*Node, allowedMenuIDs map[string]struct{}) []*Node {
+	result := make([]*Node, 0, len(nodes))
+	for _, node := range nodes {
+		if node == nil || !node.Visible || node.Status != "active" {
+			continue
+		}
+		children := PruneVisible(node.Children, allowedMenuIDs)
+		if node.Type == "directory" {
+			if len(children) == 0 {
+				continue
+			}
+			copyNode := *node
+			copyNode.Children = children
+			result = append(result, &copyNode)
+			continue
+		}
+		if _, allowed := allowedMenuIDs[node.ID]; !allowed {
+			continue
+		}
+		copyNode := *node
+		copyNode.Children = []*Node{}
+		result = append(result, &copyNode)
+	}
+	return result
+}
+
 func validPath(value string) bool {
 	return pathPattern.MatchString(value) && !strings.Contains(value, "//") && !strings.Contains(value, "..")
 }

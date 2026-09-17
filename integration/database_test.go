@@ -17,6 +17,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
+	"github.com/lihongjie0209/go-api-template/internal/application"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	userauthentication "github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
@@ -28,8 +29,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/dictionary"
 	"github.com/lihongjie0209/go-api-template/internal/files"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
-	"github.com/lihongjie0209/go-api-template/internal/menu"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
+	"github.com/lihongjie0209/go-api-template/internal/navigation"
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
@@ -139,7 +140,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testLogQueryPresentation(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
-			testMenuLifecycle(t, ctx, db, permissionID)
+			testApplicationNavigationLifecycle(t, ctx, db)
 			testPlatformConfigLifecycle(t, ctx, db)
 			testDictionaryLifecycle(t, ctx, db)
 			testPBACLifecycle(t, ctx, db)
@@ -848,51 +849,51 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	return leaf.ID
 }
 
-func testMenuLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
+func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
-	cfg := config.Config{Menu: config.Menu{CacheTTL: time.Minute, MaxNodes: 10000}, DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	service := menu.New(db, appdb.NewTransactor(db), nil, nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, nil, slog.Default(), cfg)
-	actorCtx := platformprincipal.SystemContext(ctx, "menu-integration")
-	root, err := service.Create(actorCtx, menu.Input{Key: "integration:menu", Name: "集成菜单", Type: "directory", Visible: true, Status: "active"})
+	definitions := pbac.PlatformResourceDefinitions()
+	definitions = append(definitions, pbac.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}})
+	resources, err := pbac.NewRegistryFromDefinitions(definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := service.Create(actorCtx, menu.Input{ParentID: &root.ID, Key: "integration:menu:page", Name: "集成页面", Type: "page", RoutePath: "/integration", Component: "integration/index", Visible: true, Status: "active"})
+	transactor := appdb.NewTransactor(db)
+	applications := application.New(db, transactor, nil, nil)
+	navigations := navigation.New(db, transactor, resources, nil, nil)
+	actorCtx := platformprincipal.SystemContext(ctx, "navigation-integration")
+	app, err := applications.Create(actorCtx, application.Input{Code: "integration", Name: "集成应用", HomePath: "/integration", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	button, err := service.Create(actorCtx, menu.Input{ParentID: &page.ID, Key: "integration:menu:read", Name: "读取", Type: "button", PermissionID: &permissionID, Visible: true, Status: "active"})
+	root, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, Key: "system", Name: "系统", Type: "directory", Visible: true, Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := service.Tree(actorCtx, menu.TreeInput{Keyword: "集成页面", Types: []string{"page"}})
+	page, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, ParentID: &root.ID, Key: "permissions", Name: "权限", Type: "menu", RoutePath: "/permissions", Component: "system/permissions", Resource: "integration.permissions", Action: "read", Visible: true, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := navigations.Tree(actorCtx, navigation.TreeInput{ApplicationID: app.ID, Keyword: "权限", Types: []string{"menu"}})
 	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
-		t.Fatalf("filtered menu tree=%+v err=%v", tree, err)
+		t.Fatalf("filtered navigation tree=%+v err=%v", tree, err)
 	}
-	updated, err := service.Update(actorCtx, menu.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "集成页面更新", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Visible: page.Visible, Status: page.Status, Version: page.Version})
+	updated, err := navigations.Update(actorCtx, navigation.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "权限管理", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Resource: page.Resource, Action: page.Action, Visible: page.Visible, Status: page.Status, Version: page.Version})
 	if err != nil || updated.Version != page.Version+1 {
-		t.Fatalf("updated menu=%+v err=%v", updated, err)
+		t.Fatalf("updated navigation=%+v err=%v", updated, err)
 	}
-	if _, err := service.Update(actorCtx, menu.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "旧版本", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Visible: page.Visible, Status: page.Status, Version: page.Version}); !errors.Is(err, menu.ErrConflict) {
-		t.Fatalf("stale menu update error=%v", err)
+	if _, err := navigations.Update(actorCtx, navigation.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "旧版本", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Resource: page.Resource, Action: page.Action, Visible: page.Visible, Status: page.Status, Version: page.Version}); !errors.Is(err, navigation.ErrConflict) {
+		t.Fatalf("stale navigation update error=%v", err)
 	}
-	if err := service.Delete(actorCtx, page.ID, updated.Version); !errors.Is(err, menu.ErrConflict) {
-		t.Fatalf("delete menu with child error=%v", err)
+	if err := navigations.Delete(actorCtx, root.ID, root.Version); !errors.Is(err, navigation.ErrConflict) {
+		t.Fatalf("delete navigation with child error=%v", err)
 	}
-	if err := service.Delete(actorCtx, button.ID, button.Version); err != nil {
+	if err := navigations.Delete(actorCtx, page.ID, updated.Version); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Delete(actorCtx, page.ID, updated.Version); err != nil {
+	if err := navigations.Delete(actorCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Delete(actorCtx, root.ID, root.Version); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := service.Create(actorCtx, menu.Input{Key: root.Key, Name: "恢复菜单", Type: "directory", Visible: true, Status: "active"})
-	if err != nil || restored.ID != root.ID || restored.Version <= root.Version {
-		t.Fatalf("restored stable menu=%+v err=%v", restored, err)
-	}
-	if err := service.Delete(actorCtx, restored.ID, restored.Version); err != nil {
+	if err := applications.Delete(actorCtx, app.ID, app.Version); err != nil {
 		t.Fatal(err)
 	}
 }

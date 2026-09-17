@@ -31,3 +31,19 @@ func TestBuildRejectsCrossApplicationAndMenuParent(t *testing.T) {
 	_, err = Build([]Record{{ID: "root", ApplicationID: "app-1", Type: "menu"}, {ID: "members", ApplicationID: "app-1", ParentID: &parent, Type: "menu"}})
 	require.ErrorIs(t, err, ErrInvalid)
 }
+
+func TestPruneVisibleKeepsOnlyAllowedMenusAndAncestors(t *testing.T) {
+	t.Parallel()
+	parent := "root"
+	tree, err := Build([]Record{
+		{ID: parent, ApplicationID: "app-1", Type: "directory", Visible: true, Status: "active"},
+		{ID: "allowed", ApplicationID: "app-1", ParentID: &parent, Type: "menu", Visible: true, Status: "active"},
+		{ID: "denied", ApplicationID: "app-1", ParentID: &parent, Type: "menu", Visible: true, Status: "active"},
+	})
+	require.NoError(t, err)
+	visible := PruneVisible(tree, map[string]struct{}{"allowed": {}})
+	require.Len(t, visible, 1)
+	require.Equal(t, "allowed", visible[0].Children[0].ID)
+	require.Len(t, visible[0].Children, 1)
+	require.Len(t, tree[0].Children, 2, "input tree must not be mutated")
+}

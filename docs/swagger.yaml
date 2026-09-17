@@ -1,5 +1,42 @@
 basePath: /
 definitions:
+  application.Page:
+    type: object
+  application.Record:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      description:
+        type: string
+      home_path:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      metadata:
+        type: object
+      name:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
   auth.JWK:
     properties:
       alg:
@@ -656,6 +693,50 @@ definitions:
     required:
     - username
     type: object
+  httptransport.ApplicationIDRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.ApplicationPageRequest:
+    properties:
+      codes:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      sort:
+        items:
+          $ref: '#/definitions/pagination.Sort'
+        maxItems: 3
+        type: array
+      statuses:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+    required:
+    - codes
+    - ids
+    type: object
   httptransport.CapabilityEvaluateRequest:
     properties:
       items:
@@ -678,6 +759,39 @@ definitions:
     required:
     - new_password
     - old_password
+    type: object
+  httptransport.CreateApplicationRequest:
+    properties:
+      code:
+        maxLength: 64
+        type: string
+      description:
+        maxLength: 4096
+        type: string
+      home_path:
+        maxLength: 2048
+        type: string
+      icon:
+        maxLength: 256
+        type: string
+      metadata:
+        type: object
+      name:
+        maxLength: 256
+        type: string
+      sort_order:
+        maximum: 1000000000
+        minimum: -1000000000
+        type: integer
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+    required:
+    - code
+    - name
+    - status
     type: object
   httptransport.CreateDepartmentRequest:
     properties:
@@ -758,6 +872,60 @@ definitions:
     - status
     - type
     type: object
+  httptransport.CreateNavigationRequest:
+    properties:
+      action:
+        maxLength: 128
+        type: string
+      application_id:
+        maxLength: 128
+        type: string
+      component:
+        maxLength: 512
+        type: string
+      icon:
+        maxLength: 256
+        type: string
+      metadata:
+        type: object
+      name:
+        maxLength: 256
+        type: string
+      navigation_key:
+        maxLength: 128
+        type: string
+      navigation_type:
+        enum:
+        - directory
+        - menu
+        type: string
+      parent_id:
+        maxLength: 128
+        type: string
+      resource:
+        maxLength: 128
+        type: string
+      route_path:
+        maxLength: 2048
+        type: string
+      sort_order:
+        maximum: 1000000000
+        minimum: -1000000000
+        type: integer
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      visible:
+        type: boolean
+    required:
+    - application_id
+    - name
+    - navigation_key
+    - navigation_type
+    - status
+    type: object
   httptransport.CreatePlatformConfigRequest:
     properties:
       category:
@@ -832,6 +1000,14 @@ definitions:
     required:
     - display_name
     - username
+    type: object
+  httptransport.CurrentNavigationRequest:
+    properties:
+      application_id:
+        maxLength: 128
+        type: string
+    required:
+    - application_id
     type: object
   httptransport.DataPermissionPolicyCreateRequest:
     properties:
@@ -973,6 +1149,17 @@ definitions:
     required:
     - policy_id
     type: object
+  httptransport.DeleteApplicationRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
   httptransport.DeleteDepartmentRequest:
     properties:
       id:
@@ -993,7 +1180,7 @@ definitions:
     - id
     - version
     type: object
-  httptransport.DeleteMenuRequest:
+  httptransport.DeleteNavigationRequest:
     properties:
       id:
         maxLength: 128
@@ -1255,97 +1442,6 @@ definitions:
       subject:
         type: string
     type: object
-  httptransport.MenuIDRequest:
-    properties:
-      id:
-        maxLength: 128
-        type: string
-    required:
-    - id
-    type: object
-  httptransport.MenuMutationRequest:
-    properties:
-      component:
-        maxLength: 512
-        type: string
-      external_url:
-        maxLength: 2048
-        type: string
-      icon:
-        maxLength: 256
-        type: string
-      id:
-        maxLength: 128
-        type: string
-      menu_key:
-        maxLength: 128
-        type: string
-      menu_type:
-        enum:
-        - directory
-        - page
-        - button
-        - external
-        type: string
-      metadata:
-        type: object
-      name:
-        maxLength: 256
-        type: string
-      parent_id:
-        maxLength: 128
-        type: string
-      permission_id:
-        maxLength: 128
-        type: string
-      route_path:
-        maxLength: 2048
-        type: string
-      sort_order:
-        maximum: 1000000000
-        minimum: -1000000000
-        type: integer
-      status:
-        enum:
-        - active
-        - disabled
-        type: string
-      version:
-        type: integer
-      visible:
-        type: boolean
-    required:
-    - menu_type
-    - name
-    - status
-    type: object
-  httptransport.MenuTreeRequest:
-    properties:
-      created_at_from:
-        type: string
-      created_at_to:
-        type: string
-      ids:
-        items:
-          type: string
-        maxItems: 200
-        type: array
-      keyword:
-        maxLength: 256
-        type: string
-      statuses:
-        items:
-          type: string
-        maxItems: 10
-        type: array
-      types:
-        items:
-          type: string
-        maxItems: 10
-        type: array
-    required:
-    - ids
-    type: object
   httptransport.MutateServiceAccountSecretRequest:
     properties:
       id:
@@ -1355,6 +1451,35 @@ definitions:
     required:
     - id
     - version
+    type: object
+  httptransport.NavigationIDRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.NavigationTreeRequest:
+    properties:
+      application_id:
+        maxLength: 128
+        type: string
+      keyword:
+        maxLength: 256
+        type: string
+      statuses:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+      types:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+    required:
+    - application_id
     type: object
   httptransport.OperationLogIDRequest:
     properties:
@@ -2047,6 +2172,42 @@ definitions:
           type: string
         type: array
     type: object
+  httptransport.UpdateApplicationRequest:
+    properties:
+      description:
+        maxLength: 4096
+        type: string
+      home_path:
+        maxLength: 2048
+        type: string
+      icon:
+        maxLength: 256
+        type: string
+      id:
+        maxLength: 128
+        type: string
+      metadata:
+        type: object
+      name:
+        maxLength: 256
+        type: string
+      sort_order:
+        maximum: 1000000000
+        minimum: -1000000000
+        type: integer
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - name
+    - status
+    - version
+    type: object
   httptransport.UpdateDepartmentRequest:
     properties:
       id:
@@ -2112,6 +2273,59 @@ definitions:
     required:
     - id
     - name
+    - status
+    - version
+    type: object
+  httptransport.UpdateNavigationRequest:
+    properties:
+      action:
+        maxLength: 128
+        type: string
+      component:
+        maxLength: 512
+        type: string
+      icon:
+        maxLength: 256
+        type: string
+      id:
+        maxLength: 128
+        type: string
+      metadata:
+        type: object
+      name:
+        maxLength: 256
+        type: string
+      navigation_type:
+        enum:
+        - directory
+        - menu
+        type: string
+      parent_id:
+        maxLength: 128
+        type: string
+      resource:
+        maxLength: 128
+        type: string
+      route_path:
+        maxLength: 2048
+        type: string
+      sort_order:
+        maximum: 1000000000
+        minimum: -1000000000
+        type: integer
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      version:
+        type: integer
+      visible:
+        type: boolean
+    required:
+    - id
+    - name
+    - navigation_type
     - status
     - version
     type: object
@@ -2400,11 +2614,15 @@ definitions:
       version:
         type: integer
     type: object
-  menu.Node:
+  navigation.Node:
     properties:
+      action:
+        type: string
+      application_id:
+        type: string
       children:
         items:
-          $ref: '#/definitions/menu.Node'
+          $ref: '#/definitions/navigation.Node'
         type: array
       component:
         type: string
@@ -2414,23 +2632,21 @@ definitions:
         type: string
       created_by_name:
         type: string
-      external_url:
-        type: string
       icon:
         type: string
       id:
-        type: string
-      menu_key:
-        type: string
-      menu_type:
         type: string
       metadata:
         type: object
       name:
         type: string
+      navigation_key:
+        type: string
+      navigation_type:
+        type: string
       parent_id:
         type: string
-      permission_id:
+      resource:
         type: string
       route_path:
         type: string
@@ -2449,8 +2665,12 @@ definitions:
       visible:
         type: boolean
     type: object
-  menu.Record:
+  navigation.Record:
     properties:
+      action:
+        type: string
+      application_id:
+        type: string
       component:
         type: string
       created_at:
@@ -2459,23 +2679,21 @@ definitions:
         type: string
       created_by_name:
         type: string
-      external_url:
-        type: string
       icon:
         type: string
       id:
-        type: string
-      menu_key:
-        type: string
-      menu_type:
         type: string
       metadata:
         type: object
       name:
         type: string
+      navigation_key:
+        type: string
+      navigation_type:
+        type: string
       parent_id:
         type: string
-      permission_id:
+      resource:
         type: string
       route_path:
         type: string
@@ -2573,6 +2791,13 @@ definitions:
         type: string
       version:
         type: integer
+    type: object
+  pagination.Sort:
+    properties:
+      direction:
+        type: string
+      field:
+        type: string
     type: object
   pbac.ActionDefinition:
     properties:
@@ -3388,6 +3613,121 @@ paths:
       summary: Publish JWT verification keys in the common API envelope
       tags:
       - authentication
+  /api/v1/applications/create:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateApplicationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create an application
+      tags:
+      - applications
+  /api/v1/applications/delete:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteApplicationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete an empty application
+      tags:
+      - applications
+  /api/v1/applications/get:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an application
+      tags:
+      - applications
+  /api/v1/applications/page:
+    post:
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationPageRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Page'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page applications
+      tags:
+      - applications
+  /api/v1/applications/update:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateApplicationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Record'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update an application
+      tags:
+      - applications
   /api/v1/auth/login:
     post:
       consumes:
@@ -4656,8 +4996,15 @@ paths:
       summary: Return the authenticated subject
       tags:
       - authentication
-  /api/v1/me/menus:
+  /api/v1/me/navigations:
     post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CurrentNavigationRequest'
       responses:
         "200":
           description: OK
@@ -4667,23 +5014,23 @@ paths:
             - properties:
                 body:
                   items:
-                    $ref: '#/definitions/menu.Node'
+                    $ref: '#/definitions/navigation.Node'
                   type: array
               type: object
       security:
       - Bearer: []
-      summary: Return menus visible in the current tenant context
+      summary: Get the current principal's visible application navigation
       tags:
-      - menus
-  /api/v1/menus/create:
+      - navigations
+  /api/v1/navigations/create:
     post:
       parameters:
-      - description: Menu
+      - description: Navigation
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/httptransport.MenuMutationRequest'
+          $ref: '#/definitions/httptransport.CreateNavigationRequest'
       responses:
         "200":
           description: OK
@@ -4692,22 +5039,22 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/menu.Record'
+                  $ref: '#/definitions/navigation.Record'
               type: object
       security:
       - Bearer: []
-      summary: Create a platform menu with a stable UUID v5 derived from menu_key
+      summary: Create an application navigation
       tags:
-      - menus
-  /api/v1/menus/delete:
+      - navigations
+  /api/v1/navigations/delete:
     post:
       parameters:
-      - description: Menu and version
+      - description: Navigation
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/httptransport.DeleteMenuRequest'
+          $ref: '#/definitions/httptransport.DeleteNavigationRequest'
       responses:
         "200":
           description: OK
@@ -4715,18 +5062,18 @@ paths:
             $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
-      summary: Delete a leaf platform menu
+      summary: Delete a leaf application navigation
       tags:
-      - menus
-  /api/v1/menus/get:
+      - navigations
+  /api/v1/navigations/get:
     post:
       parameters:
-      - description: Menu
+      - description: Navigation
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/httptransport.MenuIDRequest'
+          $ref: '#/definitions/httptransport.NavigationIDRequest'
       responses:
         "200":
           description: OK
@@ -4735,22 +5082,22 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/menu.Record'
+                  $ref: '#/definitions/navigation.Record'
               type: object
       security:
       - Bearer: []
-      summary: Get a platform menu
+      summary: Get an application navigation
       tags:
-      - menus
-  /api/v1/menus/tree:
+      - navigations
+  /api/v1/navigations/tree:
     post:
       parameters:
-      - description: Tree filters
+      - description: Filters
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/httptransport.MenuTreeRequest'
+          $ref: '#/definitions/httptransport.NavigationTreeRequest'
       responses:
         "200":
           description: OK
@@ -4760,23 +5107,23 @@ paths:
             - properties:
                 body:
                   items:
-                    $ref: '#/definitions/menu.Node'
+                    $ref: '#/definitions/navigation.Node'
                   type: array
               type: object
       security:
       - Bearer: []
-      summary: Return the complete platform menu tree
+      summary: Get one application's navigation tree
       tags:
-      - menus
-  /api/v1/menus/update:
+      - navigations
+  /api/v1/navigations/update:
     post:
       parameters:
-      - description: Menu and version
+      - description: Navigation
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/httptransport.MenuMutationRequest'
+          $ref: '#/definitions/httptransport.UpdateNavigationRequest'
       responses:
         "200":
           description: OK
@@ -4785,13 +5132,13 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/menu.Record'
+                  $ref: '#/definitions/navigation.Record'
               type: object
       security:
       - Bearer: []
-      summary: Update or move a platform menu
+      summary: Update or move an application navigation
       tags:
-      - menus
+      - navigations
   /api/v1/operation-logs/frontend/record:
     post:
       consumes:

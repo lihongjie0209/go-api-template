@@ -46,6 +46,214 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/applications/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Create an application",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CreateApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/applications/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Delete an empty application",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DeleteApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/applications/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Get an application",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/applications/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Page applications",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Page"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/applications/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Update an application",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.UpdateApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/login": {
             "post": {
                 "consumes": [
@@ -2274,7 +2482,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/me/menus": {
+        "/api/v1/me/navigations": {
             "post": {
                 "security": [
                     {
@@ -2282,9 +2490,20 @@ const docTemplate = `{
                     }
                 ],
                 "tags": [
-                    "menus"
+                    "navigations"
                 ],
-                "summary": "Return menus visible in the current tenant context",
+                "summary": "Get the current principal's visible application navigation",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CurrentNavigationRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -2299,7 +2518,7 @@ const docTemplate = `{
                                         "body": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/menu.Node"
+                                                "$ref": "#/definitions/navigation.Node"
                                             }
                                         }
                                     }
@@ -2310,7 +2529,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/menus/create": {
+        "/api/v1/navigations/create": {
             "post": {
                 "security": [
                     {
@@ -2318,17 +2537,17 @@ const docTemplate = `{
                     }
                 ],
                 "tags": [
-                    "menus"
+                    "navigations"
                 ],
-                "summary": "Create a platform menu with a stable UUID v5 derived from menu_key",
+                "summary": "Create an application navigation",
                 "parameters": [
                     {
-                        "description": "Menu",
+                        "description": "Navigation",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.MenuMutationRequest"
+                            "$ref": "#/definitions/httptransport.CreateNavigationRequest"
                         }
                     }
                 ],
@@ -2344,7 +2563,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/menu.Record"
+                                            "$ref": "#/definitions/navigation.Record"
                                         }
                                     }
                                 }
@@ -2354,7 +2573,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/menus/delete": {
+        "/api/v1/navigations/delete": {
             "post": {
                 "security": [
                     {
@@ -2362,17 +2581,17 @@ const docTemplate = `{
                     }
                 ],
                 "tags": [
-                    "menus"
+                    "navigations"
                 ],
-                "summary": "Delete a leaf platform menu",
+                "summary": "Delete a leaf application navigation",
                 "parameters": [
                     {
-                        "description": "Menu and version",
+                        "description": "Navigation",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.DeleteMenuRequest"
+                            "$ref": "#/definitions/httptransport.DeleteNavigationRequest"
                         }
                     }
                 ],
@@ -2386,7 +2605,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/menus/get": {
+        "/api/v1/navigations/get": {
             "post": {
                 "security": [
                     {
@@ -2394,17 +2613,17 @@ const docTemplate = `{
                     }
                 ],
                 "tags": [
-                    "menus"
+                    "navigations"
                 ],
-                "summary": "Get a platform menu",
+                "summary": "Get an application navigation",
                 "parameters": [
                     {
-                        "description": "Menu",
+                        "description": "Navigation",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.MenuIDRequest"
+                            "$ref": "#/definitions/httptransport.NavigationIDRequest"
                         }
                     }
                 ],
@@ -2420,7 +2639,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/menu.Record"
+                                            "$ref": "#/definitions/navigation.Record"
                                         }
                                     }
                                 }
@@ -2430,7 +2649,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/menus/tree": {
+        "/api/v1/navigations/tree": {
             "post": {
                 "security": [
                     {
@@ -2438,17 +2657,17 @@ const docTemplate = `{
                     }
                 ],
                 "tags": [
-                    "menus"
+                    "navigations"
                 ],
-                "summary": "Return the complete platform menu tree",
+                "summary": "Get one application's navigation tree",
                 "parameters": [
                     {
-                        "description": "Tree filters",
+                        "description": "Filters",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.MenuTreeRequest"
+                            "$ref": "#/definitions/httptransport.NavigationTreeRequest"
                         }
                     }
                 ],
@@ -2466,7 +2685,7 @@ const docTemplate = `{
                                         "body": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/menu.Node"
+                                                "$ref": "#/definitions/navigation.Node"
                                             }
                                         }
                                     }
@@ -2477,7 +2696,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/menus/update": {
+        "/api/v1/navigations/update": {
             "post": {
                 "security": [
                     {
@@ -2485,17 +2704,17 @@ const docTemplate = `{
                     }
                 ],
                 "tags": [
-                    "menus"
+                    "navigations"
                 ],
-                "summary": "Update or move a platform menu",
+                "summary": "Update or move an application navigation",
                 "parameters": [
                     {
-                        "description": "Menu and version",
+                        "description": "Navigation",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.MenuMutationRequest"
+                            "$ref": "#/definitions/httptransport.UpdateNavigationRequest"
                         }
                     }
                 ],
@@ -2511,7 +2730,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/menu.Record"
+                                            "$ref": "#/definitions/navigation.Record"
                                         }
                                     }
                                 }
@@ -6612,6 +6831,62 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "application.Page": {
+            "type": "object"
+        },
+        "application.Record": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "home_path": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "auth.JWK": {
             "type": "object",
             "properties": {
@@ -7609,6 +7884,70 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.ApplicationIDRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "httptransport.ApplicationPageRequest": {
+            "type": "object",
+            "required": [
+                "codes",
+                "ids"
+            ],
+            "properties": {
+                "codes": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "sort": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "$ref": "#/definitions/pagination.Sort"
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "httptransport.CapabilityEvaluateRequest": {
             "type": "object",
             "required": [
@@ -7639,6 +7978,51 @@ const docTemplate = `{
                 "old_password": {
                     "type": "string",
                     "maxLength": 1024
+                }
+            }
+        },
+        "httptransport.CreateApplicationRequest": {
+            "type": "object",
+            "required": [
+                "code",
+                "name",
+                "status"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 4096
+                },
+                "home_path": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
+                "icon": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "sort_order": {
+                    "type": "integer",
+                    "maximum": 1000000000,
+                    "minimum": -1000000000
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
                 }
             }
         },
@@ -7758,6 +8142,79 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.CreateNavigationRequest": {
+            "type": "object",
+            "required": [
+                "application_id",
+                "name",
+                "navigation_key",
+                "navigation_type",
+                "status"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "application_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "component": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "icon": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "navigation_key": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "navigation_type": {
+                    "type": "string",
+                    "enum": [
+                        "directory",
+                        "menu"
+                    ]
+                },
+                "parent_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "resource": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "route_path": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
+                "sort_order": {
+                    "type": "integer",
+                    "maximum": 1000000000,
+                    "minimum": -1000000000
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "visible": {
+                    "type": "boolean"
+                }
+            }
+        },
         "httptransport.CreatePlatformConfigRequest": {
             "type": "object",
             "required": [
@@ -7862,6 +8319,18 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "httptransport.CurrentNavigationRequest": {
+            "type": "object",
+            "required": [
+                "application_id"
+            ],
+            "properties": {
+                "application_id": {
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -8070,6 +8539,22 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.DeleteApplicationRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "version"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.DeleteDepartmentRequest": {
             "type": "object",
             "required": [
@@ -8100,7 +8585,7 @@ const docTemplate = `{
                 }
             }
         },
-        "httptransport.DeleteMenuRequest": {
+        "httptransport.DeleteNavigationRequest": {
             "type": "object",
             "required": [
                 "id",
@@ -8489,133 +8974,6 @@ const docTemplate = `{
                 }
             }
         },
-        "httptransport.MenuIDRequest": {
-            "type": "object",
-            "required": [
-                "id"
-            ],
-            "properties": {
-                "id": {
-                    "type": "string",
-                    "maxLength": 128
-                }
-            }
-        },
-        "httptransport.MenuMutationRequest": {
-            "type": "object",
-            "required": [
-                "menu_type",
-                "name",
-                "status"
-            ],
-            "properties": {
-                "component": {
-                    "type": "string",
-                    "maxLength": 512
-                },
-                "external_url": {
-                    "type": "string",
-                    "maxLength": 2048
-                },
-                "icon": {
-                    "type": "string",
-                    "maxLength": 256
-                },
-                "id": {
-                    "type": "string",
-                    "maxLength": 128
-                },
-                "menu_key": {
-                    "type": "string",
-                    "maxLength": 128
-                },
-                "menu_type": {
-                    "type": "string",
-                    "enum": [
-                        "directory",
-                        "page",
-                        "button",
-                        "external"
-                    ]
-                },
-                "metadata": {
-                    "type": "object"
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 256
-                },
-                "parent_id": {
-                    "type": "string",
-                    "maxLength": 128
-                },
-                "permission_id": {
-                    "type": "string",
-                    "maxLength": 128
-                },
-                "route_path": {
-                    "type": "string",
-                    "maxLength": 2048
-                },
-                "sort_order": {
-                    "type": "integer",
-                    "maximum": 1000000000,
-                    "minimum": -1000000000
-                },
-                "status": {
-                    "type": "string",
-                    "enum": [
-                        "active",
-                        "disabled"
-                    ]
-                },
-                "version": {
-                    "type": "integer"
-                },
-                "visible": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "httptransport.MenuTreeRequest": {
-            "type": "object",
-            "required": [
-                "ids"
-            ],
-            "properties": {
-                "created_at_from": {
-                    "type": "string"
-                },
-                "created_at_to": {
-                    "type": "string"
-                },
-                "ids": {
-                    "type": "array",
-                    "maxItems": 200,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "keyword": {
-                    "type": "string",
-                    "maxLength": 256
-                },
-                "statuses": {
-                    "type": "array",
-                    "maxItems": 10,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "types": {
-                    "type": "array",
-                    "maxItems": 10,
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
         "httptransport.MutateServiceAccountSecretRequest": {
             "type": "object",
             "required": [
@@ -8628,6 +8986,48 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "httptransport.NavigationIDRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "httptransport.NavigationTreeRequest": {
+            "type": "object",
+            "required": [
+                "application_id"
+            ],
+            "properties": {
+                "application_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "keyword": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "types": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -9654,6 +10054,55 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.UpdateApplicationRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "name",
+                "status",
+                "version"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "maxLength": 4096
+                },
+                "home_path": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
+                "icon": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "sort_order": {
+                    "type": "integer",
+                    "maximum": 1000000000,
+                    "minimum": -1000000000
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.UpdateDepartmentRequest": {
             "type": "object",
             "required": [
@@ -9748,6 +10197,78 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "httptransport.UpdateNavigationRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "name",
+                "navigation_type",
+                "status",
+                "version"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "component": {
+                    "type": "string",
+                    "maxLength": 512
+                },
+                "icon": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "navigation_type": {
+                    "type": "string",
+                    "enum": [
+                        "directory",
+                        "menu"
+                    ]
+                },
+                "parent_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "resource": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "route_path": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
+                "sort_order": {
+                    "type": "integer",
+                    "maximum": 1000000000,
+                    "minimum": -1000000000
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "visible": {
+                    "type": "boolean"
                 }
             }
         },
@@ -10161,13 +10682,19 @@ const docTemplate = `{
                 }
             }
         },
-        "menu.Node": {
+        "navigation.Node": {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "application_id": {
+                    "type": "string"
+                },
                 "children": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/menu.Node"
+                        "$ref": "#/definitions/navigation.Node"
                     }
                 },
                 "component": {
@@ -10182,19 +10709,10 @@ const docTemplate = `{
                 "created_by_name": {
                     "type": "string"
                 },
-                "external_url": {
-                    "type": "string"
-                },
                 "icon": {
                     "type": "string"
                 },
                 "id": {
-                    "type": "string"
-                },
-                "menu_key": {
-                    "type": "string"
-                },
-                "menu_type": {
                     "type": "string"
                 },
                 "metadata": {
@@ -10203,10 +10721,16 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "navigation_key": {
+                    "type": "string"
+                },
+                "navigation_type": {
+                    "type": "string"
+                },
                 "parent_id": {
                     "type": "string"
                 },
-                "permission_id": {
+                "resource": {
                     "type": "string"
                 },
                 "route_path": {
@@ -10235,9 +10759,15 @@ const docTemplate = `{
                 }
             }
         },
-        "menu.Record": {
+        "navigation.Record": {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "application_id": {
+                    "type": "string"
+                },
                 "component": {
                     "type": "string"
                 },
@@ -10250,19 +10780,10 @@ const docTemplate = `{
                 "created_by_name": {
                     "type": "string"
                 },
-                "external_url": {
-                    "type": "string"
-                },
                 "icon": {
                     "type": "string"
                 },
                 "id": {
-                    "type": "string"
-                },
-                "menu_key": {
-                    "type": "string"
-                },
-                "menu_type": {
                     "type": "string"
                 },
                 "metadata": {
@@ -10271,10 +10792,16 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "navigation_key": {
+                    "type": "string"
+                },
+                "navigation_type": {
+                    "type": "string"
+                },
                 "parent_id": {
                     "type": "string"
                 },
-                "permission_id": {
+                "resource": {
                     "type": "string"
                 },
                 "route_path": {
@@ -10421,6 +10948,17 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "pagination.Sort": {
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
                 }
             }
         },

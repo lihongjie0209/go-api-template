@@ -20,11 +20,11 @@
 | Concern | Application decision | Navigation decision |
 | --- | --- | --- |
 | Contract | POST create/get/page/update/delete with bounded filters and sort allowlist | POST create/get/tree/update/delete; tree requires `application_id`, is non-paginated, ordered, and bounded |
-| Authentication | JWT | JWT; current-user projection is a later explicit interface |
-| Authorization | Platform `application:manage actions` | Platform `navigation:manage actions`; menu target is independently evaluated by frontend capability APIs |
+| Authentication | JWT | JWT; current-user projection uses the same authenticated principal |
+| Authorization | Platform `application:<action>` | Platform `navigation:<action>`; `/me/navigations` uses tenant `navigation.current:read`, then batch-evaluates each menu Resource/Action |
 | Operation log | Record create/update/delete | Record create/update/delete and move |
 | Security log | None; no credential or grant changes | None; navigation metadata does not grant authority |
-| Cache | None initially; management reads are not hot | None initially; introduce application-scoped tree snapshots with write-owner invalidation when current-user navigation ships |
+| Cache | None initially; management reads are not hot | None initially; current-user trees remain policy-revision sensitive and are not cached until revision-keyed snapshots are introduced |
 | Distributed lock | None; code uniqueness and optimistic version are authoritative | None; serializable transaction, FK checks, cycle validation, and optimistic version protect mutations |
 | Optimistic lock | Update/delete require version | Update/delete/move require version |
 | Audit | Shared transaction actor and database audit triggers | Shared transaction actor and database audit triggers |
@@ -37,3 +37,7 @@ Application and navigation are platform-scoped configuration. Tenant grants to
 applications are intentionally outside this delivery and must be modeled as a
 separate tenant-owned association rather than adding nullable tenant columns to
 these tables.
+
+Migration `000031` retires the legacy global `menus` table. The old menu HTTP,
+DI, configuration, and PBAC registrations are removed so navigation has one
+authoritative model.

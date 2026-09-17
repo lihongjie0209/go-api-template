@@ -1,0 +1,4 @@
+DROP TRIGGER IF EXISTS menus_audit_bd;
+DROP TRIGGER IF EXISTS menus_audit_bu;
+DROP TRIGGER IF EXISTS menus_audit_bi;
+DROP TABLE IF EXISTS menus;

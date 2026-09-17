@@ -162,7 +162,7 @@ type EndpointAuthorization struct {
 
 平台 scope 的 Resource/Action 禁止写入租户授权上限和租户角色。接口描述声明的 Scope 必须与代码注册表一致，否则视为配置错误而不是尝试降级授权。这样菜单可见性和后端接口使用同一组有效权限，同时保留显式 Deny 的紧急封禁及例外控制能力。
 
-平台管理能力与租户/当前主体能力必须使用不同 Resource。当前平台管理使用 `tenant:*`、`menu:*`，当前租户资料和菜单分别使用 tenant scope 的 `tenant.profile:*`、`menu.current:read`；不得为了复用 Handler 把租户自治接口绑定到平台 Resource，否则租户策略和租户角色将无法安全授权该接口。
+平台管理能力与租户/当前主体能力必须使用不同 Resource。当前平台管理使用 `tenant:*`、`application:*`、`navigation:*`，当前租户资料和应用导航分别使用 tenant scope 的 `tenant.profile:*`、`navigation.current:read`；不得为了复用 Handler 把租户自治接口绑定到平台 Resource，否则租户策略和租户角色将无法安全授权该接口。
 
 租户选择发生在 tenant context 建立之前，因此“可用租户”和“切换租户”使用 principal scope 的 `tenant.selection:list/switch`，Service 再校验当前用户、会话及目标成员关系。已经进入租户后的上下文读取使用 tenant scope 的 `tenant.context:read`。
 

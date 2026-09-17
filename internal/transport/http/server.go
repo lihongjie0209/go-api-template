@@ -33,7 +33,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, platformConfigHandler *PlatformConfigHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -212,12 +212,17 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/data-permissions/tenant-policies/simulate", "data-permission.tenant-policy", "simulate", accesscontrol.DataPermissionNone, dataPermissionHandler.Simulate)
 	jwt("/data-permissions/tenant-policies/publish", "data-permission.tenant-policy", "publish", accesscontrol.DataPermissionNone, dataPermissionHandler.Publish)
 	jwt("/data-permissions/tenant-policies/status/set", "data-permission.tenant-policy", "set-status", accesscontrol.DataPermissionNone, dataPermissionHandler.SetStatus)
-	jwt("/menus/create", "menu", "create", accesscontrol.DataPermissionNone, menuHandler.Create)
-	jwt("/menus/get", "menu", "read", accesscontrol.DataPermissionNone, menuHandler.Get)
-	jwt("/menus/tree", "menu", "list", accesscontrol.DataPermissionNone, menuHandler.Tree)
-	jwt("/menus/update", "menu", "update", accesscontrol.DataPermissionNone, menuHandler.Update)
-	jwt("/menus/delete", "menu", "delete", accesscontrol.DataPermissionNone, menuHandler.Delete)
-	jwt("/me/menus", "menu.current", "read", accesscontrol.DataPermissionNone, menuHandler.Current)
+	jwt("/applications/create", "application", "create", accesscontrol.DataPermissionNone, applicationHandler.Create)
+	jwt("/applications/get", "application", "read", accesscontrol.DataPermissionNone, applicationHandler.Get)
+	jwt("/applications/page", "application", "list", accesscontrol.DataPermissionNone, applicationHandler.Page)
+	jwt("/applications/update", "application", "update", accesscontrol.DataPermissionNone, applicationHandler.Update)
+	jwt("/applications/delete", "application", "delete", accesscontrol.DataPermissionNone, applicationHandler.Delete)
+	jwt("/navigations/create", "navigation", "create", accesscontrol.DataPermissionNone, navigationHandler.Create)
+	jwt("/navigations/get", "navigation", "read", accesscontrol.DataPermissionNone, navigationHandler.Get)
+	jwt("/navigations/tree", "navigation", "list", accesscontrol.DataPermissionNone, navigationHandler.Tree)
+	jwt("/navigations/update", "navigation", "update", accesscontrol.DataPermissionNone, navigationHandler.Update)
+	jwt("/navigations/delete", "navigation", "delete", accesscontrol.DataPermissionNone, navigationHandler.Delete)
+	jwt("/me/navigations", "navigation.current", "read", accesscontrol.DataPermissionNone, navigationHandler.Current)
 	jwt("/permissions/tree", "permission.definition", "list", accesscontrol.DataPermissionNone, permissionHandler.Tree)
 	jwt("/permissions/create", "permission.definition", "create", accesscontrol.DataPermissionNone, permissionHandler.Create)
 	jwt("/permissions/get", "permission.definition", "read", accesscontrol.DataPermissionNone, permissionHandler.Get)
@@ -302,4 +307,4 @@ func registerPprof(group *gin.RouterGroup) {
 	}
 }
 
-var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewPlatformConfigHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewMenuHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewApplicationHandler, NewNavigationHandler, NewPlatformConfigHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))

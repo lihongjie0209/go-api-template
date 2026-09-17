@@ -519,7 +519,6 @@ func TestConfig_RejectsUnboundedCacheTTLs(t *testing.T) {
 	}{
 		{name: "user", mutate: func(cfg *Config) { cfg.User.CacheTTL = 24*time.Hour + time.Second }},
 		{name: "tenant", mutate: func(cfg *Config) { cfg.Tenant.CacheTTL = 24*time.Hour + time.Second }},
-		{name: "menu", mutate: func(cfg *Config) { cfg.Menu.CacheTTL = 24*time.Hour + time.Second }},
 		{name: "platform config", mutate: func(cfg *Config) { cfg.PlatformConfig.CacheTTL = 24*time.Hour + time.Second }},
 	}
 	for _, test := range tests {

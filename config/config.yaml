@@ -145,10 +145,6 @@ user:
 tenant:
   cache_ttl: 5m
 
-menu:
-  cache_ttl: 5m
-  max_nodes: 10000
-
 platform_config:
   cache_ttl: 5m
 
@@ -193,9 +189,12 @@ idempotency:
     - /api/v1/tenant-roles/delete
     - /api/v1/tenant-roles/permissions/set
     - /api/v1/tenant-members/roles/set
-    - /api/v1/menus/create
-    - /api/v1/menus/update
-    - /api/v1/menus/delete
+    - /api/v1/applications/create
+    - /api/v1/applications/update
+    - /api/v1/applications/delete
+    - /api/v1/navigations/create
+    - /api/v1/navigations/update
+    - /api/v1/navigations/delete
     - /api/v1/permissions/create
     - /api/v1/permissions/update
     - /api/v1/permissions/delete
