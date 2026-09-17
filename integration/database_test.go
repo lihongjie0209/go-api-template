@@ -859,7 +859,7 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	}
 	transactor := appdb.NewTransactor(db)
 	applications := application.New(db, transactor, nil, nil)
-	navigations := navigation.New(db, transactor, resources, nil, nil)
+	navigations := navigation.New(db, transactor, resources, nil, nil, nil, slog.Default(), config.Config{Navigation: config.Navigation{CacheTTL: time.Minute}})
 	actorCtx := platformprincipal.SystemContext(ctx, "navigation-integration")
 	app, err := applications.Create(actorCtx, application.Input{Code: "integration", Name: "集成应用", HomePath: "/integration", Status: "active"})
 	if err != nil {

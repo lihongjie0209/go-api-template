@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pbac"
@@ -36,10 +40,13 @@ type Service struct {
 	resources  *pbac.Registry
 	operations operationlog.TransactionalRecorder
 	actors     presentation.ActorResolver
+	cache      cache.Store
+	cacheTTL   time.Duration
+	logger     *slog.Logger
 }
 
-func New(db *sqlx.DB, tx *database.Transactor, resources *pbac.Registry, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver) *Service {
-	return &Service{db: db, tx: tx, resources: resources, operations: operations, actors: actors}
+func New(db *sqlx.DB, tx *database.Transactor, resources *pbac.Registry, store cache.Store, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger, cfg config.Config) *Service {
+	return &Service{db: db, tx: tx, resources: resources, operations: operations, actors: actors, cache: store, cacheTTL: cfg.Navigation.CacheTTL, logger: logger}
 }
 
 func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
@@ -137,11 +144,30 @@ func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Nod
 	if err != nil || actor.Type != platformprincipal.TypeUser || actor.TenantID == "" || actor.MembershipID == "" || applicationID == "" || len(applicationID) > 128 {
 		return nil, ErrInvalid
 	}
-	records := []Record{}
 	now := time.Now()
-	query := `SELECT ` + prefixedColumns("n") + ` FROM navigations n JOIN applications a ON a.id=n.application_id AND a.status='active' AND a.deleted_at IS NULL JOIN tenant_application_grants g ON g.application_id=a.id AND g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE n.application_id=? AND n.status='active' AND n.visible=true AND n.deleted_at IS NULL ORDER BY n.sort_order,n.id LIMIT ?`
-	if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), actor.TenantID, now, now, actor.MembershipID, actor.ID, applicationID, maxTreeNodes+1); err != nil {
+	var revision struct {
+		VersionSum int64 `db:"version_sum"`
+		NodeCount  int64 `db:"node_count"`
+	}
+	revisionQuery := `SELECT COALESCE(SUM(n.version),0) version_sum,COUNT(n.id) node_count FROM applications a JOIN tenant_application_grants g ON g.application_id=a.id AND g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL LEFT JOIN navigations n ON n.application_id=a.id WHERE a.id=? AND a.status='active' AND a.deleted_at IS NULL GROUP BY a.id`
+	if err := s.db.GetContext(ctx, &revision, s.db.Rebind(revisionQuery), actor.TenantID, now, now, actor.MembershipID, actor.ID, applicationID); errors.Is(err, sql.ErrNoRows) {
+		return []*Node{}, nil
+	} else if err != nil {
 		return nil, err
+	}
+	cacheKey := currentSourceCacheKey(applicationID, revision.VersionSum, revision.NodeCount)
+	records, cacheHit := s.cachedCurrentRecords(ctx, cacheKey)
+	if !cacheHit {
+		records = []Record{}
+		query := `SELECT ` + prefixedColumns("n") + ` FROM navigations n WHERE n.application_id=? AND n.status='active' AND n.visible=true AND n.deleted_at IS NULL ORDER BY n.sort_order,n.id LIMIT ?`
+		if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), applicationID, maxTreeNodes+1); err != nil {
+			return nil, err
+		}
+		if len(records) <= maxTreeNodes && s.cache != nil {
+			if err := cache.SetJSON(ctx, s.cache, cacheKey, records, s.cacheTTL); err != nil && s.logger != nil {
+				s.logger.WarnContext(ctx, "write current navigation source cache", "application_id", applicationID, "error", err)
+			}
+		}
 	}
 	if len(records) > maxTreeNodes {
 		return nil, ErrConflict
@@ -150,6 +176,24 @@ func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Nod
 		return nil, err
 	}
 	return Build(records)
+}
+
+func currentSourceCacheKey(applicationID string, versionSum, nodeCount int64) string {
+	return fmt.Sprintf("navigation:current-source:v1:%s:%d:%d", applicationID, versionSum, nodeCount)
+}
+
+func (s *Service) cachedCurrentRecords(ctx context.Context, key string) ([]Record, bool) {
+	if s.cache == nil {
+		return nil, false
+	}
+	records, err := cache.GetJSON[[]Record](ctx, s.cache, key)
+	if err == nil {
+		return records, true
+	}
+	if !errors.Is(err, cache.ErrMiss) && s.logger != nil {
+		s.logger.WarnContext(ctx, "read current navigation source cache", "error", err)
+	}
+	return nil, false
 }
 
 func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error) {

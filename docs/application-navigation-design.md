@@ -24,7 +24,7 @@
 | Authorization | Platform `application:<action>` | Platform `navigation:<action>`; `/me/navigations` uses tenant `navigation.current:read`, then batch-evaluates each menu Resource/Action |
 | Operation log | Record create/update/delete | Record create/update/delete and move |
 | Security log | None; no credential or grant changes | None; navigation metadata does not grant authority |
-| Cache | None initially; management reads are not hot | None initially; current-user trees remain policy-revision sensitive and are not cached until revision-keyed snapshots are introduced |
+| Cache | None; management reads are not hot | `/me/navigations` caches only the application-scoped active/visible source records in the shared Redis Store for `navigation.cache_ttl` (default 5m). Every request still validates active membership, tenant grant validity, and application status in SQL, derives the cache key from the authoritative navigation version sum/count, and re-evaluates PBAC for the current principal. Old revision keys become unreachable and expire; cache failure falls back to SQL. Final principal decisions are never cached. |
 | Distributed lock | None; code uniqueness and optimistic version are authoritative | None; serializable transaction, FK checks, cycle validation, and optimistic version protect mutations |
 | Optimistic lock | Update/delete require version | Update/delete/move require version |
 | Audit | Shared transaction actor and database audit triggers | Shared transaction actor and database audit triggers |

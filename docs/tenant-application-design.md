@@ -15,7 +15,7 @@ be reactivated only with the current optimistic version.
 | Authorization | Platform operations use `tenant:grant-application` and `tenant:read-applications`. Current selection uses tenant-scoped `application.current:list`. Navigation projection additionally requires an active, unexpired grant for its requested application. |
 | Operation log | Grant/reactivate and revoke record success atomically and failure asynchronously with safe summaries. |
 | Security log | Grant and revoke emit `tenant_application_authorization_changed`; a failure to enqueue follows the shared fail-closed policy. |
-| Cache | None in this delivery. Current selection is a bounded indexed join. Revision-keyed caching is deferred until measured because grant, application and PBAC revisions must all participate. |
+| Cache | `/me/applications` remains uncached because grant validity and membership are authorization-sensitive and the indexed result is bounded. `/me/navigations` always checks those same rows in SQL, then may reuse only a revision-keyed application navigation source snapshot; it never caches the authorization result. |
 | Distributed lock | None. The unique `(tenant_id,application_id)` constraint, serializable transaction and expected version own the invariant. |
 | Optimistic lock | Reactivation/expiry change and revoke require the current grant version. First creation requires version zero and conflicts with any historical row. |
 | Audit | Shared transaction actor plus mandatory database audit triggers. No physical delete. |
@@ -23,4 +23,3 @@ be reactivated only with the current optimistic version.
 | Tests | Unit validation, tenant-context rejection, SQL tenant predicate, stale versions, current filtering and mutation logging; PostgreSQL/MySQL Testcontainers lifecycle under the integration tag. |
 | Shared capability | Reuses transaction, principal, pagination, PBAC, response/error, operation/security log and presentation components. |
 | Dictionary | Applications remain suitable for the bounded application-selector provider; the current-principal interface is authorization-sensitive and is not a public dictionary. |
-
