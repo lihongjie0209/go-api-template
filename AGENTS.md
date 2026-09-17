@@ -188,10 +188,13 @@ otherwise unsuitable for dictionary use.
 - Frontend authorization uses server-side capability evaluation only. Page
   capabilities evaluate canonical resource/action pairs against registered
   target operations. Row capabilities accept only bounded resource IDs and
-  actions; the owning service loads trusted rows in one tenant-scoped batch and
-  evaluates current-row data permission. Never send policy expressions or
+  actions; the owning module registers a shared `RowCapabilityProvider`, loads
+  trusted rows in one tenant-scoped batch, and evaluates current-row data
+  permission. Provider results must be a subset of requested IDs and each
+  trusted `id` attribute must equal its map key. Never send policy expressions or
   accept client-supplied resource/subject attributes. Capability results are UI
-  hints; every business endpoint must repeat authoritative authorization.
+  hints with a policy revision and short expiry; every business endpoint must
+  repeat authoritative authorization.
 
 ## Logging decisions
 

@@ -509,10 +509,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/authorization.CapabilityDecision"
-                                            }
+                                            "$ref": "#/definitions/authorization.CapabilityResult"
                                         }
                                     }
                                 }
@@ -6577,6 +6574,23 @@ const docTemplate = `{
                 }
             }
         },
+        "authorization.CapabilityResult": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.CapabilityDecision"
+                    }
+                },
+                "revision": {
+                    "type": "string"
+                }
+            }
+        },
         "authorization.MemberRoleView": {
             "type": "object",
             "properties": {
@@ -6628,6 +6642,9 @@ const docTemplate = `{
         "authorization.RowCapabilityResult": {
             "type": "object",
             "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
                 "items": {
                     "type": "array",
                     "items": {
@@ -6635,6 +6652,9 @@ const docTemplate = `{
                     }
                 },
                 "resource": {
+                    "type": "string"
+                },
+                "revision": {
                     "type": "string"
                 }
             }

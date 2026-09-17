@@ -47,6 +47,17 @@ func New(client redis.UniversalClient, channel, component string, pollInterval, 
 	return &Sync{redis: client, channel: channel, component: component, pollInterval: pollInterval, timeout: timeout, revision: revision, refresh: refresh, logger: logger, metrics: metrics}
 }
 
+// Revision returns the last database revision whose complete snapshot was
+// successfully installed in this process.
+func (s *Sync) Revision() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastRevision
+}
+
 // Refresh rebuilds the entire snapshot and advances the observed database
 // revision under one process-local lock.
 func (s *Sync) Refresh(ctx context.Context) error {

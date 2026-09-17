@@ -35,7 +35,7 @@ type RowCapabilityEvaluateRequest struct {
 // @Produce json
 // @Security Bearer
 // @Param request body CapabilityEvaluateRequest true "Capabilities"
-// @Success 200 {object} Response{body=[]authorization.CapabilityDecision}
+// @Success 200 {object} Response{body=authorization.CapabilityResult}
 // @Router /api/v1/authorization/capabilities/evaluate [post]
 func (h *CapabilityHandler) Evaluate(c *gin.Context) {
 	var request CapabilityEvaluateRequest

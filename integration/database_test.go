@@ -1111,7 +1111,11 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != member.ID {
 		t.Fatalf("data-scoped member page=%+v err=%v", page, err)
 	}
-	capabilities := authorization.NewCapabilityService(db, allowCapabilityAuthorizer{}, scopes, resources)
+	rowProviders, err := authorization.NewRowCapabilityRegistry([]authorization.RowCapabilityProvider{tenant.NewMemberCapabilityProvider(db)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities := authorization.NewCapabilityService(allowCapabilityAuthorizer{}, scopes, resources, rowProviders, nil)
 	capabilityEndpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{
 		Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/tenant-members/status/update", Authentication: accesscontrol.AuthenticationJWT,
 		Resource: "tenant.member", Action: "update", DataPermission: accesscontrol.DataPermissionRequired,

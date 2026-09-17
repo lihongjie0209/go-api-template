@@ -165,6 +165,15 @@ func (l *RuntimeLoader) Run(ctx context.Context) {
 		l.sync.Run(ctx)
 	}
 }
+func (l *RuntimeLoader) Revision() string {
+	if l == nil {
+		return ""
+	}
+	if source, ok := l.sync.(interface{ Revision() string }); ok {
+		return source.Revision()
+	}
+	return ""
+}
 func (l *RuntimeLoader) Refresh(ctx context.Context) error {
 	policies, err := l.repository.LoadAllPublished(ctx)
 	if err != nil {

@@ -39,6 +39,7 @@ func TestPollingRecoversLostNotification(t *testing.T) {
 		return nil
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	require.NoError(t, syncer.Refresh(t.Context()))
+	require.Equal(t, "revision-1", syncer.Revision())
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -47,6 +48,7 @@ func TestPollingRecoversLostNotification(t *testing.T) {
 	revision = "revision-2"
 	revisionMu.Unlock()
 	require.Eventually(t, func() bool { return refreshes.Load() >= 2 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return syncer.Revision() == "revision-2" }, time.Second, 10*time.Millisecond)
 	cancel()
 	<-done
 }

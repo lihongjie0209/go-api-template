@@ -51,6 +51,16 @@ func (l *RuntimeLoader) Run(ctx context.Context) {
 	}
 }
 
+func (l *RuntimeLoader) Revision() string {
+	if l == nil {
+		return ""
+	}
+	if source, ok := l.sync.(interface{ Revision() string }); ok {
+		return source.Revision()
+	}
+	return ""
+}
+
 // Refresh preserves the previous engine snapshot unless every published policy
 // loads, parses, validates, and compiles successfully.
 func (l *RuntimeLoader) Refresh(ctx context.Context) error {

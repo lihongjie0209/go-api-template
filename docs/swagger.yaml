@@ -107,6 +107,17 @@ definitions:
       resource:
         type: string
     type: object
+  authorization.CapabilityResult:
+    properties:
+      expires_at:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/authorization.CapabilityDecision'
+        type: array
+      revision:
+        type: string
+    type: object
   authorization.MemberRoleView:
     properties:
       code:
@@ -140,11 +151,15 @@ definitions:
     type: object
   authorization.RowCapabilityResult:
     properties:
+      expires_at:
+        type: string
       items:
         items:
           $ref: '#/definitions/authorization.RowCapabilityDecision'
         type: array
       resource:
+        type: string
+      revision:
         type: string
     type: object
   authorization.TenantRole:
@@ -3493,9 +3508,7 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  items:
-                    $ref: '#/definitions/authorization.CapabilityDecision'
-                  type: array
+                  $ref: '#/definitions/authorization.CapabilityResult'
               type: object
       security:
       - Bearer: []

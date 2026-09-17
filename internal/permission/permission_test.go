@@ -56,6 +56,13 @@ func TestPermissionSeedIDGoldenMapping(t *testing.T) {
 	require.Equal(t, "a0d93b54-6f9d-5136-abb5-27897aef65ad", id)
 }
 
+func TestCapabilityPermissionSeedIDGoldenMapping(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("authorization.capability.evaluate")
+	require.NoError(t, err)
+	require.Equal(t, "113ab186-bba8-5d22-b37f-f1f65bb4b211", id)
+}
+
 type actorResolverStub struct {
 	calls int
 }
