@@ -225,6 +225,15 @@ definitions:
     x-enum-varnames:
     - EffectAllow
     - EffectDeny
+  datapermission.EvaluationResult:
+    properties:
+      current_allowed:
+        type: boolean
+      sql:
+        $ref: '#/definitions/datapermission.PredicatePreview'
+      transition_allowed:
+        type: boolean
+    type: object
   datapermission.Policy:
     properties:
       api_version:
@@ -332,11 +341,11 @@ definitions:
     type: object
   datapermission.SimulationResult:
     properties:
-      current_allowed:
-        type: boolean
-      sql:
-        $ref: '#/definitions/datapermission.PredicatePreview'
-      transition_allowed:
+      baseline:
+        $ref: '#/definitions/datapermission.EvaluationResult'
+      candidate:
+        $ref: '#/definitions/datapermission.EvaluationResult'
+      changed:
         type: boolean
     type: object
   datapermission.SubjectAttributes:
@@ -2824,6 +2833,15 @@ definitions:
           type: string
         type: array
     type: object
+  pbac.SimulationResult:
+    properties:
+      baseline:
+        $ref: '#/definitions/pbac.Decision'
+      candidate:
+        $ref: '#/definitions/pbac.Decision'
+      changed:
+        type: boolean
+    type: object
   pbac.Subject:
     properties:
       authenticated:
@@ -5006,7 +5024,7 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/pbac.Decision'
+                  $ref: '#/definitions/pbac.SimulationResult'
               type: object
       security:
       - Bearer: []
@@ -5288,7 +5306,7 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/pbac.Decision'
+                  $ref: '#/definitions/pbac.SimulationResult'
               type: object
       security:
       - Bearer: []

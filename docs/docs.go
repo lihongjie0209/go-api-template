@@ -2929,7 +2929,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/pbac.Decision"
+                                            "$ref": "#/definitions/pbac.SimulationResult"
                                         }
                                     }
                                 }
@@ -3432,7 +3432,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/pbac.Decision"
+                                            "$ref": "#/definitions/pbac.SimulationResult"
                                         }
                                     }
                                 }
@@ -6954,6 +6954,20 @@ const docTemplate = `{
                 "EffectDeny"
             ]
         },
+        "datapermission.EvaluationResult": {
+            "type": "object",
+            "properties": {
+                "current_allowed": {
+                    "type": "boolean"
+                },
+                "sql": {
+                    "$ref": "#/definitions/datapermission.PredicatePreview"
+                },
+                "transition_allowed": {
+                    "type": "boolean"
+                }
+            }
+        },
         "datapermission.Policy": {
             "type": "object",
             "properties": {
@@ -7117,13 +7131,13 @@ const docTemplate = `{
         "datapermission.SimulationResult": {
             "type": "object",
             "properties": {
-                "current_allowed": {
-                    "type": "boolean"
+                "baseline": {
+                    "$ref": "#/definitions/datapermission.EvaluationResult"
                 },
-                "sql": {
-                    "$ref": "#/definitions/datapermission.PredicatePreview"
+                "candidate": {
+                    "$ref": "#/definitions/datapermission.EvaluationResult"
                 },
-                "transition_allowed": {
+                "changed": {
                     "type": "boolean"
                 }
             }
@@ -10798,6 +10812,20 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "pbac.SimulationResult": {
+            "type": "object",
+            "properties": {
+                "baseline": {
+                    "$ref": "#/definitions/pbac.Decision"
+                },
+                "candidate": {
+                    "$ref": "#/definitions/pbac.Decision"
+                },
+                "changed": {
+                    "type": "boolean"
                 }
             }
         },

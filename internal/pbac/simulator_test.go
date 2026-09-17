@@ -10,14 +10,60 @@ import (
 func TestSimulatorUsesIsolatedDenyOverridesEvaluation(t *testing.T) {
 	registry, err := NewRegistryFromDefinitions(ResourceDefinitions{resource("tenant.member", "member", ResourceScopeTenant, "update")})
 	require.NoError(t, err)
+	runtime, err := NewRuntimeEngine(registry)
+	require.NoError(t, err)
 	authenticated := true
-	result, err := NewSimulator(registry).Simulate(t.Context(), SimulationInput{
+	result, err := NewSimulator(registry, runtime).Simulate(t.Context(), SimulationInput{
 		Policy:  Policy{APIVersion: APIVersionV1, Kind: KindPolicy, Metadata: PolicyMetadata{Code: "deny-member-update", Name: "Deny member update"}, Scope: PolicyScope{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: SubjectMatcher{Authenticated: &authenticated}, Resource: ResourceMatcher{Type: "tenant.member"}, Actions: []string{"update"}, Effect: EffectDeny}},
 		Request: EvaluationRequest{Subject: Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"}, Resource: Resource{Type: "tenant.member", TenantID: "tenant-1"}, Action: "update"},
 	})
 	require.NoError(t, err)
-	require.Equal(t, DecisionEffectDeny, result.Effect)
-	require.Equal(t, ReasonExplicitDeny, result.ReasonCode)
+	require.Equal(t, ReasonNoMatchingPolicy, result.Baseline.ReasonCode)
+	require.Equal(t, DecisionEffectDeny, result.Candidate.Effect)
+	require.Equal(t, ReasonExplicitDeny, result.Candidate.ReasonCode)
+	require.True(t, result.Changed)
+}
+
+func TestSimulatorCombinesCandidateWithActivePoliciesAndReplacesSameIdentity(t *testing.T) {
+	registry, err := NewRegistryFromDefinitions(ResourceDefinitions{resource("tenant.member", "member", ResourceScopeTenant, "update")})
+	require.NoError(t, err)
+	authenticated := true
+	active := Policy{APIVersion: APIVersionV1, Kind: KindPolicy, Metadata: PolicyMetadata{Code: "member-update", Name: "Allow member update"}, Scope: PolicyScope{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: SubjectMatcher{Authenticated: &authenticated}, Resource: ResourceMatcher{Type: "tenant.member"}, Actions: []string{"update"}, Effect: EffectAllow}}
+	runtime, err := NewEngine(registry, []Policy{active})
+	require.NoError(t, err)
+	candidate := clonePolicy(active)
+	candidate.Metadata.Name = "Deny member update"
+	candidate.Spec.Effect = EffectDeny
+
+	result, err := NewSimulator(registry, runtime).Simulate(t.Context(), SimulationInput{
+		Policy: candidate,
+		Request: EvaluationRequest{
+			Subject:  Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
+			Resource: Resource{Type: "tenant.member", TenantID: "tenant-1"},
+			Action:   "update",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, DecisionEffectAllow, result.Baseline.Effect)
+	require.Equal(t, DecisionEffectDeny, result.Candidate.Effect)
+	require.Equal(t, []string{"member-update"}, result.Candidate.MatchedPolicies)
+	require.True(t, result.Changed)
+}
+
+func TestSimulatorReportsUnchangedForIdenticalActivePolicy(t *testing.T) {
+	registry, err := NewRegistryFromDefinitions(ResourceDefinitions{resource("tenant.member", "member", ResourceScopeTenant, "update")})
+	require.NoError(t, err)
+	authenticated := true
+	policy := Policy{APIVersion: APIVersionV1, Kind: KindPolicy, Metadata: PolicyMetadata{Code: "member-update", Name: "Allow member update"}, Scope: PolicyScope{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: SubjectMatcher{Authenticated: &authenticated}, Resource: ResourceMatcher{Type: "tenant.member"}, Actions: []string{"update"}, Effect: EffectAllow}}
+	runtime, err := NewEngine(registry, []Policy{policy})
+	require.NoError(t, err)
+
+	result, err := NewSimulator(registry, runtime).Simulate(t.Context(), SimulationInput{
+		Policy:  policy,
+		Request: EvaluationRequest{Subject: Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"}, Resource: Resource{Type: "tenant.member", TenantID: "tenant-1"}, Action: "update"},
+	})
+	require.NoError(t, err)
+	require.False(t, result.Changed)
 }
 
 func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
@@ -25,6 +71,8 @@ func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
 		resource("tenant.member", "member", ResourceScopeTenant, "read", "update"),
 		resource("tenant.department", "department", ResourceScopeTenant, "update"),
 	})
+	require.NoError(t, err)
+	runtime, err := NewRuntimeEngine(registry)
 	require.NoError(t, err)
 	authenticated := true
 	policy := Policy{APIVersion: APIVersionV1, Kind: KindPolicy, Metadata: PolicyMetadata{Code: "allow-member-update", Name: "Allow member update"}, Scope: PolicyScope{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: SubjectMatcher{Authenticated: &authenticated}, Resource: ResourceMatcher{Type: "tenant.member"}, Actions: []string{"update"}, Effect: EffectAllow}}
@@ -39,7 +87,7 @@ func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewSimulator(registry).Simulate(t.Context(), SimulationInput{
+			_, err := NewSimulator(registry, runtime).Simulate(t.Context(), SimulationInput{
 				Policy:  policy,
 				Request: EvaluationRequest{Subject: Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"}, Resource: test.resource, Action: test.action},
 			})
@@ -51,8 +99,10 @@ func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
 func TestSimulatorReturnsCanceledContext(t *testing.T) {
 	registry, err := NewRegistryFromDefinitions(ResourceDefinitions{resource("tenant.member", "member", ResourceScopeTenant, "update")})
 	require.NoError(t, err)
+	runtime, err := NewRuntimeEngine(registry)
+	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = NewSimulator(registry).Simulate(ctx, SimulationInput{})
+	_, err = NewSimulator(registry, runtime).Simulate(ctx, SimulationInput{})
 	require.ErrorIs(t, err, context.Canceled)
 }

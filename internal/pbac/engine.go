@@ -47,8 +47,9 @@ type compiledPolicy struct {
 }
 
 type policySnapshot struct {
-	global map[string][]*compiledPolicy
-	tenant map[string]map[string][]*compiledPolicy
+	global   map[string][]*compiledPolicy
+	tenant   map[string]map[string][]*compiledPolicy
+	policies []Policy
 }
 
 // Engine evaluates immutable compiled snapshots and atomically replaces them
@@ -77,8 +78,9 @@ func (e *Engine) Replace(policies []Policy) error {
 		return ErrSnapshotUnavailable
 	}
 	next := &policySnapshot{
-		global: make(map[string][]*compiledPolicy),
-		tenant: make(map[string]map[string][]*compiledPolicy),
+		global:   make(map[string][]*compiledPolicy),
+		tenant:   make(map[string]map[string][]*compiledPolicy),
+		policies: make([]Policy, 0, len(policies)),
 	}
 	identities := make(map[string]struct{}, len(policies))
 	for _, source := range policies {
@@ -96,6 +98,7 @@ func (e *Engine) Replace(policies []Policy) error {
 			return fmt.Errorf("compile policy %q when: %w", policy.Metadata.Code, err)
 		}
 		compiled := &compiledPolicy{policy: policy, when: condition}
+		next.policies = append(next.policies, clonePolicy(policy))
 		for _, action := range policy.Spec.Actions {
 			key := candidateKey(policy.Spec.Resource.Type, action)
 			if policy.Scope.Type == PolicyScopeGlobal {
@@ -113,6 +116,22 @@ func (e *Engine) Replace(policies []Policy) error {
 	sortSnapshot(next)
 	e.snapshot.Store(next)
 	return nil
+}
+
+// Policies returns an immutable copy of the currently active source policies.
+func (e *Engine) Policies() ([]Policy, error) {
+	if e == nil {
+		return nil, ErrSnapshotUnavailable
+	}
+	current := e.snapshot.Load()
+	if current == nil {
+		return nil, ErrSnapshotUnavailable
+	}
+	policies := make([]Policy, 0, len(current.policies))
+	for _, policy := range current.policies {
+		policies = append(policies, clonePolicy(policy))
+	}
+	return policies, nil
 }
 
 // Evaluate applies structural matchers, trusted operation conditions, and the

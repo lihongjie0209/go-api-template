@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 
 	"github.com/lihongjie0209/go-api-template/internal/pbac"
@@ -26,40 +27,71 @@ type PredicatePreview struct {
 	ParameterCount int    `json:"parameter_count"`
 }
 
-type SimulationResult struct {
+type EvaluationResult struct {
 	CurrentAllowed    bool             `json:"current_allowed"`
 	TransitionAllowed bool             `json:"transition_allowed"`
 	SQL               PredicatePreview `json:"sql"`
 }
 
+type SimulationResult struct {
+	Baseline  EvaluationResult `json:"baseline"`
+	Candidate EvaluationResult `json:"candidate"`
+	Changed   bool             `json:"changed"`
+}
+
 type Simulator struct {
 	schemas   *SchemaRegistry
 	resources *pbac.Registry
+	runtime   *Engine
 }
 
-func NewSimulator(schemas *SchemaRegistry, resources *pbac.Registry) *Simulator {
-	return &Simulator{schemas: schemas, resources: resources}
+func NewSimulator(schemas *SchemaRegistry, resources *pbac.Registry, runtime *Engine) *Simulator {
+	return &Simulator{schemas: schemas, resources: resources, runtime: runtime}
 }
 
 func (s *Simulator) Simulate(ctx context.Context, input SimulationInput) (SimulationResult, error) {
 	if err := ctx.Err(); err != nil {
 		return SimulationResult{}, err
 	}
-	engine, err := NewEngine(s.schemas, s.resources, []Policy{input.Policy})
-	if err != nil {
-		return SimulationResult{}, err
-	}
 	if err := validateSimulationTarget(s.resources, input); err != nil {
 		return SimulationResult{}, err
 	}
-	resource, action := input.Resource.Type, input.Action
-	predicate, err := engine.CompileSQL(ctx, resource, action, input.Subject, input.SubjectAttributes)
+	policies, err := s.runtime.Policies()
 	if err != nil {
 		return SimulationResult{}, err
 	}
-	current, err := engine.EvaluateCurrent(ctx, resource, action, input.Subject, input.SubjectAttributes, input.ResourceAttributes)
+	baselineEngine, err := NewEngine(s.schemas, s.resources, policies)
 	if err != nil {
 		return SimulationResult{}, err
+	}
+	baseline, baselinePredicate, err := evaluateSimulation(ctx, baselineEngine, input)
+	if err != nil {
+		return SimulationResult{}, err
+	}
+	engine, err := NewEngine(s.schemas, s.resources, replacePolicy(policies, input.Policy))
+	if err != nil {
+		return SimulationResult{}, err
+	}
+	candidate, candidatePredicate, err := evaluateSimulation(ctx, engine, input)
+	if err != nil {
+		return SimulationResult{}, err
+	}
+	changed := baseline.CurrentAllowed != candidate.CurrentAllowed ||
+		baseline.TransitionAllowed != candidate.TransitionAllowed ||
+		baselinePredicate.Clause != candidatePredicate.Clause ||
+		!reflect.DeepEqual(baselinePredicate.Args, candidatePredicate.Args)
+	return SimulationResult{Baseline: baseline, Candidate: candidate, Changed: changed}, nil
+}
+
+func evaluateSimulation(ctx context.Context, engine *Engine, input SimulationInput) (EvaluationResult, SQLPredicate, error) {
+	resource, action := input.Resource.Type, input.Action
+	predicate, err := engine.CompileSQL(ctx, resource, action, input.Subject, input.SubjectAttributes)
+	if err != nil {
+		return EvaluationResult{}, SQLPredicate{}, err
+	}
+	current, err := engine.EvaluateCurrent(ctx, resource, action, input.Subject, input.SubjectAttributes, input.ResourceAttributes)
+	if err != nil {
+		return EvaluationResult{}, SQLPredicate{}, err
 	}
 	proposed := input.ProposedAttributes
 	if proposed == nil {
@@ -67,9 +99,27 @@ func (s *Simulator) Simulate(ctx context.Context, input SimulationInput) (Simula
 	}
 	transition, err := engine.EvaluateTransition(ctx, resource, action, input.Subject, input.SubjectAttributes, input.ResourceAttributes, proposed)
 	if err != nil {
-		return SimulationResult{}, err
+		return EvaluationResult{}, SQLPredicate{}, err
 	}
-	return SimulationResult{CurrentAllowed: current, TransitionAllowed: transition, SQL: PredicatePreview{Clause: predicate.Clause, ParameterCount: len(predicate.Args)}}, nil
+	return EvaluationResult{CurrentAllowed: current, TransitionAllowed: transition, SQL: PredicatePreview{Clause: predicate.Clause, ParameterCount: len(predicate.Args)}}, predicate, nil
+}
+
+func replacePolicy(policies []Policy, candidate Policy) []Policy {
+	result := make([]Policy, 0, len(policies)+1)
+	replaced := false
+	for _, policy := range policies {
+		if policy.Scope.Type == candidate.Scope.Type && policy.Scope.TenantID == candidate.Scope.TenantID &&
+			policy.Metadata.Code == candidate.Metadata.Code {
+			result = append(result, candidate)
+			replaced = true
+			continue
+		}
+		result = append(result, policy)
+	}
+	if replaced {
+		return result
+	}
+	return append(result, candidate)
 }
 
 func validateSimulationTarget(resources *pbac.Registry, input SimulationInput) error {

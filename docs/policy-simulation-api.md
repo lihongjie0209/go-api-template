@@ -1,14 +1,15 @@
 # Policy Simulation API
 
-Policy simulation validates and evaluates one unpersisted candidate document in
-an isolated in-memory engine. It never writes policy tables, publishes a
-version, sends a Redis notification, or replaces the active runtime snapshot.
+Policy simulation validates one unpersisted candidate document and compares the
+current published snapshot with an isolated candidate snapshot. It never writes
+policy tables, publishes a version, sends a Redis notification, or replaces the
+active runtime snapshot.
 
 ## Interface design review
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Four POST + JSON routes cover global/tenant PBAC and data-permission policies. Requests contain one candidate policy plus bounded typed evaluation input. The simulated Resource/Action must be declared by that candidate; mismatches are invalid requests rather than synthetic deny decisions. Responses use the shared envelope. |
+| Contract | Four POST + JSON routes cover global/tenant PBAC and data-permission policies. Requests contain one candidate policy plus bounded typed evaluation input. Responses contain `baseline`, `candidate`, and `changed`. The simulated Resource/Action must be declared by that candidate; mismatches are invalid requests rather than synthetic deny decisions. Responses use the shared envelope. |
 | Authentication | JWT only. Global simulation uses the corresponding platform policy-management permission; tenant simulation uses the tenant policy-management permission. |
 | Authorization | Canonical actions are `pbac.*-policy:simulate` and `data-permission.*-policy:simulate`. Tenant routes require the candidate policy, simulated subject, and simulated resource tenant to equal the authenticated tenant. |
 | Operation log | Simulation is a read-only diagnostic. Initial delivery relies on protected request telemetry; durable diagnostic operation logging is required before exposing full multi-policy production traces. |
@@ -17,8 +18,8 @@ version, sends a Redis notification, or replaces the active runtime snapshot.
 | Distributed lock | None; each call owns an isolated immutable engine. |
 | Optimistic lock | Not applicable because no state changes. |
 | Audit | No database write occurs. |
-| Presentation | PBAC returns stable decision effect/reason and matched policy codes. Data permission returns current/transition booleans plus a parameterized SQL preview and parameter count; parameter values are never returned. |
-| Tests | Unit tests cover PBAC deny results, proposed-state denial, parameter redaction, validation failures, and cancellation. HTTP route/Swagger/authorization coverage remains enforced by existing CI gates. |
+| Presentation | PBAC returns baseline and candidate stable decision effect/reason and matched policy codes. Data permission returns baseline and candidate current/transition booleans plus parameterized SQL previews and parameter counts; parameter values are never returned. `changed` includes hidden SQL argument changes without exposing their values. |
+| Tests | Unit tests cover active-policy composition, same-identity replacement, PBAC deny results, proposed-state denial, parameter redaction, target validation, tenant isolation, and cancellation. HTTP route/Swagger/authorization coverage remains enforced by existing CI gates. |
 | Shared capability | Reuses the canonical registries, strict policy validators, CEL operation engine, data predicate compiler, and in-memory evaluator. |
 | Dictionary | Not applicable; hypothetical authorization diagnostics are sensitive and request-specific. |
 
@@ -30,9 +31,14 @@ version, sends a Redis notification, or replaces the active runtime snapshot.
 - `POST /api/v1/data-permissions/tenant-policies/simulate`
 
 Simulation accepts a policy document directly so an invalid draft can be
-diagnosed before persistence. Database version simulation can be layered on top
-later by loading the immutable version and passing the same model to this
-service.
+diagnosed before persistence. The baseline is evaluated from one immutable copy
+of the current runtime snapshot. The candidate snapshot replaces an active
+policy with the same `scope + tenant_id + metadata.code`; otherwise the
+candidate is added. All other published global and applicable tenant policies
+remain present, so PBAC deny-overrides and data-permission Allow-union minus
+Deny-union semantics match runtime behavior. Database version simulation can be
+layered on top later by loading the immutable version and passing the same model
+to this service.
 
 Data-permission simulation requires an explicit operation resource such as
 `{"type":"tenant.member","tenant_id":"..."}` and an action because one

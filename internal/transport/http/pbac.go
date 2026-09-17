@@ -84,7 +84,7 @@ type PBACSimulationRequest struct {
 // @Produce json
 // @Security Bearer
 // @Param request body PBACSimulationRequest true "Simulation"
-// @Success 200 {object} Response{body=pbac.Decision}
+// @Success 200 {object} Response{body=pbac.SimulationResult}
 // @Router /api/v1/pbac/global-policies/simulate [post]
 // @Router /api/v1/pbac/tenant-policies/simulate [post]
 func (h *PBACHandler) Simulate(c *gin.Context) {

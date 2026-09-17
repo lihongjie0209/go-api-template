@@ -15,18 +15,59 @@ func TestSimulatorReturnsParameterizedPreviewWithoutValues(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
+	runtime, err := NewRuntimeEngine(schemas, resources)
+	require.NoError(t, err)
 	authenticated := true
-	result, err := NewSimulator(schemas, resources).Simulate(t.Context(), SimulationInput{
+	result, err := NewSimulator(schemas, resources, runtime).Simulate(t.Context(), SimulationInput{
 		Policy:  Policy{APIVersion: PolicyAPIVersion, Kind: PolicyKind, Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"}, Condition: "resource.owner_id == subject.id", ProposedCondition: `proposed.status == "active"`, Effect: EffectAllow}},
 		Action:  "update",
 		Subject: pbac.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"}, Resource: pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"}, SubjectAttributes: SubjectAttributes{"id": "user-1"},
 		ResourceAttributes: ResourceAttributes{"owner_id": "user-1", "status": "active"}, ProposedAttributes: ResourceAttributes{"owner_id": "user-1", "status": "disabled"},
 	})
 	require.NoError(t, err)
-	require.True(t, result.CurrentAllowed)
-	require.False(t, result.TransitionAllowed)
-	require.Equal(t, 1, result.SQL.ParameterCount)
-	require.NotContains(t, result.SQL.Clause, "user-1")
+	require.False(t, result.Baseline.CurrentAllowed)
+	require.True(t, result.Candidate.CurrentAllowed)
+	require.False(t, result.Candidate.TransitionAllowed)
+	require.Equal(t, 1, result.Candidate.SQL.ParameterCount)
+	require.NotContains(t, result.Candidate.SQL.Clause, "user-1")
+	require.True(t, result.Changed)
+}
+
+func TestSimulatorCombinesCandidateWithActiveDataPolicies(t *testing.T) {
+	simulator, candidate := newDataPermissionSimulator(t)
+	authenticated := true
+	activeAllow := clonePolicy(candidate)
+	activeAllow.Metadata.Code = "member-all"
+	activeAllow.Metadata.Name = "All members"
+	activeAllow.Spec.Condition = ""
+	require.NoError(t, simulator.runtime.Replace([]Policy{activeAllow}))
+	candidate.Spec.Effect = EffectDeny
+
+	result, err := simulator.Simulate(t.Context(), SimulationInput{
+		Policy: candidate, Action: "update",
+		Subject:           pbac.Subject{ID: "user-1", Authenticated: authenticated, TenantID: "tenant-1"},
+		Resource:          pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"},
+		SubjectAttributes: SubjectAttributes{"id": "user-1"}, ResourceAttributes: ResourceAttributes{"owner_id": "user-1"},
+	})
+	require.NoError(t, err)
+	require.True(t, result.Baseline.CurrentAllowed)
+	require.False(t, result.Candidate.CurrentAllowed)
+	require.Contains(t, result.Candidate.SQL.Clause, "NOT")
+	require.True(t, result.Changed)
+}
+
+func TestSimulatorReportsUnchangedForIdenticalActiveDataPolicy(t *testing.T) {
+	simulator, policy := newDataPermissionSimulator(t)
+	require.NoError(t, simulator.runtime.Replace([]Policy{policy}))
+
+	result, err := simulator.Simulate(t.Context(), SimulationInput{
+		Policy: policy, Action: "update",
+		Subject:           pbac.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
+		Resource:          pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"},
+		SubjectAttributes: SubjectAttributes{"id": "user-1"}, ResourceAttributes: ResourceAttributes{"owner_id": "user-1"},
+	})
+	require.NoError(t, err)
+	require.False(t, result.Changed)
 }
 
 func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
@@ -72,7 +113,9 @@ func newDataPermissionSimulator(t *testing.T) (*Simulator, Policy) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
+	runtime, err := NewRuntimeEngine(schemas, resources)
+	require.NoError(t, err)
 	authenticated := true
 	policy := Policy{APIVersion: PolicyAPIVersion, Kind: PolicyKind, Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"}, Condition: "resource.owner_id == subject.id", Effect: EffectAllow}}
-	return NewSimulator(schemas, resources), policy
+	return NewSimulator(schemas, resources, runtime), policy
 }

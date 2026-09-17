@@ -105,6 +105,16 @@ func (p *Policy) normalize() {
 	pbac.NormalizeSubjectMatcher(&p.Spec.Subject)
 }
 
+func clonePolicy(policy Policy) Policy {
+	policy.Spec.Actions = slices.Clone(policy.Spec.Actions)
+	policy.Spec.Subject.Types = slices.Clone(policy.Spec.Subject.Types)
+	policy.Spec.Subject.IDs = slices.Clone(policy.Spec.Subject.IDs)
+	policy.Spec.Subject.Roles.AnyOf = slices.Clone(policy.Spec.Subject.Roles.AnyOf)
+	policy.Spec.Subject.Roles.AllOf = slices.Clone(policy.Spec.Subject.Roles.AllOf)
+	policy.Spec.Subject.Roles.NoneOf = slices.Clone(policy.Spec.Subject.Roles.NoneOf)
+	return policy
+}
+
 func (p Policy) Compile(schemas *SchemaRegistry, resources *pbac.Registry) (CompiledPolicy, error) {
 	if p.APIVersion != PolicyAPIVersion || p.Kind != PolicyKind || !policyCode.MatchString(p.Metadata.Code) || strings.TrimSpace(p.Metadata.Name) == "" {
 		return CompiledPolicy{}, ErrInvalidPolicy

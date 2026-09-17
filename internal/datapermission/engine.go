@@ -12,7 +12,10 @@ import (
 var ErrSnapshotUnavailable = errors.New("data permission: snapshot unavailable")
 var ErrObjectDenied = errors.New("data permission: object denied")
 
-type snapshot struct{ policies map[string][]CompiledPolicy }
+type snapshot struct {
+	policies map[string][]CompiledPolicy
+	sources  []Policy
+}
 
 type Engine struct {
 	schemas   *SchemaRegistry
@@ -36,7 +39,7 @@ func (e *Engine) Replace(policies []Policy) error {
 	if e == nil || e.schemas == nil || e.resources == nil {
 		return ErrSnapshotUnavailable
 	}
-	next := &snapshot{policies: make(map[string][]CompiledPolicy)}
+	next := &snapshot{policies: make(map[string][]CompiledPolicy), sources: make([]Policy, 0, len(policies))}
 	for _, policy := range policies {
 		compiled, err := policy.Compile(e.schemas, e.resources)
 		if err != nil {
@@ -46,9 +49,26 @@ func (e *Engine) Replace(policies []Policy) error {
 			key := policy.Spec.Resource + "\x00" + action
 			next.policies[key] = append(next.policies[key], compiled)
 		}
+		next.sources = append(next.sources, clonePolicy(policy))
 	}
 	e.snapshot.Store(next)
 	return nil
+}
+
+// Policies returns an immutable copy of the currently active source policies.
+func (e *Engine) Policies() ([]Policy, error) {
+	if e == nil {
+		return nil, ErrSnapshotUnavailable
+	}
+	current := e.snapshot.Load()
+	if current == nil {
+		return nil, ErrSnapshotUnavailable
+	}
+	policies := make([]Policy, 0, len(current.sources))
+	for _, policy := range current.sources {
+		policies = append(policies, clonePolicy(policy))
+	}
+	return policies, nil
 }
 
 // CompileSQL matches policies and produces the fixed allow-union minus
