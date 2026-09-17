@@ -207,10 +207,12 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 
 func testPBACLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
-	registry, err := pbac.NewRegistry([]pbac.ResourceDefinition{{
+	definitions := pbac.PlatformResourceDefinitions()
+	definitions = append(definitions, pbac.ResourceDefinition{
 		Key: "integration.member", Name: "Integration member", Scope: pbac.ResourceScopeTenant,
 		Actions: []pbac.ActionDefinition{{Key: "update", Name: "Update"}},
-	}})
+	})
+	registry, err := pbac.NewRegistry(definitions)
 	if err != nil {
 		t.Fatalf("create pbac registry: %v", err)
 	}
