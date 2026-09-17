@@ -99,6 +99,7 @@ func TestPlatformResourceDefinitions(t *testing.T) {
 		{name: "application", resource: "application", action: "update", scope: ResourceScopePlatform},
 		{name: "tenant application grant", resource: "tenant.application-grant", action: "grant", scope: ResourceScopePlatform},
 		{name: "current applications", resource: "application.current", action: "list", scope: ResourceScopeTenant},
+		{name: "switch current application", resource: "application.current", action: "switch", scope: ResourceScopeTenant},
 		{name: "navigation", resource: "navigation", action: "create", scope: ResourceScopePlatform},
 		{name: "tenant selection", resource: "tenant.selection", action: "switch", scope: ResourceScopePrincipal},
 		{name: "dictionary item", resource: "dictionary.item", action: "list", scope: ResourceScopePlatform},

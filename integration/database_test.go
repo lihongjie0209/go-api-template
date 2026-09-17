@@ -870,10 +870,25 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if err != nil || grant.Status != "active" || grant.Version != 1 {
 		t.Fatalf("tenant application grant=%+v err=%v", grant, err)
 	}
-	currentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: "authorization-tenant", MembershipID: "authorization-admin-member"})
+	currentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, SessionID: "application-context-session", TenantID: "authorization-tenant", MembershipID: "authorization-admin-member"})
+	if err := transactor.Within(currentCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(currentCtx, tx.Rebind(`INSERT INTO identity_sessions(id,user_id,refresh_token_hash,previous_refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), "application-context-session", "authorization-admin", "application-context-refresh-token-hash", "", now.Add(time.Hour), now, "", "127.0.0.1", "integration", now, "authorization-admin", now, "authorization-admin")
+		return err
+	}); err != nil {
+		t.Fatalf("create application context session: %v", err)
+	}
 	currentApplications, err := access.Current(currentCtx)
 	if err != nil || len(currentApplications) != 1 || currentApplications[0].ID != app.ID {
 		t.Fatalf("current applications=%+v err=%v", currentApplications, err)
+	}
+	selected, err := access.SwitchContext(currentCtx, application.SwitchInput{ApplicationID: app.ID})
+	if err != nil || selected.ApplicationID != app.ID || selected.Version != 1 {
+		t.Fatalf("selected application=%+v err=%v", selected, err)
+	}
+	selected, err = access.SwitchContext(currentCtx, application.SwitchInput{ApplicationID: app.ID, Version: selected.Version})
+	if err != nil || selected.Version != 2 {
+		t.Fatalf("updated selected application=%+v err=%v", selected, err)
 	}
 	root, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, Key: "system", Name: "系统", Type: "directory", Visible: true, Status: "active"})
 	if err != nil {
@@ -913,6 +928,9 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	currentApplications, err = access.Current(currentCtx)
 	if err != nil || len(currentApplications) != 0 {
 		t.Fatalf("applications after revoke=%+v err=%v", currentApplications, err)
+	}
+	if _, err := access.CurrentContext(currentCtx); !errors.Is(err, application.ErrContextNotFound) {
+		t.Fatalf("current context after revoke error=%v", err)
 	}
 	if err := applications.Delete(actorCtx, app.ID, app.Version); err != nil {
 		t.Fatalf("delete application after revoke error=%v", err)

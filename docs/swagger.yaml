@@ -1,5 +1,30 @@
 basePath: /
 definitions:
+  application.Context:
+    properties:
+      application_code:
+        type: string
+      application_id:
+        type: string
+      application_name:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      home_path:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      version:
+        type: integer
+    type: object
   application.Current:
     properties:
       code:
@@ -2189,6 +2214,17 @@ definitions:
     - password
     - user_id
     type: object
+  httptransport.SwitchApplicationRequest:
+    properties:
+      application_id:
+        maxLength: 128
+        type: string
+      version:
+        minimum: 0
+        type: integer
+    required:
+    - application_id
+    type: object
   httptransport.SwitchTenantRequest:
     properties:
       tenant_id:
@@ -3401,6 +3437,7 @@ definitions:
     - identity_user_changed
     - tenant_changed
     - tenant_context_switch
+    - application_context_switch
     - tenant_authorization_changed
     - platform_menu_changed
     - platform_config_changed
@@ -3425,6 +3462,7 @@ definitions:
     - EventIdentityUserChanged
     - EventTenantChanged
     - EventTenantContextSwitch
+    - EventApplicationContextSwitch
     - EventTenantAuthorization
     - EventMenuChanged
     - EventPlatformConfigChanged
@@ -5136,6 +5174,55 @@ paths:
       summary: Return the authenticated subject
       tags:
       - authentication
+  /api/v1/me/application/current:
+    post:
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Context'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the current session application
+      tags:
+      - applications
+  /api/v1/me/application/switch:
+    post:
+      parameters:
+      - description: Application and expected context version; use zero for first
+          selection
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SwitchApplicationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Context'
+              type: object
+      security:
+      - Bearer: []
+      summary: Switch the current session application
+      tags:
+      - applications
   /api/v1/me/applications:
     post:
       parameters:

@@ -2482,6 +2482,94 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/me/application/current": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Get the current session application",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Context"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/me/application/switch": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Switch the current session application",
+                "parameters": [
+                    {
+                        "description": "Application and expected context version; use zero for first selection",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.SwitchApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Context"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me/applications": {
             "post": {
                 "security": [
@@ -7042,6 +7130,44 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "application.Context": {
+            "type": "object",
+            "properties": {
+                "application_code": {
+                    "type": "string"
+                },
+                "application_id": {
+                    "type": "string"
+                },
+                "application_name": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "home_path": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "application.Current": {
             "type": "object",
             "properties": {
@@ -10289,6 +10415,22 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.SwitchApplicationRequest": {
+            "type": "object",
+            "required": [
+                "application_id"
+            ],
+            "properties": {
+                "application_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "version": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
         "httptransport.SwitchTenantRequest": {
             "type": "object",
             "required": [
@@ -12069,6 +12211,7 @@ const docTemplate = `{
                 "identity_user_changed",
                 "tenant_changed",
                 "tenant_context_switch",
+                "application_context_switch",
                 "tenant_authorization_changed",
                 "platform_menu_changed",
                 "platform_config_changed",
@@ -12093,6 +12236,7 @@ const docTemplate = `{
                 "EventIdentityUserChanged",
                 "EventTenantChanged",
                 "EventTenantContextSwitch",
+                "EventApplicationContextSwitch",
                 "EventTenantAuthorization",
                 "EventMenuChanged",
                 "EventPlatformConfigChanged",

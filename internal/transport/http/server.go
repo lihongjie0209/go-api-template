@@ -222,6 +222,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/platform/tenant-applications/get", "tenant.application-grant", "read", accesscontrol.DataPermissionNone, applicationHandler.GetTenantApplication)
 	jwt("/platform/tenant-applications/page", "tenant.application-grant", "list", accesscontrol.DataPermissionNone, applicationHandler.PageTenantApplications)
 	jwt("/me/applications", "application.current", "list", accesscontrol.DataPermissionNone, applicationHandler.CurrentApplications)
+	jwt("/me/application/current", "application.current", "read", accesscontrol.DataPermissionNone, applicationHandler.CurrentApplication)
+	jwt("/me/application/switch", "application.current", "switch", accesscontrol.DataPermissionNone, applicationHandler.SwitchApplication)
 	jwt("/navigations/create", "navigation", "create", accesscontrol.DataPermissionNone, navigationHandler.Create)
 	jwt("/navigations/get", "navigation", "read", accesscontrol.DataPermissionNone, navigationHandler.Get)
 	jwt("/navigations/tree", "navigation", "list", accesscontrol.DataPermissionNone, navigationHandler.Tree)

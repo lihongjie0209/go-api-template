@@ -84,6 +84,10 @@ type TenantApplicationPageRequest struct {
 	CreatedAtTo    *time.Time        `json:"created_at_to"`
 	Sort           []pagination.Sort `json:"sort" binding:"max=3,dive"`
 }
+type SwitchApplicationRequest struct {
+	ApplicationID string `json:"application_id" binding:"required,max=128"`
+	Version       int64  `json:"version" binding:"gte=0"`
+}
 
 // CreateApplication godoc
 // @Summary Create an application
@@ -243,6 +247,38 @@ func (h *ApplicationHandler) CurrentApplications(c *gin.Context) {
 	result, err := h.access.Current(c.Request.Context())
 	h.respond(c, result, err)
 }
+
+// CurrentApplication godoc
+// @Summary Get the current session application
+// @Tags applications
+// @Security Bearer
+// @Param request body object true "Empty JSON object"
+// @Success 200 {object} Response{body=application.Context}
+// @Router /api/v1/me/application/current [post]
+func (h *ApplicationHandler) CurrentApplication(c *gin.Context) {
+	var request struct{}
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.access.CurrentContext(c.Request.Context())
+	h.respond(c, result, err)
+}
+
+// SwitchApplication godoc
+// @Summary Switch the current session application
+// @Tags applications
+// @Security Bearer
+// @Param request body SwitchApplicationRequest true "Application and expected context version; use zero for first selection"
+// @Success 200 {object} Response{body=application.Context}
+// @Router /api/v1/me/application/switch [post]
+func (h *ApplicationHandler) SwitchApplication(c *gin.Context) {
+	var request SwitchApplicationRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.access.SwitchContext(c.Request.Context(), application.SwitchInput{ApplicationID: request.ApplicationID, Version: request.Version})
+	h.respond(c, result, err)
+}
 func (h *ApplicationHandler) bind(c *gin.Context, v any) bool {
 	if e := c.ShouldBindJSON(v); e != nil {
 		Fail(c, h.logger, apperror.Invalid("invalid application request", e))
@@ -268,6 +304,8 @@ func (h *ApplicationHandler) respond(c *gin.Context, v any, e error) {
 		Fail(c, h.logger, apperror.Conflict("tenant application grant conflict", e))
 	case errors.Is(e, application.ErrGrantForbidden):
 		Fail(c, h.logger, apperror.Forbidden("tenant application grant forbidden"))
+	case errors.Is(e, application.ErrContextNotFound):
+		Fail(c, h.logger, apperror.NotFound("current application context not found"))
 	default:
 		Fail(c, h.logger, apperror.Internal(e))
 	}

@@ -19,19 +19,19 @@
 
 | Concern | Application decision | Navigation decision |
 | --- | --- | --- |
-| Contract | POST create/get/page/update/delete with bounded filters and sort allowlist | POST create/get/tree/update/delete; tree requires `application_id`, is non-paginated, ordered, and bounded |
+| Contract | POST create/get/page/update/delete with bounded filters and sort allowlist; `/me/application/current` reads and `/me/application/switch` changes the session selection using expected version zero for first selection and a positive current version afterward | POST create/get/tree/update/delete; tree requires `application_id`, is non-paginated, ordered, and bounded |
 | Authentication | JWT | JWT; current-user projection uses the same authenticated principal |
-| Authorization | Platform `application:<action>` | Platform `navigation:<action>`; `/me/navigations` uses tenant `navigation.current:read`, then batch-evaluates each menu Resource/Action |
-| Operation log | Record create/update/delete | Record create/update/delete and move |
-| Security log | None; no credential or grant changes | None; navigation metadata does not grant authority |
+| Authorization | Platform `application:<action>`; session context uses tenant-scoped `application.current:read/switch` and SQL-validates the exact user, session, tenant, membership, application and active grant | Platform `navigation:<action>`; `/me/navigations` uses tenant `navigation.current:read`, then batch-evaluates each menu Resource/Action |
+| Operation log | Record create/update/delete and successful/failed application context switches | Record create/update/delete and move |
+| Security log | Application context switching records the independent `application_context_switch` event with tenant/session/IP/UA request context; public dictionary lookup is query-only | None; navigation metadata does not grant authority |
 | Cache | None; management reads are not hot | `/me/navigations` caches only the application-scoped active/visible source records in the shared Redis Store for `navigation.cache_ttl` (default 5m). Every request still validates active membership, tenant grant validity, and application status in SQL, derives the cache key from the authoritative navigation version sum/count, and re-evaluates PBAC for the current principal. Old revision keys become unreachable and expire; cache failure falls back to SQL. Final principal decisions are never cached. |
 | Distributed lock | None; code uniqueness and optimistic version are authoritative | None; serializable transaction, FK checks, cycle validation, and optimistic version protect mutations |
-| Optimistic lock | Update/delete require version | Update/delete/move require version |
-| Audit | Shared transaction actor and database audit triggers | Shared transaction actor and database audit triggers |
+| Optimistic lock | Update/delete require version; changing an existing session application requires its current context version | Update/delete/move require version |
+| Audit | Shared transaction actor and database audit triggers; session application context is application-owned and does not modify the identity module's session table | Shared transaction actor and database audit triggers |
 | Presentation | RFC3339 +08 timestamps and actor display names | Same; Resource/Action are semantic display fields rather than opaque IDs |
 | Tests | Validation, filtering, not-found, conflict, cancellation; Testcontainers repository coverage | Type/target matrix, parent/application/cycle/leaf rules, stable tree order; Testcontainers repository coverage |
 | Shared capability | Shared pagination, response/errors, stable ID, operation log | Shared PBAC registry, tree SDK, stable ID, response/errors, operation log |
-| Dictionary | Suitable as a bounded application selector provider in a later delivery | Unsuitable: navigation is structural frontend configuration, not a business dictionary |
+| Dictionary | `platform.application` is an in-process bounded enum provider for public display metadata (`id/code/name/icon/home_path/status`). It conveys no tenant grant; entry and navigation still require `/me/applications` plus authorization checks. | Unsuitable: navigation is structural frontend configuration, not a business dictionary |
 
 Application and navigation are platform-scoped configuration. Tenant grants are
 implemented as the separate tenant-owned `tenant_application_grants`

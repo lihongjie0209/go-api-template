@@ -30,28 +30,29 @@ import (
 type EventType string
 
 const (
-	EventLogin                 EventType = "login"
-	EventTokenRefresh          EventType = "token_refresh"
-	EventLogout                EventType = "logout"
-	EventForcedLogout          EventType = "forced_logout"
-	EventPasswordChanged       EventType = "password_changed"
-	EventPasswordReset         EventType = "password_reset"
-	EventSessionRevoked        EventType = "session_revoked"
-	EventLogoutAll             EventType = "logout_all"
-	EventMembershipAdded       EventType = "membership_added"
-	EventMembershipChanged     EventType = "membership_changed"
-	EventMembershipRemoved     EventType = "membership_removed"
-	EventPBACPolicyChanged     EventType = "pbac_policy_changed"
-	EventDataPolicyChanged     EventType = "data_permission_policy_changed"
-	EventPermissionChanged     EventType = "permission_definition_changed"
-	EventIdentityUserChanged   EventType = "identity_user_changed"
-	EventTenantChanged         EventType = "tenant_changed"
-	EventTenantContextSwitch   EventType = "tenant_context_switch"
-	EventTenantAuthorization   EventType = "tenant_authorization_changed"
-	EventMenuChanged           EventType = "platform_menu_changed"
-	EventPlatformConfigChanged EventType = "platform_config_changed"
-	EventSecurityLogAccess     EventType = "security_log_accessed"
-	EventServiceAccountChanged EventType = "service_account_changed"
+	EventLogin                    EventType = "login"
+	EventTokenRefresh             EventType = "token_refresh"
+	EventLogout                   EventType = "logout"
+	EventForcedLogout             EventType = "forced_logout"
+	EventPasswordChanged          EventType = "password_changed"
+	EventPasswordReset            EventType = "password_reset"
+	EventSessionRevoked           EventType = "session_revoked"
+	EventLogoutAll                EventType = "logout_all"
+	EventMembershipAdded          EventType = "membership_added"
+	EventMembershipChanged        EventType = "membership_changed"
+	EventMembershipRemoved        EventType = "membership_removed"
+	EventPBACPolicyChanged        EventType = "pbac_policy_changed"
+	EventDataPolicyChanged        EventType = "data_permission_policy_changed"
+	EventPermissionChanged        EventType = "permission_definition_changed"
+	EventIdentityUserChanged      EventType = "identity_user_changed"
+	EventTenantChanged            EventType = "tenant_changed"
+	EventTenantContextSwitch      EventType = "tenant_context_switch"
+	EventApplicationContextSwitch EventType = "application_context_switch"
+	EventTenantAuthorization      EventType = "tenant_authorization_changed"
+	EventMenuChanged              EventType = "platform_menu_changed"
+	EventPlatformConfigChanged    EventType = "platform_config_changed"
+	EventSecurityLogAccess        EventType = "security_log_accessed"
+	EventServiceAccountChanged    EventType = "service_account_changed"
 )
 
 const envelopeType = "platform.security-log.recorded.v1"
@@ -304,7 +305,7 @@ func (s *Service) hashIdentifier(value string) string {
 	return s.hash(strings.ToLower(strings.TrimSpace(value)))
 }
 func validEvent(value EventType) bool {
-	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventPBACPolicyChanged || value == EventDataPolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess || value == EventServiceAccountChanged
+	return value == EventLogin || value == EventTokenRefresh || value == EventLogout || value == EventForcedLogout || value == EventPasswordChanged || value == EventPasswordReset || value == EventSessionRevoked || value == EventLogoutAll || value == EventMembershipAdded || value == EventMembershipChanged || value == EventMembershipRemoved || value == EventPBACPolicyChanged || value == EventDataPolicyChanged || value == EventPermissionChanged || value == EventIdentityUserChanged || value == EventTenantChanged || value == EventTenantContextSwitch || value == EventApplicationContextSwitch || value == EventTenantAuthorization || value == EventMenuChanged || value == EventPlatformConfigChanged || value == EventSecurityLogAccess || value == EventServiceAccountChanged
 }
 
 func validateEntry(entry Entry) error {

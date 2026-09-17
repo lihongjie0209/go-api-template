@@ -24,7 +24,7 @@ func PlatformResourceDefinitions() ResourceDefinitions {
 		resource("permission.definition", "权限定义", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("application", "应用", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("tenant.application-grant", "租户应用授权", ResourceScopePlatform, "grant", "revoke", "read", "list"),
-		resource("application.current", "当前租户应用", ResourceScopeTenant, "list"),
+		resource("application.current", "当前租户应用", ResourceScopeTenant, "list", "read", "switch"),
 		resource("navigation", "应用导航", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("navigation.current", "当前租户应用导航", ResourceScopeTenant, "read"),
 		resource("dictionary.definition", "数据字典", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
