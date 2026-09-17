@@ -70,6 +70,21 @@ func TestSimulatorReportsUnchangedForIdenticalActiveDataPolicy(t *testing.T) {
 	require.False(t, result.Changed)
 }
 
+func TestEnginePoliciesReturnsDeepCopy(t *testing.T) {
+	simulator, policy := newDataPermissionSimulator(t)
+	require.NoError(t, simulator.runtime.Replace([]Policy{policy}))
+
+	policies, err := simulator.runtime.Policies()
+	require.NoError(t, err)
+	*policies[0].Spec.Subject.Authenticated = false
+	policies[0].Spec.Actions[0] = "changed"
+
+	unchanged, err := simulator.runtime.Policies()
+	require.NoError(t, err)
+	require.True(t, *unchanged[0].Spec.Subject.Authenticated)
+	require.Equal(t, []string{"update"}, unchanged[0].Spec.Actions)
+}
+
 func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
 	simulator, policy := newDataPermissionSimulator(t)
 	tests := []struct {

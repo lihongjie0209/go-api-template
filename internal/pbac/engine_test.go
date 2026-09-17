@@ -134,3 +134,27 @@ func TestEngineRejectsTenantMismatchBeforePolicyEvaluation(t *testing.T) {
 	require.Equal(t, DecisionEffectDeny, decision.Effect)
 	require.Equal(t, ReasonTenantMismatch, decision.ReasonCode)
 }
+
+func TestEnginePoliciesReturnsDeepCopy(t *testing.T) {
+	t.Parallel()
+	authenticated := true
+	policy := enginePolicy(
+		"allow-member",
+		PolicyScope{Type: PolicyScopeGlobal},
+		SubjectMatcher{Authenticated: &authenticated, Roles: RolesMatcher{AnyOf: []string{"manager"}}},
+		EffectAllow,
+	)
+	engine := newTestEngine(t, policy)
+
+	policies, err := engine.Policies()
+	require.NoError(t, err)
+	*policies[0].Spec.Subject.Authenticated = false
+	policies[0].Spec.Subject.Roles.AnyOf[0] = "changed"
+	policies[0].Spec.Actions[0] = "changed"
+
+	unchanged, err := engine.Policies()
+	require.NoError(t, err)
+	require.True(t, *unchanged[0].Spec.Subject.Authenticated)
+	require.Equal(t, []string{"manager"}, unchanged[0].Spec.Subject.Roles.AnyOf)
+	require.Equal(t, []string{"update"}, unchanged[0].Spec.Actions)
+}

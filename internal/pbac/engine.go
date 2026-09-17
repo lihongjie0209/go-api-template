@@ -228,6 +228,10 @@ func sortSnapshot(snapshot *policySnapshot) {
 }
 
 func clonePolicy(policy Policy) Policy {
+	if policy.Spec.Subject.Authenticated != nil {
+		authenticated := *policy.Spec.Subject.Authenticated
+		policy.Spec.Subject.Authenticated = &authenticated
+	}
 	policy.Spec.Actions = slices.Clone(policy.Spec.Actions)
 	policy.Spec.Subject.Types = slices.Clone(policy.Spec.Subject.Types)
 	policy.Spec.Subject.IDs = slices.Clone(policy.Spec.Subject.IDs)
