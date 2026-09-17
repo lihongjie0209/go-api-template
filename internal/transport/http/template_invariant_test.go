@@ -140,6 +140,53 @@ func TestForceLogoutAnotherUserUsesPlatformUserPermission(t *testing.T) {
 	}
 }
 
+func TestSelfProfileRoutesUsePrincipalScopedPermission(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, registration := range []string{
+		`jwt("/profile/get", "identity.profile", "read", accesscontrol.DataPermissionNone`,
+		`jwt("/profile/update", "identity.profile", "update", accesscontrol.DataPermissionNone`,
+	} {
+		if !strings.Contains(string(source), registration) {
+			t.Errorf("missing self-profile authorization registration %q", registration)
+		}
+	}
+}
+
+func TestFrontendTelemetryAndUsageUseDedicatedPermissions(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, registration := range []string{
+		`jwt("/operation-logs/frontend/record", "frontend.telemetry", "record", accesscontrol.DataPermissionNone`,
+		`jwt("/me/navigation-usage", "navigation.current", "read", accesscontrol.DataPermissionNone`,
+	} {
+		if !strings.Contains(string(source), registration) {
+			t.Errorf("missing frontend telemetry authorization registration %q", registration)
+		}
+	}
+	if strings.Contains(string(source), `jwt("/operation-logs/frontend/record", "operation.log", "create"`) {
+		t.Fatal("a user telemetry event must not require the administrative operation-log permission")
+	}
+}
+
+func TestPlatformRuntimeStatusUsesReadPermission(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `jwt("/platform/runtime/status", "platform.runtime", "read", accesscontrol.DataPermissionNone`
+	if !strings.Contains(string(source), want) {
+		t.Fatalf("runtime status must be registered as the platform.runtime:read operation")
+	}
+}
+
 func TestTenantCeilingMutationUsesPlatformScope(t *testing.T) {
 	t.Parallel()
 	source, err := os.ReadFile("server.go")
@@ -152,6 +199,37 @@ func TestTenantCeilingMutationUsesPlatformScope(t *testing.T) {
 	}
 	if strings.Contains(string(source), `jwt("/tenant-authorization/permissions/set"`) {
 		t.Fatal("tenant-scoped route cannot mutate the platform-owned tenant permission ceiling")
+	}
+}
+
+func TestTenantAuthorizationManagementReadsUsePrivilegedPlatformScope(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, registration := range []string{
+		`jwt("/platform/tenant-authorization/permissions/get", "tenant", "grant", accesscontrol.DataPermissionNone`,
+		`jwt("/platform/tenant-authorization/administrators/page", "tenant", "assign-administrator", accesscontrol.DataPermissionNone`,
+	} {
+		if !strings.Contains(string(source), registration) {
+			t.Errorf("missing privileged platform authorization registration %q", registration)
+		}
+	}
+}
+
+func TestTenantAdministratorCandidatePageUsesTenantScope(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `jwt("/tenant-authorization/administrators/page", "tenant.authorization", "assign-administrator", accesscontrol.DataPermissionNone`
+	if !strings.Contains(string(source), want) {
+		t.Fatal("tenant administrator candidate page must use tenant.authorization:assign-administrator")
+	}
+	if strings.Contains(string(source), `jwt("/tenant-authorization/administrators/page", "tenant",`) {
+		t.Fatal("tenant administrator candidate page must not use the platform tenant resource")
 	}
 }
 
@@ -168,6 +246,20 @@ func TestTenantCreatesRequireObjectDataPermission(t *testing.T) {
 	} {
 		if !strings.Contains(string(source), registration) {
 			t.Errorf("missing object-level data permission registration %q", registration)
+		}
+	}
+}
+
+func TestDepartmentMemberAssignmentReadUsesSamePrivilegedScopeAsWrite(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"get", "set"} {
+		registration := `jwt("/tenant-departments/members/` + path + `", "tenant.department", "assign-member", accesscontrol.DataPermissionRequired`
+		if !strings.Contains(string(source), registration) {
+			t.Errorf("department member %s must use assign-member with required data permission", path)
 		}
 	}
 }

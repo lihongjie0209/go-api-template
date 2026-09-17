@@ -152,6 +152,234 @@ func TestEffectivePermissionIDsRejectsInactiveMembershipBeforeGrants(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEffectivePermissionsReturnsDisplayContractForCurrentMember(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+		ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1",
+	})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT DISTINCT rp.permission_id FROM tenant_role_permissions`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}).AddRow("permission-read"))
+	mock.ExpectQuery(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE p.id IN \(\?\)`).
+		WithArgs("permission-read").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "permission_key", "name", "resource", "action"}).
+			AddRow("permission-read", "tenant.member.read", "查看成员", "tenant.member", "read"))
+
+	permissions, err := service.EffectivePermissions(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, []PermissionView{{ID: "permission-read", PermissionKey: "tenant.member.read", Name: "查看成员", Resource: "tenant.member", Action: "read"}}, permissions)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAssignablePermissionsReturnsDisplayFieldsWithinCallerCeiling(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := &TenantAuthorizationService{db: sqlxDB}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+		ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1",
+	})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT DISTINCT rp.permission_id FROM tenant_role_permissions`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}).AddRow("permission-read"))
+	mock.ExpectQuery(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE p.id IN \(\?\)`).
+		WithArgs("permission-read").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "permission_key", "name", "resource", "action"}).
+			AddRow("permission-read", "tenant.member.read", "查看成员", "tenant.member", "read"))
+
+	permissions, err := service.AssignablePermissions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []PermissionView{{ID: "permission-read", PermissionKey: "tenant.member.read", Name: "查看成员", Resource: "tenant.member", Action: "read"}}, permissions)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAssignablePermissionsReturnsEmptyWithoutBuildingINQuery(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := &TenantAuthorizationService{db: sqlxDB}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+		ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1",
+	})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT DISTINCT rp.permission_id FROM tenant_role_permissions`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+
+	permissions, err := service.AssignablePermissions(ctx)
+	require.NoError(t, err)
+	require.Empty(t, permissions)
+	require.NotNil(t, permissions)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTenantPermissionCeilingReturnsAuthoritativePlatformGrantSet(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &TenantAuthorizationService{db: db}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "platform-user", Type: platformprincipal.TypeUser})
+	mock.ExpectQuery(`SELECT name FROM tenants WHERE id=\? AND deleted_at IS NULL`).
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Tenant One"))
+	mock.ExpectQuery(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM tenant_permission_grants g JOIN permissions p`).
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "permission_key", "name", "resource", "action"}).
+			AddRow("permission-read", "tenant.member.read", "查看成员", "tenant.member", "read"))
+
+	permissions, err := service.TenantPermissionCeiling(ctx, "tenant-1")
+	require.NoError(t, err)
+	require.Equal(t, []PermissionView{{ID: "permission-read", PermissionKey: "tenant.member.read", Name: "查看成员", Resource: "tenant.member", Action: "read"}}, permissions)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTenantPermissionCeilingRejectsTenantPrincipalBeforeDatabase(t *testing.T) {
+	t.Parallel()
+	service := &TenantAuthorizationService{}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+	_, err := service.TenantPermissionCeiling(ctx, "tenant-1")
+	require.ErrorIs(t, err, ErrTenantAuthorizationForbidden)
+}
+
+func TestPageAdministratorCandidatesUsesTenantIsolationForCountAndItems(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &TenantAuthorizationService{db: db}
+	request := pagination.Request{Page: 1, PageSize: 20}
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.deleted_at IS NULL LEFT JOIN tenant_administrators a .* WHERE m.tenant_id=\? AND m.deleted_at IS NULL`).
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT m.id AS membership_id,.* FROM tenant_memberships m JOIN tenants t .* WHERE m.tenant_id=\? AND m.deleted_at IS NULL ORDER BY m.joined_at DESC,m.id LIMIT \? OFFSET \?`).
+		WithArgs("tenant-1", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"membership_id", "tenant_id", "user_id", "username", "display_name", "status", "joined_at", "version", "is_administrator"}).
+			AddRow("membership-1", "tenant-1", "user-1", "alice", "Alice", "active", time.Now(), 3, true))
+
+	items, total, err := service.pageAdministratorCandidates(t.Context(), "tenant-1", AdministratorPageInput{}, request)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, items, 1)
+	require.True(t, items[0].IsAdministrator)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPagePlatformAdministratorCandidatesRejectsTenantPrincipalBeforeDatabase(t *testing.T) {
+	t.Parallel()
+	service := &TenantAuthorizationService{}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+	_, err := service.PagePlatformAdministratorCandidates(ctx, "tenant-1", AdministratorPageInput{})
+	require.ErrorIs(t, err, ErrTenantAuthorizationForbidden)
+}
+
+func TestPageTenantAdministratorCandidatesRejectsInvalidPrincipalBeforeDatabase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		principal platformprincipal.Principal
+	}{
+		{name: "platform principal", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}},
+		{name: "missing membership", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &TenantAuthorizationService{}
+			ctx := platformprincipal.WithContext(t.Context(), test.principal)
+			_, err := service.PageTenantAdministratorCandidates(ctx, AdministratorPageInput{})
+			require.ErrorIs(t, err, ErrTenantAuthorizationForbidden)
+		})
+	}
+}
+
+func TestPageTenantAdministratorCandidatesRejectsNonAdministratorBeforeCandidateQuery(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators a JOIN tenant_memberships m .* JOIN tenants t .* WHERE a.tenant_id=\? AND a.membership_id=\? AND a.deleted_at IS NULL`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	_, err = service.PageTenantAdministratorCandidates(ctx, AdministratorPageInput{})
+	require.ErrorIs(t, err, ErrTenantAuthorizationForbidden)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPageTenantAdministratorCandidatesUsesOnlyPrincipalTenant(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+	joinedAt := time.Date(2026, time.September, 18, 1, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators a JOIN tenant_memberships m .* JOIN tenants t .* WHERE a.tenant_id=\? AND a.membership_id=\? AND a.deleted_at IS NULL`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants t .* WHERE m.tenant_id=\? AND m.deleted_at IS NULL`).
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT m.id AS membership_id,.* WHERE m.tenant_id=\? AND m.deleted_at IS NULL ORDER BY m.joined_at DESC,m.id LIMIT \? OFFSET \?`).
+		WithArgs("tenant-1", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"membership_id", "tenant_id", "user_id", "username", "display_name", "status", "joined_at", "version", "is_administrator"}).
+			AddRow("member-2", "tenant-1", "user-2", "alice", "Alice", "active", joinedAt, 2, false))
+
+	page, err := service.PageTenantAdministratorCandidates(ctx, AdministratorPageInput{})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, page.Total)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "tenant-1", page.Items[0].TenantID)
+	require.Equal(t, "2026-09-18T09:00:00+08:00", page.Items[0].JoinedAt.Format(time.RFC3339))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPageTenantAdministratorCandidatesPropagatesGuardDatabaseFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnError(context.DeadlineExceeded)
+
+	_, err = service.PageTenantAdministratorCandidates(ctx, AdministratorPageInput{})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrTenantAuthorizationForbidden)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestRequireSubset(t *testing.T) {
 	require.NoError(t, requireSubset([]string{"read"}, []string{"write", "read"}))
 	require.ErrorIs(t, requireSubset([]string{"delete"}, []string{"read"}), ErrTenantAuthorizationForbidden)

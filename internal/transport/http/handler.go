@@ -33,6 +33,15 @@ type PingResponseBody struct {
 	Version string `json:"version"`
 }
 
+// RuntimeStatusResponseBody is the management-console view of the current
+// process and its required dependencies.
+type RuntimeStatusResponseBody struct {
+	Build     buildinfo.Info `json:"build"`
+	Liveness  health.Status  `json:"liveness"`
+	Readiness health.Status  `json:"readiness"`
+	Ready     bool           `json:"ready"`
+}
+
 // Live godoc
 // @Summary Check process liveness
 // @Tags operations
@@ -106,3 +115,23 @@ func (h *Handler) Ping(c *gin.Context) {
 // @Success 200 {object} Response{body=buildinfo.Info}
 // @Router /api/v1/version [post]
 func (h *Handler) Version(c *gin.Context) { OK(c, buildinfo.Current()) }
+
+// RuntimeStatus godoc
+// @Summary Return build, liveness, and dependency readiness for the management console
+// @Tags operations
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} Response{body=RuntimeStatusResponseBody}
+// @Failure 401 {object} Response "Code 20001: unauthorized"
+// @Failure 403 {object} Response "Code 20003: forbidden"
+// @Router /api/v1/platform/runtime/status [post]
+func (h *Handler) RuntimeStatus(c *gin.Context) {
+	readiness, ready := h.health.Ready(c.Request.Context())
+	OK(c, RuntimeStatusResponseBody{
+		Build:     buildinfo.Current(),
+		Liveness:  h.health.Live(),
+		Readiness: readiness,
+		Ready:     ready,
+	})
+}

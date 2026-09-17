@@ -6,7 +6,7 @@ package pbac
 func PlatformResourceDefinitions() ResourceDefinitions {
 	return ResourceDefinitions{
 		resource("identity.user", "用户", ResourceScopePlatform, "create", "read", "list", "update", "delete", "reset-password", "force-logout"),
-		resource("identity.profile", "当前用户资料", ResourceScopePrincipal, "read"),
+		resource("identity.profile", "当前用户资料", ResourceScopePrincipal, "read", "update"),
 		resource("identity.session", "当前用户登录会话", ResourceScopePrincipal, "list", "revoke", "logout"),
 		resource("identity.credential", "当前用户凭据", ResourceScopePrincipal, "change-password"),
 		resource("authorization.capability", "当前用户前端能力", ResourceScopePrincipal, "evaluate"),
@@ -27,9 +27,12 @@ func PlatformResourceDefinitions() ResourceDefinitions {
 		resource("application.current", "当前租户应用", ResourceScopeTenant, "list", "read", "switch"),
 		resource("navigation", "应用导航", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("navigation.current", "当前租户应用导航", ResourceScopeTenant, "read"),
+		resource("frontend.telemetry", "当前用户前端埋点", ResourceScopePrincipal, "record"),
 		resource("dictionary.definition", "数据字典", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("dictionary.item", "数据字典项", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("platform.config", "平台配置", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
+		resource("platform.runtime", "平台运行状态", ResourceScopePlatform, "read"),
+		resource("scheduled-job", "定时任务", ResourceScopePlatform, "create", "read", "list", "update", "delete", "execute"),
 		resource("operation.log", "操作日志", ResourceScopeTenant, "create", "read", "list"),
 		resource("security.log", "安全日志", ResourceScopeTenant, "read", "list"),
 		resource("pbac.resource-action", "PBAC 资源动作注册表", ResourceScopePlatform, "list"),

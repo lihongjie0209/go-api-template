@@ -72,6 +72,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(application.New),
 		fx.Provide(application.NewTenantAccessService),
 		fx.Provide(application.NewDictionaryProvider),
+		fx.Provide(scheduler.NewHandlerRegistry, scheduler.NewDefinitionService),
 		fx.Provide(navigation.New),
 		fx.Provide(dictionary.New, dictionary.NewProviderRegistry),
 		fx.Invoke(application.RegisterDictionaryProvider),

@@ -22,10 +22,11 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("invalid user")
-	ErrNotFound = errors.New("user not found")
-	ErrConflict = errors.New("user conflict")
-	ErrInUse    = errors.New("user is in use")
+	ErrInvalid   = errors.New("invalid user")
+	ErrNotFound  = errors.New("user not found")
+	ErrConflict  = errors.New("user conflict")
+	ErrInUse     = errors.New("user is in use")
+	ErrForbidden = errors.New("user operation forbidden")
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,63}$`)
@@ -68,6 +69,10 @@ type UpdateInput struct {
 	ID, DisplayName, Email, Phone string
 	Status                        Status
 	Version                       int64
+}
+type SelfUpdateInput struct {
+	DisplayName, Email, Phone string
+	Version                   int64
 }
 type PageInput struct {
 	pagination.Request
@@ -169,6 +174,16 @@ func (s *Service) Get(ctx context.Context, id string) (User, error) {
 	}
 	return s.cached(ctx, "id:"+id, func() (User, error) { return s.repository.Get(ctx, id) })
 }
+func (s *Service) Self(ctx context.Context) (User, error) {
+	principal, ok := platformprincipal.FromContext(ctx)
+	if !ok {
+		return User{}, platformprincipal.ErrMissing
+	}
+	if principal.Type != platformprincipal.TypeUser || strings.TrimSpace(principal.ID) == "" {
+		return User{}, ErrForbidden
+	}
+	return s.Get(ctx, principal.ID)
+}
 func (s *Service) ResolveUsername(ctx context.Context, username string) (User, error) {
 	username = normalizeUsername(username)
 	if !usernamePattern.MatchString(username) {
@@ -242,6 +257,57 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 	return pagination.Result[User]{Items: users, Page: request.Page, PageSize: request.PageSize, Total: total}, e
 }
 func (s *Service) Update(ctx context.Context, input UpdateInput) (User, error) {
+	return s.update(ctx, input, "identity.user.update")
+}
+func (s *Service) UpdateSelf(ctx context.Context, input SelfUpdateInput) (User, error) {
+	principal, ok := platformprincipal.FromContext(ctx)
+	if !ok {
+		return User{}, platformprincipal.ErrMissing
+	}
+	if principal.Type != platformprincipal.TypeUser || strings.TrimSpace(principal.ID) == "" {
+		return User{}, ErrForbidden
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.Phone = strings.TrimSpace(input.Phone)
+	if input.Version <= 0 || !validUserProfile(input.DisplayName, input.Email, input.Phone) {
+		return User{}, ErrInvalid
+	}
+	existing, err := s.repository.Get(ctx, principal.ID)
+	if err != nil {
+		return User{}, err
+	}
+	safeRequest := map[string]any{
+		"name":    input.DisplayName,
+		"fields":  []string{"display_name", "email", "phone"},
+		"version": input.Version,
+	}
+	err = s.mutate(ctx, "identity.profile.update", principal.ID, safeRequest, func(tx *sqlx.Tx) error {
+		query := tx.Rebind(`UPDATE identity_users SET display_name=?,email=?,phone=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
+		result, execErr := tx.ExecContext(ctx, query, input.DisplayName, input.Email, input.Phone, time.Now(), principal.ID, principal.ID, input.Version)
+		if execErr != nil {
+			return execErr
+		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("self profile update affected rows: %w", rowsErr)
+		}
+		if rows != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
+	if err != nil {
+		return User{}, err
+	}
+	s.invalidate(ctx, existing)
+	user, err := s.repository.Get(ctx, principal.ID)
+	if err == nil {
+		s.cacheUser(ctx, user)
+	}
+	return user, err
+}
+func (s *Service) update(ctx context.Context, input UpdateInput, operation string) (User, error) {
 	a, e := actor(ctx)
 	if e != nil {
 		return User{}, e
@@ -254,7 +320,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (User, error) {
 	if e != nil {
 		return User{}, e
 	}
-	e = s.mutate(ctx, "identity.user.update", input.ID, input, func(tx *sqlx.Tx) error {
+	e = s.mutate(ctx, operation, input.ID, input, func(tx *sqlx.Tx) error {
 		if input.Status != StatusActive {
 			now := time.Now()
 			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='user_status_changed',updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), now, now, a, input.ID); err != nil {

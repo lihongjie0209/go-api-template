@@ -132,6 +132,7 @@ cron:
   timezone: Asia/Shanghai
   sample_spec: "0 */5 * * * *"
   job_timeout: 30s
+  refresh_interval: 30s
 migration:
   auto_up: false
   create_schema: false

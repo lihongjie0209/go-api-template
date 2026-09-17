@@ -53,6 +53,59 @@ type DeleteUserRequest struct {
 	ID      string `json:"id" binding:"required"`
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
+type UpdateProfileRequest struct {
+	DisplayName string `json:"display_name" binding:"required"`
+	Email       string `json:"email"`
+	Phone       string `json:"phone"`
+	Version     int64  `json:"version" binding:"required,gt=0"`
+}
+
+// GetProfile godoc
+// @Summary Get the authenticated user's profile
+// @Tags profile
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body object true "Empty JSON object"
+// @Success 200 {object} Response{body=identity.User}
+// @Router /api/v1/profile/get [post]
+func (h *UserHandler) GetProfile(c *gin.Context) {
+	var request struct{}
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.Self(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, result)
+}
+
+// UpdateProfile godoc
+// @Summary Update the authenticated user's profile with optimistic locking
+// @Tags profile
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body UpdateProfileRequest true "Profile and expected version"
+// @Success 200 {object} Response{body=identity.User}
+// @Router /api/v1/profile/update [post]
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+	var request UpdateProfileRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.UpdateSelf(c.Request.Context(), identity.SelfUpdateInput{
+		DisplayName: request.DisplayName, Email: request.Email,
+		Phone: request.Phone, Version: request.Version,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, result)
+}
 
 // CreateUser godoc
 // @Summary Create a globally identified user
@@ -177,6 +230,8 @@ func (h *UserHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.NotFound("user not found"))
 	case errors.Is(e, identity.ErrConflict), errors.Is(e, identity.ErrInUse):
 		Fail(c, h.logger, apperror.Conflict("username or user version conflict", e))
+	case errors.Is(e, identity.ErrForbidden):
+		Fail(c, h.logger, apperror.Forbidden("user operation forbidden"))
 	default:
 		Fail(c, h.logger, apperror.Internal(e))
 	}

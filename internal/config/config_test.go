@@ -289,6 +289,7 @@ func TestConfigRejectsUnsafeCronBounds(t *testing.T) {
 		func(cron *Cron) { cron.Timezone = strings.Repeat("x", 101) },
 		func(cron *Cron) { cron.SampleSpec = strings.Repeat("*", 257) },
 		func(cron *Cron) { cron.JobTimeout = time.Hour + time.Second },
+		func(cron *Cron) { cron.RefreshInterval = 500 * time.Millisecond },
 	} {
 		cfg := validDevelopmentConfig(t)
 		mutate(&cfg.Cron)

@@ -1,0 +1,4 @@
+CREATE TABLE scheduled_jobs (id text PRIMARY KEY,code text NOT NULL,name text NOT NULL,description text NOT NULL DEFAULT '',cron_spec text NOT NULL,timezone text NOT NULL,handler text NOT NULL,timeout_seconds bigint NOT NULL CHECK(timeout_seconds BETWEEN 1 AND 3600),lock_ttl_seconds bigint NOT NULL CHECK(lock_ttl_seconds BETWEEN 1 AND 86400),status text NOT NULL CHECK(status IN('active','disabled')),payload jsonb NOT NULL DEFAULT '{}'::jsonb,created_at timestamptz NOT NULL,created_by text NOT NULL,updated_at timestamptz NOT NULL,updated_by text NOT NULL,version bigint NOT NULL CHECK(version>0),deleted_at timestamptz,deleted_by text);
+CREATE UNIQUE INDEX scheduled_jobs_code_unique ON scheduled_jobs(lower(code)) WHERE deleted_at IS NULL;
+CREATE INDEX scheduled_jobs_page_idx ON scheduled_jobs(status,handler,code,id) WHERE deleted_at IS NULL;
+SELECT app_enable_audit('scheduled_jobs');

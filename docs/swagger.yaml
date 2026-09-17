@@ -213,6 +213,40 @@ definitions:
       token_type:
         type: string
     type: object
+  authorization.AdministratorCandidate:
+    properties:
+      display_name:
+        type: string
+      is_administrator:
+        type: boolean
+      joined_at:
+        type: string
+      membership_id:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: string
+      user_id:
+        type: string
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.AdministratorCandidatePage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.AdministratorCandidate'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
   authorization.CapabilityDecision:
     properties:
       allowed:
@@ -1040,6 +1074,51 @@ definitions:
     - status
     - value
     type: object
+  httptransport.CreateScheduledJobRequest:
+    properties:
+      code:
+        maxLength: 64
+        type: string
+      cron_spec:
+        maxLength: 256
+        type: string
+      description:
+        maxLength: 4096
+        type: string
+      handler:
+        maxLength: 128
+        type: string
+      lock_ttl_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
+      name:
+        maxLength: 256
+        type: string
+      payload:
+        type: object
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      timeout_seconds:
+        maximum: 3600
+        minimum: 1
+        type: integer
+      timezone:
+        maxLength: 100
+        type: string
+    required:
+    - code
+    - cron_spec
+    - handler
+    - lock_ttl_seconds
+    - name
+    - status
+    - timeout_seconds
+    - timezone
+    type: object
   httptransport.CreateServiceAccountRequest:
     properties:
       client_id:
@@ -1288,6 +1367,17 @@ definitions:
     - version
     type: object
   httptransport.DeletePlatformConfigRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - version
+    type: object
+  httptransport.DeleteScheduledJobRequest:
     properties:
       id:
         maxLength: 128
@@ -1584,6 +1674,8 @@ definitions:
         type: array
     required:
     - application_id
+    type: object
+  httptransport.NavigationUsageRequest:
     type: object
   httptransport.OperationLogIDRequest:
     properties:
@@ -2102,6 +2194,100 @@ definitions:
     - resource
     - resource_ids
     type: object
+  httptransport.RuntimeStatusResponseBody:
+    properties:
+      build:
+        $ref: '#/definitions/buildinfo.Info'
+      liveness:
+        $ref: '#/definitions/health.Status'
+      readiness:
+        $ref: '#/definitions/health.Status'
+      ready:
+        type: boolean
+    type: object
+  httptransport.ScheduledJobIDRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+    required:
+    - id
+    type: object
+  httptransport.ScheduledJobPageRequest:
+    properties:
+      codes:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      handlers:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      sort:
+        items:
+          $ref: '#/definitions/pagination.Sort'
+        maxItems: 3
+        type: array
+      statuses:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+    required:
+    - codes
+    - handlers
+    - ids
+    type: object
+  httptransport.ScheduledJobRunPageRequest:
+    properties:
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      scheduled_job_id:
+        maxLength: 128
+        type: string
+      sort:
+        items:
+          $ref: '#/definitions/pagination.Sort'
+        maxItems: 3
+        type: array
+      started_at_from:
+        type: string
+      started_at_to:
+        type: string
+      statuses:
+        items:
+          type: string
+        maxItems: 3
+        type: array
+      trigger_sources:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+    required:
+    - scheduled_job_id
+    type: object
   httptransport.SecurityLogIDRequest:
     properties:
       id:
@@ -2537,6 +2723,68 @@ definitions:
     - value
     - version
     type: object
+  httptransport.UpdateProfileRequest:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      phone:
+        type: string
+      version:
+        type: integer
+    required:
+    - display_name
+    - version
+    type: object
+  httptransport.UpdateScheduledJobRequest:
+    properties:
+      cron_spec:
+        maxLength: 256
+        type: string
+      description:
+        maxLength: 4096
+        type: string
+      handler:
+        maxLength: 128
+        type: string
+      id:
+        maxLength: 128
+        type: string
+      lock_ttl_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
+      name:
+        maxLength: 256
+        type: string
+      payload:
+        type: object
+      status:
+        enum:
+        - active
+        - disabled
+        type: string
+      timeout_seconds:
+        maximum: 3600
+        minimum: 1
+        type: integer
+      timezone:
+        maxLength: 100
+        type: string
+      version:
+        type: integer
+    required:
+    - cron_spec
+    - handler
+    - id
+    - lock_ttl_seconds
+    - name
+    - status
+    - timeout_seconds
+    - timezone
+    - version
+    type: object
   httptransport.UpdateServiceAccountRequest:
     properties:
       description:
@@ -2649,6 +2897,41 @@ definitions:
     - password
     - username
     type: object
+  httptransport.administratorPageRequest:
+    properties:
+      joined_from:
+        type: string
+      joined_to:
+        type: string
+      keyword:
+        type: string
+      membership_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          type: string
+        maxItems: 10
+        type: array
+      tenant_id:
+        maxLength: 128
+        type: string
+      user_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+    required:
+    - membership_ids
+    - tenant_id
+    - user_ids
+    type: object
   httptransport.createTenantRoleRequest:
     properties:
       code:
@@ -2748,6 +3031,45 @@ definitions:
     - permission_ids
     - tenant_id
     - version
+    type: object
+  httptransport.tenantAdministratorPageRequest:
+    properties:
+      joined_from:
+        type: string
+      joined_to:
+        type: string
+      keyword:
+        type: string
+      membership_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      statuses:
+        items:
+          type: string
+        maxItems: 10
+        type: array
+      user_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+    required:
+    - membership_ids
+    - user_ids
+    type: object
+  httptransport.tenantPermissionCeilingRequest:
+    properties:
+      tenant_id:
+        maxLength: 128
+        type: string
+    required:
+    - tenant_id
     type: object
   identity.Status:
     enum:
@@ -2887,6 +3209,17 @@ definitions:
         type: integer
       visible:
         type: boolean
+    type: object
+  operationlog.MenuUsage:
+    properties:
+      application_id:
+        type: string
+      click_count:
+        type: integer
+      last_clicked_at:
+        type: string
+      menu_id:
+        type: string
     type: object
   operationlog.Page:
     properties:
@@ -3418,6 +3751,101 @@ definitions:
       version:
         type: integer
     type: object
+  scheduler.Definition:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      cron_spec:
+        type: string
+      description:
+        type: string
+      handler:
+        type: string
+      id:
+        type: string
+      lock_ttl_seconds:
+        type: integer
+      name:
+        type: string
+      payload:
+        type: object
+      status:
+        type: string
+      timeout_seconds:
+        type: integer
+      timezone:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  scheduler.DefinitionPage:
+    type: object
+  scheduler.HandlerDefinition:
+    properties:
+      description:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
+    type: object
+  scheduler.Run:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      duration_ms:
+        type: integer
+      error_message:
+        type: string
+      finished_at:
+        type: string
+      handler:
+        type: string
+      id:
+        type: string
+      job_code:
+        type: string
+      job_name:
+        type: string
+      request_id:
+        type: string
+      scheduled_job_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      trace_id:
+        type: string
+      trigger_source:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  scheduler.RunPage:
+    type: object
   securitylog.EventType:
     enum:
     - login
@@ -3653,6 +4081,23 @@ definitions:
         type: string
     required:
     - membership_id
+    type: object
+  tenant.DepartmentMemberView:
+    properties:
+      display_name:
+        type: string
+      is_primary:
+        type: boolean
+      joined_at:
+        type: string
+      membership_id:
+        type: string
+      status:
+        $ref: '#/definitions/tenant.Status'
+      user_id:
+        type: string
+      username:
+        type: string
     type: object
   tenant.DepartmentNode:
     properties:
@@ -5249,6 +5694,46 @@ paths:
       summary: List applications available to the current tenant principal
       tags:
       - applications
+  /api/v1/me/navigation-usage:
+    post:
+      consumes:
+      - application/json
+      description: Returns at most 1000 successful menu-view aggregates from the last
+        90 days.
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.NavigationUsageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/operationlog.MenuUsage'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the current principal's recent menu usage
+      tags:
+      - navigations
   /api/v1/me/navigations:
     post:
       parameters:
@@ -6297,6 +6782,36 @@ paths:
       summary: Update a platform configuration
       tags:
       - platform-configs
+  /api/v1/platform/runtime/status:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.RuntimeStatusResponseBody'
+              type: object
+        "401":
+          description: 'Code 20001: unauthorized'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: 'Code 20003: forbidden'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Return build, liveness, and dependency readiness for the management
+        console
+      tags:
+      - operations
   /api/v1/platform/tenant-applications/get:
     post:
       parameters:
@@ -6388,6 +6903,34 @@ paths:
       summary: Revoke a tenant application grant
       tags:
       - tenant-applications
+  /api/v1/platform/tenant-authorization/administrators/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.administratorPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.AdministratorCandidatePage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page tenant members and their administrator assignment
+      tags:
+      - tenant-authorization
   /api/v1/platform/tenant-authorization/administrators/set:
     post:
       consumes:
@@ -6409,6 +6952,36 @@ paths:
       security:
       - Bearer: []
       summary: Add or remove a tenant administrator
+      tags:
+      - tenant-authorization
+  /api/v1/platform/tenant-authorization/permissions/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantPermissionCeilingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/authorization.PermissionView'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant's permission ceiling
       tags:
       - tenant-authorization
   /api/v1/platform/tenant-authorization/permissions/set:
@@ -6570,6 +7143,62 @@ paths:
       summary: Update any tenant from platform context using optimistic locking
       tags:
       - platform-tenants
+  /api/v1/profile/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.User'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the authenticated user's profile
+      tags:
+      - profile
+  /api/v1/profile/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Profile and expected version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.User'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update the authenticated user's profile with optimistic locking
+      tags:
+      - profile
   /api/v1/public/dictionaries/query:
     post:
       consumes:
@@ -6652,6 +7281,214 @@ paths:
       summary: List explicitly public active platform configurations
       tags:
       - public-configs
+  /api/v1/scheduled-job-runs/get:
+    post:
+      parameters:
+      - description: Run ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.Run'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a scheduled job execution record
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-job-runs/page:
+    post:
+      parameters:
+      - description: Run filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobRunPageRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.RunPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page one scheduled job's execution records
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/create:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CreateScheduledJobRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.Definition'
+              type: object
+      security:
+      - Bearer: []
+      summary: Create a scheduled job definition
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/delete:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DeleteScheduledJobRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Delete a scheduled job definition
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/get:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.Definition'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a scheduled job definition
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/handlers/list:
+    post:
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/scheduler.HandlerDefinition'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List executable scheduled job handlers registered by code
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/page:
+    post:
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobPageRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.DefinitionPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page scheduled job definitions
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/trigger:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Trigger one scheduled job immediately
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/update:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.UpdateScheduledJobRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.Definition'
+              type: object
+      security:
+      - Bearer: []
+      summary: Update a scheduled job definition
+      tags:
+      - scheduled-jobs
   /api/v1/security-logs/get:
     post:
       consumes:
@@ -6886,6 +7723,42 @@ paths:
       summary: Update a service account using optimistic locking
       tags:
       - service-accounts
+  /api/v1/tenant-authorization/administrators/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantAdministratorPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.AdministratorCandidatePage'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page administrator candidates in the current tenant
+      tags:
+      - tenant-authorization
   /api/v1/tenant-authorization/administrators/set:
     post:
       consumes:
@@ -6907,6 +7780,36 @@ paths:
       security:
       - Bearer: []
       summary: Add or remove a tenant administrator
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-authorization/assignable-permissions:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/authorization.PermissionView'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List permissions the current tenant principal may delegate
       tags:
       - tenant-authorization
   /api/v1/tenant-authorization/effective-permissions:
@@ -6931,12 +7834,12 @@ paths:
             - properties:
                 body:
                   items:
-                    type: string
+                    $ref: '#/definitions/authorization.PermissionView'
                   type: array
               type: object
       security:
       - Bearer: []
-      summary: List effective permission IDs for a tenant member
+      summary: List effective permissions for a tenant member
       tags:
       - tenant-authorization
   /api/v1/tenant-context/available:
@@ -7076,6 +7979,36 @@ paths:
       security:
       - Bearer: []
       summary: Get a tenant department
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/members/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DepartmentIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/tenant.DepartmentMemberView'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List current department member assignments
       tags:
       - tenant-departments
   /api/v1/tenant-departments/members/set:

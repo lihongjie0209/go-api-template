@@ -84,6 +84,34 @@ func TestDepartmentServiceRejectsUnboundedInputBeforeDatabase(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 	require.ErrorIs(t, service.Delete(ctx, overlongID, 1), ErrInvalid)
 	require.ErrorIs(t, service.SetMembers(ctx, "department-a", []DepartmentMemberAssignment{{MembershipID: overlongID}}), ErrInvalid)
+	_, err = service.Members(ctx, overlongID)
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestDepartmentMembersAppliesTenantAndScopedDepartmentBeforeListing(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND (1 = 1)`)).
+		WithArgs("tenant-a", "department-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("department-a", "tenant-a", nil, "engineering", "Engineering", 0, now, "user-a", now, "user-a", 1))
+	mock.ExpectQuery(`SELECT m.id AS membership_id,m.user_id,m.username,m.display_name,m.status,m.joined_at,dm.is_primary FROM tenant_department_members dm JOIN tenant_memberships m`).
+		WithArgs("tenant-a", "department-a").
+		WillReturnRows(sqlmock.NewRows([]string{"membership_id", "user_id", "username", "display_name", "status", "joined_at", "is_primary"}).
+			AddRow("membership-a", "user-a", "alice", "Alice", "active", now, true))
+	service := &DepartmentService{db: db}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "membership-system"})
+
+	members, err := service.Members(ctx, "department-a")
+	require.NoError(t, err)
+	require.Equal(t, "membership-a", members[0].MembershipID)
+	require.Equal(t, "Alice", members[0].DisplayName)
+	require.True(t, members[0].IsPrimary)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestDepartmentServiceTreeBoundsDatabaseResult(t *testing.T) {

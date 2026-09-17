@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -75,6 +76,18 @@ type Page struct {
 	PageSize int      `json:"page_size"`
 	Total    int64    `json:"total"`
 }
+
+type MenuUsage struct {
+	ApplicationID string    `db:"application_id" json:"application_id"`
+	MenuID        string    `db:"menu_id" json:"menu_id"`
+	ClickCount    int64     `db:"click_count" json:"click_count"`
+	LastClickedAt time.Time `db:"last_clicked_at" json:"last_clicked_at"`
+}
+
+const (
+	MenuUsageLimit  = 1000
+	MenuUsageWindow = 90 * 24 * time.Hour
+)
 
 const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_name_snapshot AS actor_name,l.actor_type,l.application_id,l.source,l.operation,l.resource_type,l.resource_id,l.resource_name_snapshot AS resource_name,l.protocol,l.method,l.route,l.request_payload,l.duration_ms,l.succeeded,l.error_code,l.error_message,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.extension,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
 
@@ -172,6 +185,36 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 		return Page{}, err
 	}
 	return Page{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+// MenuUsage returns a bounded, eventually consistent aggregate of the current
+// principal's successful frontend menu views. It is a presentation hint only:
+// callers must intersect it with the server-authorized navigation set.
+func (s *Service) MenuUsage(ctx context.Context, from, to time.Time) ([]MenuUsage, error) {
+	actor, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if actor.Type != platformprincipal.TypeUser || strings.TrimSpace(actor.ID) == "" ||
+		strings.TrimSpace(actor.TenantID) == "" || strings.TrimSpace(actor.MembershipID) == "" ||
+		from.IsZero() || to.IsZero() || !from.Before(to) || to.Sub(from) > MenuUsageWindow {
+		return nil, ErrInvalidEntry
+	}
+	items := []MenuUsage{}
+	query := s.db.Rebind(`SELECT l.application_id,l.resource_id AS menu_id,COUNT(*) AS click_count,MAX(l.occurred_at) AS last_clicked_at
+FROM operation_logs l
+WHERE l.tenant_id=? AND l.actor_id=? AND l.source='frontend' AND l.resource_type='menu_view' AND l.succeeded=?
+  AND l.application_id<>'' AND l.resource_id<>'' AND l.occurred_at>=? AND l.occurred_at<? AND l.deleted_at IS NULL
+GROUP BY l.application_id,l.resource_id
+ORDER BY COUNT(*) DESC,MAX(l.occurred_at) DESC,l.application_id,l.resource_id
+LIMIT ?`)
+	if err := s.db.SelectContext(ctx, &items, query, actor.TenantID, actor.ID, true, from, to, MenuUsageLimit); err != nil {
+		return nil, fmt.Errorf("query current principal menu usage: %w", err)
+	}
+	for index := range items {
+		items[index].LastClickedAt = presentation.Time(items[index].LastClickedAt)
+	}
+	return items, nil
 }
 
 func (s *Service) present(ctx context.Context, records []Record) error {

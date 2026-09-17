@@ -175,6 +175,28 @@ func (h *DepartmentHandler) SetMembers(c *gin.Context) {
 	}
 	OK(c, gin.H{})
 }
+
+// Members godoc
+// @Summary List current department member assignments
+// @Tags tenant-departments
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DepartmentIDRequest true "Department"
+// @Success 200 {object} Response{body=[]tenant.DepartmentMemberView}
+// @Router /api/v1/tenant-departments/members/get [post]
+func (h *DepartmentHandler) Members(c *gin.Context) {
+	var r DepartmentIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	members, err := h.service.Members(c.Request.Context(), r.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, members)
+}
 func (h *DepartmentHandler) bind(c *gin.Context, v any) bool {
 	if err := c.ShouldBindJSON(v); err != nil {
 		Fail(c, h.logger, apperror.Invalid("invalid department request", err))

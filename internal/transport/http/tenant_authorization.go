@@ -25,6 +25,26 @@ type setTenantPermissionsRequest struct {
 	Version       int64    `json:"version" binding:"required,gt=0"`
 	PermissionIDs []string `json:"permission_ids" binding:"max=1000,dive,required,max=128"`
 }
+type tenantPermissionCeilingRequest struct {
+	TenantID string `json:"tenant_id" binding:"required,max=128"`
+}
+type administratorPageRequest struct {
+	pagination.Request
+	TenantID      string     `json:"tenant_id" binding:"required,max=128"`
+	MembershipIDs []string   `json:"membership_ids" binding:"max=200,dive,required,max=128"`
+	UserIDs       []string   `json:"user_ids" binding:"max=200,dive,required,max=128"`
+	Statuses      []string   `json:"statuses" binding:"max=10,dive,oneof=active disabled"`
+	JoinedFrom    *time.Time `json:"joined_from"`
+	JoinedTo      *time.Time `json:"joined_to"`
+}
+type tenantAdministratorPageRequest struct {
+	pagination.Request
+	MembershipIDs []string   `json:"membership_ids" binding:"max=200,dive,required,max=128"`
+	UserIDs       []string   `json:"user_ids" binding:"max=200,dive,required,max=128"`
+	Statuses      []string   `json:"statuses" binding:"max=10,dive,oneof=active disabled"`
+	JoinedFrom    *time.Time `json:"joined_from"`
+	JoinedTo      *time.Time `json:"joined_to"`
+}
 type setAdministratorRequest struct {
 	TenantID     string `json:"tenant_id" binding:"required,max=128"`
 	MembershipID string `json:"membership_id" binding:"required,max=128"`
@@ -90,6 +110,78 @@ func (h *TenantAuthorizationHandler) SetTenantPermissions(c *gin.Context) {
 		return
 	}
 	h.respond(c, h.service.SetTenantPermissions(c.Request.Context(), request.TenantID, request.Version, request.PermissionIDs))
+}
+
+// TenantPermissionCeiling godoc
+// @Summary Get a tenant's permission ceiling
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantPermissionCeilingRequest true "Tenant"
+// @Success 200 {object} Response{body=[]authorization.PermissionView}
+// @Router /api/v1/platform/tenant-authorization/permissions/get [post]
+func (h *TenantAuthorizationHandler) TenantPermissionCeiling(c *gin.Context) {
+	var request tenantPermissionCeilingRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	permissions, err := h.service.TenantPermissionCeiling(c.Request.Context(), request.TenantID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, permissions)
+}
+
+// PagePlatformAdministratorCandidates godoc
+// @Summary Page tenant members and their administrator assignment
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body administratorPageRequest true "Filters"
+// @Success 200 {object} Response{body=authorization.AdministratorCandidatePage}
+// @Router /api/v1/platform/tenant-authorization/administrators/page [post]
+func (h *TenantAuthorizationHandler) PagePlatformAdministratorCandidates(c *gin.Context) {
+	var request administratorPageRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	page, err := h.service.PagePlatformAdministratorCandidates(c.Request.Context(), request.TenantID, authorization.AdministratorPageInput{
+		Request: request.Request, MembershipIDs: request.MembershipIDs, UserIDs: request.UserIDs, Statuses: request.Statuses, JoinedFrom: request.JoinedFrom, JoinedTo: request.JoinedTo,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
+}
+
+// PageTenantAdministratorCandidates godoc
+// @Summary Page administrator candidates in the current tenant
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantAdministratorPageRequest true "Filters"
+// @Success 200 {object} Response{body=authorization.AdministratorCandidatePage}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Router /api/v1/tenant-authorization/administrators/page [post]
+func (h *TenantAuthorizationHandler) PageTenantAdministratorCandidates(c *gin.Context) {
+	var request tenantAdministratorPageRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	page, err := h.service.PageTenantAdministratorCandidates(c.Request.Context(), authorization.AdministratorPageInput{
+		Request: request.Request, MembershipIDs: request.MembershipIDs, UserIDs: request.UserIDs, Statuses: request.Statuses, JoinedFrom: request.JoinedFrom, JoinedTo: request.JoinedTo,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
 }
 
 // SetAdministrator godoc
@@ -301,13 +393,13 @@ func (h *TenantAuthorizationHandler) SetMemberRoles(c *gin.Context) {
 }
 
 // EffectivePermissions godoc
-// @Summary List effective permission IDs for a tenant member
+// @Summary List effective permissions for a tenant member
 // @Tags tenant-authorization
 // @Accept json
 // @Produce json
 // @Security Bearer
 // @Param request body effectivePermissionsRequest true "Member"
-// @Success 200 {object} Response{body=[]string}
+// @Success 200 {object} Response{body=[]authorization.PermissionView}
 // @Router /api/v1/tenant-authorization/effective-permissions [post]
 func (h *TenantAuthorizationHandler) EffectivePermissions(c *gin.Context) {
 	var request effectivePermissionsRequest
@@ -315,6 +407,28 @@ func (h *TenantAuthorizationHandler) EffectivePermissions(c *gin.Context) {
 		return
 	}
 	permissions, err := h.service.EffectivePermissions(c.Request.Context(), request.MembershipID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, permissions)
+}
+
+// AssignablePermissions godoc
+// @Summary List permissions the current tenant principal may delegate
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body object true "Empty JSON object"
+// @Success 200 {object} Response{body=[]authorization.PermissionView}
+// @Router /api/v1/tenant-authorization/assignable-permissions [post]
+func (h *TenantAuthorizationHandler) AssignablePermissions(c *gin.Context) {
+	var request struct{}
+	if !h.bind(c, &request) {
+		return
+	}
+	permissions, err := h.service.AssignablePermissions(c.Request.Context())
 	if err != nil {
 		h.fail(c, err)
 		return

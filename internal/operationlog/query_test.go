@@ -98,3 +98,66 @@ func TestPageScopesTenantBeforeApplyingClientFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMenuUsageScopesPrincipalTenantAndHalfOpenWindow(t *testing.T) {
+	t.Parallel()
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	service := &Service{db: sqlx.NewDb(database, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+		ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1",
+	})
+	to := time.Date(2026, time.September, 18, 1, 0, 0, 0, time.UTC)
+	from := to.Add(-MenuUsageWindow)
+	query := regexp.QuoteMeta(`SELECT l.application_id,l.resource_id AS menu_id,COUNT(*) AS click_count,MAX(l.occurred_at) AS last_clicked_at
+FROM operation_logs l
+WHERE l.tenant_id=? AND l.actor_id=? AND l.source='frontend' AND l.resource_type='menu_view' AND l.succeeded=?
+  AND l.application_id<>'' AND l.resource_id<>'' AND l.occurred_at>=? AND l.occurred_at<? AND l.deleted_at IS NULL
+GROUP BY l.application_id,l.resource_id
+ORDER BY COUNT(*) DESC,MAX(l.occurred_at) DESC,l.application_id,l.resource_id
+LIMIT ?`)
+	mock.ExpectQuery(query).WithArgs("tenant-1", "user-1", true, from, to, MenuUsageLimit).WillReturnRows(
+		sqlmock.NewRows([]string{"application_id", "menu_id", "click_count", "last_clicked_at"}).
+			AddRow("app-1", "menu-1", 3, to.Add(-time.Hour)),
+	)
+
+	items, err := service.MenuUsage(ctx, from, to)
+	if err != nil || len(items) != 1 || items[0].ClickCount != 3 {
+		t.Fatalf("MenuUsage() = %+v, %v", items, err)
+	}
+	if got := items[0].LastClickedAt.Format(time.RFC3339); got != "2026-09-18T08:00:00+08:00" {
+		t.Fatalf("last_clicked_at = %s", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMenuUsageRejectsInvalidPrincipalAndWindowBeforeQuery(t *testing.T) {
+	t.Parallel()
+	to := time.Now()
+	tests := []struct {
+		name      string
+		principal platformprincipal.Principal
+		from      time.Time
+		to        time.Time
+	}{
+		{name: "service account", principal: platformprincipal.Principal{ID: "svc", Type: platformprincipal.TypeServiceAccount, TenantID: "tenant-1", MembershipID: "membership-1"}, from: to.Add(-time.Hour), to: to},
+		{name: "missing tenant", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, MembershipID: "membership-1"}, from: to.Add(-time.Hour), to: to},
+		{name: "missing membership", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"}, from: to.Add(-time.Hour), to: to},
+		{name: "reversed window", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"}, from: to, to: to.Add(-time.Hour)},
+		{name: "unbounded window", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"}, from: to.Add(-MenuUsageWindow - time.Second), to: to},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := platformprincipal.WithContext(t.Context(), test.principal)
+			service := &Service{}
+			if _, err := service.MenuUsage(ctx, test.from, test.to); !errors.Is(err, ErrInvalidEntry) {
+				t.Fatalf("MenuUsage() = %v, want ErrInvalidEntry", err)
+			}
+		})
+	}
+}

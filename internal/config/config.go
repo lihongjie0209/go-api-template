@@ -206,10 +206,11 @@ type PSK struct {
 	Key     string `mapstructure:"key"`
 }
 type Cron struct {
-	Enabled    bool          `mapstructure:"enabled"`
-	Timezone   string        `mapstructure:"timezone"`
-	SampleSpec string        `mapstructure:"sample_spec"`
-	JobTimeout time.Duration `mapstructure:"job_timeout"`
+	Enabled         bool          `mapstructure:"enabled"`
+	Timezone        string        `mapstructure:"timezone"`
+	SampleSpec      string        `mapstructure:"sample_spec"`
+	JobTimeout      time.Duration `mapstructure:"job_timeout"`
+	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
 }
 type Migration struct {
 	AutoUp       bool   `mapstructure:"auto_up"`
@@ -617,6 +618,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("cron.timezone", "Asia/Shanghai")
 	v.SetDefault("cron.sample_spec", "0 */5 * * * *")
 	v.SetDefault("cron.job_timeout", "30s")
+	v.SetDefault("cron.refresh_interval", "30s")
 	v.SetDefault("migration.path", "migrations/postgres")
 	v.SetDefault("migration.database_url", "")
 	v.SetDefault("migration.auto_up", false)
@@ -804,8 +806,8 @@ func (c Config) Validate() error {
 	if c.PolicySync.PollInterval < time.Second || c.PolicySync.PollInterval > 10*time.Minute || c.PolicySync.Timeout < 100*time.Millisecond || c.PolicySync.Timeout > 30*time.Second || c.PolicySync.Timeout >= c.PolicySync.PollInterval {
 		return errors.New("policy_sync requires timeout between 100ms and 30s and poll_interval between 1s and 10m greater than timeout")
 	}
-	if strings.TrimSpace(c.Cron.Timezone) == "" || len(c.Cron.Timezone) > 100 || len(c.Cron.SampleSpec) > 256 || c.Cron.JobTimeout < time.Second || c.Cron.JobTimeout > time.Hour {
-		return errors.New("cron requires a bounded timezone, schedule, and job_timeout between one second and one hour")
+	if strings.TrimSpace(c.Cron.Timezone) == "" || len(c.Cron.Timezone) > 100 || len(c.Cron.SampleSpec) > 256 || c.Cron.JobTimeout < time.Second || c.Cron.JobTimeout > time.Hour || c.Cron.RefreshInterval < time.Second || c.Cron.RefreshInterval > 10*time.Minute {
+		return errors.New("cron requires a bounded timezone, schedule, job_timeout between one second and one hour, and refresh_interval between one second and ten minutes")
 	}
 	if c.Tenant.CacheTTL <= 0 || c.Tenant.CacheTTL > maxCacheTTL {
 		return errors.New("tenant cache duration must be positive and no greater than 24h")

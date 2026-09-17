@@ -79,6 +79,111 @@ func TestUserInputsRejectUnboundedSearchAndProfileFields(t *testing.T) {
 	}
 }
 
+func TestSelfProfileUsesAuthenticatedUserID(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{repository: NewRepository(db)}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-self").WillReturnRows(
+		sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-self", StatusActive, 3, now)...),
+	)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-self", Type: platformprincipal.TypeUser})
+	profile, err := service.Self(ctx)
+	if err != nil || profile.ID != "user-self" || profile.Username != "alice" {
+		t.Fatalf("Self() = %+v, error = %v", profile, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSelfProfileRejectsServiceAccount(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount})
+	if _, err := service.Self(ctx); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Self() error = %v", err)
+	}
+	if _, err := service.UpdateSelf(ctx, SelfUpdateInput{DisplayName: "Service", Version: 1}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("UpdateSelf() error = %v", err)
+	}
+}
+
+func TestUpdateSelfValidatesBeforeDatabaseAccess(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-self", Type: platformprincipal.TypeUser})
+	_, err := service.UpdateSelf(ctx, SelfUpdateInput{DisplayName: " ", Version: 1})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("UpdateSelf() error = %v", err)
+	}
+}
+
+func TestUpdateSelfPreservesStatusAndUsesOptimisticVersion(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	operations := &capturingOperationRecorder{}
+	service := &Service{
+		repository: NewRepository(db), transactor: database.NewTransactor(db),
+		operations: operations, security: securityStub{},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-self").WillReturnRows(
+		sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-self", StatusLocked, 7, now)...),
+	)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_users SET display_name=`).
+		WithArgs("Alice Updated", "alice.updated@example.com", "13900000000", sqlmock.AnyArg(), "user-self", "user-self", int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-self").WillReturnRows(
+		sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-self", StatusLocked, 8, now)...),
+	)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-self", Type: platformprincipal.TypeUser})
+	profile, err := service.UpdateSelf(ctx, SelfUpdateInput{
+		DisplayName: "Alice Updated", Email: "alice.updated@example.com",
+		Phone: "13900000000", Version: 7,
+	})
+	if err != nil || profile.Status != StatusLocked || profile.Version != 8 {
+		t.Fatalf("UpdateSelf() = %+v, error = %v", profile, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.entries) != 1 {
+		t.Fatalf("operation log entries = %d", len(operations.entries))
+	}
+	request, ok := operations.entries[0].Request.(map[string]any)
+	if !ok {
+		t.Fatalf("operation log request = %#v", operations.entries[0].Request)
+	}
+	if _, leaked := request["email"]; leaked {
+		t.Fatalf("operation log leaked email: %#v", request)
+	}
+	if _, leaked := request["phone"]; leaked {
+		t.Fatalf("operation log leaked phone: %#v", request)
+	}
+}
+
+func userColumnNames() []string {
+	return []string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}
+}
+
+func userRow(id string, status Status, version int64, now time.Time) []driver.Value {
+	return []driver.Value{id, "alice", "Alice", "alice@example.com", "13800000000", status, now, "admin", "Administrator", now, "admin", "Administrator", version}
+}
+
 func TestDeleteRejectsTenantOwner(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
@@ -120,6 +225,18 @@ type operationStub struct{}
 func (operationStub) Enabled() bool                                    { return true }
 func (operationStub) Record(context.Context, operationlog.Entry) error { return nil }
 func (operationStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	return nil
+}
+
+type capturingOperationRecorder struct{ entries []operationlog.Entry }
+
+func (*capturingOperationRecorder) Enabled() bool { return true }
+func (r *capturingOperationRecorder) Record(_ context.Context, entry operationlog.Entry) error {
+	r.entries = append(r.entries, entry)
+	return nil
+}
+func (r *capturingOperationRecorder) RecordTx(_ context.Context, _ *sqlx.Tx, entry operationlog.Entry) error {
+	r.entries = append(r.entries, entry)
 	return nil
 }
 

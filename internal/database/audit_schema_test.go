@@ -58,6 +58,34 @@ func TestMySQLDownMigrationsDoNotDropIndexesFromRetiredRoutePolicyTables(t *test
 	}
 }
 
+func TestMySQLDataMigrationsSetAndClearAuditActor(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob(filepath.Join("..", "..", "migrations", "mysql", "*.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := regexp.MustCompile(`(?im)^\s*(?:insert\s+into|update)\s+`)
+	for _, file := range files {
+		// MySQL audit triggers were introduced by migration 000019. Earlier
+		// data migrations cannot populate the transaction actor variable.
+		if filepath.Base(file) < "000019" {
+			continue
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !mutation.Match(content) {
+			continue
+		}
+		sql := strings.ToLower(string(content))
+		if !strings.Contains(sql, "set @app_actor_id = 'system:migration'") ||
+			!strings.Contains(sql, "set @app_actor_id = null") {
+			t.Errorf("%s mutates audited data without setting and clearing the migration actor", file)
+		}
+	}
+}
+
 func validateMySQLAuditTriggers(sql string) error {
 	lower := strings.ToLower(sql)
 	physicalDeleteAllowed := map[string]bool{"operation_logs": true, "security_logs": true}

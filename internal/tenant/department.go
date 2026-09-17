@@ -64,6 +64,16 @@ type DepartmentMemberAssignment struct {
 	IsPrimary    bool   `json:"is_primary"`
 }
 
+type DepartmentMemberView struct {
+	MembershipID string    `db:"membership_id" json:"membership_id"`
+	UserID       string    `db:"user_id" json:"user_id"`
+	Username     string    `db:"username" json:"username"`
+	DisplayName  string    `db:"display_name" json:"display_name"`
+	Status       Status    `db:"status" json:"status"`
+	JoinedAt     time.Time `db:"joined_at" json:"joined_at"`
+	IsPrimary    bool      `db:"is_primary" json:"is_primary"`
+}
+
 type DepartmentService struct {
 	db         *sqlx.DB
 	tx         *database.Transactor
@@ -493,6 +503,32 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 			return nil
 		})
 	})
+}
+
+func (s *DepartmentService) Members(ctx context.Context, departmentID string) ([]DepartmentMemberView, error) {
+	actor, err := departmentActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	departmentID = strings.TrimSpace(departmentID)
+	if departmentID == "" || len(departmentID) > maxTenantIDLength {
+		return nil, ErrInvalid
+	}
+	if _, err := s.Get(ctx, departmentID); err != nil {
+		return nil, err
+	}
+	members := []DepartmentMemberView{}
+	query := `SELECT m.id AS membership_id,m.user_id,m.username,m.display_name,m.status,m.joined_at,dm.is_primary FROM tenant_department_members dm JOIN tenant_memberships m ON m.tenant_id=dm.tenant_id AND m.id=dm.membership_id AND m.deleted_at IS NULL WHERE dm.tenant_id=? AND dm.department_id=? AND dm.deleted_at IS NULL ORDER BY LOWER(m.username),LOWER(m.display_name),m.id LIMIT 1001`
+	if err := s.db.SelectContext(ctx, &members, s.db.Rebind(query), actor.TenantID, departmentID); err != nil {
+		return nil, fmt.Errorf("list department members: %w", err)
+	}
+	if len(members) > 1000 {
+		return nil, fmt.Errorf("%w: department member assignment exceeds 1000 rows", ErrInvalid)
+	}
+	for index := range members {
+		members[index].JoinedAt = presentation.Time(members[index].JoinedAt)
+	}
+	return members, nil
 }
 
 func (s *DepartmentService) departmentScope(ctx context.Context) (datapermission.SQLPredicate, error) {

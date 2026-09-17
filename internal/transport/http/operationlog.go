@@ -57,6 +57,8 @@ type FrontendEventRequest struct {
 	Extension     map[string]any `json:"extension" binding:"omitempty"`
 }
 
+type NavigationUsageRequest struct{}
+
 // RecordFrontendEvent godoc
 // @Summary Enqueue a frontend menu or button event
 // @Tags operation-logs
@@ -110,6 +112,33 @@ func (h *OperationLogHandler) RecordFrontend(c *gin.Context) {
 		return
 	}
 	OK(c, gin.H{"accepted": true})
+}
+
+// NavigationUsage godoc
+// @Summary Get the current principal's recent menu usage
+// @Description Returns at most 1000 successful menu-view aggregates from the last 90 days.
+// @Tags navigations
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body NavigationUsageRequest true "Empty JSON object"
+// @Success 200 {object} Response{body=[]operationlog.MenuUsage}
+// @Failure 400 {object} Response
+// @Failure 401 {object} Response
+// @Router /api/v1/me/navigation-usage [post]
+func (h *OperationLogHandler) NavigationUsage(c *gin.Context) {
+	var request NavigationUsageRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Fail(c, h.logger, apperror.Invalid("invalid navigation usage request", err))
+		return
+	}
+	now := time.Now()
+	items, err := h.service.MenuUsage(c.Request.Context(), now.Add(-operationlog.MenuUsageWindow), now)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, items)
 }
 
 // Get godoc

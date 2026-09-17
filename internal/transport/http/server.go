@@ -33,7 +33,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, scheduledJobHandler *ScheduledJobHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -90,6 +90,16 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		post(jwtEndpoint("/api/v1"+path, resource, action, data), handlers...)
 	}
 	public("/version", handler.Version)
+	jwt("/platform/runtime/status", "platform.runtime", "read", accesscontrol.DataPermissionNone, handler.RuntimeStatus)
+	jwt("/scheduled-jobs/create", "scheduled-job", "create", accesscontrol.DataPermissionNone, scheduledJobHandler.Create)
+	jwt("/scheduled-jobs/get", "scheduled-job", "read", accesscontrol.DataPermissionNone, scheduledJobHandler.Get)
+	jwt("/scheduled-jobs/page", "scheduled-job", "list", accesscontrol.DataPermissionNone, scheduledJobHandler.Page)
+	jwt("/scheduled-jobs/update", "scheduled-job", "update", accesscontrol.DataPermissionNone, scheduledJobHandler.Update)
+	jwt("/scheduled-jobs/delete", "scheduled-job", "delete", accesscontrol.DataPermissionNone, scheduledJobHandler.Delete)
+	jwt("/scheduled-jobs/handlers/list", "scheduled-job", "list", accesscontrol.DataPermissionNone, scheduledJobHandler.ListHandlers)
+	jwt("/scheduled-jobs/trigger", "scheduled-job", "execute", accesscontrol.DataPermissionNone, scheduledJobHandler.Trigger)
+	jwt("/scheduled-job-runs/get", "scheduled-job", "read", accesscontrol.DataPermissionNone, scheduledJobHandler.GetRun)
+	jwt("/scheduled-job-runs/page", "scheduled-job", "list", accesscontrol.DataPermissionNone, scheduledJobHandler.PageRuns)
 	public("/.well-known/jwks.json", handler.JWKSAPI)
 	public("/auth/login", RateLimit(limiter, cfg.RateLimit.Login, "login", func(c *gin.Context) string { return c.ClientIP() }, logger), authenticationHandler.Login)
 	public("/auth/user/login", RateLimit(limiter, cfg.RateLimit.Login, "user-login", func(c *gin.Context) string { return c.ClientIP() }, logger), userAuthenticationHandler.Login)
@@ -102,6 +112,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/auth/sessions/logout-all", "identity.session", "logout", accesscontrol.DataPermissionNone, userAuthenticationHandler.LogoutAll)
 	jwt("/auth/sessions/force-logout-all", "identity.user", "force-logout", accesscontrol.DataPermissionNone, userAuthenticationHandler.ForceLogoutAll)
 	jwt("/me", "identity.profile", "read", accesscontrol.DataPermissionNone, handler.Me)
+	jwt("/profile/get", "identity.profile", "read", accesscontrol.DataPermissionNone, userHandler.GetProfile)
+	jwt("/profile/update", "identity.profile", "update", accesscontrol.DataPermissionNone, userHandler.UpdateProfile)
 	jwt("/authorization/capabilities/evaluate", "authorization.capability", "evaluate", accesscontrol.DataPermissionNone, capabilityHandler.Evaluate)
 	jwt("/authorization/rows/evaluate", "authorization.capability", "evaluate", accesscontrol.DataPermissionNone, capabilityHandler.EvaluateRows)
 	public("/example/ping", handler.Ping)
@@ -144,10 +156,15 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/tenant-departments/update", "tenant.department", "update", accesscontrol.DataPermissionRequired, departmentHandler.Update)
 	jwt("/tenant-departments/delete", "tenant.department", "delete", accesscontrol.DataPermissionRequired, departmentHandler.Delete)
 	jwt("/tenant-departments/members/set", "tenant.department", "assign-member", accesscontrol.DataPermissionRequired, departmentHandler.SetMembers)
+	jwt("/tenant-departments/members/get", "tenant.department", "assign-member", accesscontrol.DataPermissionRequired, departmentHandler.Members)
 	jwt("/platform/tenant-authorization/permissions/set", "tenant", "grant", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.SetTenantPermissions)
+	jwt("/platform/tenant-authorization/permissions/get", "tenant", "grant", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.TenantPermissionCeiling)
+	jwt("/platform/tenant-authorization/administrators/page", "tenant", "assign-administrator", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.PagePlatformAdministratorCandidates)
 	jwt("/platform/tenant-authorization/administrators/set", "tenant", "assign-administrator", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.SetAdministrator)
+	jwt("/tenant-authorization/administrators/page", "tenant.authorization", "assign-administrator", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.PageTenantAdministratorCandidates)
 	jwt("/tenant-authorization/administrators/set", "tenant.authorization", "assign-administrator", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.SetAdministrator)
 	jwt("/tenant-authorization/effective-permissions", "tenant.authorization", "read", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.EffectivePermissions)
+	jwt("/tenant-authorization/assignable-permissions", "tenant.authorization", "read", accesscontrol.DataPermissionNone, tenantAuthorizationHandler.AssignablePermissions)
 	jwt("/tenant-roles/create", "tenant.role", "create", accesscontrol.DataPermissionObject, tenantAuthorizationHandler.CreateRole)
 	jwt("/tenant-roles/get", "tenant.role", "read", accesscontrol.DataPermissionRequired, tenantAuthorizationHandler.GetRole)
 	jwt("/tenant-roles/page", "tenant.role", "list", accesscontrol.DataPermissionRequired, tenantAuthorizationHandler.PageRoles)
@@ -235,7 +252,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/permissions/get", "permission.definition", "read", accesscontrol.DataPermissionNone, permissionHandler.Get)
 	jwt("/permissions/update", "permission.definition", "update", accesscontrol.DataPermissionNone, permissionHandler.Update)
 	jwt("/permissions/delete", "permission.definition", "delete", accesscontrol.DataPermissionNone, permissionHandler.Delete)
-	jwt("/operation-logs/frontend/record", "operation.log", "create", accesscontrol.DataPermissionNone, operationLogHandler.RecordFrontend)
+	jwt("/operation-logs/frontend/record", "frontend.telemetry", "record", accesscontrol.DataPermissionNone, operationLogHandler.RecordFrontend)
+	jwt("/me/navigation-usage", "navigation.current", "read", accesscontrol.DataPermissionNone, operationLogHandler.NavigationUsage)
 	jwt("/operation-logs/get", "operation.log", "read", accesscontrol.DataPermissionNone, operationLogHandler.Get)
 	jwt("/operation-logs/page", "operation.log", "list", accesscontrol.DataPermissionNone, operationLogHandler.Page)
 	jwt("/security-logs/get", "security.log", "read", accesscontrol.DataPermissionNone, securityLogHandler.Get)
@@ -314,4 +332,4 @@ func registerPprof(group *gin.RouterGroup) {
 	}
 }
 
-var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewApplicationHandler, NewNavigationHandler, NewPlatformConfigHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewApplicationHandler, NewNavigationHandler, NewPlatformConfigHandler, NewScheduledJobHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))

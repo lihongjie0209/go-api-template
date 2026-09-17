@@ -2617,6 +2617,72 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/me/navigation-usage": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "Returns at most 1000 successful menu-view aggregates from the last 90 days.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "navigations"
+                ],
+                "summary": "Get the current principal's recent menu usage",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.NavigationUsageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/operationlog.MenuUsage"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me/navigations": {
             "post": {
                 "security": [
@@ -4475,6 +4541,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform/runtime/status": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operations"
+                ],
+                "summary": "Return build, liveness, and dependency readiness for the management console",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.RuntimeStatusResponseBody"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Code 20001: unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Code 20003: forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform/tenant-applications/get": {
             "post": {
                 "security": [
@@ -4639,6 +4756,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform/tenant-authorization/administrators/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Page tenant members and their administrator assignment",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.administratorPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.AdministratorCandidatePage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform/tenant-authorization/administrators/set": {
             "post": {
                 "security": [
@@ -4672,6 +4839,59 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-authorization/permissions/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get a tenant's permission ceiling",
+                "parameters": [
+                    {
+                        "description": "Tenant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantPermissionCeilingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/authorization.PermissionView"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -4953,6 +5173,106 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/profile/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "profile"
+                ],
+                "summary": "Get the authenticated user's profile",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/identity.User"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/profile/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "profile"
+                ],
+                "summary": "Update the authenticated user's profile with optimistic locking",
+                "parameters": [
+                    {
+                        "description": "Profile and expected version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.UpdateProfileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/identity.User"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/dictionaries/query": {
             "post": {
                 "description": "Public endpoint. Enum results are paged; tree results are returned as a bounded complete tree.",
@@ -5083,6 +5403,381 @@ const docTemplate = `{
                                             "items": {
                                                 "$ref": "#/definitions/platformconfig.PublicView"
                                             }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-job-runs/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Get a scheduled job execution record",
+                "parameters": [
+                    {
+                        "description": "Run ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.Run"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-job-runs/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Page one scheduled job's execution records",
+                "parameters": [
+                    {
+                        "description": "Run filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobRunPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.RunPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Create a scheduled job definition",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CreateScheduledJobRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.Definition"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Delete a scheduled job definition",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DeleteScheduledJobRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Get a scheduled job definition",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.Definition"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/handlers/list": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "List executable scheduled job handlers registered by code",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/scheduler.HandlerDefinition"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Page scheduled job definitions",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.DefinitionPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/trigger": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Trigger one scheduled job immediately",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Update a scheduled job definition",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.UpdateScheduledJobRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.Definition"
                                         }
                                     }
                                 }
@@ -5498,6 +6193,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-authorization/administrators/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Page administrator candidates in the current tenant",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantAdministratorPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.AdministratorCandidatePage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-authorization/administrators/set": {
             "post": {
                 "security": [
@@ -5536,6 +6293,59 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-authorization/assignable-permissions": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "List permissions the current tenant principal may delegate",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/authorization.PermissionView"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-authorization/effective-permissions": {
             "post": {
                 "security": [
@@ -5552,7 +6362,7 @@ const docTemplate = `{
                 "tags": [
                     "tenant-authorization"
                 ],
-                "summary": "List effective permission IDs for a tenant member",
+                "summary": "List effective permissions for a tenant member",
                 "parameters": [
                     {
                         "description": "Member",
@@ -5578,7 +6388,7 @@ const docTemplate = `{
                                         "body": {
                                             "type": "array",
                                             "items": {
-                                                "type": "string"
+                                                "$ref": "#/definitions/authorization.PermissionView"
                                             }
                                         }
                                     }
@@ -5831,6 +6641,59 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/tenant.Department"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-departments/members/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-departments"
+                ],
+                "summary": "List current department member assignments",
+                "parameters": [
+                    {
+                        "description": "Department",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DepartmentIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/tenant.DepartmentMemberView"
+                                            }
                                         }
                                     }
                                 }
@@ -7452,6 +8315,58 @@ const docTemplate = `{
                 }
             }
         },
+        "authorization.AdministratorCandidate": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "is_administrator": {
+                    "type": "boolean"
+                },
+                "joined_at": {
+                    "type": "string"
+                },
+                "membership_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.AdministratorCandidatePage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.AdministratorCandidate"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "authorization.CapabilityDecision": {
             "type": "object",
             "properties": {
@@ -8683,6 +9598,65 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.CreateScheduledJobRequest": {
+            "type": "object",
+            "required": [
+                "code",
+                "cron_spec",
+                "handler",
+                "lock_ttl_seconds",
+                "name",
+                "status",
+                "timeout_seconds",
+                "timezone"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "cron_spec": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 4096
+                },
+                "handler": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "lock_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "payload": {
+                    "type": "object"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 1
+                },
+                "timezone": {
+                    "type": "string",
+                    "maxLength": 100
+                }
+            }
+        },
         "httptransport.CreateServiceAccountRequest": {
             "type": "object",
             "required": [
@@ -9046,6 +10020,22 @@ const docTemplate = `{
             }
         },
         "httptransport.DeletePlatformConfigRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "version"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.DeleteScheduledJobRequest": {
             "type": "object",
             "required": [
                 "id",
@@ -9485,6 +10475,9 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "httptransport.NavigationUsageRequest": {
+            "type": "object"
         },
         "httptransport.OperationLogIDRequest": {
             "type": "object",
@@ -10246,6 +11239,143 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.RuntimeStatusResponseBody": {
+            "type": "object",
+            "properties": {
+                "build": {
+                    "$ref": "#/definitions/buildinfo.Info"
+                },
+                "liveness": {
+                    "$ref": "#/definitions/health.Status"
+                },
+                "readiness": {
+                    "$ref": "#/definitions/health.Status"
+                },
+                "ready": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "httptransport.ScheduledJobIDRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "httptransport.ScheduledJobPageRequest": {
+            "type": "object",
+            "required": [
+                "codes",
+                "handlers",
+                "ids"
+            ],
+            "properties": {
+                "codes": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "handlers": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "sort": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "$ref": "#/definitions/pagination.Sort"
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "httptransport.ScheduledJobRunPageRequest": {
+            "type": "object",
+            "required": [
+                "scheduled_job_id"
+            ],
+            "properties": {
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "scheduled_job_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "sort": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "$ref": "#/definitions/pagination.Sort"
+                    }
+                },
+                "started_at_from": {
+                    "type": "string"
+                },
+                "started_at_to": {
+                    "type": "string"
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "trigger_sources": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "httptransport.SecurityLogIDRequest": {
             "type": "object",
             "required": [
@@ -10874,6 +12004,90 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.UpdateProfileRequest": {
+            "type": "object",
+            "required": [
+                "display_name",
+                "version"
+            ],
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.UpdateScheduledJobRequest": {
+            "type": "object",
+            "required": [
+                "cron_spec",
+                "handler",
+                "id",
+                "lock_ttl_seconds",
+                "name",
+                "status",
+                "timeout_seconds",
+                "timezone",
+                "version"
+            ],
+            "properties": {
+                "cron_spec": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 4096
+                },
+                "handler": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "lock_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "payload": {
+                    "type": "object"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 1
+                },
+                "timezone": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.UpdateServiceAccountRequest": {
             "type": "object",
             "required": [
@@ -11039,6 +12253,56 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.administratorPageRequest": {
+            "type": "object",
+            "required": [
+                "membership_ids",
+                "tenant_id",
+                "user_ids"
+            ],
+            "properties": {
+                "joined_from": {
+                    "type": "string"
+                },
+                "joined_to": {
+                    "type": "string"
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "membership_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "user_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "httptransport.createTenantRoleRequest": {
             "type": "object",
             "required": [
@@ -11178,6 +12442,63 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "httptransport.tenantAdministratorPageRequest": {
+            "type": "object",
+            "required": [
+                "membership_ids",
+                "user_ids"
+            ],
+            "properties": {
+                "joined_from": {
+                    "type": "string"
+                },
+                "joined_to": {
+                    "type": "string"
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "membership_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "user_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "httptransport.tenantPermissionCeilingRequest": {
+            "type": "object",
+            "required": [
+                "tenant_id"
+            ],
+            "properties": {
+                "tenant_id": {
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -11385,6 +12706,23 @@ const docTemplate = `{
                 },
                 "visible": {
                     "type": "boolean"
+                }
+            }
+        },
+        "operationlog.MenuUsage": {
+            "type": "object",
+            "properties": {
+                "application_id": {
+                    "type": "string"
+                },
+                "click_count": {
+                    "type": "integer"
+                },
+                "last_clicked_at": {
+                    "type": "string"
+                },
+                "menu_id": {
+                    "type": "string"
                 }
             }
         },
@@ -12191,6 +13529,150 @@ const docTemplate = `{
                 }
             }
         },
+        "scheduler.Definition": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "cron_spec": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "handler": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lock_ttl_seconds": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "object"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "timeout_seconds": {
+                    "type": "integer"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "scheduler.DefinitionPage": {
+            "type": "object"
+        },
+        "scheduler.HandlerDefinition": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "scheduler.Run": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "handler": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "job_code": {
+                    "type": "string"
+                },
+                "job_name": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "scheduled_job_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "trigger_source": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "scheduler.RunPage": {
+            "type": "object"
+        },
         "securitylog.EventType": {
             "type": "string",
             "enum": [
@@ -12522,6 +14004,32 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "membership_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "tenant.DepartmentMemberView": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "is_primary": {
+                    "type": "boolean"
+                },
+                "joined_at": {
+                    "type": "string"
+                },
+                "membership_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/tenant.Status"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "username": {
                     "type": "string"
                 }
             }

@@ -79,6 +79,36 @@ type PermissionView struct {
 	Action        string `db:"action" json:"action"`
 }
 
+type AdministratorCandidate struct {
+	MembershipID    string    `db:"membership_id" json:"membership_id"`
+	TenantID        string    `db:"tenant_id" json:"tenant_id"`
+	UserID          string    `db:"user_id" json:"user_id"`
+	Username        string    `db:"username" json:"username"`
+	DisplayName     string    `db:"display_name" json:"display_name"`
+	Status          string    `db:"status" json:"status"`
+	JoinedAt        time.Time `db:"joined_at" json:"joined_at"`
+	Version         int64     `db:"version" json:"version"`
+	IsAdministrator bool      `db:"is_administrator" json:"is_administrator"`
+}
+
+type AdministratorPageInput struct {
+	pagination.Request
+	MembershipIDs []string
+	UserIDs       []string
+	Statuses      []string
+	JoinedFrom    *time.Time
+	JoinedTo      *time.Time
+}
+
+type AdministratorCandidatePage struct {
+	Items    []AdministratorCandidate `json:"items"`
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+	Total    int64                    `json:"total"`
+}
+
+const administratorCountQuery = `SELECT count(*) FROM tenant_administrators a JOIN tenant_memberships m ON m.tenant_id=a.tenant_id AND m.id=a.membership_id AND m.status='active' AND m.deleted_at IS NULL JOIN tenants t ON t.id=a.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE a.tenant_id=? AND a.membership_id=? AND a.deleted_at IS NULL`
+
 type MemberRoleView struct {
 	ID   string `db:"id" json:"id"`
 	Code string `db:"code" json:"code"`
@@ -159,6 +189,134 @@ func (s *TenantAuthorizationService) SetTenantPermissions(ctx context.Context, t
 			return pruneRolePermissions(ctx, tx, tenantID, permissionIDs, actor.ID)
 		})
 	})
+}
+
+// TenantPermissionCeiling returns the platform-owned permission ceiling for a tenant.
+func (s *TenantAuthorizationService) TenantPermissionCeiling(ctx context.Context, tenantID string) ([]PermissionView, error) {
+	actor, err := platformprincipal.Require(ctx)
+	tenantID = strings.TrimSpace(tenantID)
+	if err != nil || actor.TenantID != "" {
+		return nil, ErrTenantAuthorizationForbidden
+	}
+	if tenantID == "" || len(tenantID) > maxAuthorizationIDLength {
+		return nil, ErrTenantAuthorizationInvalid
+	}
+	if _, err := s.tenantName(ctx, tenantID); err != nil {
+		return nil, err
+	}
+	permissions := []PermissionView{}
+	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM tenant_permission_grants g JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE g.tenant_id=? AND g.deleted_at IS NULL ORDER BY p.permission_key,p.id`
+	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), tenantID); err != nil {
+		return nil, fmt.Errorf("list tenant permission ceiling: %w", err)
+	}
+	return permissions, nil
+}
+
+func (s *TenantAuthorizationService) PagePlatformAdministratorCandidates(ctx context.Context, tenantID string, input AdministratorPageInput) (pagination.Result[AdministratorCandidate], error) {
+	actor, err := platformprincipal.Require(ctx)
+	tenantID = strings.TrimSpace(tenantID)
+	if err != nil || actor.TenantID != "" {
+		return pagination.Result[AdministratorCandidate]{}, ErrTenantAuthorizationForbidden
+	}
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	request, err := normalizeAdministratorPageInput(input)
+	if err != nil || tenantID == "" || len(tenantID) > maxAuthorizationIDLength {
+		return pagination.Result[AdministratorCandidate]{}, ErrTenantAuthorizationInvalid
+	}
+	if _, err := s.tenantName(ctx, tenantID); err != nil {
+		return pagination.Result[AdministratorCandidate]{}, err
+	}
+	items, total, err := s.pageAdministratorCandidates(ctx, tenantID, input, request)
+	if err != nil {
+		return pagination.Result[AdministratorCandidate]{}, err
+	}
+	for index := range items {
+		items[index].JoinedAt = presentation.Time(items[index].JoinedAt)
+	}
+	return pagination.Result[AdministratorCandidate]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+// PageTenantAdministratorCandidates returns administrator candidates only for
+// the tenant carried by the authenticated principal. Request data cannot
+// select a different tenant.
+func (s *TenantAuthorizationService) PageTenantAdministratorCandidates(ctx context.Context, input AdministratorPageInput) (pagination.Result[AdministratorCandidate], error) {
+	actor, err := tenantActor(ctx)
+	if err != nil {
+		return pagination.Result[AdministratorCandidate]{}, err
+	}
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	request, err := normalizeAdministratorPageInput(input)
+	if err != nil {
+		return pagination.Result[AdministratorCandidate]{}, err
+	}
+	if err := s.requireAdministrator(ctx, actor.TenantID, actor.MembershipID); err != nil {
+		return pagination.Result[AdministratorCandidate]{}, err
+	}
+	items, total, err := s.pageAdministratorCandidates(ctx, actor.TenantID, input, request)
+	if err != nil {
+		return pagination.Result[AdministratorCandidate]{}, err
+	}
+	for index := range items {
+		items[index].JoinedAt = presentation.Time(items[index].JoinedAt)
+	}
+	return pagination.Result[AdministratorCandidate]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func normalizeAdministratorPageInput(input AdministratorPageInput) (pagination.Request, error) {
+	request, err := pagination.Normalize(input.Request)
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	if err != nil || len(input.Keyword) > maxRoleKeywordLength || len(input.MembershipIDs) > 200 || len(input.UserIDs) > 200 || len(input.Statuses) > 10 || !boundedAuthorizationIDs(input.MembershipIDs) || !boundedAuthorizationIDs(input.UserIDs) || (input.JoinedFrom != nil && input.JoinedTo != nil && !input.JoinedFrom.Before(*input.JoinedTo)) {
+		return pagination.Request{}, ErrTenantAuthorizationInvalid
+	}
+	for _, status := range input.Statuses {
+		if status != "active" && status != "disabled" {
+			return pagination.Request{}, ErrTenantAuthorizationInvalid
+		}
+	}
+	return request, nil
+}
+
+func (s *TenantAuthorizationService) pageAdministratorCandidates(ctx context.Context, tenantID string, input AdministratorPageInput, request pagination.Request) ([]AdministratorCandidate, int64, error) {
+	where, args := `m.tenant_id=? AND m.deleted_at IS NULL`, []any{tenantID}
+	if input.Keyword != "" {
+		where += ` AND (LOWER(m.username) LIKE ? OR LOWER(m.display_name) LIKE ?)`
+		pattern := "%" + strings.ToLower(input.Keyword) + "%"
+		args = append(args, pattern, pattern)
+	}
+	for _, filter := range []struct {
+		column string
+		values []string
+	}{{"m.id", input.MembershipIDs}, {"m.user_id", input.UserIDs}, {"m.status", input.Statuses}} {
+		if len(filter.values) == 0 {
+			continue
+		}
+		clause, inArgs, inErr := sqlx.In(filter.column+` IN (?)`, filter.values)
+		if inErr != nil {
+			return nil, 0, fmt.Errorf("build administrator candidate filter: %w", inErr)
+		}
+		where += " AND " + clause
+		args = append(args, inArgs...)
+	}
+	if input.JoinedFrom != nil {
+		where += ` AND m.joined_at>=?`
+		args = append(args, *input.JoinedFrom)
+	}
+	if input.JoinedTo != nil {
+		where += ` AND m.joined_at<?`
+		args = append(args, *input.JoinedTo)
+	}
+	from := ` FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.deleted_at IS NULL LEFT JOIN tenant_administrators a ON a.tenant_id=m.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL WHERE ` + where
+	var total int64
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*)`+from), args...); err != nil {
+		return nil, 0, fmt.Errorf("count administrator candidates: %w", err)
+	}
+	queryArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
+	items := []AdministratorCandidate{}
+	query := `SELECT m.id AS membership_id,m.tenant_id,m.user_id,m.username,m.display_name,m.status,m.joined_at,m.version,CASE WHEN a.id IS NULL THEN 0 ELSE 1 END AS is_administrator` + from + ` ORDER BY m.joined_at DESC,m.id LIMIT ? OFFSET ?`
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), queryArgs...); err != nil {
+		return nil, 0, fmt.Errorf("page administrator candidates: %w", err)
+	}
+	return items, total, nil
 }
 
 func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenantID, membershipID string, enabled bool) error {
@@ -335,7 +493,7 @@ func (s *TenantAuthorizationService) SetMemberRoles(ctx context.Context, members
 	})
 }
 
-func (s *TenantAuthorizationService) EffectivePermissions(ctx context.Context, membershipID string) ([]string, error) {
+func (s *TenantAuthorizationService) EffectivePermissions(ctx context.Context, membershipID string) ([]PermissionView, error) {
 	actor, err := tenantActor(ctx)
 	if err != nil {
 		return nil, err
@@ -347,10 +505,47 @@ func (s *TenantAuthorizationService) EffectivePermissions(ctx context.Context, m
 	if len(membershipID) > maxAuthorizationIDLength {
 		return nil, ErrTenantAuthorizationInvalid
 	}
-	if membershipID != actor.MembershipID && !s.isAdministrator(ctx, actor.TenantID, actor.MembershipID) {
-		return nil, ErrTenantAuthorizationForbidden
+	if membershipID != actor.MembershipID {
+		if err := s.requireAdministrator(ctx, actor.TenantID, actor.MembershipID); err != nil {
+			return nil, err
+		}
 	}
-	return effectivePermissionIDs(ctx, s.db, actor.TenantID, membershipID)
+	ids, err := effectivePermissionIDs(ctx, s.db, actor.TenantID, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	return s.permissionViews(ctx, ids)
+}
+
+// AssignablePermissions returns the display contract for the exact permission
+// ceiling the current tenant principal may delegate to roles. It intentionally
+// derives the IDs from the same path used by ensureAssignable so the management
+// UI cannot advertise permissions that a subsequent write would reject.
+func (s *TenantAuthorizationService) AssignablePermissions(ctx context.Context) ([]PermissionView, error) {
+	actor, err := tenantActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := effectivePermissionIDs(ctx, s.db, actor.TenantID, actor.MembershipID)
+	if err != nil {
+		return nil, err
+	}
+	return s.permissionViews(ctx, ids)
+}
+
+func (s *TenantAuthorizationService) permissionViews(ctx context.Context, ids []string) ([]PermissionView, error) {
+	if len(ids) == 0 {
+		return []PermissionView{}, nil
+	}
+	query, args, err := sqlx.In(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE p.id IN (?) AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL ORDER BY p.permission_key`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("build assignable permission query: %w", err)
+	}
+	permissions := []PermissionView{}
+	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), args...); err != nil {
+		return nil, fmt.Errorf("list permission views: %w", err)
+	}
+	return permissions, nil
 }
 
 func (s *TenantAuthorizationService) GetRole(ctx context.Context, roleID string) (TenantRole, error) {
@@ -967,10 +1162,21 @@ func (s *TenantAuthorizationService) isAdministrator(ctx context.Context, tenant
 	if membershipID == "" || s.db == nil {
 		return false
 	}
+	return s.requireAdministrator(ctx, tenantID, membershipID) == nil
+}
+
+func (s *TenantAuthorizationService) requireAdministrator(ctx context.Context, tenantID, membershipID string) error {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(membershipID) == "" || s.db == nil {
+		return ErrTenantAuthorizationForbidden
+	}
 	var count int
-	query := `SELECT count(*) FROM tenant_administrators a JOIN tenant_memberships m ON m.tenant_id=a.tenant_id AND m.id=a.membership_id AND m.status='active' AND m.deleted_at IS NULL JOIN tenants t ON t.id=a.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE a.tenant_id=? AND a.membership_id=? AND a.deleted_at IS NULL`
-	err := s.db.GetContext(ctx, &count, s.db.Rebind(query), tenantID, membershipID)
-	return err == nil && count == 1
+	if err := s.db.GetContext(ctx, &count, s.db.Rebind(administratorCountQuery), tenantID, membershipID); err != nil {
+		return fmt.Errorf("check tenant administrator: %w", err)
+	}
+	if count != 1 {
+		return ErrTenantAuthorizationForbidden
+	}
+	return nil
 }
 
 func (s *TenantAuthorizationService) withLock(ctx context.Context, key string, fn func(context.Context) error) error {

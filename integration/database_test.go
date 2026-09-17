@@ -32,11 +32,13 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/migration"
 	"github.com/lihongjie0209/go-api-template/internal/navigation"
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
@@ -46,9 +48,14 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"go.uber.org/fx"
 )
 
 type integrationLifecycleLocker struct{}
+
+type integrationLifecycle struct{}
+
+func (integrationLifecycle) Append(fx.Hook) {}
 
 type allowCapabilityAuthorizer struct{}
 
@@ -142,6 +149,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testApplicationNavigationLifecycle(t, ctx, db)
 			testPlatformConfigLifecycle(t, ctx, db)
+			testScheduledJobLifecycle(t, ctx, db)
 			testDictionaryLifecycle(t, ctx, db)
 			testPBACLifecycle(t, ctx, db)
 			testDataPermissionLifecycle(t, ctx, db)
@@ -537,6 +545,14 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 			args  []any
 		}{
 			{
+				`INSERT INTO identity_users(id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`,
+				[]any{"authorization-admin", "authorization.admin", "Authorization Admin", "", "", "active", now, "authorization-integration", now, "authorization-integration"},
+			},
+			{
+				`INSERT INTO identity_users(id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`,
+				[]any{"authorization-target", "authorization.target", "Authorization Target", "", "", "active", now, "authorization-integration", now, "authorization-integration"},
+			},
+			{
 				`INSERT INTO tenants(id,code,name,description,status,owner_user_id,owner_name,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`,
 				[]any{tenantID, "authorization-integration", "Authorization Integration", "", "active", "authorization-admin", "Authorization Admin", now, "authorization-integration", now, "authorization-integration"},
 			},
@@ -603,7 +619,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 	targetCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-target", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: targetMemberID})
 	effective, err := service.EffectivePermissions(targetCtx, "")
-	if err != nil || len(effective) != 1 || effective[0] != permissionID {
+	if err != nil || len(effective) != 1 || effective[0].ID != permissionID || effective[0].Name == "" {
 		t.Fatalf("effective permissions=%v err=%v", effective, err)
 	}
 	page, err := service.PageRoles(adminCtx, authorization.RolePageInput{Request: pagination.Request{Page: 1, PageSize: 20}, Keyword: "审计", IDs: []string{role.ID}, Statuses: []string{"active"}})
@@ -975,6 +991,104 @@ func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	}
 	if err := service.Delete(actorCtx, restored.ID, restored.Version); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	transactor := appdb.NewTransactor(db)
+	handlers := scheduler.NewHandlerRegistry(logger)
+	cfg := config.Config{
+		App:  config.App{Name: "scheduler-integration"},
+		Cron: config.Cron{Timezone: "Asia/Shanghai"},
+	}
+	runtime, err := scheduler.NewManager(
+		integrationLifecycle{},
+		cfg,
+		db,
+		transactor,
+		integrationLifecycleLocker{},
+		observability.NewMetrics(cfg, nil, nil),
+		logger,
+		handlers,
+	)
+	if err != nil {
+		t.Fatalf("create scheduler runtime: %v", err)
+	}
+	service := scheduler.NewDefinitionService(db, transactor, discardOperationRecorder{}, nil, handlers, runtime)
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "scheduler-admin", Type: platformprincipal.TypeUser})
+
+	created, err := service.Create(actorCtx, scheduler.DefinitionInput{
+		Code:           "integration-sample",
+		Name:           "Integration sample",
+		CronSpec:       "0 */5 * * * *",
+		Timezone:       "Asia/Shanghai",
+		Handler:        "system.sample",
+		TimeoutSeconds: 30,
+		LockTTLSeconds: 60,
+		Status:         "active",
+	})
+	if err != nil {
+		t.Fatalf("create scheduled job: %v", err)
+	}
+	if created.Version != 1 || created.CreatedBy != "scheduler-admin" || created.UpdatedBy != "scheduler-admin" {
+		t.Fatalf("created scheduled job audit = %+v", created)
+	}
+
+	page, err := service.Page(actorCtx, scheduler.DefinitionPageInput{
+		Request:  pagination.Request{Page: 1, PageSize: 20, Keyword: "integration"},
+		Statuses: []string{"active"},
+	})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != created.ID {
+		t.Fatalf("page scheduled jobs = %+v err=%v", page, err)
+	}
+
+	update := scheduler.UpdateDefinitionInput{
+		ID:             created.ID,
+		Name:           "Updated integration sample",
+		CronSpec:       created.CronSpec,
+		Timezone:       created.Timezone,
+		Handler:        created.Handler,
+		TimeoutSeconds: created.TimeoutSeconds,
+		LockTTLSeconds: created.LockTTLSeconds,
+		Status:         created.Status,
+		Payload:        created.Payload,
+		Version:        created.Version,
+	}
+	updated, err := service.Update(actorCtx, update)
+	if err != nil {
+		t.Fatalf("update scheduled job: %v", err)
+	}
+	if updated.Version != 2 || updated.Name != update.Name {
+		t.Fatalf("updated scheduled job = %+v", updated)
+	}
+	if _, err := service.Update(actorCtx, update); !errors.Is(err, scheduler.ErrDefinitionConflict) {
+		t.Fatalf("stale scheduled job update error = %v", err)
+	}
+
+	if err := runtime.Trigger(actorCtx, updated); err != nil {
+		t.Fatalf("trigger scheduled job: %v", err)
+	}
+	runs, err := service.PageRuns(actorCtx, scheduler.RunPageInput{
+		Request:        pagination.Request{Page: 1, PageSize: 20},
+		ScheduledJobID: updated.ID,
+		Statuses:       []string{"success"},
+		TriggerSources: []string{"manual"},
+	})
+	if err != nil || runs.Total != 1 || len(runs.Items) != 1 {
+		t.Fatalf("page scheduled job runs = %+v err=%v", runs, err)
+	}
+	run, err := service.GetRun(actorCtx, runs.Items[0].ID)
+	if err != nil || run.ScheduledJobID != updated.ID || run.JobName != updated.Name || run.Version != 1 {
+		t.Fatalf("get scheduled job run = %+v err=%v", run, err)
+	}
+
+	if err := service.Delete(actorCtx, updated.ID, updated.Version); err != nil {
+		t.Fatalf("delete scheduled job: %v", err)
+	}
+	if _, err := service.Get(actorCtx, updated.ID); !errors.Is(err, scheduler.ErrDefinitionNotFound) {
+		t.Fatalf("get deleted scheduled job error = %v", err)
 	}
 }
 
