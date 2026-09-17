@@ -183,24 +183,22 @@ func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*Depart
 	if len(keyword) > 256 {
 		return nil, ErrInvalid
 	}
-	records := []Department{}
 	scope, err := s.departmentScope(ctx)
 	if err != nil {
 		return nil, err
 	}
-	query, args := `SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.deleted_at IS NULL AND `+scope.Clause, append([]any{actor.TenantID}, scope.Args...)
-	query += ` ORDER BY sort_order,id LIMIT 10001`
-	if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), args...); err != nil {
+	records, err := s.listTreeRecords(ctx, actor.TenantID, scope)
+	if err != nil {
 		return nil, err
 	}
 	if len(records) > maxDepartmentNodes {
 		return nil, fmt.Errorf("%w: department tree exceeds %d nodes", ErrInvalid, maxDepartmentNodes)
 	}
-	records = filterDepartments(records, keyword)
-	if err := s.presentDepartments(ctx, records); err != nil {
+	filtered := filterDepartments(records, keyword)
+	if err := s.presentDepartments(ctx, filtered); err != nil {
 		return nil, err
 	}
-	forest, err := platformtree.Build(records, func(v Department) string { return v.ID }, func(v Department) (string, bool) {
+	forest, err := platformtree.Build(filtered, func(v Department) string { return v.ID }, func(v Department) (string, bool) {
 		if v.ParentID == nil {
 			return "", false
 		}
@@ -210,6 +208,16 @@ func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*Depart
 		return nil, fmt.Errorf("build department tree: %w", err)
 	}
 	return mapDepartments(forest), nil
+}
+
+func (s *DepartmentService) listTreeRecords(ctx context.Context, tenantID string, scope datapermission.SQLPredicate) ([]Department, error) {
+	records := []Department{}
+	query, args := `SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.deleted_at IS NULL AND `+scope.Clause, append([]any{tenantID}, scope.Args...)
+	query += ` ORDER BY sort_order,id LIMIT 10001`
+	if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), args...); err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 func (s *DepartmentService) presentDepartments(ctx context.Context, records []Department) error {

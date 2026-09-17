@@ -405,7 +405,18 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 	if err != nil {
 		return pagination.Result[TenantRole]{}, err
 	}
-	where, args := `tr.tenant_id=? AND tr.deleted_at IS NULL AND `+scope.Clause, append([]any{actor.TenantID}, scope.Args...)
+	items, total, err := s.pageRoles(ctx, actor.TenantID, input, request, scope)
+	if err != nil {
+		return pagination.Result[TenantRole]{}, err
+	}
+	if err := s.presentRoles(ctx, items); err != nil {
+		return pagination.Result[TenantRole]{}, err
+	}
+	return pagination.Result[TenantRole]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func (s *TenantAuthorizationService) pageRoles(ctx context.Context, tenantID string, input RolePageInput, request pagination.Request, scope datapermission.SQLPredicate) ([]TenantRole, int64, error) {
+	where, args := `tr.tenant_id=? AND tr.deleted_at IS NULL AND `+scope.Clause, append([]any{tenantID}, scope.Args...)
 	if keyword := input.Keyword; keyword != "" {
 		where += ` AND (LOWER(tr.code) LIKE ? OR LOWER(tr.name) LIKE ? OR LOWER(tr.description) LIKE ?)`
 		pattern := "%" + strings.ToLower(keyword) + "%"
@@ -421,7 +432,7 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 		}
 		clause, inArgs, inErr := sqlx.In(column+` IN (?)`, values)
 		if inErr != nil {
-			return pagination.Result[TenantRole]{}, ErrTenantAuthorizationInvalid
+			return nil, 0, ErrTenantAuthorizationInvalid
 		}
 		where += " AND " + clause
 		args = append(args, inArgs...)
@@ -436,18 +447,15 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 	}
 	var total int64
 	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM tenant_roles tr WHERE `+where), args...); err != nil {
-		return pagination.Result[TenantRole]{}, err
+		return nil, 0, err
 	}
 	queryArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
 	items := []TenantRole{}
 	query := `SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status,tr.created_at,tr.created_by,tr.updated_at,tr.updated_by,tr.version FROM tenant_roles tr WHERE ` + where + ` ORDER BY tr.created_at DESC,tr.id LIMIT ? OFFSET ?`
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), queryArgs...); err != nil {
-		return pagination.Result[TenantRole]{}, err
+		return nil, 0, err
 	}
-	if err := s.presentRoles(ctx, items); err != nil {
-		return pagination.Result[TenantRole]{}, err
-	}
-	return pagination.Result[TenantRole]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+	return items, total, nil
 }
 
 func (s *TenantAuthorizationService) presentRoles(ctx context.Context, roles []TenantRole) error {

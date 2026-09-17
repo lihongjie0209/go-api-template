@@ -611,6 +611,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if _, err := service.GetRole(otherTenantCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("cross-tenant role lookup error=%v", err)
 	}
+	testRoleDataPermissionEnforcement(t, ctx, db, registry, tenantID, adminMemberID, &role)
 	updated, err := service.UpdateRole(adminCtx, role.ID, "高级审计员", role.Description, "active", role.Version)
 	if err != nil || updated.Version != role.Version+1 {
 		t.Fatalf("updated tenant role=%+v err=%v", updated, err)
@@ -623,6 +624,57 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 	if _, err := service.GetRole(adminCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("deleted tenant role lookup error=%v", err)
+	}
+}
+
+func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, resources *pbac.Registry, tenantID, membershipID string, visible *authorization.TenantRole) {
+	t.Helper()
+	const hiddenID = "integration-hidden-role"
+	now := time.Now()
+	actorCtx := platformprincipal.SystemContext(ctx, "other-actor")
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenant_roles(id,tenant_id,code,name,description,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), hiddenID, tenantID, "hidden-role", "Hidden Role", "", "active", now, "other-actor", now, "other-actor")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := datapermission.NewSchemaRegistry(authorization.NewTenantRoleDataPermissionSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated := true
+	engine, err := datapermission.NewEngine(schemas, resources, []datapermission.Policy{{
+		APIVersion: datapermission.PolicyAPIVersion, Kind: datapermission.PolicyKind,
+		Metadata: datapermission.PolicyMetadata{Code: "integration-role-owner", Name: "Integration role owner scope"},
+		Scope:    datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
+		Spec:     datapermission.PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.role", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, config.Config{}, datapermission.NewService(db, engine), resources)
+	principal := platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: membershipID}
+	endpointContext := func(action string) context.Context {
+		requestCtx := platformprincipal.WithContext(ctx, principal)
+		return accesscontrol.WithEndpoint(requestCtx, accesscontrol.Endpoint{Resource: "tenant.role", Action: action, DataPermission: accesscontrol.DataPermissionRequired})
+	}
+	if _, err := service.GetRole(endpointContext("read"), hiddenID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("hidden role get error=%v", err)
+	}
+	page, err := service.PageRoles(endpointContext("list"), authorization.RolePageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != visible.ID {
+		t.Fatalf("data-scoped role page=%+v err=%v", page, err)
+	}
+	if _, err := service.UpdateRole(endpointContext("update"), hiddenID, "Denied", "", "active", 1); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("hidden role update error=%v", err)
+	}
+	updated, err := service.UpdateRole(endpointContext("update"), visible.ID, visible.Name, visible.Description, visible.Status, visible.Version)
+	if err != nil {
+		t.Fatalf("data-scoped role update: %v", err)
+	}
+	*visible = updated
+	if err := service.DeleteRole(endpointContext("delete"), hiddenID, 1); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("hidden role delete error=%v", err)
 	}
 }
 
@@ -1025,6 +1077,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testDepartmentDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, &root)
 	child, err := departments.Create(departmentCtx, tenant.DepartmentInput{ParentID: &root.ID, Code: "backend", Name: "后端平台"})
 	if err != nil {
 		t.Fatal(err)
@@ -1053,6 +1106,61 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if _, err := service.Get(tenantCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("get deleted tenant error = %v", err)
+	}
+}
+
+func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, tenantID, membershipID string, visible *tenant.Department) {
+	t.Helper()
+	const hiddenID = "integration-hidden-department"
+	now := time.Now()
+	actorCtx := platformprincipal.SystemContext(ctx, "other-actor")
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenant_departments(id,tenant_id,parent_id,code,name,sort_order,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), hiddenID, tenantID, nil, "hidden-department", "Hidden Department", 0, now, "other-actor", now, "other-actor")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := datapermission.NewSchemaRegistry(tenant.NewDepartmentDataPermissionSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated := true
+	engine, err := datapermission.NewEngine(schemas, resources, []datapermission.Policy{{
+		APIVersion: datapermission.PolicyAPIVersion, Kind: datapermission.PolicyKind,
+		Metadata: datapermission.PolicyMetadata{Code: "integration-department-owner", Name: "Integration department owner scope"},
+		Scope:    datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
+		Spec:     datapermission.PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "owner-1", username: "owner", name: "Owner"}, config.Config{}, datapermission.NewService(db, engine))
+	principal := platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: membershipID}
+	endpointContext := func(action string) context.Context {
+		requestCtx := platformprincipal.WithContext(ctx, principal)
+		return accesscontrol.WithEndpoint(requestCtx, accesscontrol.Endpoint{Resource: "tenant.department", Action: action, DataPermission: accesscontrol.DataPermissionRequired})
+	}
+	if _, err := service.Get(endpointContext("read"), hiddenID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden department get error=%v", err)
+	}
+	tree, err := service.Tree(endpointContext("list"), "")
+	if err != nil || len(tree) != 1 || tree[0].ID != visible.ID {
+		t.Fatalf("data-scoped department tree=%+v err=%v", tree, err)
+	}
+	if _, err := service.Update(endpointContext("update"), tenant.DepartmentUpdate{ID: hiddenID, Name: "Denied", Version: 1}); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden department update error=%v", err)
+	}
+	updated, err := service.Update(endpointContext("update"), tenant.DepartmentUpdate{ID: visible.ID, Name: visible.Name, SortOrder: visible.SortOrder, Version: visible.Version})
+	if err != nil {
+		t.Fatalf("data-scoped department update: %v", err)
+	}
+	*visible = updated
+	if err := service.Delete(endpointContext("delete"), hiddenID, 1); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden department delete error=%v", err)
 	}
 }
 

@@ -89,6 +89,28 @@ func TestGetRoleAppliesTenantAndDataPermissionInOneQuery(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPageRolesAppliesIdenticalDataScopeToCountAndItems(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	scope := datapermission.SQLPredicate{Clause: "(tr.created_by = ?)", Args: []any{"user-1"}}
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_roles tr WHERE tr.tenant_id=\? AND tr.deleted_at IS NULL AND \(tr.created_by = \?\)`).
+		WithArgs("tenant-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT .* FROM tenant_roles tr WHERE tr.tenant_id=\? AND tr.deleted_at IS NULL AND \(tr.created_by = \?\).*LIMIT \? OFFSET \?`).
+		WithArgs("tenant-1", "user-1", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	service := &TenantAuthorizationService{db: db}
+	request := pagination.Request{Page: 1, PageSize: 20}
+	items, total, err := service.pageRoles(t.Context(), "tenant-1", RolePageInput{}, request, scope)
+	require.NoError(t, err)
+	require.Zero(t, total)
+	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestEffectivePermissionIDsForAdministrator(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

@@ -102,6 +102,24 @@ func TestDepartmentServiceTreeBoundsDatabaseResult(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDepartmentTreeAppliesTenantAndDataPermissionBeforeConstruction(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.deleted_at IS NULL AND (td.created_by = ?) ORDER BY sort_order,id LIMIT 10001`)).
+		WithArgs("tenant-a", "user-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	service := &DepartmentService{db: db}
+
+	scope := datapermission.SQLPredicate{Clause: "(td.created_by = ?)", Args: []any{"user-a"}}
+	records, err := service.listTreeRecords(t.Context(), "tenant-a", scope)
+	require.NoError(t, err)
+	require.Empty(t, records)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDepartmentGetAppliesTenantAndDataPermissionInOneQuery(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
