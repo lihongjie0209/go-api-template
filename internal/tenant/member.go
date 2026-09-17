@@ -330,6 +330,16 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 	if e != nil {
 		return Member{}, e
 	}
+	if s.dataScopes != nil {
+		current := datapermission.ResourceAttributes{"id": member.ID, "owner_id": member.UserID, "status": string(member.Status), "created_by": member.CreatedBy}
+		proposed := datapermission.ResourceAttributes{"id": member.ID, "owner_id": member.UserID, "status": string(status), "created_by": member.CreatedBy}
+		if err := s.dataScopes.AuthorizeTransition(ctx, "tenant.member", current, proposed); err != nil {
+			if errors.Is(err, datapermission.ErrObjectDenied) {
+				return Member{}, ErrForbidden
+			}
+			return Member{}, err
+		}
+	}
 	subjectName := memberDisplayName(member)
 	e = s.mutate(ctx, "tenant.member.status.update", id, map[string]any{"status": status, "version": version}, securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: id, SubjectName: subjectName, SubjectType: "tenant_membership", TenantID: actor.TenantID, Metadata: map[string]any{"status": status}}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 		if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {

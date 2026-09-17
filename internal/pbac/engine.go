@@ -41,7 +41,10 @@ type Decision struct {
 	DeniedByPolicyID string
 }
 
-type compiledPolicy struct{ policy Policy }
+type compiledPolicy struct {
+	policy Policy
+	when   *compiledWhen
+}
 
 type policySnapshot struct {
 	global map[string][]*compiledPolicy
@@ -88,7 +91,11 @@ func (e *Engine) Replace(policies []Policy) error {
 			return fmt.Errorf("%w: %q", ErrDuplicatePolicy, policy.Metadata.Code)
 		}
 		identities[identity] = struct{}{}
-		compiled := &compiledPolicy{policy: policy}
+		condition, err := compileWhen(policy.Spec.When)
+		if err != nil {
+			return fmt.Errorf("compile policy %q when: %w", policy.Metadata.Code, err)
+		}
+		compiled := &compiledPolicy{policy: policy, when: condition}
 		for _, action := range policy.Spec.Actions {
 			key := candidateKey(policy.Spec.Resource.Type, action)
 			if policy.Scope.Type == PolicyScopeGlobal {
@@ -108,8 +115,9 @@ func (e *Engine) Replace(policies []Policy) error {
 	return nil
 }
 
-// Evaluate applies structural matchers and the fixed deny-overrides combining
-// algorithm. Row-level conditions belong exclusively to datapermission.
+// Evaluate applies structural matchers, trusted operation conditions, and the
+// fixed deny-overrides combining algorithm. Row-level conditions belong
+// exclusively to datapermission.
 func (e *Engine) Evaluate(ctx context.Context, request EvaluationRequest) (Decision, error) {
 	if e == nil || e.registry == nil {
 		return indeterminate(ReasonEvaluationFailed), ErrSnapshotUnavailable
@@ -145,6 +153,13 @@ func (e *Engine) Evaluate(ctx context.Context, request EvaluationRequest) (Decis
 		}
 		if !MatchSubject(candidate.policy.Spec.Subject, request.Subject) ||
 			!MatchResource(candidate.policy.Spec.Resource, request.Resource) {
+			continue
+		}
+		conditionMatched, conditionErr := candidate.when.evaluate(ctx, request)
+		if conditionErr != nil {
+			return indeterminate(ReasonEvaluationFailed), conditionErr
+		}
+		if !conditionMatched {
 			continue
 		}
 		matched = append(matched, candidate.policy.Metadata.Code)

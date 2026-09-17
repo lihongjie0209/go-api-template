@@ -7,15 +7,16 @@
 操作权限只回答“主体是否可以对某类资源执行某个操作”：
 
 ```text
-Decision = Evaluate(Subject, ResourceType, Action) -> Allow | Deny | Indeterminate
+Decision = Evaluate(Subject, ResourceType, Action, TrustedOperationContext) -> Allow | Deny | Indeterminate
 ```
 
 - `subject`：谁在操作；
 - `resource.type`：操作哪一类业务资源；
 - `actions`：执行什么操作；
+- `when`：可选的可信操作上下文条件；
 - `effect`：匹配后产生 Allow 或 Deny。
 
-操作权限策略不包含数据 `condition`。本人数据、所属部门、数据所有者、负责范围等条件属于数据权限模块。
+操作权限策略不包含数据 `condition`。本人数据、所属部门、数据所有者、负责范围和拟修改字段等条件属于数据权限模块。`when` 只能使用服务端构造的主体、租户、接口、认证和环境属性。
 
 ## 2. 策略格式
 
@@ -37,10 +38,27 @@ spec:
   resource:
     type: tenant.member
   actions: [create, read, list, update, remove]
+  when: environment.business_day && environment.local_hour >= 9 && environment.local_hour < 18
   effect: allow
 ```
 
 策略正文只允许 `api_version`、`kind`、`metadata`、`scope` 和上述 `spec` 字段。未知字段必须在保存或发布时拒绝。
+
+### 2.1 操作条件设计决策
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | `spec.when` 是最长 4096 字节、结果必须为 boolean 的受限 CEL；空值表示只使用结构化 Matcher。错误使用稳定的策略校验/求值失败分类。 |
+| Authentication | 条件只能读取已经验证的认证方式，不能读取 Authorization、Cookie、Token 或原始 Header。 |
+| Authorization | 允许根固定为 `subject`、`tenant`、`request`、`environment`、`authentication`；禁止 `resource`、`proposed`、请求 body、动态字段、函数和外部调用。 |
+| Operation/Security log | 纯求值不单独记录；策略生命周期继续记录操作和安全日志，但不记录表达式输入值。 |
+| Cache | 发布时编译并随不可变策略快照原子替换；请求期不重新解析表达式。 |
+| Distributed/optimistic lock | 纯求值无锁；发布生命周期继续使用数据库行锁和策略版本乐观锁。 |
+| Audit | 时间、环境、接口和认证属性全部由服务端上下文生成，客户端不能覆盖。 |
+| Presentation | 拒绝响应只暴露稳定错误码，不返回命中条件、属性值或策略正文。 |
+| Tests | 覆盖工作时间边界、条件不匹配、Deny 优先、未知字段、`resource/proposed` 越界、函数、复杂度、取消和求值错误。 |
+| Shared capability | 复用现有 CEL 依赖和 PBAC 快照；条件编译器保持在 PBAC 公共模块，稳定后可提取到平台 SDK。 |
+| Dictionary | 策略是安全配置且可能包含主体匹配信息，不作为数据字典提供者。 |
 
 ## 3. Subject Matcher
 
@@ -71,6 +89,20 @@ Resource 和 Action 必须存在于启动时冻结的注册表中。规范标识
 | 任一必要求值为 Indeterminate | Indeterminate，调用方按 Deny 执行 |
 
 策略顺序、创建时间和发布时间不得影响结果。首版不支持数字优先级。
+
+结构化 Subject/Resource/Action 匹配后才计算 `when`。`when=false` 表示该策略未匹配，不产生 Deny；一个匹配且 `when=true` 的 Deny 仍覆盖全部 Allow。任何已发布候选策略发生求值错误时结果为 Indeterminate 并 fail-closed，不能跳过坏策略继续授权。
+
+### 5.1 `when` 属性契约
+
+允许的服务端可信属性为：
+
+- `subject.id/type/authenticated/tenant_id/membership_id/roles`；
+- `tenant.id`；
+- `request.transport/operation`；
+- `environment.profile/timezone/local_hour/weekday/business_day`；
+- `authentication.scheme`。
+
+`weekday` 使用 ISO 8601 的 1（周一）到 7（周日），平台时间以 `Asia/Shanghai` 生成；一次决策只捕获一次时间。当前 `business_day` 仅表示周一到周五，不包含法定节假日，未来接入可信工作日日历时保持字段语义并增加日历版本。支持 boolean 逻辑、相等/不等、有序比较、`in` 字面量集合和括号；不支持任何函数、方法、动态索引或自定义变量。
 
 ## 6. 执行位置
 
@@ -167,7 +199,7 @@ type EndpointAuthorization struct {
 - 两套路由共用持久化生命周期实现，但 Handler 强制策略文档、目标策略和路由 Scope 一致；
 - 数据权限策略使用独立模型、表、引擎与管理接口，不能通过操作策略接口保存；
 - 操作策略与数据权限策略分别维护不可变进程内快照；Redis Pub/Sub 仅作为刷新提示，数据库 revision 轮询负责丢消息与断线恢复；
-- 项目不兼容旧的混合 Condition 格式，解析时把 `condition` 视为未知字段并拒绝。
+- 项目不兼容旧的混合 Condition 格式，解析时把 `condition` 视为未知字段并拒绝；操作条件只能使用 `when`。
 
 ### 8.1 首条策略引导
 

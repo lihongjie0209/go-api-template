@@ -23,10 +23,13 @@ func TestEnforcerAuthorizesDeclaredOperation(t *testing.T) {
 	registry, err := NewEndpointRegistry(resources, []Endpoint{{Transport: TransportHTTP, Operation: "POST /members/get", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "read", DataPermission: DataPermissionRequired}})
 	require.NoError(t, err)
 	called := false
-	enforcer := NewEnforcer(registry, authorizerFunc(func(_ context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) error {
+	enforcer := NewEnforcer(registry, authorizerFunc(func(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) error {
 		called = true
 		require.Equal(t, "u1", principal.ID)
 		require.Equal(t, platformauthz.ScopeTenant, requirement.Scope)
+		resolved, ok := EndpointFromContext(ctx)
+		require.True(t, ok)
+		require.Equal(t, "POST /members/get", resolved.Operation)
 		return nil
 	}))
 	ctx := WithCredentialScheme(platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "u1", Type: platformprincipal.TypeUser}), CredentialSchemeBearer)

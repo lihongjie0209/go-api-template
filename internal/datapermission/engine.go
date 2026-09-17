@@ -72,8 +72,16 @@ func (e *Engine) CompileSQL(ctx context.Context, resource, action string, subjec
 }
 
 // EvaluateObject applies the same published policy snapshot to one trusted,
-// server-constructed object before it is inserted.
+// server-constructed object before it is inserted. A create has no old row, so
+// the constructed object is used for both current and proposed predicates.
 func (e *Engine) EvaluateObject(ctx context.Context, resource, action string, subject pbac.Subject, subjectAttributes SubjectAttributes, resourceAttributes ResourceAttributes) (bool, error) {
+	return e.EvaluateTransition(ctx, resource, action, subject, subjectAttributes, resourceAttributes, resourceAttributes)
+}
+
+// EvaluateTransition applies current-row and proposed-object predicates to a
+// server-constructed state transition after the current row was selected under
+// the SQL data scope.
+func (e *Engine) EvaluateTransition(ctx context.Context, resource, action string, subject pbac.Subject, subjectAttributes SubjectAttributes, resourceAttributes, proposedAttributes ResourceAttributes) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -88,7 +96,7 @@ func (e *Engine) EvaluateObject(ctx context.Context, resource, action string, su
 	if err != nil {
 		return false, err
 	}
-	return NewEvaluator(schema).Evaluate(matched, subjectAttributes, resourceAttributes)
+	return NewEvaluator(schema).EvaluateTransition(matched, subjectAttributes, resourceAttributes, proposedAttributes)
 }
 
 func (e *Engine) matchedScopes(resource, action string, subject pbac.Subject) ([]PolicyScope, error) {
@@ -107,7 +115,10 @@ func (e *Engine) matchedScopes(resource, action string, subject pbac.Subject) ([
 		if !pbac.MatchSubject(policy.Policy.Spec.Subject, subject) {
 			continue
 		}
-		matched = append(matched, PolicyScope{Effect: policy.Policy.Spec.Effect, Predicate: policy.Predicate})
+		matched = append(matched, PolicyScope{
+			Effect: policy.Policy.Spec.Effect, Predicate: policy.Predicate, ProposedPredicate: policy.ProposedPredicate,
+			HasProposed: policy.Policy.Spec.ProposedCondition != "",
+		})
 	}
 	return matched, nil
 }

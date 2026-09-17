@@ -3,8 +3,11 @@ package authorization
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
+	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -16,10 +19,17 @@ type Authorizer struct {
 	db       *sqlx.DB
 	engine   *pbac.Engine
 	registry *pbac.Registry
+	now      func() time.Time
 }
 
+var operationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
 func New(db *sqlx.DB, engine *pbac.Engine, registry *pbac.Registry) platformauthz.Authorizer {
-	return &Authorizer{db: db, engine: engine, registry: registry}
+	return newAuthorizer(db, engine, registry, time.Now)
+}
+
+func newAuthorizer(db *sqlx.DB, engine *pbac.Engine, registry *pbac.Registry, now func() time.Time) *Authorizer {
+	return &Authorizer{db: db, engine: engine, registry: registry, now: now}
 }
 
 func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) error {
@@ -34,6 +44,18 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 	if err != nil {
 		return platformauthz.ErrDecisionUnavailable
 	}
+	now := a.now
+	if now == nil {
+		now = time.Now
+	}
+	decisionTime := now().In(operationLocation)
+	endpoint, _ := accesscontrol.EndpointFromContext(ctx)
+	profile, _ := environment.FromContext(ctx)
+	credential, _ := accesscontrol.CredentialSchemeFromContext(ctx)
+	weekday := int(decisionTime.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
 	decision, err := a.engine.Evaluate(ctx, pbac.EvaluationRequest{
 		Subject: pbac.Subject{
 			ID: principal.ID, Type: string(principal.Type), Authenticated: true,
@@ -43,6 +65,11 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 			Type: requirement.Resource, TenantID: principal.TenantID,
 		},
 		Action: requirement.Action,
+		Context: pbac.OperationContext{
+			Transport: string(endpoint.Transport), Operation: endpoint.Operation,
+			Profile: profile, Timezone: "Asia/Shanghai", LocalHour: decisionTime.Hour(), Weekday: weekday,
+			BusinessDay: weekday <= 5, AuthenticationScheme: string(credential),
+		},
 	})
 	if err != nil || decision.Effect == pbac.DecisionEffectIndeterminate {
 		return platformauthz.ErrDecisionUnavailable

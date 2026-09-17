@@ -98,3 +98,74 @@ func TestEngineEvaluatesProposedObjectWithDenyOverrides(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, allowed)
 }
+
+func TestEngineEvaluatesCurrentAndProposedStateTogether(t *testing.T) {
+	schema, err := NewSchema("tenant.member", map[string]Field{
+		"owner_id": {Column: "tm.user_id", Type: ValueTypeText},
+		"status":   {Column: "tm.status", Type: ValueTypeText},
+	})
+	require.NoError(t, err)
+	schemas, err := NewSchemaRegistry(schema)
+	require.NoError(t, err)
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	policy := Policy{
+		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+		Metadata: PolicyMetadata{Code: "member-activate-own", Name: "Activate own member"},
+		Scope:    PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec: PolicySpec{
+			Resource: "tenant.member", Actions: []string{"update"}, Effect: EffectAllow,
+			Condition: `resource.owner_id == subject.id`, ProposedCondition: `proposed.status == "active"`,
+		},
+	}
+	engine, err := NewEngine(schemas, resources, []Policy{policy})
+	require.NoError(t, err)
+	subject := pbac.Subject{ID: "user-1", TenantID: "tenant-1"}
+	attributes := SubjectAttributes{"id": "user-1"}
+
+	allowed, err := engine.EvaluateTransition(t.Context(), "tenant.member", "update", subject, attributes,
+		ResourceAttributes{"owner_id": "user-1", "status": "disabled"}, ResourceAttributes{"owner_id": "user-1", "status": "active"})
+	require.NoError(t, err)
+	require.True(t, allowed)
+	allowed, err = engine.EvaluateTransition(t.Context(), "tenant.member", "update", subject, attributes,
+		ResourceAttributes{"owner_id": "user-1", "status": "disabled"}, ResourceAttributes{"owner_id": "user-1", "status": "disabled"})
+	require.NoError(t, err)
+	require.False(t, allowed)
+	allowed, err = engine.EvaluateTransition(t.Context(), "tenant.member", "update", subject, attributes,
+		ResourceAttributes{"owner_id": "other", "status": "disabled"}, ResourceAttributes{"owner_id": "other", "status": "active"})
+	require.NoError(t, err)
+	require.False(t, allowed)
+}
+
+func TestPolicyRejectsProposedConditionForReadAction(t *testing.T) {
+	schema, err := NewSchema("tenant.member", map[string]Field{"status": {Column: "tm.status", Type: ValueTypeText}})
+	require.NoError(t, err)
+	schemas, err := NewSchemaRegistry(schema)
+	require.NoError(t, err)
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	policy := Policy{
+		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+		Metadata: PolicyMetadata{Code: "invalid-read-target", Name: "Invalid read target"},
+		Scope:    PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec: PolicySpec{Resource: "tenant.member", Actions: []string{"read"}, Effect: EffectAllow,
+			ProposedCondition: `proposed.status == "active"`},
+	}
+	_, err = policy.Compile(schemas, resources)
+	require.ErrorIs(t, err, ErrInvalidPolicy)
+}
+
+func TestPolicyRoundTripPreservesProposedCondition(t *testing.T) {
+	policy := Policy{
+		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+		Metadata: PolicyMetadata{Code: "member-target-status", Name: "Member target status"},
+		Scope:    PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec: PolicySpec{Resource: "tenant.member", Actions: []string{"update"}, Condition: `resource.status == "disabled"`,
+			ProposedCondition: `proposed.status == "active"`, Effect: EffectAllow},
+	}
+	document, err := MarshalPolicy(policy)
+	require.NoError(t, err)
+	parsed, err := ParsePolicy(document)
+	require.NoError(t, err)
+	require.Equal(t, policy.Spec.ProposedCondition, parsed.Spec.ProposedCondition)
+}

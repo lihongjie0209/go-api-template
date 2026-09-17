@@ -158,11 +158,22 @@ otherwise unsuitable for dictionary use.
   operations to catch omissions.
 - Operation authorization and data permission are separate modules and policy
   models. Operation policies answer whether a subject may invoke a resource
-  action and use boolean deny-overrides. Data-permission policies answer which
-  rows that already-authorized action may access; matching Allow predicates are
-  unioned and the union of Deny predicates is subtracted. Never put a data
-  condition in an operation policy or treat an operation Allow as unrestricted
-  row access.
+  action and use boolean deny-overrides. An operation policy may use `when`
+  only for bounded server-derived subject, tenant, endpoint, authentication,
+  and environment attributes such as trusted local time; it must never inspect
+  request bodies, current resource fields, or proposed mutations. Data-permission
+  policies answer which rows that already-authorized action may access; matching
+  Allow predicates are unioned and the union of Deny predicates is subtracted.
+  Never put a data condition in an operation policy or treat an operation Allow
+  as unrestricted row access.
+- Data-permission `condition` applies to the current persisted row and must be
+  compilable into the shared parameterized SQL Predicate. Optional
+  `proposed_condition` applies only to a server-validated, server-constructed
+  create/update target object and is evaluated in memory after the current row
+  was selected under tenant, logical-delete, version, and SQL data scope. Raw
+  request JSON is never a trusted proposed object. Create operations use the
+  constructed new object as both current and proposed input. Read/list/delete
+  actions must reject `proposed_condition` because no target state is evaluated.
 - Page/list/count/get/update/delete repositories must apply the compiled data
   scope together with tenant isolation and logical-delete predicates. Items
   and counts use the same scope; filtering after pagination is forbidden.

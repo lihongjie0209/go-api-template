@@ -41,20 +41,28 @@ spec:
   resource: tenant.member
   actions: [read, list, update]
   condition: resource.owner_id == subject.id
+  proposed_condition: proposed.status == "active"
   effect: allow
 ```
 
-`condition` 在本策略中只表示数据范围，不能承担接口操作授权。
+`condition` 在本策略中只表示当前数据范围，不能承担接口操作授权。`proposed_condition` 约束服务端校验并构造的创建/更新目标对象，不参与 SQL 拼接。
 
 ## 3. Condition 语义
 
-核心输入为 `subject trusted attributes + resource data attributes -> boolean`。
+核心输入分为：
+
+- `condition(subject, resource)`：当前持久化行，可转换为 SQL；
+- `proposed_condition(subject, proposed)`：服务端构造的目标对象，只进行内存求值。
 
 首轮实现支持 boolean `&&`、`||`、`!`、文本相等 `==`、集合 `resource.field in subject.collection` 和括号。`!=`、有序比较和空值判断只有在对应字段类型、内存语义和 SQL 三者具有一致测试后才能加入；当前发布校验必须拒绝它们。
 
 首版禁止网络、数据库、文件和脚本调用；任意函数；动态 Resource 字段名；策略提供表名、列名、JOIN 或 SQL；以及无法同时生成内存求值器和参数化 SQL 的表达式。
 
 Subject 属性来自认证 Principal、租户成员关系及服务端可信投影。Resource 属性来自 Repository 记录或服务端校验后的待创建对象。客户端提交的 `tenant_id`、`owner_id`、`department_id` 等字段不能直接作为可信权限属性。
+
+创建操作没有旧行，服务端构造的新对象同时作为 `resource` 和 `proposed` 求值。更新操作先使用 `condition` 将当前行范围下推到 Repository，再使用同一条已授权、带租户和版本约束读取出的当前对象以及服务端构造的 `proposed` 对象求值。原始请求 JSON 绝不能直接作为 `proposed`。
+
+带 `proposed_condition` 的 Allow 在 SQL 阶段只下推其当前行 `condition`，随后在状态转换阶段同时满足两者才形成 Allow。带 `proposed_condition` 的 Deny 不得提前作为 SQL Deny 下推，否则会在目标状态未知时过度排除当前行；它在状态转换阶段同时满足当前行和目标对象条件时才参与 deny-overrides。不含目标条件的 Deny 仍直接下推 SQL。
 
 角色与部门投影仅对 `user` 主体生效，并且查询必须同时绑定 `principal.id + tenant_id + membership_id`，校验有效成员记录的 `user_id`。服务账号不能通过携带成员 ID 继承人的角色或部门；如需授权服务账号，必须使用显式 PBAC Subject type/ID 策略。
 
@@ -109,7 +117,8 @@ TenantIsolation AND SoftDelete AND BusinessFilters AND DataPermissionScope
 | create | 对服务端构造的待创建 Resource 执行内存 Predicate；接入前不得把 Required 范围伪装成已完成 |
 | getByID | SQL 同时包含 ID、租户和 DataScope |
 | page/list/search | DataScope 在统计和分页前下推 SQL |
-| update/delete | 目标选择、租户、DataScope 和乐观版本在同一 SQL/事务边界 |
+| update | 当前目标选择、租户、DataScope 和乐观版本在同一 SQL/事务边界；写入前还必须满足 `proposed_condition` |
+| delete | 目标选择、租户、DataScope 和乐观版本在同一 SQL/事务边界 |
 | batch | 使用集合 SQL Scope，并校验请求目标与实际命中数量 |
 
 逐条内存过滤只允许用于候选数有严格上限的小集合，不能作为普通分页实现。策略不能声明 JOIN；复杂关系由 Resource 所属模块注册受控字段编译器。
@@ -149,6 +158,6 @@ data_permission_policy_actions
 | Audit/Optimistic lock | 已使用三张独立策略表，包含审计、逻辑删除和版本字段；发布和启停使用行锁与乐观锁 |
 | Presentation | SQL 参数和主体属性不返回前端；错误只返回稳定分类 |
 | Management API | 已按全局策略和租户策略拆分 POST JSON 管理接口，支持创建、查询、分页、创建版本、发布和启停；读取与变更均按 Principal 的租户边界过滤 |
-| Repository | `tenant.member`、`tenant.department`、`tenant.role` 的对象读取、分页/树查询和既有对象变更已下推 SQL；count 与 items 复用同一范围。三类创建接口声明 `DataPermissionObject`，Service 使用生成后的 ID、解析后的关联对象以及服务端确定的状态/actor 构造可信 ResourceAttributes，在写入前使用同一策略快照求值；无 Allow 或命中 Deny 均拒绝。 |
-| Tests | 单元测试覆盖解析、合并、SQL、租户可见性、持久化发布/启停和 fail-closed；容器集成测试由 CI 验证 PostgreSQL/MySQL 生命周期与成员分页范围 |
+| Repository | `tenant.member`、`tenant.department`、`tenant.role` 的对象读取、分页/树查询和既有对象变更已下推 SQL；count 与 items 复用同一范围。三类创建接口声明 `DataPermissionObject`，Service 使用生成后的 ID、解析后的关联对象以及服务端确定的状态/actor 构造可信 ResourceAttributes，在写入前使用同一策略快照求值。三类 update 在当前行 SQL 范围命中后，再分别构造 current/proposed 属性并执行 `proposed_condition`；无 Allow 或命中 Deny 均拒绝。 |
+| Tests | 单元测试覆盖解析、current/proposed 命名空间隔离、合并、SQL、对象状态转换、租户可见性、持久化发布/启停和 fail-closed；容器集成测试由 CI 验证 PostgreSQL/MySQL 生命周期、成员分页范围和目标状态约束。 |
 | Shared capability | Predicate/Schema/Compiler 是跨业务 Resource 的公共基础设施候选，稳定后提取到平台 SDK |

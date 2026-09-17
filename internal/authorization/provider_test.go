@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
+	"github.com/lihongjie0209/go-api-template/internal/environment"
 	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -24,6 +27,29 @@ func TestAuthorizerUsesLocalPBACEngine(t *testing.T) {
 	require.NoError(t, err)
 	err = authorizer.Authorize(t.Context(), platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform})
 	require.ErrorIs(t, err, platformauthz.ErrDenied)
+}
+
+func TestAuthorizerBuildsTrustedOperationConditionContext(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	registry := authorizationTestRegistry(t)
+	engine, err := pbac.NewEngine(registry, []pbac.Policy{{
+		APIVersion: pbac.APIVersionV1, Kind: pbac.KindPolicy,
+		Metadata: pbac.PolicyMetadata{Code: "working-hours", Name: "Working hours"}, Scope: pbac.PolicyScope{Type: pbac.PolicyScopeGlobal},
+		Spec: pbac.PolicySpec{Subject: pbac.SubjectMatcher{Types: []string{"user"}}, Resource: pbac.ResourceMatcher{Type: "identity.user"}, Actions: []string{"read"},
+			When: `environment.profile == "production" && environment.weekday == 1 && environment.local_hour == 9 && request.transport == "http" && request.operation == "POST /users/get" && authentication.scheme == "bearer"`, Effect: pbac.EffectAllow},
+	}})
+	require.NoError(t, err)
+	authorizer := newAuthorizer(sqlx.NewDb(db, "sqlmock"), engine, registry, func() time.Time {
+		return time.Date(2026, time.September, 14, 9, 30, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	})
+	ctx := environment.WithContext(t.Context(), "production")
+	ctx = accesscontrol.WithEndpoint(ctx, accesscontrol.Endpoint{Transport: accesscontrol.TransportHTTP, Operation: "POST /users/get"})
+	ctx = accesscontrol.WithCredentialScheme(ctx, accesscontrol.CredentialSchemeBearer)
+
+	err = authorizer.Authorize(ctx, platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform})
+	require.NoError(t, err)
 }
 
 func TestAuthorizerResolvesTrustedTenantRoles(t *testing.T) {

@@ -257,6 +257,8 @@ definitions:
         type: string
       effect:
         $ref: '#/definitions/datapermission.Effect'
+      proposed_condition:
+        type: string
       resource:
         type: string
       subject:
@@ -2532,6 +2534,8 @@ definitions:
         $ref: '#/definitions/pbac.ResourceMatcher'
       subject:
         $ref: '#/definitions/pbac.SubjectMatcher'
+      when:
+        type: string
     type: object
   pbac.PolicyVersionPage:
     properties:

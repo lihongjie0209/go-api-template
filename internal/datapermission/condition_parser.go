@@ -35,6 +35,7 @@ func NewConditionParser(schema *Schema) (*ConditionParser, error) {
 	environment, err := cel.NewEnv(
 		cel.Variable("subject", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("resource", cel.MapType(cel.StringType, cel.DynType)),
+		cel.Variable("proposed", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("request", cel.MapType(cel.StringType, cel.DynType)),
 		cel.Variable("environment", cel.MapType(cel.StringType, cel.DynType)),
 	)
@@ -46,6 +47,17 @@ func NewConditionParser(schema *Schema) (*ConditionParser, error) {
 
 // Parse validates CEL syntax and converts only the documented safe subset.
 func (p *ConditionParser) Parse(source string) (Predicate, error) {
+	return p.parse(source, operandResource)
+}
+
+// ParseProposed compiles the object-only condition namespace. It accepts only
+// proposed fields on the left side so policy text cannot silently escape into
+// repository SQL.
+func (p *ConditionParser) ParseProposed(source string) (Predicate, error) {
+	return p.parse(source, operandProposed)
+}
+
+func (p *ConditionParser) parse(source string, target operandKind) (Predicate, error) {
 	if p == nil || p.schema == nil || p.environment == nil {
 		return Predicate{}, ErrInvalidSchema
 	}
@@ -64,14 +76,14 @@ func (p *ConditionParser) Parse(source string) (Predicate, error) {
 		return Predicate{}, fmt.Errorf("%w: condition must return bool", ErrInvalidCondition)
 	}
 	nodes := 0
-	predicate, err := p.convert(checked.NativeRep().Expr(), 1, &nodes)
+	predicate, err := p.convert(checked.NativeRep().Expr(), target, 1, &nodes)
 	if err != nil {
 		return Predicate{}, err
 	}
 	return predicate, nil
 }
 
-func (p *ConditionParser) convert(expression celast.Expr, depth int, nodes *int) (Predicate, error) {
+func (p *ConditionParser) convert(expression celast.Expr, target operandKind, depth int, nodes *int) (Predicate, error) {
 	*nodes = *nodes + 1
 	if depth > MaxPredicateDepth || *nodes > MaxPredicateNodes {
 		return Predicate{}, ErrPredicateTooComplex
@@ -89,11 +101,11 @@ func (p *ConditionParser) convert(expression celast.Expr, depth int, nodes *int)
 		if len(arguments) != 2 {
 			return Predicate{}, ErrInvalidCondition
 		}
-		left, err := p.convert(arguments[0], depth+1, nodes)
+		left, err := p.convert(arguments[0], target, depth+1, nodes)
 		if err != nil {
 			return Predicate{}, err
 		}
-		right, err := p.convert(arguments[1], depth+1, nodes)
+		right, err := p.convert(arguments[1], target, depth+1, nodes)
 		if err != nil {
 			return Predicate{}, err
 		}
@@ -105,7 +117,7 @@ func (p *ConditionParser) convert(expression celast.Expr, depth int, nodes *int)
 		if len(arguments) != 1 {
 			return Predicate{}, ErrInvalidCondition
 		}
-		child, err := p.convert(arguments[0], depth+1, nodes)
+		child, err := p.convert(arguments[0], target, depth+1, nodes)
 		if err != nil {
 			return Predicate{}, err
 		}
@@ -122,8 +134,8 @@ func (p *ConditionParser) convert(expression celast.Expr, depth int, nodes *int)
 		if err != nil {
 			return Predicate{}, err
 		}
-		if left.kind != operandResource || (right.kind != operandSubject && right.kind != operandLiteral) {
-			return Predicate{}, fmt.Errorf("%w: equality requires resource field and subject field or literal", ErrUnsupportedCondition)
+		if left.kind != target || (right.kind != operandSubject && right.kind != operandLiteral) {
+			return Predicate{}, fmt.Errorf("%w: equality requires the approved object field and subject field or literal", ErrUnsupportedCondition)
 		}
 		if right.kind == operandSubject {
 			valueType, _ := subjectFieldType(right.name)
@@ -144,8 +156,8 @@ func (p *ConditionParser) convert(expression celast.Expr, depth int, nodes *int)
 		if err != nil {
 			return Predicate{}, err
 		}
-		if left.kind != operandResource || right.kind != operandSubject {
-			return Predicate{}, fmt.Errorf("%w: in requires resource field and subject collection", ErrUnsupportedCondition)
+		if left.kind != target || right.kind != operandSubject {
+			return Predicate{}, fmt.Errorf("%w: in requires the approved object field and subject collection", ErrUnsupportedCondition)
 		}
 		valueType, _ := subjectFieldType(right.name)
 		if valueType != subjectValueTextList {
@@ -175,6 +187,11 @@ func (p *ConditionParser) operand(expression celast.Expr, allowLiteral bool) (Op
 				return Operand{}, fmt.Errorf("%w: %q", ErrResourceFieldUnknown, name)
 			}
 			return ResourceField(name), nil
+		case "proposed":
+			if _, ok := p.schema.field(name); !ok {
+				return Operand{}, fmt.Errorf("%w: %q", ErrResourceFieldUnknown, name)
+			}
+			return ProposedField(name), nil
 		case "subject":
 			if _, ok := subjectFieldType(name); !ok {
 				return Operand{}, fmt.Errorf("%w: %q", ErrSubjectAttributeUnknown, name)

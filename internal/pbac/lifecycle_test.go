@@ -46,6 +46,7 @@ func tenantPolicyDocument() Policy {
 			},
 			Resource: ResourceMatcher{Type: "member"},
 			Actions:  []string{"update"},
+			When:     "environment.business_day",
 			Effect:   EffectAllow,
 		},
 	}
@@ -245,6 +246,7 @@ func TestRuntimeLoaderReplacesEngineFromPublishedState(t *testing.T) {
 		},
 		Resource: Resource{Type: "member", TenantID: "tenant-1"},
 		Action:   "update",
+		Context:  OperationContext{BusinessDay: true},
 	})
 	require.NoError(t, err)
 	require.Equal(t, DecisionEffectAllow, decision.Effect)

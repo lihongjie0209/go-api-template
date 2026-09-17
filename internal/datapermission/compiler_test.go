@@ -70,6 +70,29 @@ func TestCompilerEmptyConditionsHaveExplicitSemantics(t *testing.T) {
 	}
 }
 
+func TestCompilerDefersProposedStateDenyUntilTransition(t *testing.T) {
+	compiler := NewCompiler(memberSchema(t))
+	result, err := compiler.Compile([]PolicyScope{
+		{Effect: EffectAllow, Predicate: Equal(ResourceField("created_by"), SubjectField("id"))},
+		{Effect: EffectDeny, Predicate: Predicate{}, ProposedPredicate: Equal(ProposedField("status"), Literal("disabled")), HasProposed: true},
+	}, SubjectAttributes{"id": "user-1"})
+	require.NoError(t, err)
+	require.Equal(t, "(tm.created_by = ?)", result.Clause)
+	require.Equal(t, []any{"user-1"}, result.Args)
+
+	evaluator := NewEvaluator(memberSchema(t))
+	policies := []PolicyScope{
+		{Effect: EffectAllow, Predicate: Equal(ResourceField("created_by"), SubjectField("id"))},
+		{Effect: EffectDeny, ProposedPredicate: Equal(ProposedField("status"), Literal("disabled")), HasProposed: true},
+	}
+	allowed, err := evaluator.EvaluateTransition(policies, SubjectAttributes{"id": "user-1"}, ResourceAttributes{"created_by": "user-1"}, ResourceAttributes{"status": "active"})
+	require.NoError(t, err)
+	require.True(t, allowed)
+	allowed, err = evaluator.EvaluateTransition(policies, SubjectAttributes{"id": "user-1"}, ResourceAttributes{"created_by": "user-1"}, ResourceAttributes{"status": "disabled"})
+	require.NoError(t, err)
+	require.False(t, allowed)
+}
+
 func TestCompilerFailsClosedForMissingSubjectAttribute(t *testing.T) {
 	t.Parallel()
 	_, err := NewCompiler(memberSchema(t)).Compile([]PolicyScope{{Effect: EffectAllow, Predicate: Equal(ResourceField("created_by"), SubjectField("id"))}}, SubjectAttributes{})

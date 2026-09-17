@@ -50,8 +50,10 @@ const (
 
 // PolicyScope is one already subject/resource/action-matched data policy.
 type PolicyScope struct {
-	Effect    Effect
-	Predicate Predicate
+	Effect            Effect
+	Predicate         Predicate
+	ProposedPredicate Predicate
+	HasProposed       bool
 }
 
 // SubjectAttributes contains trusted values resolved by the service boundary.
@@ -72,6 +74,7 @@ type operandKind uint8
 
 const (
 	operandResource operandKind = iota + 1
+	operandProposed
 	operandSubject
 	operandLiteral
 )
@@ -93,6 +96,11 @@ type Predicate struct {
 
 // ResourceField references a logical field registered in a Resource Schema.
 func ResourceField(name string) Operand { return Operand{kind: operandResource, name: name} }
+
+// ProposedField references a logical field on a trusted, server-constructed
+// target object. Proposed fields are evaluated in memory and never compiled to
+// SQL identifiers or values.
+func ProposedField(name string) Operand { return Operand{kind: operandProposed, name: name} }
 
 // SubjectField references a trusted subject attribute bound at evaluation time.
 func SubjectField(name string) Operand { return Operand{kind: operandSubject, name: name} }

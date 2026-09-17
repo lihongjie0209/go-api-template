@@ -15,6 +15,16 @@ func NewEvaluator(schema *Schema) *Evaluator { return &Evaluator{schema: schema}
 
 // Evaluate returns true only when an Allow matches and no Deny matches.
 func (e *Evaluator) Evaluate(policies []PolicyScope, subject SubjectAttributes, resource ResourceAttributes) (bool, error) {
+	return e.evaluate(policies, subject, resource, nil, false)
+}
+
+// EvaluateTransition requires both the current-row predicate and the proposed
+// object predicate of the same policy to match before applying its effect.
+func (e *Evaluator) EvaluateTransition(policies []PolicyScope, subject SubjectAttributes, resource, proposed ResourceAttributes) (bool, error) {
+	return e.evaluate(policies, subject, resource, proposed, true)
+}
+
+func (e *Evaluator) evaluate(policies []PolicyScope, subject SubjectAttributes, resource, proposed ResourceAttributes, includeProposed bool) (bool, error) {
 	if e == nil || e.schema == nil {
 		return false, ErrInvalidSchema
 	}
@@ -24,9 +34,15 @@ func (e *Evaluator) Evaluate(policies []PolicyScope, subject SubjectAttributes, 
 		if policy.Effect != EffectAllow && policy.Effect != EffectDeny {
 			return false, fmt.Errorf("%w: unknown effect %q", ErrInvalidPredicate, policy.Effect)
 		}
-		matched, err := e.evaluatePredicate(policy.Predicate, subject, resource, 1, new(int))
+		matched, err := e.evaluatePredicate(policy.Predicate, subject, resource, proposed, 1, new(int))
 		if err != nil {
 			return false, err
+		}
+		if matched && includeProposed {
+			matched, err = e.evaluatePredicate(policy.ProposedPredicate, subject, resource, proposed, 1, new(int))
+			if err != nil {
+				return false, err
+			}
 		}
 		if !matched {
 			continue
@@ -40,7 +56,7 @@ func (e *Evaluator) Evaluate(policies []PolicyScope, subject SubjectAttributes, 
 	return matchedAllow && !matchedDeny, nil
 }
 
-func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttributes, resource ResourceAttributes, depth int, nodes *int) (bool, error) {
+func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttributes, resource, proposed ResourceAttributes, depth int, nodes *int) (bool, error) {
 	*nodes = *nodes + 1
 	if depth > MaxPredicateDepth || *nodes > MaxPredicateNodes {
 		return false, ErrPredicateTooComplex
@@ -58,7 +74,7 @@ func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttrib
 				return false, ErrAttributeTypeMismatch
 			}
 		}
-		left, right, err := e.resolveValues(predicate.left, predicate.right, subject, resource)
+		left, right, err := e.resolveValues(predicate.left, predicate.right, subject, resource, proposed)
 		if err != nil {
 			return false, err
 		}
@@ -69,8 +85,8 @@ func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttrib
 		}
 		return leftText == rightText, nil
 	case predicateIn:
-		if predicate.left.kind != operandResource || predicate.right.kind != operandSubject {
-			return false, fmt.Errorf("%w: in requires resource field and subject collection", ErrInvalidPredicate)
+		if predicate.left.kind != operandResource && predicate.left.kind != operandProposed || predicate.right.kind != operandSubject {
+			return false, fmt.Errorf("%w: in requires object field and subject collection", ErrInvalidPredicate)
 		}
 		valueType, ok := subjectFieldType(predicate.right.name)
 		if !ok {
@@ -79,7 +95,7 @@ func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttrib
 		if valueType != subjectValueTextList {
 			return false, ErrAttributeTypeMismatch
 		}
-		value, err := e.resourceValue(predicate.left.name, resource)
+		value, err := e.objectValue(predicate.left, resource, proposed)
 		if err != nil {
 			return false, err
 		}
@@ -107,7 +123,7 @@ func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttrib
 		}
 		matchedAll := true
 		for _, child := range predicate.children {
-			matched, err := e.evaluatePredicate(child, subject, resource, depth+1, nodes)
+			matched, err := e.evaluatePredicate(child, subject, resource, proposed, depth+1, nodes)
 			if err != nil {
 				return false, err
 			}
@@ -122,7 +138,7 @@ func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttrib
 		}
 		matchedAny := false
 		for _, child := range predicate.children {
-			matched, err := e.evaluatePredicate(child, subject, resource, depth+1, nodes)
+			matched, err := e.evaluatePredicate(child, subject, resource, proposed, depth+1, nodes)
 			if err != nil {
 				return false, err
 			}
@@ -135,18 +151,18 @@ func (e *Evaluator) evaluatePredicate(predicate Predicate, subject SubjectAttrib
 		if len(predicate.children) != 1 {
 			return false, fmt.Errorf("%w: not requires one child", ErrInvalidPredicate)
 		}
-		matched, err := e.evaluatePredicate(predicate.children[0], subject, resource, depth+1, nodes)
+		matched, err := e.evaluatePredicate(predicate.children[0], subject, resource, proposed, depth+1, nodes)
 		return !matched, err
 	default:
 		return false, ErrInvalidPredicate
 	}
 }
 
-func (e *Evaluator) resolveValues(left, right Operand, subject SubjectAttributes, resource ResourceAttributes) (any, any, error) {
-	if left.kind != operandResource {
-		return nil, nil, fmt.Errorf("%w: comparison left operand must be a resource field", ErrInvalidPredicate)
+func (e *Evaluator) resolveValues(left, right Operand, subject SubjectAttributes, resource, proposed ResourceAttributes) (any, any, error) {
+	if left.kind != operandResource && left.kind != operandProposed {
+		return nil, nil, fmt.Errorf("%w: comparison left operand must be an object field", ErrInvalidPredicate)
 	}
-	leftValue, err := e.resourceValue(left.name, resource)
+	leftValue, err := e.objectValue(left, resource, proposed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,6 +177,24 @@ func (e *Evaluator) resolveValues(left, right Operand, subject SubjectAttributes
 		return leftValue, right.literal, nil
 	default:
 		return nil, nil, fmt.Errorf("%w: comparison right operand must be subject or literal", ErrInvalidPredicate)
+	}
+}
+
+func (e *Evaluator) objectValue(operand Operand, resource, proposed ResourceAttributes) (any, error) {
+	switch operand.kind {
+	case operandResource:
+		return e.resourceValue(operand.name, resource)
+	case operandProposed:
+		if _, ok := e.schema.field(operand.name); !ok {
+			return nil, fmt.Errorf("%w: %q", ErrResourceFieldUnknown, operand.name)
+		}
+		value, ok := proposed[operand.name]
+		if !ok {
+			return nil, fmt.Errorf("%w: proposed.%s", ErrResourceAttributeMissing, operand.name)
+		}
+		return value, nil
+	default:
+		return nil, ErrInvalidPredicate
 	}
 }
 

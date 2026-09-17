@@ -6701,6 +6701,9 @@ const docTemplate = `{
                 "effect": {
                     "$ref": "#/definitions/datapermission.Effect"
                 },
+                "proposed_condition": {
+                    "type": "string"
+                },
                 "resource": {
                     "type": "string"
                 },
@@ -10064,6 +10067,9 @@ const docTemplate = `{
                 },
                 "subject": {
                     "$ref": "#/definitions/pbac.SubjectMatcher"
+                },
+                "when": {
+                    "type": "string"
                 }
             }
         },

@@ -22,6 +22,21 @@ type EvaluationRequest struct {
 	Subject  Subject
 	Resource Resource
 	Action   string
+	Context  OperationContext
+}
+
+// OperationContext contains only server-derived attributes approved for
+// ActionPolicy `when` expressions. Request bodies and resource data never enter
+// this structure.
+type OperationContext struct {
+	Transport            string
+	Operation            string
+	Profile              string
+	Timezone             string
+	LocalHour            int
+	Weekday              int
+	BusinessDay          bool
+	AuthenticationScheme string
 }
 
 // MatchSubject applies the structural subject matcher.

@@ -225,6 +225,7 @@ func testPBACLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 			Subject:  pbac.SubjectMatcher{Authenticated: &authenticated},
 			Resource: pbac.ResourceMatcher{Type: "integration.member"},
 			Actions:  []string{"update"},
+			When:     `environment.profile == "integration"`,
 			Effect:   pbac.EffectAllow,
 		},
 	}
@@ -256,6 +257,7 @@ func testPBACLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		Subject:  pbac.Subject{Authenticated: true, TenantID: "tenant-a"},
 		Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
 		Action:   "update",
+		Context:  pbac.OperationContext{Profile: "integration"},
 	})
 	if err != nil || decision.Effect != pbac.DecisionEffectAllow {
 		t.Fatalf("pbac decision=%+v err=%v", decision, err)
@@ -264,9 +266,17 @@ func testPBACLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		Subject:  pbac.Subject{Authenticated: true, TenantID: "tenant-b"},
 		Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
 		Action:   "update",
+		Context:  pbac.OperationContext{Profile: "integration"},
 	})
 	if err != nil || denied.Effect != pbac.DecisionEffectDeny || denied.ReasonCode != pbac.ReasonTenantMismatch {
 		t.Fatalf("cross-tenant pbac decision=%+v err=%v", denied, err)
+	}
+	outsideContext, err := engine.Evaluate(ctx, pbac.EvaluationRequest{
+		Subject: pbac.Subject{Authenticated: true, TenantID: "tenant-a"}, Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
+		Action: "update", Context: pbac.OperationContext{Profile: "production"},
+	})
+	if err != nil || outsideContext.Effect != pbac.DecisionEffectDeny || outsideContext.ReasonCode != pbac.ReasonNoMatchingPolicy {
+		t.Fatalf("context-restricted pbac decision=%+v err=%v", outsideContext, err)
 	}
 }
 
@@ -1058,9 +1068,18 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 		Spec: datapermission.PolicySpec{
 			Subject:   pbac.SubjectMatcher{Authenticated: &authenticated},
 			Resource:  "tenant.member",
-			Actions:   []string{"read", "list", "update", "remove"},
+			Actions:   []string{"read", "list", "remove"},
 			Condition: "resource.owner_id == subject.id",
 			Effect:    datapermission.EffectAllow,
+		},
+	}, {
+		APIVersion: datapermission.PolicyAPIVersion,
+		Kind:       datapermission.PolicyKind,
+		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-self-update", Name: "Integration active member update"},
+		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
+		Spec: datapermission.PolicySpec{
+			Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"},
+			Condition: "resource.owner_id == subject.id", ProposedCondition: `proposed.status == "active"`, Effect: datapermission.EffectAllow,
 		},
 	}})
 	if err != nil {
@@ -1087,6 +1106,9 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 	}
 	if _, err := service.UpdateStatus(endpointContext("update", accesscontrol.DataPermissionRequired), ownerMembershipID, tenant.StatusDisabled, 1); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("hidden member update error=%v", err)
+	}
+	if _, err := service.UpdateStatus(endpointContext("update", accesscontrol.DataPermissionRequired), member.ID, tenant.StatusDisabled, member.Version); !errors.Is(err, tenant.ErrForbidden) {
+		t.Fatalf("proposed member status error=%v", err)
 	}
 	updated, err := service.UpdateStatus(endpointContext("update", accesscontrol.DataPermissionRequired), member.ID, tenant.StatusActive, member.Version)
 	if err != nil || updated.Version != member.Version+1 {

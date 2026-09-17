@@ -67,6 +67,7 @@ type PolicySpec struct {
 	Subject  SubjectMatcher  `json:"subject" yaml:"subject"`
 	Resource ResourceMatcher `json:"resource" yaml:"resource"`
 	Actions  []string        `json:"actions" yaml:"actions"`
+	When     string          `json:"when,omitempty" yaml:"when,omitempty"`
 	Effect   Effect          `json:"effect" yaml:"effect"`
 }
 
@@ -156,6 +157,9 @@ func (p Policy) Validate(registry *Registry) error {
 	if p.Spec.Effect != EffectAllow && p.Spec.Effect != EffectDeny {
 		return fmt.Errorf("%w: invalid effect %q", ErrInvalidPolicy, p.Spec.Effect)
 	}
+	if _, err := compileWhen(p.Spec.When); err != nil {
+		return fmt.Errorf("%w: when: %v", ErrInvalidPolicy, err)
+	}
 	seen := make(map[string]struct{}, len(p.Spec.Actions))
 	for _, action := range p.Spec.Actions {
 		if _, exists := seen[action]; exists {
@@ -179,6 +183,7 @@ func (p *Policy) normalize() {
 	p.Metadata.Description = strings.TrimSpace(p.Metadata.Description)
 	p.Scope.TenantID = strings.TrimSpace(p.Scope.TenantID)
 	p.Spec.Resource.Type = strings.TrimSpace(p.Spec.Resource.Type)
+	p.Spec.When = strings.TrimSpace(p.Spec.When)
 	for index := range p.Spec.Actions {
 		p.Spec.Actions[index] = strings.TrimSpace(p.Spec.Actions[index])
 	}

@@ -260,6 +260,10 @@ func (e *Enforcer) Authorize(ctx context.Context, transport Transport, operation
 	case pbac.ResourceScopePrincipal:
 		scope = platformauthz.ScopePrincipal
 	}
+	// Make the registry-resolved descriptor available while the authorization
+	// decision is evaluated. The transport exposes it downstream only after the
+	// decision succeeds.
+	ctx = WithEndpoint(ctx, endpoint)
 	err := platformauthz.Enforce(ctx, e.authorizer, platformauthz.Requirement{Resource: endpoint.Resource, Action: endpoint.Action, Scope: scope})
 	return endpoint, err
 }

@@ -51,16 +51,18 @@ type PolicyBoundary struct {
 }
 
 type PolicySpec struct {
-	Subject   pbac.SubjectMatcher `json:"subject" yaml:"subject"`
-	Resource  string              `json:"resource" yaml:"resource"`
-	Actions   []string            `json:"actions" yaml:"actions"`
-	Condition string              `json:"condition,omitempty" yaml:"condition,omitempty"`
-	Effect    Effect              `json:"effect" yaml:"effect"`
+	Subject           pbac.SubjectMatcher `json:"subject" yaml:"subject"`
+	Resource          string              `json:"resource" yaml:"resource"`
+	Actions           []string            `json:"actions" yaml:"actions"`
+	Condition         string              `json:"condition,omitempty" yaml:"condition,omitempty"`
+	ProposedCondition string              `json:"proposed_condition,omitempty" yaml:"proposed_condition,omitempty"`
+	Effect            Effect              `json:"effect" yaml:"effect"`
 }
 
 type CompiledPolicy struct {
-	Policy    Policy
-	Predicate Predicate
+	Policy            Policy
+	Predicate         Predicate
+	ProposedPredicate Predicate
 }
 
 func ParsePolicy(data []byte) (Policy, error) {
@@ -96,6 +98,7 @@ func (p *Policy) normalize() {
 	p.Scope.TenantID = strings.TrimSpace(p.Scope.TenantID)
 	p.Spec.Resource = strings.TrimSpace(p.Spec.Resource)
 	p.Spec.Condition = strings.TrimSpace(p.Spec.Condition)
+	p.Spec.ProposedCondition = strings.TrimSpace(p.Spec.ProposedCondition)
 	for i := range p.Spec.Actions {
 		p.Spec.Actions[i] = strings.TrimSpace(p.Spec.Actions[i])
 	}
@@ -129,6 +132,9 @@ func (p Policy) Compile(schemas *SchemaRegistry, resources *pbac.Registry) (Comp
 		if err != nil || p.Scope.Type == PolicyScopeTenant && resource.Scope != pbac.ResourceScopeTenant {
 			return CompiledPolicy{}, fmt.Errorf("%w: resource action", ErrInvalidPolicy)
 		}
+		if p.Spec.ProposedCondition != "" && action != "create" && action != "add" && action != "update" {
+			return CompiledPolicy{}, fmt.Errorf("%w: proposed_condition is unsupported for action %q", ErrInvalidPolicy, action)
+		}
 	}
 	parser, err := NewConditionParser(schema)
 	if err != nil {
@@ -138,5 +144,9 @@ func (p Policy) Compile(schemas *SchemaRegistry, resources *pbac.Registry) (Comp
 	if err != nil {
 		return CompiledPolicy{}, err
 	}
-	return CompiledPolicy{Policy: p, Predicate: predicate}, nil
+	proposedPredicate, err := parser.ParseProposed(p.Spec.ProposedCondition)
+	if err != nil {
+		return CompiledPolicy{}, err
+	}
+	return CompiledPolicy{Policy: p, Predicate: predicate, ProposedPredicate: proposedPredicate}, nil
 }

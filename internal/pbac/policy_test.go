@@ -35,12 +35,14 @@ spec:
   resource:
     type: member
   actions: [read, update]
+  when: environment.business_day
   effect: allow
 `
 	policy, err := ParsePolicy([]byte(document))
 	require.NoError(t, err)
 	require.Empty(t, policy.Spec.Subject.Role)
 	require.Equal(t, []string{"department_manager"}, policy.Spec.Subject.Roles.AnyOf)
+	require.Equal(t, "environment.business_day", policy.Spec.When)
 	require.NoError(t, policy.Validate(testRegistry(t)))
 
 	_, err = ParsePolicy([]byte(document + "  condition: resource.owner_id == subject.id\n"))

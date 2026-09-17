@@ -46,12 +46,23 @@ func (s *Service) Compile(ctx context.Context, expectedResource string) (SQLPred
 // AuthorizeObject evaluates a trusted proposed object for an endpoint that
 // explicitly declares DataPermissionObject. No matching Allow fails closed.
 func (s *Service) AuthorizeObject(ctx context.Context, expectedResource string, resource ResourceAttributes) error {
+	return s.authorizeObject(ctx, expectedResource, accesscontrol.DataPermissionObject, resource, resource)
+}
+
+// AuthorizeTransition checks a trusted current object and a separately
+// constructed target object. It is used after the current row has been selected
+// under Compile's SQL predicate and before the mutation is committed.
+func (s *Service) AuthorizeTransition(ctx context.Context, expectedResource string, resource, proposed ResourceAttributes) error {
+	return s.authorizeObject(ctx, expectedResource, accesscontrol.DataPermissionRequired, resource, proposed)
+}
+
+func (s *Service) authorizeObject(ctx context.Context, expectedResource string, expectedMode accesscontrol.DataPermissionMode, resource, proposed ResourceAttributes) error {
 	principal, err := platformprincipal.Require(ctx)
 	if err != nil {
 		return err
 	}
 	endpoint, ok := accesscontrol.EndpointFromContext(ctx)
-	if !ok || endpoint.Resource != expectedResource || endpoint.DataPermission != accesscontrol.DataPermissionObject {
+	if !ok || endpoint.Resource != expectedResource || endpoint.DataPermission != expectedMode {
 		if principal.Type == platformprincipal.TypeSystem {
 			return nil
 		}
@@ -63,7 +74,7 @@ func (s *Service) AuthorizeObject(ctx context.Context, expectedResource string, 
 	}
 	subject := pbac.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
 	attributes := SubjectAttributes{"id": principal.ID, "tenant_id": principal.TenantID, "membership_id": principal.MembershipID, "role_codes": roles, "department_ids": departments}
-	allowed, err := s.engine.EvaluateObject(ctx, endpoint.Resource, endpoint.Action, subject, attributes, resource)
+	allowed, err := s.engine.EvaluateTransition(ctx, endpoint.Resource, endpoint.Action, subject, attributes, resource, proposed)
 	if err != nil {
 		return err
 	}

@@ -56,6 +56,25 @@ func TestConditionParserTreatsEmptySourceAsUnrestrictedScope(t *testing.T) {
 	require.Equal(t, "(1 = 1)", compiled.Clause)
 }
 
+func TestConditionParserSeparatesCurrentAndProposedNamespaces(t *testing.T) {
+	t.Parallel()
+	parser, err := NewConditionParser(memberSchema(t))
+	require.NoError(t, err)
+	proposed, err := parser.ParseProposed(`proposed.status == "active"`)
+	require.NoError(t, err)
+	allowed, err := NewEvaluator(memberSchema(t)).EvaluateTransition(
+		[]PolicyScope{{Effect: EffectAllow, ProposedPredicate: proposed}},
+		SubjectAttributes{}, ResourceAttributes{"status": "disabled"}, ResourceAttributes{"status": "active"},
+	)
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	_, err = parser.Parse(`proposed.status == "active"`)
+	require.ErrorIs(t, err, ErrUnsupportedCondition)
+	_, err = parser.ParseProposed(`resource.status == "active"`)
+	require.ErrorIs(t, err, ErrUnsupportedCondition)
+}
+
 func TestConditionParserRejectsUnsupportedOrUnsafeExpressions(t *testing.T) {
 	t.Parallel()
 	parser, err := NewConditionParser(memberSchema(t))

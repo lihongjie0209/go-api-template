@@ -31,6 +31,13 @@ func (c *Compiler) Compile(policies []PolicyScope, subject SubjectAttributes) (S
 		case EffectAllow:
 			allows = append(allows, policy.Predicate)
 		case EffectDeny:
+			// A proposed-state Deny cannot be decided while selecting the current
+			// row. Applying its current predicate here would over-deny transitions
+			// whose proposed object does not match. EvaluateTransition applies it
+			// after the row was selected under the remaining SQL scope.
+			if policy.HasProposed {
+				continue
+			}
 			denies = append(denies, policy.Predicate)
 		default:
 			return SQLPredicate{}, fmt.Errorf("%w: unknown effect %q", ErrInvalidPredicate, policy.Effect)

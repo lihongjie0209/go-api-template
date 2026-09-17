@@ -105,6 +105,7 @@ func NewTenantRoleDataPermissionSchema() *datapermission.Schema {
 	schema, err := datapermission.NewSchema("tenant.role", map[string]datapermission.Field{
 		"id":         {Column: "tr.id", Type: datapermission.ValueTypeText},
 		"code":       {Column: "tr.code", Type: datapermission.ValueTypeText},
+		"name":       {Column: "tr.name", Type: datapermission.ValueTypeText},
 		"status":     {Column: "tr.status", Type: datapermission.ValueTypeText},
 		"created_by": {Column: "tr.created_by", Type: datapermission.ValueTypeText},
 	})
@@ -218,7 +219,7 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 			return TenantRole{}, datapermission.ErrScopeRequired
 		}
 	} else if err := s.dataScopes.AuthorizeObject(ctx, "tenant.role", datapermission.ResourceAttributes{
-		"id": role.ID, "code": role.Code, "status": role.Status, "created_by": actor.ID,
+		"id": role.ID, "code": role.Code, "name": role.Name, "status": role.Status, "created_by": actor.ID,
 	}); err != nil {
 		if errors.Is(err, datapermission.ErrObjectDenied) {
 			return TenantRole{}, ErrTenantAuthorizationForbidden
@@ -537,8 +538,19 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 	if err != nil {
 		return TenantRole{}, err
 	}
-	if _, err := s.getRole(ctx, actor.TenantID, roleID, scope); err != nil {
+	current, err := s.getRole(ctx, actor.TenantID, roleID, scope)
+	if err != nil {
 		return TenantRole{}, err
+	}
+	if s.dataScopes != nil {
+		currentAttributes := datapermission.ResourceAttributes{"id": current.ID, "code": current.Code, "name": current.Name, "status": current.Status, "created_by": current.CreatedBy}
+		proposedAttributes := datapermission.ResourceAttributes{"id": current.ID, "code": current.Code, "name": name, "status": status, "created_by": current.CreatedBy}
+		if err := s.dataScopes.AuthorizeTransition(ctx, "tenant.role", currentAttributes, proposedAttributes); err != nil {
+			if errors.Is(err, datapermission.ErrObjectDenied) {
+				return TenantRole{}, ErrTenantAuthorizationForbidden
+			}
+			return TenantRole{}, err
+		}
 	}
 	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.update", roleID, map[string]any{"name": name, "status": status, "version": version}, actor.TenantID, nil, func(tx *sqlx.Tx) error {

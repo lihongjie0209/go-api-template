@@ -85,6 +85,7 @@ func NewDepartmentDataPermissionSchema() *datapermission.Schema {
 		"id":         {Column: "td.id", Type: datapermission.ValueTypeText},
 		"parent_id":  {Column: "td.parent_id", Type: datapermission.ValueTypeText},
 		"code":       {Column: "td.code", Type: datapermission.ValueTypeText},
+		"name":       {Column: "td.name", Type: datapermission.ValueTypeText},
 		"created_by": {Column: "td.created_by", Type: datapermission.ValueTypeText},
 	})
 	if err != nil {
@@ -113,7 +114,7 @@ func (s *DepartmentService) Create(ctx context.Context, input DepartmentInput) (
 			return Department{}, datapermission.ErrScopeRequired
 		}
 	} else if err := s.dataScopes.AuthorizeObject(ctx, "tenant.department", datapermission.ResourceAttributes{
-		"id": record.ID, "parent_id": parentID, "code": record.Code, "created_by": actor.ID,
+		"id": record.ID, "parent_id": parentID, "code": record.Code, "name": record.Name, "created_by": actor.ID,
 	}); err != nil {
 		if errors.Is(err, datapermission.ErrObjectDenied) {
 			return Department{}, ErrForbidden
@@ -292,6 +293,27 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 	scope, err := s.departmentScope(ctx)
 	if err != nil {
 		return Department{}, err
+	}
+	current, err := s.get(ctx, actor.TenantID, input.ID, scope)
+	if err != nil {
+		return Department{}, err
+	}
+	if s.dataScopes != nil {
+		currentParent, proposedParent := "", ""
+		if current.ParentID != nil {
+			currentParent = *current.ParentID
+		}
+		if input.ParentID != nil {
+			proposedParent = *input.ParentID
+		}
+		currentAttributes := datapermission.ResourceAttributes{"id": current.ID, "parent_id": currentParent, "code": current.Code, "name": current.Name, "created_by": current.CreatedBy}
+		proposedAttributes := datapermission.ResourceAttributes{"id": current.ID, "parent_id": proposedParent, "code": current.Code, "name": input.Name, "created_by": current.CreatedBy}
+		if err := s.dataScopes.AuthorizeTransition(ctx, "tenant.department", currentAttributes, proposedAttributes); err != nil {
+			if errors.Is(err, datapermission.ErrObjectDenied) {
+				return Department{}, ErrForbidden
+			}
+			return Department{}, err
+		}
 	}
 	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.department.update", input.ID, input, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
