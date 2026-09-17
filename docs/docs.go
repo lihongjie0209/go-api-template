@@ -8304,6 +8304,9 @@ const docTemplate = `{
                 "expires_in": {
                     "type": "integer"
                 },
+                "must_change_password": {
+                    "type": "boolean"
+                },
                 "refresh_token": {
                     "type": "string"
                 },

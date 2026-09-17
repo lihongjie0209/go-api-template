@@ -2,6 +2,7 @@ package authentication
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
@@ -56,8 +58,8 @@ func TestService_ChangePasswordRevokesEveryActiveSession(t *testing.T) {
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "version"}).AddRow("credential-1", "user-1", oldHash, 0, nil, 3))
-	mock.ExpectExec(`UPDATE identity_user_credentials`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "credential-1", int64(3)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).AddRow("credential-1", "user-1", oldHash, 0, nil, true, 3))
+	mock.ExpectExec(`UPDATE identity_user_credentials.*must_change_password=`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), false, sqlmock.AnyArg(), "user-1", "credential-1", int64(3)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_sessions`).WithArgs(sqlmock.AnyArg(), "password_changed", sqlmock.AnyArg(), "user-1", "user-1").WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 
@@ -243,6 +245,89 @@ func TestService_SetPasswordClassifiesWeakPasswordAsInvalidInput(t *testing.T) {
 	require.ErrorIs(t, service.SetPassword(ctx, "user-1", "short"), ErrInvalid)
 }
 
+func TestService_SetPasswordCreatesRestrictedCredential(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	ctx := platformprincipal.SystemContext(t.Context(), "admin")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO identity_user_credentials .*must_change_password`).WithArgs(
+		sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), int64(0), sqlmock.AnyArg(), true,
+		sqlmock.AnyArg(), "admin", sqlmock.AnyArg(), "admin",
+	).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, service.SetPassword(ctx, "user-1", "correct horse battery staple"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SetPasswordRestrictsExistingCredential(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	ctx := platformprincipal.SystemContext(t.Context(), "admin")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).
+			AddRow("credential-1", "user-1", "old-hash", 0, nil, false, 2),
+	)
+	mock.ExpectExec(`UPDATE identity_user_credentials.*must_change_password=`).WithArgs(
+		sqlmock.AnyArg(), sqlmock.AnyArg(), true, sqlmock.AnyArg(), "admin", "credential-1", int64(2),
+	).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_sessions`).WithArgs(
+		sqlmock.AnyArg(), "password_reset", sqlmock.AnyArg(), "admin", "user-1",
+	).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, service.SetPassword(ctx, "user-1", "correct horse battery staple"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_LoginReturnsPasswordChangeRequirement(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	jwtConfig, err := testutil.JWTConfig()
+	require.NoError(t, err)
+	users := identity.New(identity.NewRepository(sqlxDB), database.NewTransactor(sqlxDB), nil, nil, nil, nil, config.Config{})
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), users, auth.New(config.Config{JWT: jwtConfig}), config.Config{JWT: jwtConfig, Authentication: config.Authentication{RefreshTTL: time.Hour}})
+	hasher := auth.NewPasswordHasher()
+	passwordHash, err := hasher.Hash("temporary password value")
+	require.NoError(t, err)
+	now := time.Now()
+
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("alice").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("user-1", "alice", "Alice", "", "", identity.StatusActive, now, "admin", "Administrator", now, "admin", "Administrator", 2),
+	)
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).
+			AddRow("credential-1", "user-1", passwordHash, 0, nil, true, 3),
+	)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=0`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO identity_sessions`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	tokens, err := service.Login(t.Context(), "alice", "temporary password value", "127.0.0.1", "test")
+	require.NoError(t, err)
+	require.True(t, tokens.MustChangePassword)
+	claims, err := service.jwt.Parse(tokens.AccessToken)
+	require.NoError(t, err)
+	require.True(t, claims.MustChangePassword)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestService_RefreshRollsBackRotationWhenAccessTokenSigningFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -254,14 +339,43 @@ func TestService_RefreshRollsBackRotationWhenAccessTokenSigningFails(t *testing.
 	now := time.Now()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "version"}).
-			AddRow("session-1", "user-1", hash, "", now.Add(time.Hour), nil, 2))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+			AddRow("session-1", "user-1", hash, "", now.Add(time.Hour), nil, true, 2))
 	mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "session-1", int64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
 	_, err = service.Refresh(t.Context(), raw)
 	require.ErrorContains(t, err, "signing is not configured")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshPreservesPasswordChangeRequirement(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	jwtConfig, err := testutil.JWTConfig()
+	require.NoError(t, err)
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, auth.New(config.Config{JWT: jwtConfig}), config.Config{JWT: jwtConfig})
+	raw := "refresh-token"
+	hash := tokenHash(raw)
+	now := time.Now()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+			AddRow("session-1", "user-1", hash, "", now.Add(time.Hour), nil, true, 2),
+	)
+	mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tokens, err := service.Refresh(t.Context(), raw)
+	require.NoError(t, err)
+	require.True(t, tokens.MustChangePassword)
+	claims, err := service.jwt.Parse(tokens.AccessToken)
+	require.NoError(t, err)
+	require.True(t, claims.MustChangePassword)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -347,7 +461,7 @@ func TestService_ChangePasswordRollsBackWhenSecurityEventCannotBeStored(t *testi
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "version"}).AddRow("credential-1", "user-1", oldHash, 0, nil, 3))
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).AddRow("credential-1", "user-1", oldHash, 0, nil, true, 3))
 	mock.ExpectExec(`UPDATE identity_user_credentials`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_sessions`).WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectRollback()

@@ -55,6 +55,41 @@ func TestEnvironmentInjectsActiveProfile(t *testing.T) {
 	}
 }
 
+func TestPasswordChangeGateFailsClosedOutsideCredentialRecovery(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tests := []struct {
+		name       string
+		path       string
+		required   bool
+		wantStatus int
+	}{
+		{name: "ordinary session", path: "/api/v1/users/page", wantStatus: http.StatusNoContent},
+		{name: "restricted ordinary API", path: "/api/v1/users/page", required: true, wantStatus: http.StatusForbidden},
+		{name: "restricted password change", path: "/api/v1/auth/password/change", required: true, wantStatus: http.StatusNoContent},
+		{name: "restricted refresh", path: "/api/v1/auth/refresh", required: true, wantStatus: http.StatusNoContent},
+		{name: "restricted logout", path: "/api/v1/auth/logout", required: true, wantStatus: http.StatusNoContent},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set(passwordChangeRequiredKey, test.required)
+				c.Next()
+			}, PasswordChangeGate(logger))
+			router.POST(test.path, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(`{}`))
+			router.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+		})
+	}
+}
+
 func (*fakeIdempotencyManager) Enabled() bool { return true }
 func (m *fakeIdempotencyManager) MaxResponseBytes() int {
 	if m.maxBytes > 0 {

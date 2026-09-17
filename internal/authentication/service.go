@@ -36,20 +36,22 @@ var (
 )
 
 type Tokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	SessionID    string `json:"session_id"`
-	UserID       string `json:"-"`
+	AccessToken        string `json:"access_token"`
+	RefreshToken       string `json:"refresh_token"`
+	TokenType          string `json:"token_type"`
+	ExpiresIn          int64  `json:"expires_in"`
+	SessionID          string `json:"session_id"`
+	MustChangePassword bool   `json:"must_change_password"`
+	UserID             string `json:"-"`
 }
 type Credential struct {
-	ID             string     `db:"id"`
-	UserID         string     `db:"user_id"`
-	PasswordHash   string     `db:"password_hash"`
-	FailedAttempts int64      `db:"failed_attempts"`
-	LockedUntil    *time.Time `db:"locked_until"`
-	Version        int64      `db:"version"`
+	ID                 string     `db:"id"`
+	UserID             string     `db:"user_id"`
+	PasswordHash       string     `db:"password_hash"`
+	FailedAttempts     int64      `db:"failed_attempts"`
+	LockedUntil        *time.Time `db:"locked_until"`
+	MustChangePassword bool       `db:"must_change_password"`
+	Version            int64      `db:"version"`
 }
 type session struct {
 	ID                       string     `db:"id"`
@@ -58,6 +60,7 @@ type session struct {
 	PreviousRefreshTokenHash string     `db:"previous_refresh_token_hash"`
 	ExpiresAt                time.Time  `db:"expires_at"`
 	RevokedAt                *time.Time `db:"revoked_at"`
+	MustChangePassword       bool       `db:"must_change_password"`
 	Version                  int64      `db:"version"`
 }
 type SessionView struct {
@@ -174,7 +177,7 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 	}
 	return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var credential Credential
-		q := tx.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL FOR UPDATE`)
+		q := tx.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,must_change_password,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL FOR UPDATE`)
 		if err := tx.GetContext(ctx, &credential, q, actor.ID); err != nil {
 			return ErrInvalidCredentials
 		}
@@ -182,7 +185,10 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 		if verifyErr != nil || !valid {
 			return ErrInvalidCredentials
 		}
-		if err := updatePasswordAndRevoke(ctx, tx, credential, hash, actor.ID, "password_changed", time.Now()); err != nil {
+		if err := updatePasswordAndRevoke(ctx, tx, credential, passwordUpdate{
+			Hash: hash, ActorID: actor.ID, Reason: "password_changed",
+			ChangedAt: time.Now(), ForceChange: false,
+		}); err != nil {
 			return err
 		}
 		return s.recordSecurityTx(ctx, tx, securitylog.Entry{EventType: securitylog.EventPasswordChanged, SubjectID: actor.ID, SubjectType: string(platformprincipal.TypeUser), Succeeded: true})
@@ -377,18 +383,30 @@ func setPasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, userID, hash, actorI
 		return identity.ErrNotFound
 	}
 	var credential Credential
-	err := tx.GetContext(ctx, &credential, tx.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL FOR UPDATE`), userID)
+	err := tx.GetContext(ctx, &credential, tx.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,must_change_password,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL FOR UPDATE`), userID)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO identity_user_credentials (id,user_id,password_hash,failed_attempts,password_changed_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), userID, hash, 0, now, now, actorID, now, actorID)
+		_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO identity_user_credentials (id,user_id,password_hash,failed_attempts,password_changed_at,must_change_password,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), userID, hash, 0, now, true, now, actorID, now, actorID)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	return updatePasswordAndRevoke(ctx, tx, credential, hash, actorID, reason, now)
+	return updatePasswordAndRevoke(ctx, tx, credential, passwordUpdate{
+		Hash: hash, ActorID: actorID, Reason: reason,
+		ChangedAt: now, ForceChange: true,
+	})
 }
-func updatePasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, credential Credential, hash, actorID, reason string, now time.Time) error {
-	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_user_credentials SET password_hash=?,failed_attempts=0,locked_until=NULL,password_changed_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), hash, now, now, actorID, credential.ID, credential.Version)
+
+type passwordUpdate struct {
+	Hash        string
+	ActorID     string
+	Reason      string
+	ChangedAt   time.Time
+	ForceChange bool
+}
+
+func updatePasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, credential Credential, update passwordUpdate) error {
+	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_user_credentials SET password_hash=?,failed_attempts=0,locked_until=NULL,password_changed_at=?,must_change_password=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), update.Hash, update.ChangedAt, update.ForceChange, update.ChangedAt, update.ActorID, credential.ID, credential.Version)
 	if err != nil {
 		return err
 	}
@@ -399,7 +417,7 @@ func updatePasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, credential Creden
 	if rows != 1 {
 		return ErrInvalidCredentials
 	}
-	_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), now, reason, now, actorID, credential.UserID)
+	_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), update.ChangedAt, update.Reason, update.ChangedAt, update.ActorID, credential.UserID)
 	return err
 }
 func (s *Service) Login(ctx context.Context, username, password, ip, ua string) (Tokens, error) {
@@ -410,7 +428,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		return Tokens{}, ErrInvalidCredentials
 	}
 	var credential Credential
-	q := s.db.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL`)
+	q := s.db.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,must_change_password,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL`)
 	if err = s.db.GetContext(ctx, &credential, q, user.ID); err != nil {
 		return Tokens{}, ErrInvalidCredentials
 	}
@@ -429,7 +447,10 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		return Tokens{}, err
 	}
 	sessionID := uuid.NewString()
-	access, err := s.jwt.IssuePrincipal(platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser, SessionID: sessionID})
+	access, err := s.jwt.IssuePrincipalWithState(
+		platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser, SessionID: sessionID},
+		auth.TokenState{MustChangePassword: credential.MustChangePassword},
+	)
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -457,7 +478,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	if err != nil {
 		return Tokens{}, err
 	}
-	return Tokens{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: sessionID, UserID: user.ID}, nil
+	return Tokens{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: sessionID, MustChangePassword: credential.MustChangePassword, UserID: user.ID}, nil
 }
 
 func boundedSessionText(value string, limit int) string {
@@ -500,7 +521,7 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	reused := false
 	access := ""
 	err = s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
-		q := tx.Rebind(`SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE (s.refresh_token_hash=? OR s.previous_refresh_token_hash=?) AND s.deleted_at IS NULL FOR UPDATE`)
+		q := tx.Rebind(`SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,c.must_change_password,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL WHERE (s.refresh_token_hash=? OR s.previous_refresh_token_hash=?) AND s.deleted_at IS NULL FOR UPDATE`)
 		if e := tx.GetContext(systemCtx, &current, q, oldHash, oldHash); e != nil {
 			if errors.Is(e, sql.ErrNoRows) {
 				return ErrRefreshInvalid
@@ -531,7 +552,10 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 			return ErrRefreshInvalid
 		}
 		var issueErr error
-		access, issueErr = s.jwt.IssuePrincipal(platformprincipal.Principal{ID: current.UserID, Type: platformprincipal.TypeUser, SessionID: current.ID})
+		access, issueErr = s.jwt.IssuePrincipalWithState(
+			platformprincipal.Principal{ID: current.UserID, Type: platformprincipal.TypeUser, SessionID: current.ID},
+			auth.TokenState{MustChangePassword: current.MustChangePassword},
+		)
 		if issueErr != nil {
 			return issueErr
 		}
@@ -543,7 +567,7 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	if reused {
 		return Tokens{}, ErrRefreshReused
 	}
-	return Tokens{AccessToken: access, RefreshToken: newRaw, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: current.ID, UserID: current.UserID}, nil
+	return Tokens{AccessToken: access, RefreshToken: newRaw, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: current.ID, MustChangePassword: current.MustChangePassword, UserID: current.UserID}, nil
 }
 func (s *Service) Logout(ctx context.Context, raw string) error {
 	if raw == "" || len(raw) > 4096 {

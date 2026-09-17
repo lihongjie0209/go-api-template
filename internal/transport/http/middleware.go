@@ -438,12 +438,13 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 		var identity platformprincipal.Principal
 		switch {
 		case strings.EqualFold(scheme, "Bearer"):
-			verified, err := service.Verify(c.Request.Context(), raw)
+			verified, state, err := service.VerifyWithState(c.Request.Context(), raw)
 			if err != nil {
 				Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
 				return
 			}
 			identity = verified
+			c.Set(passwordChangeRequiredKey, state.MustChangePassword)
 			c.Request = c.Request.WithContext(accesscontrol.WithCredentialScheme(c.Request.Context(), accesscontrol.CredentialSchemeBearer))
 		case strings.EqualFold(scheme, "PSK"):
 			if !cfg.Auth.PSK.Enabled || !auth.VerifyPSK(header, cfg.Auth.PSK.Key) {
@@ -460,6 +461,28 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 		ctx := platformprincipal.WithContext(c.Request.Context(), identity)
 		c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, header))
 		c.Next()
+	}
+}
+
+const passwordChangeRequiredKey = "password_change_required"
+
+func PasswordChangeGate(logger *slog.Logger) gin.HandlerFunc {
+	allowed := map[string]struct{}{
+		"/api/v1/auth/logout":          {},
+		"/api/v1/auth/password/change": {},
+		"/api/v1/auth/refresh":         {},
+	}
+	return func(c *gin.Context) {
+		required, _ := c.Get(passwordChangeRequiredKey)
+		if mustChange, _ := required.(bool); !mustChange {
+			c.Next()
+			return
+		}
+		if _, ok := allowed[c.FullPath()]; ok {
+			c.Next()
+			return
+		}
+		Fail(c, logger, apperror.Forbidden("password change required"))
 	}
 }
 

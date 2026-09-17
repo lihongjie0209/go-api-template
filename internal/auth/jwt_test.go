@@ -241,3 +241,26 @@ func TestService_IssueAndParse(t *testing.T) {
 		t.Fatalf("Subject = %q, want client", claims.Subject)
 	}
 }
+
+func TestService_IssuePrincipalWithStateRoundTripsPasswordRequirement(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	raw, err := service.IssuePrincipalWithState(
+		platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"},
+		TokenState{MustChangePassword: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := service.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claims.MustChangePassword {
+		t.Fatal("must_change_password claim was not preserved")
+	}
+}

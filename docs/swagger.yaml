@@ -206,6 +206,8 @@ definitions:
         type: string
       expires_in:
         type: integer
+      must_change_password:
+        type: boolean
       refresh_token:
         type: string
       session_id:

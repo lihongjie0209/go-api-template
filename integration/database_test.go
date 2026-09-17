@@ -801,11 +801,11 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatal(err)
 	}
 	tokens, err := authenticationService.Login(ctx, "ALICE.SMITH", "correct horse battery staple", "127.0.0.1", "integration-test")
-	if err != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" {
+	if err != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" || !tokens.MustChangePassword {
 		t.Fatalf("login tokens=%+v err=%v", tokens, err)
 	}
 	rotated, err := authenticationService.Refresh(ctx, tokens.RefreshToken)
-	if err != nil || rotated.RefreshToken == tokens.RefreshToken {
+	if err != nil || rotated.RefreshToken == tokens.RefreshToken || !rotated.MustChangePassword {
 		t.Fatalf("refresh tokens=%+v err=%v", rotated, err)
 	}
 	if err := authenticationService.Logout(ctx, rotated.RefreshToken); err != nil {
@@ -813,6 +813,16 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if _, err := authenticationService.Refresh(ctx, tokens.RefreshToken); !errors.Is(err, userauthentication.ErrRefreshReused) {
 		t.Fatalf("replayed refresh error=%v", err)
+	}
+	if err := authenticationService.ChangePassword(creatorCtx, "correct horse battery staple", "a different correct horse battery staple"); err != nil {
+		t.Fatalf("change temporary password: %v", err)
+	}
+	unrestricted, err := authenticationService.Login(ctx, "alice.smith", "a different correct horse battery staple", "127.0.0.1", "integration-test")
+	if err != nil || unrestricted.MustChangePassword {
+		t.Fatalf("unrestricted login tokens=%+v err=%v", unrestricted, err)
+	}
+	if err := authenticationService.Logout(ctx, unrestricted.RefreshToken); err != nil {
+		t.Fatal(err)
 	}
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)

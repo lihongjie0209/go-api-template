@@ -25,10 +25,15 @@ import (
 
 type Claims struct {
 	jwt.RegisteredClaims
-	PrincipalType platformprincipal.Type `json:"principal_type,omitempty"`
-	SessionID     string                 `json:"session_id,omitempty"`
-	TenantID      string                 `json:"tenant_id,omitempty"`
-	MembershipID  string                 `json:"membership_id,omitempty"`
+	PrincipalType      platformprincipal.Type `json:"principal_type,omitempty"`
+	SessionID          string                 `json:"session_id,omitempty"`
+	TenantID           string                 `json:"tenant_id,omitempty"`
+	MembershipID       string                 `json:"membership_id,omitempty"`
+	MustChangePassword bool                   `json:"must_change_password,omitempty"`
+}
+
+type TokenState struct {
+	MustChangePassword bool
 }
 type signingKey struct {
 	id, algorithm   string
@@ -115,24 +120,31 @@ func NewWithDatabase(cfg config.Config, db *sqlx.DB) *Service {
 	return s
 }
 func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Principal, error) {
+	principal, _, err := s.VerifyWithState(ctx, raw)
+	return principal, err
+}
+
+func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprincipal.Principal, TokenState, error) {
 	if len(s.verification) == 0 {
 		if s.verifier == nil {
-			return platformprincipal.Principal{}, errors.New("jwt verification keys are not configured")
+			return platformprincipal.Principal{}, TokenState{}, errors.New("jwt verification keys are not configured")
 		}
-		return s.verifier.VerifyBearer(ctx, raw)
+		principal, err := s.verifier.VerifyBearer(ctx, raw)
+		return principal, TokenState{}, err
 	}
 	claims, parseErr := s.Parse(raw)
 	if parseErr != nil {
 		if s.verifier != nil && !s.referencesLocalKey(raw) {
-			return s.verifier.VerifyBearer(ctx, raw)
+			principal, err := s.verifier.VerifyBearer(ctx, raw)
+			return principal, TokenState{}, err
 		}
-		return platformprincipal.Principal{}, parseErr
+		return platformprincipal.Principal{}, TokenState{}, parseErr
 	}
 	t := claims.PrincipalType
 	switch t {
 	case platformprincipal.TypeUser:
 		if s.db == nil {
-			return platformprincipal.Principal{}, errors.New("session validation is unavailable")
+			return platformprincipal.Principal{}, TokenState{}, errors.New("session validation is unavailable")
 		}
 		var count int
 		query := `SELECT count(*) FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
@@ -142,25 +154,29 @@ func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Pri
 			args = append(args, claims.MembershipID, claims.TenantID)
 		}
 		if err := s.db.GetContext(ctx, &count, s.db.Rebind(query), args...); err != nil || count != 1 {
-			return platformprincipal.Principal{}, errors.New("session is revoked or expired")
+			return platformprincipal.Principal{}, TokenState{}, errors.New("session is revoked or expired")
 		}
 	case platformprincipal.TypeServiceAccount:
 		if s.db == nil {
-			return platformprincipal.Principal{}, errors.New("service account validation is unavailable")
+			return platformprincipal.Principal{}, TokenState{}, errors.New("service account validation is unavailable")
 		}
 		var count int
 		query := s.db.Rebind(`SELECT count(*) FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
 		if err := s.db.GetContext(ctx, &count, query, claims.Subject, time.Now()); err != nil || count != 1 {
-			return platformprincipal.Principal{}, errors.New("service account is disabled or expired")
+			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
 		}
 	}
-	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, nil
+	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, TokenState{MustChangePassword: claims.MustChangePassword}, nil
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
 func (s *Service) Issue(subject string) (string, error) {
 	return s.IssuePrincipal(platformprincipal.Principal{ID: subject, Type: platformprincipal.TypeServiceAccount})
 }
 func (s *Service) IssuePrincipal(principal platformprincipal.Principal) (string, error) {
+	return s.IssuePrincipalWithState(principal, TokenState{})
+}
+
+func (s *Service) IssuePrincipalWithState(principal platformprincipal.Principal, state TokenState) (string, error) {
 	if !s.Enabled() {
 		return "", errors.New("asymmetric jwt signing is not configured")
 	}
@@ -181,7 +197,7 @@ func (s *Service) IssuePrincipal(principal platformprincipal.Principal) (string,
 	if err != nil {
 		return "", fmt.Errorf("create token id: %w", err)
 	}
-	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: s.issuer, Audience: jwt.ClaimStrings{s.audience}, Subject: principal.ID, ID: jti, IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl))}, PrincipalType: principal.Type, SessionID: principal.SessionID, TenantID: principal.TenantID, MembershipID: principal.MembershipID}
+	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: s.issuer, Audience: jwt.ClaimStrings{s.audience}, Subject: principal.ID, ID: jti, IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl))}, PrincipalType: principal.Type, SessionID: principal.SessionID, TenantID: principal.TenantID, MembershipID: principal.MembershipID, MustChangePassword: state.MustChangePassword}
 	token := jwt.NewWithClaims(jwt.GetSigningMethod(s.active.algorithm), claims)
 	token.Header["kid"] = s.active.id
 	return token.SignedString(s.active.private)
