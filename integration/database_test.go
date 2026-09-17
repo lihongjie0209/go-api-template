@@ -40,6 +40,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
+	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
@@ -47,6 +48,12 @@ import (
 )
 
 type integrationLifecycleLocker struct{}
+
+type allowCapabilityAuthorizer struct{}
+
+func (allowCapabilityAuthorizer) Authorize(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
+	return nil
+}
 
 func (integrationLifecycleLocker) TryLock(context.Context, string, time.Duration) (cache.Lock, bool, error) {
 	return integrationLifecycleLock{}, true, nil
@@ -1103,6 +1110,19 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 	page, err := service.Page(endpointContext("list", accesscontrol.DataPermissionRequired), tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != member.ID {
 		t.Fatalf("data-scoped member page=%+v err=%v", page, err)
+	}
+	capabilities := authorization.NewCapabilityService(db, allowCapabilityAuthorizer{}, scopes, resources)
+	capabilityEndpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{
+		Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/tenant-members/status/update", Authentication: accesscontrol.AuthenticationJWT,
+		Resource: "tenant.member", Action: "update", DataPermission: accesscontrol.DataPermissionRequired,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities.SetEndpointRegistry(capabilityEndpoints)
+	capabilityResult, err := capabilities.EvaluateRows(platformprincipal.WithContext(ctx, principal), "tenant.member", []string{"update"}, []string{member.ID, ownerMembershipID, "missing-member"})
+	if err != nil || len(capabilityResult.Items) != 3 || !capabilityResult.Items[0].Actions["update"] || capabilityResult.Items[1].Actions["update"] || capabilityResult.Items[2].Actions["update"] {
+		t.Fatalf("row capability result=%+v err=%v", capabilityResult, err)
 	}
 	if _, err := service.UpdateStatus(endpointContext("update", accesscontrol.DataPermissionRequired), ownerMembershipID, tenant.StatusDisabled, 1); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("hidden member update error=%v", err)

@@ -56,6 +56,47 @@ func (s *Service) AuthorizeTransition(ctx context.Context, expectedResource stri
 	return s.authorizeObject(ctx, expectedResource, accesscontrol.DataPermissionRequired, resource, proposed)
 }
 
+// EvaluateRows evaluates current-row data permissions for a bounded batch.
+// Subject projections are resolved once. The caller must supply trusted rows
+// loaded under the authenticated tenant boundary.
+func (s *Service) EvaluateRows(ctx context.Context, resource, action string, rows []ResourceAttributes) ([]bool, error) {
+	result, err := s.EvaluateRowActions(ctx, resource, []string{action}, rows)
+	if err != nil {
+		return nil, err
+	}
+	return result[action], nil
+}
+
+// EvaluateRowActions evaluates multiple actions while resolving the trusted
+// subject projection only once for the complete bounded batch.
+func (s *Service) EvaluateRowActions(ctx context.Context, resource string, actions []string, rows []ResourceAttributes) (map[string][]bool, error) {
+	principal, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roles, departments, err := s.projections(ctx, principal)
+	if err != nil {
+		return nil, fmt.Errorf("resolve data permission subject: %w", err)
+	}
+	subject := pbac.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
+	attributes := SubjectAttributes{"id": principal.ID, "tenant_id": principal.TenantID, "membership_id": principal.MembershipID, "role_codes": roles, "department_ids": departments}
+	result := make(map[string][]bool, len(actions))
+	for _, action := range actions {
+		decisions := make([]bool, len(rows))
+		for index, row := range rows {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			decisions[index], err = s.engine.EvaluateCurrent(ctx, resource, action, subject, attributes, row)
+			if err != nil {
+				return nil, err
+			}
+		}
+		result[action] = decisions
+	}
+	return result, nil
+}
+
 func (s *Service) authorizeObject(ctx context.Context, expectedResource string, expectedMode accesscontrol.DataPermissionMode, resource, proposed ResourceAttributes) error {
 	principal, err := platformprincipal.Require(ctx)
 	if err != nil {

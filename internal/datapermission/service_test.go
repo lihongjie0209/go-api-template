@@ -83,3 +83,30 @@ func TestServiceAuthorizesTrustedStateTransition(t *testing.T) {
 	require.ErrorIs(t, service.AuthorizeTransition(ctx, "tenant.member", current, ResourceAttributes{"owner_id": "user-1", "status": "disabled"}), ErrObjectDenied)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestServiceEvaluatesMultipleRowActionsWithOneSubjectProjection(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
+	require.NoError(t, err)
+	schemas, err := NewSchemaRegistry(schema)
+	require.NoError(t, err)
+	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	engine, err := NewEngine(schemas, resources, []Policy{{
+		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+		Metadata: PolicyMetadata{Code: "member-own", Name: "Member own"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec: PolicySpec{Resource: "tenant.member", Actions: []string{"update", "remove"}, Condition: "resource.owner_id == subject.id", Effect: EffectAllow},
+	}})
+	require.NoError(t, err)
+	service := NewService(sqlx.NewDb(raw, "sqlmock"), engine)
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
+	mock.ExpectQuery(`SELECT DISTINCT dm.department_id`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"department_id"}))
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+
+	result, err := service.EvaluateRowActions(ctx, "tenant.member", []string{"update", "remove"}, []ResourceAttributes{{"owner_id": "user-1"}, {"owner_id": "user-2"}})
+	require.NoError(t, err)
+	require.Equal(t, map[string][]bool{"update": {true, false}, "remove": {true, false}}, result)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

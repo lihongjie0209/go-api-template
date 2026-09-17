@@ -9,6 +9,7 @@ func PlatformResourceDefinitions() ResourceDefinitions {
 		resource("identity.profile", "当前用户资料", ResourceScopePrincipal, "read"),
 		resource("identity.session", "当前用户登录会话", ResourceScopePrincipal, "list", "revoke", "logout"),
 		resource("identity.credential", "当前用户凭据", ResourceScopePrincipal, "change-password"),
+		resource("authorization.capability", "当前用户前端能力", ResourceScopePrincipal, "evaluate"),
 		resource("identity.service-account", "服务账号", ResourceScopePlatform, "create", "read", "list", "update", "rotate-secret", "delete"),
 		resource("identity.internal-authentication", "内部认证能力", ResourceScopePlatform, "validate-session", "revoke-tenant-sessions", "issue-tenant-token"),
 		resource("file.object", "文件对象", ResourceScopeTenant, "create", "read", "list", "download", "delete"),

@@ -16,6 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
+	"github.com/lihongjie0209/go-api-template/internal/authorization"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
@@ -32,7 +33,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, platformConfigHandler *PlatformConfigHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, platformConfigHandler *PlatformConfigHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, menuHandler *MenuHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -101,6 +102,8 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/auth/sessions/logout-all", "identity.session", "logout", accesscontrol.DataPermissionNone, userAuthenticationHandler.LogoutAll)
 	jwt("/auth/sessions/force-logout-all", "identity.user", "force-logout", accesscontrol.DataPermissionNone, userAuthenticationHandler.ForceLogoutAll)
 	jwt("/me", "identity.profile", "read", accesscontrol.DataPermissionNone, handler.Me)
+	jwt("/authorization/capabilities/evaluate", "authorization.capability", "evaluate", accesscontrol.DataPermissionNone, capabilityHandler.Evaluate)
+	jwt("/authorization/rows/evaluate", "authorization.capability", "evaluate", accesscontrol.DataPermissionNone, capabilityHandler.EvaluateRows)
 	public("/example/ping", handler.Ping)
 	jwt("/files/upload", "file.object", "create", accesscontrol.DataPermissionNone, fileHandler.Upload)
 	jwt("/files/get", "file.object", "read", accesscontrol.DataPermissionNone, fileHandler.Get)
@@ -231,6 +234,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	if err := endpointRegistry.ValidateCoverage(httpBusinessOperations(router)); err != nil {
 		return nil, fmt.Errorf("validate HTTP authorization descriptor coverage: %w", err)
 	}
+	capabilityService.SetEndpointRegistry(endpointRegistry)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
 	var listener net.Listener
 	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
@@ -294,4 +298,4 @@ func registerPprof(group *gin.RouterGroup) {
 	}
 }
 
-var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewPlatformConfigHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewMenuHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewPlatformConfigHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewMenuHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))

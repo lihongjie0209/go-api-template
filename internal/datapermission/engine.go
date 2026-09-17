@@ -78,6 +78,27 @@ func (e *Engine) EvaluateObject(ctx context.Context, resource, action string, su
 	return e.EvaluateTransition(ctx, resource, action, subject, subjectAttributes, resourceAttributes, resourceAttributes)
 }
 
+// EvaluateCurrent evaluates only the persisted-row predicate. Proposed-state
+// predicates are intentionally ignored because a generic row capability has no
+// validated target state; the mutation endpoint must evaluate the transition.
+func (e *Engine) EvaluateCurrent(ctx context.Context, resource, action string, subject pbac.Subject, subjectAttributes SubjectAttributes, resourceAttributes ResourceAttributes) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if e == nil || e.schemas == nil || e.resources == nil {
+		return false, ErrSnapshotUnavailable
+	}
+	schema, ok := e.schemas.Get(resource)
+	if !ok {
+		return false, ErrInvalidSchema
+	}
+	matched, err := e.matchedScopes(resource, action, subject)
+	if err != nil {
+		return false, err
+	}
+	return NewEvaluator(schema).Evaluate(matched, subjectAttributes, resourceAttributes)
+}
+
 // EvaluateTransition applies current-row and proposed-object predicates to a
 // server-constructed state transition after the current row was selected under
 // the SQL data scope.

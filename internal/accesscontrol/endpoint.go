@@ -160,6 +160,25 @@ func (r *EndpointRegistry) Definitions() []Endpoint {
 	return result
 }
 
+// Find returns registered endpoints for one canonical resource/action pair in
+// stable order. It is used by self-capability evaluation so operation-policy
+// conditions see the actual target operation rather than the capability API.
+func (r *EndpointRegistry) Find(resource, action string) []Endpoint {
+	if r == nil {
+		return nil
+	}
+	result := make([]Endpoint, 0)
+	for _, endpoint := range r.endpoints {
+		if endpoint.Resource == resource && endpoint.Action == action {
+			result = append(result, endpoint)
+		}
+	}
+	slices.SortFunc(result, func(left, right Endpoint) int {
+		return strings.Compare(endpointKey(left.Transport, left.Operation), endpointKey(right.Transport, right.Operation))
+	})
+	return result
+}
+
 // ValidateCoverage requires an exact match between runtime operations and descriptors.
 func (r *EndpointRegistry) ValidateCoverage(operations []Operation) error {
 	if r == nil {

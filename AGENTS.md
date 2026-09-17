@@ -185,6 +185,13 @@ otherwise unsuitable for dictionary use.
   identities; after complete descriptor coverage and decision migration, remove
   the legacy database route-policy module rather than maintaining two sources
   of authorization truth.
+- Frontend authorization uses server-side capability evaluation only. Page
+  capabilities evaluate canonical resource/action pairs against registered
+  target operations. Row capabilities accept only bounded resource IDs and
+  actions; the owning service loads trusted rows in one tenant-scoped batch and
+  evaluates current-row data permission. Never send policy expressions or
+  accept client-supplied resource/subject attributes. Capability results are UI
+  hints; every business endpoint must repeat authoritative authorization.
 
 ## Logging decisions
 

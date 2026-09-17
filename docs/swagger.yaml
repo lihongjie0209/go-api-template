@@ -91,6 +91,22 @@ definitions:
       token_type:
         type: string
     type: object
+  authorization.CapabilityDecision:
+    properties:
+      allowed:
+        type: boolean
+      key:
+        type: string
+    type: object
+  authorization.CapabilityRequest:
+    properties:
+      action:
+        type: string
+      key:
+        type: string
+      resource:
+        type: string
+    type: object
   authorization.MemberRoleView:
     properties:
       code:
@@ -110,6 +126,24 @@ definitions:
         type: string
       permission_key:
         type: string
+      resource:
+        type: string
+    type: object
+  authorization.RowCapabilityDecision:
+    properties:
+      actions:
+        additionalProperties:
+          type: boolean
+        type: object
+      resource_id:
+        type: string
+    type: object
+  authorization.RowCapabilityResult:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.RowCapabilityDecision'
+        type: array
       resource:
         type: string
     type: object
@@ -575,6 +609,17 @@ definitions:
         type: string
     required:
     - username
+    type: object
+  httptransport.CapabilityEvaluateRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.CapabilityRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - items
     type: object
   httptransport.ChangePasswordRequest:
     properties:
@@ -1709,6 +1754,28 @@ definitions:
     required:
     - session_id
     - version
+    type: object
+  httptransport.RowCapabilityEvaluateRequest:
+    properties:
+      actions:
+        items:
+          type: string
+        maxItems: 20
+        minItems: 1
+        type: array
+      resource:
+        maxLength: 128
+        type: string
+      resource_ids:
+        items:
+          type: string
+        maxItems: 200
+        minItems: 1
+        type: array
+    required:
+    - actions
+    - resource
+    - resource_ids
     type: object
   httptransport.SecurityLogIDRequest:
     properties:
@@ -3405,6 +3472,64 @@ paths:
       summary: Authenticate a user with username and password
       tags:
       - authentication
+  /api/v1/authorization/capabilities/evaluate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Capabilities
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CapabilityEvaluateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/authorization.CapabilityDecision'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: Batch evaluate page-level capabilities for the current principal
+      tags:
+      - authorization
+  /api/v1/authorization/rows/evaluate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Rows
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.RowCapabilityEvaluateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.RowCapabilityResult'
+              type: object
+      security:
+      - Bearer: []
+      summary: Batch evaluate current-row capabilities for the current principal
+      tags:
+      - authorization
   /api/v1/data-permissions/global-policies/create:
     post:
       consumes:

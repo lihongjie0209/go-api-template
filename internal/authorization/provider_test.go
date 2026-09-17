@@ -65,6 +65,28 @@ func TestAuthorizerResolvesTrustedTenantRoles(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAuthorizerMemoizesRolesForCapabilityBatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	registry := authorizationTestRegistry(t)
+	authenticated := true
+	engine, err := pbac.NewEngine(registry, []pbac.Policy{{
+		APIVersion: pbac.APIVersionV1, Kind: pbac.KindPolicy,
+		Metadata: pbac.PolicyMetadata{Code: "manager-member-actions", Name: "Manager member actions"}, Scope: pbac.PolicyScope{Type: pbac.PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec: pbac.PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated, Roles: pbac.RolesMatcher{AnyOf: []string{"manager"}}}, Resource: pbac.ResourceMatcher{Type: "tenant.member"}, Actions: []string{"read", "update"}, Effect: pbac.EffectAllow},
+	}})
+	require.NoError(t, err)
+	authorizer := &Authorizer{db: sqlx.NewDb(db, "sqlmock"), engine: engine, registry: registry}
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("manager"))
+	ctx := withAuthorizationMemo(t.Context())
+	principal := tenantPrincipal()
+
+	require.NoError(t, authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant}))
+	require.NoError(t, authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "tenant.member", Action: "update", Scope: platformauthz.ScopeTenant}))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAuthorizerMapsEvaluationFailureToUnavailable(t *testing.T) {
 	authorizer := &Authorizer{}
 	err := authorizer.Authorize(t.Context(), platformprincipal.Principal{ID: "user-1"}, platformauthz.Requirement{Resource: "identity.user", Action: "read"})

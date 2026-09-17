@@ -29,7 +29,7 @@ func dataPermissionExemption(resource, action string) string {
 	switch resource {
 	case "identity.user", "identity.service-account", "tenant", "permission.definition", "menu", "dictionary.definition", "dictionary.item", "platform.config", "pbac.resource-action", "pbac.global-policy", "data-permission.global-policy":
 		return "platform-scoped resource; operation PBAC is the complete authorization boundary"
-	case "identity.profile", "identity.session", "identity.credential", "tenant.selection":
+	case "identity.profile", "identity.session", "identity.credential", "tenant.selection", "authorization.capability":
 		return "service enforces the authenticated principal ownership predicate"
 	case "tenant.profile":
 		return "service enforces the authenticated principal tenant boundary"

@@ -466,6 +466,109 @@
                 }
             }
         },
+        "/api/v1/authorization/capabilities/evaluate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization"
+                ],
+                "summary": "Batch evaluate page-level capabilities for the current principal",
+                "parameters": [
+                    {
+                        "description": "Capabilities",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CapabilityEvaluateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/authorization.CapabilityDecision"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/rows/evaluate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization"
+                ],
+                "summary": "Batch evaluate current-row capabilities for the current principal",
+                "parameters": [
+                    {
+                        "description": "Rows",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.RowCapabilityEvaluateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.RowCapabilityResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/global-policies/create": {
             "post": {
                 "security": [
@@ -6446,6 +6549,31 @@
                 }
             }
         },
+        "authorization.CapabilityDecision": {
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                }
+            }
+        },
+        "authorization.CapabilityRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                }
+            }
+        },
         "authorization.MemberRoleView": {
             "type": "object",
             "properties": {
@@ -6474,6 +6602,34 @@
                 },
                 "permission_key": {
                     "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                }
+            }
+        },
+        "authorization.RowCapabilityDecision": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "resource_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "authorization.RowCapabilityResult": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.RowCapabilityDecision"
+                    }
                 },
                 "resource": {
                     "type": "string"
@@ -7180,6 +7336,22 @@
                 "username": {
                     "type": "string",
                     "maxLength": 256
+                }
+            }
+        },
+        "httptransport.CapabilityEvaluateRequest": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/authorization.CapabilityRequest"
+                    }
                 }
             }
         },
@@ -8845,6 +9017,36 @@
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "httptransport.RowCapabilityEvaluateRequest": {
+            "type": "object",
+            "required": [
+                "actions",
+                "resource",
+                "resource_ids"
+            ],
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "resource": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "resource_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

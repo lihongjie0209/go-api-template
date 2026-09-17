@@ -70,3 +70,16 @@ func TestEndpointRegistryValidatesExactRuntimeCoverage(t *testing.T) {
 		{Transport: TransportHTTP, Name: "POST /api/v1/members/get"},
 	}), ErrEndpointCoverage)
 }
+
+func TestEndpointRegistryFindUsesStableTargetOrder(t *testing.T) {
+	t.Parallel()
+	registry, err := NewEndpointRegistry(endpointResourceRegistry(t), []Endpoint{
+		{Transport: TransportHTTP, Operation: "POST /api/v1/members/z-update", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "update", DataPermission: DataPermissionNone, DataPermissionReason: "test"},
+		{Transport: TransportHTTP, Operation: "POST /api/v1/members/a-update", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "update", DataPermission: DataPermissionNone, DataPermissionReason: "test"},
+	})
+	require.NoError(t, err)
+
+	result := registry.Find("tenant.member", "update")
+	require.Equal(t, []string{"POST /api/v1/members/a-update", "POST /api/v1/members/z-update"}, []string{result[0].Operation, result[1].Operation})
+	require.Empty(t, registry.Find("tenant.member", "read"))
+}
