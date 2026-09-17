@@ -381,6 +381,19 @@ Status values:
 | Tree integrity | Directory/page/external/button parent rules are validated across the complete candidate tree, so changing a directory with descendants into an incompatible node type is rejected. Buttons require a page parent and active permission; all other children require a directory parent. The shared tree utility detects duplicate/orphan/cycle corruption. Reads are deterministically ordered and database-limited to `max_nodes + 1` before rejecting an oversized tree; searches retain ancestors. |
 | Authorization and tenant behavior | Administration uses the platform-scope `menu` PBAC Resource. Current-user navigation uses the separate tenant-scope `menu.current:read` Resource, then obtains authoritative effective tenant permissions and includes only active/visible nodes whose own and ancestor requirements are satisfied. It never trusts permission IDs supplied by the frontend and does not query another service's owned tables. Platform menu definitions are global; tenant-specific visibility is a derived authorization view. |
 | Concurrency, cache and audit | Structural mutations use the shared renewable `menu:tree` lease plus a serializable transaction, unique constraints and expected versions. Successful writes invalidate both bounded source-tree cache variants only after commit. The cached value is never a principal-specific authorization result. Domain writes plus operation and privilege-security events share one transaction; either outbox failure rolls back the menu change, while failed attempts are recorded separately. Database triggers maintain all mandatory audit/version/delete fields. |
+
+## Application and navigation replacement
+
+| Area | Status | Evidence and remaining work |
+| --- | --- | --- |
+| Application registry | in_progress | Migration `000030` defines platform-scoped applications with deterministic business identity, full audit fields, status/order metadata and PostgreSQL/Kingbase/MySQL audit enforcement. The Go domain module validates normalized codes, paths, JSON bounds and UUIDv5 generation. CRUD/page transport and transactional operation-log wiring remain. |
+| Navigation tree | in_progress | Migration `000030` defines application-owned `directory/menu` nodes. The domain module enforces the type matrix, same-application trees, directory-only parents, stable UUIDv5 identity and canonical PBAC Resource/Action resolution for menu leaves. CRUD/tree transport, current-user batch capability projection, cache and removal of the legacy `menus.permission_id` model remain. |
+
+The new navigation model is intentionally parallel to the legacy menu table
+until an explicit data conversion can map every legacy permission ID to one
+canonical Resource/Action. No route may expose both models as competing
+authorization sources. The legacy section above remains authoritative for the
+currently exposed `/menus` routes until that cutover is completed.
 | Presentation | Stable key/ID, name, route, component, icon and permission reference give the frontend display/navigation contract without exposing ID-only relationships. Get/admin/current trees resolve creator/updater names through the shared bounded Identity adapter only after source-cache reads and authorization filtering, so cached data remains principal-independent. Missing system/service actors retain stable-ID fallback and timestamps render in `Asia/Shanghai`. |
 | Tests | Unit tests cover stable UUID mapping, validation, traversal rejection, cycle/parent-type rules, ancestor filtering, protected ancestors, cache population/invalidation, actor presentation fallback/+08 conversion and transactional-audit rollback. The service-contained PostgreSQL/MySQL lifecycle covers nested create/filter/update/stale conflict/dependent delete/logical delete and stable-ID restore; GitHub Actions run `35065952569` passed. |
 
