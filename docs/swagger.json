@@ -7942,6 +7942,7 @@
             "required": [
                 "action",
                 "policy",
+                "resource",
                 "resource_attributes",
                 "subject",
                 "subject_attributes"
@@ -7956,6 +7957,9 @@
                 },
                 "proposed_attributes": {
                     "$ref": "#/definitions/datapermission.ResourceAttributes"
+                },
+                "resource": {
+                    "$ref": "#/definitions/pbac.Resource"
                 },
                 "resource_attributes": {
                     "$ref": "#/definitions/datapermission.ResourceAttributes"

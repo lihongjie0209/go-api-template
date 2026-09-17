@@ -8,7 +8,7 @@ version, sends a Redis notification, or replaces the active runtime snapshot.
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Four POST + JSON routes cover global/tenant PBAC and data-permission policies. Requests contain one candidate policy plus bounded typed evaluation input. Responses use the shared envelope. |
+| Contract | Four POST + JSON routes cover global/tenant PBAC and data-permission policies. Requests contain one candidate policy plus bounded typed evaluation input. The simulated Resource/Action must be declared by that candidate; mismatches are invalid requests rather than synthetic deny decisions. Responses use the shared envelope. |
 | Authentication | JWT only. Global simulation uses the corresponding platform policy-management permission; tenant simulation uses the tenant policy-management permission. |
 | Authorization | Canonical actions are `pbac.*-policy:simulate` and `data-permission.*-policy:simulate`. Tenant routes require the candidate policy, simulated subject, and simulated resource tenant to equal the authenticated tenant. |
 | Operation log | Simulation is a read-only diagnostic. Initial delivery relies on protected request telemetry; durable diagnostic operation logging is required before exposing full multi-policy production traces. |
@@ -34,7 +34,15 @@ diagnosed before persistence. Database version simulation can be layered on top
 later by loading the immutable version and passing the same model to this
 service.
 
-Data-permission simulation requires an explicit action because one document may
-cover several actions. Resource and subject attribute names are validated
-against the code-owned Schema; arbitrary SQL and client-supplied column names
-are never accepted.
+Data-permission simulation requires an explicit operation resource such as
+`{"type":"tenant.member","tenant_id":"..."}` and an action because one
+document may cover several actions. For a tenant resource, the authenticated
+tenant, candidate-policy tenant, subject tenant, and resource tenant must all
+match. Resource and subject attribute names are validated against the
+code-owned Schema; arbitrary SQL and client-supplied column names are never
+accepted.
+
+Both simulators propagate request cancellation and reject an evaluation target
+outside the candidate policy's declared Resource/Action set. A deny response
+therefore represents evaluation of the candidate, not a miss caused by testing
+an unrelated operation.

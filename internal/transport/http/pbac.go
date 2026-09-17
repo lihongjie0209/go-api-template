@@ -339,7 +339,7 @@ func (h *PBACHandler) respond(c *gin.Context, body any, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, pbac.ErrInvalidPolicy), errors.Is(err, pbac.ErrInvalidEvaluationRequest):
+	case errors.Is(err, pbac.ErrInvalidPolicy), errors.Is(err, pbac.ErrInvalidEvaluationRequest), errors.Is(err, pbac.ErrInvalidSimulation):
 		Fail(c, h.logger, apperror.Invalid("invalid PBAC policy", err))
 	case errors.Is(err, pbac.ErrPolicyNotFound), errors.Is(err, pbac.ErrPolicyVersionMissing):
 		Fail(c, h.logger, apperror.NotFound("PBAC policy not found"))

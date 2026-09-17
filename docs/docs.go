@@ -7945,6 +7945,7 @@ const docTemplate = `{
             "required": [
                 "action",
                 "policy",
+                "resource",
                 "resource_attributes",
                 "subject",
                 "subject_attributes"
@@ -7959,6 +7960,9 @@ const docTemplate = `{
                 },
                 "proposed_attributes": {
                     "$ref": "#/definitions/datapermission.ResourceAttributes"
+                },
+                "resource": {
+                    "$ref": "#/definitions/pbac.Resource"
                 },
                 "resource_attributes": {
                     "$ref": "#/definitions/datapermission.ResourceAttributes"

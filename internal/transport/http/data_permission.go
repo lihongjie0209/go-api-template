@@ -72,6 +72,7 @@ type DataPermissionSimulationRequest struct {
 	Policy             datapermission.Policy             `json:"policy" binding:"required"`
 	Action             string                            `json:"action" binding:"required,max=128"`
 	Subject            pbac.Subject                      `json:"subject" binding:"required"`
+	Resource           pbac.Resource                     `json:"resource" binding:"required"`
 	SubjectAttributes  datapermission.SubjectAttributes  `json:"subject_attributes" binding:"required"`
 	ResourceAttributes datapermission.ResourceAttributes `json:"resource_attributes" binding:"required"`
 	ProposedAttributes datapermission.ResourceAttributes `json:"proposed_attributes"`
@@ -92,11 +93,11 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	if request.Policy.Scope.Type != expectedDataPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Subject.TenantID, request.Subject.TenantID) {
+	if request.Policy.Scope.Type != expectedDataPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Subject.TenantID, request.Resource.TenantID) {
 		h.respond(c, nil, datapermission.ErrPolicyScope)
 		return
 	}
-	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
+	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, Resource: request.Resource, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
 	h.respond(c, result, err)
 }
 
