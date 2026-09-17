@@ -10,16 +10,18 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 type DataPermissionHandler struct {
-	service *datapermission.LifecycleService
-	logger  *slog.Logger
+	service   *datapermission.LifecycleService
+	simulator *datapermission.Simulator
+	logger    *slog.Logger
 }
 
-func NewDataPermissionHandler(service *datapermission.LifecycleService, logger *slog.Logger) *DataPermissionHandler {
-	return &DataPermissionHandler{service: service, logger: logger}
+func NewDataPermissionHandler(service *datapermission.LifecycleService, simulator *datapermission.Simulator, logger *slog.Logger) *DataPermissionHandler {
+	return &DataPermissionHandler{service: service, simulator: simulator, logger: logger}
 }
 
 type DataPermissionPolicyCreateRequest struct {
@@ -64,6 +66,38 @@ type DataPermissionStatusRequest struct {
 	PolicyID              string `json:"policy_id" binding:"required,uuid"`
 	Status                string `json:"status" binding:"required,oneof=active disabled"`
 	ExpectedPolicyVersion int64  `json:"expected_policy_version" binding:"required,gt=0"`
+}
+
+type DataPermissionSimulationRequest struct {
+	Policy             datapermission.Policy             `json:"policy" binding:"required"`
+	Action             string                            `json:"action" binding:"required,max=128"`
+	Subject            pbac.Subject                      `json:"subject" binding:"required"`
+	SubjectAttributes  datapermission.SubjectAttributes  `json:"subject_attributes" binding:"required"`
+	ResourceAttributes datapermission.ResourceAttributes `json:"resource_attributes" binding:"required"`
+	ProposedAttributes datapermission.ResourceAttributes `json:"proposed_attributes"`
+}
+
+// SimulateDataPermissionPolicy godoc
+// @Summary Validate and simulate one unpersisted data-permission policy
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DataPermissionSimulationRequest true "Simulation"
+// @Success 200 {object} Response{body=datapermission.SimulationResult}
+// @Router /api/v1/data-permissions/global-policies/simulate [post]
+// @Router /api/v1/data-permissions/tenant-policies/simulate [post]
+func (h *DataPermissionHandler) Simulate(c *gin.Context) {
+	var request DataPermissionSimulationRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	if request.Policy.Scope.Type != expectedDataPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Subject.TenantID, request.Subject.TenantID) {
+		h.respond(c, nil, datapermission.ErrPolicyScope)
+		return
+	}
+	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
+	h.respond(c, result, err)
 }
 
 // CreateDataPermissionPolicy godoc
@@ -272,7 +306,11 @@ func (h *DataPermissionHandler) respond(c *gin.Context, body any, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, datapermission.ErrInvalidPolicy), errors.Is(err, datapermission.ErrInvalidPredicate), errors.Is(err, datapermission.ErrInvalidSchema):
+	case errors.Is(err, datapermission.ErrInvalidPolicy), errors.Is(err, datapermission.ErrInvalidPredicate), errors.Is(err, datapermission.ErrInvalidSchema),
+		errors.Is(err, datapermission.ErrInvalidSimulation),
+		errors.Is(err, datapermission.ErrResourceAttributeMissing), errors.Is(err, datapermission.ErrSubjectAttributeMissing),
+		errors.Is(err, datapermission.ErrAttributeTypeMismatch), errors.Is(err, datapermission.ErrResourceFieldUnknown),
+		errors.Is(err, datapermission.ErrSubjectAttributeUnknown):
 		Fail(c, h.logger, apperror.Invalid("invalid data-permission policy", err))
 	case errors.Is(err, datapermission.ErrPolicyNotFound):
 		Fail(c, h.logger, apperror.NotFound("data-permission policy not found"))

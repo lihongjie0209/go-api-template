@@ -30,10 +30,10 @@ func PlatformResourceDefinitions() ResourceDefinitions {
 		resource("operation.log", "操作日志", ResourceScopeTenant, "create", "read", "list"),
 		resource("security.log", "安全日志", ResourceScopeTenant, "read", "list"),
 		resource("pbac.resource-action", "PBAC 资源动作注册表", ResourceScopePlatform, "list"),
-		resource("pbac.global-policy", "全局策略", ResourceScopePlatform, "create", "read", "list", "create-version", "publish", "set-status"),
-		resource("pbac.tenant-policy", "租户策略", ResourceScopeTenant, "create", "read", "list", "create-version", "publish", "set-status"),
-		resource("data-permission.global-policy", "全局数据权限策略", ResourceScopePlatform, "create", "read", "list", "create-version", "publish", "set-status"),
-		resource("data-permission.tenant-policy", "租户数据权限策略", ResourceScopeTenant, "create", "read", "list", "create-version", "publish", "set-status"),
+		resource("pbac.global-policy", "全局策略", ResourceScopePlatform, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
+		resource("pbac.tenant-policy", "租户策略", ResourceScopeTenant, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
+		resource("data-permission.global-policy", "全局数据权限策略", ResourceScopePlatform, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
+		resource("data-permission.tenant-policy", "租户数据权限策略", ResourceScopeTenant, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
 	}
 }
 

@@ -769,6 +769,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data-permissions/global-policies/simulate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Validate and simulate one unpersisted data-permission policy",
+                "parameters": [
+                    {
+                        "description": "Simulation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionSimulationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/datapermission.SimulationResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/global-policies/status/set": {
             "post": {
                 "security": [
@@ -1160,6 +1210,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/datapermission.PolicyRecord"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data-permissions/tenant-policies/simulate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Validate and simulate one unpersisted data-permission policy",
+                "parameters": [
+                    {
+                        "description": "Simulation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionSimulationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/datapermission.SimulationResult"
                                         }
                                     }
                                 }
@@ -2789,6 +2889,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/pbac/global-policies/simulate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pbac"
+                ],
+                "summary": "Validate and simulate one unpersisted PBAC policy",
+                "parameters": [
+                    {
+                        "description": "Simulation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PBACSimulationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/pbac.Decision"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/pbac/global-policies/status/set": {
             "post": {
                 "security": [
@@ -3233,6 +3383,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/pbac.Publication"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/pbac/tenant-policies/simulate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pbac"
+                ],
+                "summary": "Validate and simulate one unpersisted PBAC policy",
+                "parameters": [
+                    {
+                        "description": "Simulation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PBACSimulationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/pbac.Decision"
                                         }
                                     }
                                 }
@@ -6888,6 +7088,17 @@ const docTemplate = `{
                 }
             }
         },
+        "datapermission.PredicatePreview": {
+            "type": "object",
+            "properties": {
+                "clause": {
+                    "type": "string"
+                },
+                "parameter_count": {
+                    "type": "integer"
+                }
+            }
+        },
         "datapermission.Publication": {
             "type": "object",
             "properties": {
@@ -6898,6 +7109,28 @@ const docTemplate = `{
                     "$ref": "#/definitions/datapermission.VersionRecord"
                 }
             }
+        },
+        "datapermission.ResourceAttributes": {
+            "type": "object",
+            "additionalProperties": {}
+        },
+        "datapermission.SimulationResult": {
+            "type": "object",
+            "properties": {
+                "current_allowed": {
+                    "type": "boolean"
+                },
+                "sql": {
+                    "$ref": "#/definitions/datapermission.PredicatePreview"
+                },
+                "transition_allowed": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "datapermission.SubjectAttributes": {
+            "type": "object",
+            "additionalProperties": {}
         },
         "datapermission.VersionPage": {
             "type": "object",
@@ -7704,6 +7937,37 @@ const docTemplate = `{
                 },
                 "version_number": {
                     "type": "integer"
+                }
+            }
+        },
+        "httptransport.DataPermissionSimulationRequest": {
+            "type": "object",
+            "required": [
+                "action",
+                "policy",
+                "resource_attributes",
+                "subject",
+                "subject_attributes"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "policy": {
+                    "$ref": "#/definitions/datapermission.Policy"
+                },
+                "proposed_attributes": {
+                    "$ref": "#/definitions/datapermission.ResourceAttributes"
+                },
+                "resource_attributes": {
+                    "$ref": "#/definitions/datapermission.ResourceAttributes"
+                },
+                "subject": {
+                    "$ref": "#/definitions/pbac.Subject"
+                },
+                "subject_attributes": {
+                    "$ref": "#/definitions/datapermission.SubjectAttributes"
                 }
             }
         },
@@ -8627,6 +8891,21 @@ const docTemplate = `{
                             "$ref": "#/definitions/pbac.ResourceScope"
                         }
                     ]
+                }
+            }
+        },
+        "httptransport.PBACSimulationRequest": {
+            "type": "object",
+            "required": [
+                "policy",
+                "request"
+            ],
+            "properties": {
+                "policy": {
+                    "$ref": "#/definitions/pbac.Policy"
+                },
+                "request": {
+                    "$ref": "#/definitions/pbac.EvaluationRequest"
                 }
             }
         },
@@ -10141,6 +10420,39 @@ const docTemplate = `{
                 }
             }
         },
+        "pbac.Decision": {
+            "type": "object",
+            "properties": {
+                "denied_by_policy_id": {
+                    "type": "string"
+                },
+                "effect": {
+                    "$ref": "#/definitions/pbac.DecisionEffect"
+                },
+                "matched_policies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reason_code": {
+                    "type": "string"
+                }
+            }
+        },
+        "pbac.DecisionEffect": {
+            "type": "string",
+            "enum": [
+                "allow",
+                "deny",
+                "indeterminate"
+            ],
+            "x-enum-varnames": [
+                "DecisionEffectAllow",
+                "DecisionEffectDeny",
+                "DecisionEffectIndeterminate"
+            ]
+        },
         "pbac.Effect": {
             "type": "string",
             "enum": [
@@ -10151,6 +10463,52 @@ const docTemplate = `{
                 "EffectAllow",
                 "EffectDeny"
             ]
+        },
+        "pbac.EvaluationRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "context": {
+                    "$ref": "#/definitions/pbac.OperationContext"
+                },
+                "resource": {
+                    "$ref": "#/definitions/pbac.Resource"
+                },
+                "subject": {
+                    "$ref": "#/definitions/pbac.Subject"
+                }
+            }
+        },
+        "pbac.OperationContext": {
+            "type": "object",
+            "properties": {
+                "authentication_scheme": {
+                    "type": "string"
+                },
+                "business_day": {
+                    "type": "boolean"
+                },
+                "local_hour": {
+                    "type": "integer"
+                },
+                "operation": {
+                    "type": "string"
+                },
+                "profile": {
+                    "type": "string"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "transport": {
+                    "type": "string"
+                },
+                "weekday": {
+                    "type": "integer"
+                }
+            }
         },
         "pbac.Policy": {
             "type": "object",
@@ -10361,6 +10719,17 @@ const docTemplate = `{
                 }
             }
         },
+        "pbac.Resource": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "pbac.ResourceDefinition": {
             "type": "object",
             "properties": {
@@ -10425,6 +10794,32 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "pbac.Subject": {
+            "type": "object",
+            "properties": {
+                "authenticated": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "membership_id": {
+                    "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },

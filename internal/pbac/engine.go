@@ -35,10 +35,10 @@ const (
 
 // Decision explains the stable outcome without exposing condition internals.
 type Decision struct {
-	Effect           DecisionEffect
-	ReasonCode       string
-	MatchedPolicies  []string
-	DeniedByPolicyID string
+	Effect           DecisionEffect `json:"effect"`
+	ReasonCode       string         `json:"reason_code"`
+	MatchedPolicies  []string       `json:"matched_policies"`
+	DeniedByPolicyID string         `json:"denied_by_policy_id,omitempty"`
 }
 
 type compiledPolicy struct {

@@ -313,12 +313,34 @@ definitions:
       subject:
         $ref: '#/definitions/pbac.SubjectMatcher'
     type: object
+  datapermission.PredicatePreview:
+    properties:
+      clause:
+        type: string
+      parameter_count:
+        type: integer
+    type: object
   datapermission.Publication:
     properties:
       policy:
         $ref: '#/definitions/datapermission.PolicyRecord'
       version:
         $ref: '#/definitions/datapermission.VersionRecord'
+    type: object
+  datapermission.ResourceAttributes:
+    additionalProperties: {}
+    type: object
+  datapermission.SimulationResult:
+    properties:
+      current_allowed:
+        type: boolean
+      sql:
+        $ref: '#/definitions/datapermission.PredicatePreview'
+      transition_allowed:
+        type: boolean
+    type: object
+  datapermission.SubjectAttributes:
+    additionalProperties: {}
     type: object
   datapermission.VersionPage:
     properties:
@@ -861,6 +883,28 @@ definitions:
     - expected_policy_version
     - policy_id
     - version_number
+    type: object
+  httptransport.DataPermissionSimulationRequest:
+    properties:
+      action:
+        maxLength: 128
+        type: string
+      policy:
+        $ref: '#/definitions/datapermission.Policy'
+      proposed_attributes:
+        $ref: '#/definitions/datapermission.ResourceAttributes'
+      resource_attributes:
+        $ref: '#/definitions/datapermission.ResourceAttributes'
+      subject:
+        $ref: '#/definitions/pbac.Subject'
+      subject_attributes:
+        $ref: '#/definitions/datapermission.SubjectAttributes'
+    required:
+    - action
+    - policy
+    - resource_attributes
+    - subject
+    - subject_attributes
     type: object
   httptransport.DataPermissionStatusRequest:
     properties:
@@ -1486,6 +1530,16 @@ definitions:
         - platform
         - tenant
         - principal
+    type: object
+  httptransport.PBACSimulationRequest:
+    properties:
+      policy:
+        $ref: '#/definitions/pbac.Policy'
+      request:
+        $ref: '#/definitions/pbac.EvaluationRequest'
+    required:
+    - policy
+    - request
     type: object
   httptransport.PageServiceAccountsRequest:
     properties:
@@ -2517,6 +2571,29 @@ definitions:
       name:
         type: string
     type: object
+  pbac.Decision:
+    properties:
+      denied_by_policy_id:
+        type: string
+      effect:
+        $ref: '#/definitions/pbac.DecisionEffect'
+      matched_policies:
+        items:
+          type: string
+        type: array
+      reason_code:
+        type: string
+    type: object
+  pbac.DecisionEffect:
+    enum:
+    - allow
+    - deny
+    - indeterminate
+    type: string
+    x-enum-varnames:
+    - DecisionEffectAllow
+    - DecisionEffectDeny
+    - DecisionEffectIndeterminate
   pbac.Effect:
     enum:
     - allow
@@ -2525,6 +2602,36 @@ definitions:
     x-enum-varnames:
     - EffectAllow
     - EffectDeny
+  pbac.EvaluationRequest:
+    properties:
+      action:
+        type: string
+      context:
+        $ref: '#/definitions/pbac.OperationContext'
+      resource:
+        $ref: '#/definitions/pbac.Resource'
+      subject:
+        $ref: '#/definitions/pbac.Subject'
+    type: object
+  pbac.OperationContext:
+    properties:
+      authentication_scheme:
+        type: string
+      business_day:
+        type: boolean
+      local_hour:
+        type: integer
+      operation:
+        type: string
+      profile:
+        type: string
+      timezone:
+        type: string
+      transport:
+        type: string
+      weekday:
+        type: integer
+    type: object
   pbac.Policy:
     properties:
       api_version:
@@ -2662,6 +2769,13 @@ definitions:
       version:
         $ref: '#/definitions/pbac.PolicyVersionRecord'
     type: object
+  pbac.Resource:
+    properties:
+      tenant_id:
+        type: string
+      type:
+        type: string
+    type: object
   pbac.ResourceDefinition:
     properties:
       actions:
@@ -2706,6 +2820,23 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  pbac.Subject:
+    properties:
+      authenticated:
+        type: boolean
+      id:
+        type: string
+      membership_id:
+        type: string
+      roles:
+        items:
+          type: string
+        type: array
+      tenant_id:
+        type: string
+      type:
+        type: string
     type: object
   pbac.SubjectMatcher:
     properties:
@@ -3655,6 +3786,34 @@ paths:
       summary: Atomically publish a data-permission policy draft
       tags:
       - data-permission
+  /api/v1/data-permissions/global-policies/simulate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Simulation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionSimulationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.SimulationResult'
+              type: object
+      security:
+      - Bearer: []
+      summary: Validate and simulate one unpersisted data-permission policy
+      tags:
+      - data-permission
   /api/v1/data-permissions/global-policies/status/set:
     post:
       consumes:
@@ -3877,6 +4036,34 @@ paths:
       security:
       - Bearer: []
       summary: Atomically publish a data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/simulate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Simulation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionSimulationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.SimulationResult'
+              type: object
+      security:
+      - Bearer: []
+      summary: Validate and simulate one unpersisted data-permission policy
       tags:
       - data-permission
   /api/v1/data-permissions/tenant-policies/status/set:
@@ -4795,6 +4982,34 @@ paths:
       summary: Atomically publish a PBAC policy draft
       tags:
       - pbac
+  /api/v1/pbac/global-policies/simulate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Simulation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACSimulationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.Decision'
+              type: object
+      security:
+      - Bearer: []
+      summary: Validate and simulate one unpersisted PBAC policy
+      tags:
+      - pbac
   /api/v1/pbac/global-policies/status/set:
     post:
       consumes:
@@ -5047,6 +5262,34 @@ paths:
       security:
       - Bearer: []
       summary: Atomically publish a PBAC policy draft
+      tags:
+      - pbac
+  /api/v1/pbac/tenant-policies/simulate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Simulation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PBACSimulationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/pbac.Decision'
+              type: object
+      security:
+      - Bearer: []
+      summary: Validate and simulate one unpersisted PBAC policy
       tags:
       - pbac
   /api/v1/pbac/tenant-policies/status/set:

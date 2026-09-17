@@ -14,13 +14,14 @@ import (
 )
 
 type PBACHandler struct {
-	service  *pbac.LifecycleService
-	registry *pbac.Registry
-	logger   *slog.Logger
+	service   *pbac.LifecycleService
+	registry  *pbac.Registry
+	simulator *pbac.Simulator
+	logger    *slog.Logger
 }
 
-func NewPBACHandler(service *pbac.LifecycleService, registry *pbac.Registry, logger *slog.Logger) *PBACHandler {
-	return &PBACHandler{service: service, registry: registry, logger: logger}
+func NewPBACHandler(service *pbac.LifecycleService, registry *pbac.Registry, simulator *pbac.Simulator, logger *slog.Logger) *PBACHandler {
+	return &PBACHandler{service: service, registry: registry, simulator: simulator, logger: logger}
 }
 
 type PBACResourceListRequest struct {
@@ -69,6 +70,34 @@ type PBACPolicyStatusSetRequest struct {
 	PolicyID              string `json:"policy_id" binding:"required,uuid"`
 	Status                string `json:"status" binding:"required,oneof=active disabled"`
 	ExpectedPolicyVersion int64  `json:"expected_policy_version" binding:"required,gt=0"`
+}
+
+type PBACSimulationRequest struct {
+	Policy  pbac.Policy            `json:"policy" binding:"required"`
+	Request pbac.EvaluationRequest `json:"request" binding:"required"`
+}
+
+// SimulatePBACPolicy godoc
+// @Summary Validate and simulate one unpersisted PBAC policy
+// @Tags pbac
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PBACSimulationRequest true "Simulation"
+// @Success 200 {object} Response{body=pbac.Decision}
+// @Router /api/v1/pbac/global-policies/simulate [post]
+// @Router /api/v1/pbac/tenant-policies/simulate [post]
+func (h *PBACHandler) Simulate(c *gin.Context) {
+	var request PBACSimulationRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	if request.Policy.Scope.Type != expectedPBACPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Request.Subject.TenantID, request.Request.Resource.TenantID) {
+		h.respond(c, nil, pbac.ErrTenantAccessDenied)
+		return
+	}
+	result, err := h.simulator.Simulate(c.Request.Context(), pbac.SimulationInput{Policy: request.Policy, Request: request.Request})
+	h.respond(c, result, err)
 }
 
 // ListPBACResources godoc
@@ -310,7 +339,7 @@ func (h *PBACHandler) respond(c *gin.Context, body any, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, pbac.ErrInvalidPolicy):
+	case errors.Is(err, pbac.ErrInvalidPolicy), errors.Is(err, pbac.ErrInvalidEvaluationRequest):
 		Fail(c, h.logger, apperror.Invalid("invalid PBAC policy", err))
 	case errors.Is(err, pbac.ErrPolicyNotFound), errors.Is(err, pbac.ErrPolicyVersionMissing):
 		Fail(c, h.logger, apperror.NotFound("PBAC policy not found"))
@@ -323,4 +352,20 @@ func (h *PBACHandler) respond(c *gin.Context, body any, err error) {
 	default:
 		Fail(c, h.logger, apperror.Internal(err))
 	}
+}
+
+func simulationTenantAllowed(c *gin.Context, tenantIDs ...string) bool {
+	if !strings.Contains(c.FullPath(), "/tenant-policies/") {
+		return true
+	}
+	principal, err := platformprincipal.Require(c.Request.Context())
+	if err != nil || principal.TenantID == "" {
+		return false
+	}
+	for _, tenantID := range tenantIDs {
+		if tenantID != principal.TenantID {
+			return false
+		}
+	}
+	return true
 }

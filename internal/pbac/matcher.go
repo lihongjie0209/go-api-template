@@ -2,41 +2,41 @@ package pbac
 
 // Subject contains the trusted identity projection used by operation PBAC.
 type Subject struct {
-	ID            string
-	Type          string
-	Authenticated bool
-	TenantID      string
-	MembershipID  string
-	Roles         []string
+	ID            string   `json:"id"`
+	Type          string   `json:"type"`
+	Authenticated bool     `json:"authenticated"`
+	TenantID      string   `json:"tenant_id"`
+	MembershipID  string   `json:"membership_id"`
+	Roles         []string `json:"roles"`
 }
 
 // Resource identifies the operation-level resource type and tenant boundary.
 type Resource struct {
-	Type     string
-	TenantID string
+	Type     string `json:"type"`
+	TenantID string `json:"tenant_id"`
 }
 
 // EvaluationRequest is the complete trusted input to one authorization
 // decision.
 type EvaluationRequest struct {
-	Subject  Subject
-	Resource Resource
-	Action   string
-	Context  OperationContext
+	Subject  Subject          `json:"subject"`
+	Resource Resource         `json:"resource"`
+	Action   string           `json:"action"`
+	Context  OperationContext `json:"context"`
 }
 
 // OperationContext contains only server-derived attributes approved for
 // ActionPolicy `when` expressions. Request bodies and resource data never enter
 // this structure.
 type OperationContext struct {
-	Transport            string
-	Operation            string
-	Profile              string
-	Timezone             string
-	LocalHour            int
-	Weekday              int
-	BusinessDay          bool
-	AuthenticationScheme string
+	Transport            string `json:"transport"`
+	Operation            string `json:"operation"`
+	Profile              string `json:"profile"`
+	Timezone             string `json:"timezone"`
+	LocalHour            int    `json:"local_hour"`
+	Weekday              int    `json:"weekday"`
+	BusinessDay          bool   `json:"business_day"`
+	AuthenticationScheme string `json:"authentication_scheme"`
 }
 
 // MatchSubject applies the structural subject matcher.
