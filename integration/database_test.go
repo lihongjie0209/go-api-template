@@ -1221,7 +1221,7 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != member.ID {
 		t.Fatalf("data-scoped member page=%+v err=%v", page, err)
 	}
-	rowProviders, err := authorization.NewRowCapabilityRegistry([]authorization.RowCapabilityProvider{tenant.NewMemberCapabilityProvider(db)})
+	rowProviders, err := authorization.NewRowCapabilityRegistry([]authorization.RowCapabilityProvider{tenant.NewMemberCapabilityProvider(db)}, resources, schemas)
 	if err != nil {
 		t.Fatal(err)
 	}

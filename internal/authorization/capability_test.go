@@ -78,7 +78,7 @@ func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {
 	dataScopes := datapermission.NewService(nil, engine)
 	providers, err := NewRowCapabilityRegistry([]RowCapabilityProvider{staticRowCapabilityProvider{resource: "tenant.member", rows: map[string]datapermission.ResourceAttributes{
 		"member-1": {"id": "member-1", "owner_id": "user-1", "status": "active", "created_by": "admin-1"},
-	}}})
+	}}}, resources, schemas)
 	require.NoError(t, err)
 	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }), dataScopes, resources, providers, nil, func() time.Time { return time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC) })
 	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/tenant-members/status/update", Authentication: accesscontrol.AuthenticationJWT, Resource: "tenant.member", Action: "update", DataPermission: accesscontrol.DataPermissionRequired}})
@@ -110,7 +110,7 @@ func TestCapabilityServiceRejectsProviderRowsOutsideRequestedSet(t *testing.T) {
 		rows: map[string]datapermission.ResourceAttributes{
 			"other-tenant-row": {"id": "other-tenant-row"},
 		},
-	}})
+	}}, resources, schemas)
 	require.NoError(t, err)
 	service := newCapabilityService(
 		capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }),

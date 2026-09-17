@@ -8,6 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/pbac"
 )
 
 var (
@@ -26,13 +27,23 @@ type RowCapabilityRegistry struct {
 	providers map[string]RowCapabilityProvider
 }
 
-func NewRowCapabilityRegistry(providers []RowCapabilityProvider) (*RowCapabilityRegistry, error) {
+func NewRowCapabilityRegistry(providers []RowCapabilityProvider, resources *pbac.Registry, schemas *datapermission.SchemaRegistry) (*RowCapabilityRegistry, error) {
+	if resources == nil || schemas == nil {
+		return nil, ErrRowCapabilityProviderInvalid
+	}
 	registry := &RowCapabilityRegistry{providers: make(map[string]RowCapabilityProvider, len(providers))}
 	for _, provider := range providers {
 		if provider == nil || provider.Resource() == "" {
 			return nil, ErrRowCapabilityProviderInvalid
 		}
 		resource := provider.Resource()
+		definition, ok := resources.Resource(resource)
+		if !ok || definition.Scope != pbac.ResourceScopeTenant {
+			return nil, fmt.Errorf("%w: resource %s must be registered with tenant scope", ErrRowCapabilityProviderInvalid, resource)
+		}
+		if _, ok := schemas.Get(resource); !ok {
+			return nil, fmt.Errorf("%w: resource %s has no data-permission schema", ErrRowCapabilityProviderInvalid, resource)
+		}
 		if _, exists := registry.providers[resource]; exists {
 			return nil, fmt.Errorf("%w: %s", ErrRowCapabilityProviderDuplicate, resource)
 		}

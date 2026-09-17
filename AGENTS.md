@@ -195,6 +195,10 @@ otherwise unsuitable for dictionary use.
   accept client-supplied resource/subject attributes. Capability results are UI
   hints with a policy revision and short expiry; every business endpoint must
   repeat authoritative authorization.
+- Row capability registration fails startup and CI unless the provider's
+  resource exists in the canonical Resource/Action registry, has tenant scope,
+  and owns a registered data-permission Schema. A provider must not silently
+  introduce an untyped or platform-scoped row-evaluation path.
 
 ## Logging decisions
 

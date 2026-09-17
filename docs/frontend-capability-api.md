@@ -78,6 +78,11 @@ in the first release. Adding another resource requires a module-owned provider,
 registered data-permission schema, tenant-isolation tests, and documented
 trusted attributes. Clients cannot submit resource attributes.
 
+Provider registration is validated during dependency graph construction. The
+application refuses to start when a provider names an unknown resource, a
+non-tenant resource, or a resource without a registered data-permission Schema;
+the same constructor tests run in CI.
+
 `proposed_condition` is intentionally not evaluated because this API has no
 validated target object. A normal edit button may be shown when the current row
 is allowed; the mutation endpoint still evaluates the proposed transition and
