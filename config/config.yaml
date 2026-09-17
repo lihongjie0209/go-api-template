@@ -192,6 +192,8 @@ idempotency:
     - /api/v1/applications/create
     - /api/v1/applications/update
     - /api/v1/applications/delete
+    - /api/v1/platform/tenant-applications/grant
+    - /api/v1/platform/tenant-applications/revoke
     - /api/v1/navigations/create
     - /api/v1/navigations/update
     - /api/v1/navigations/delete

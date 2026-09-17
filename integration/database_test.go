@@ -865,6 +865,16 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if err != nil {
 		t.Fatal(err)
 	}
+	access := application.NewTenantAccessService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{}, nil)
+	grant, err := access.Grant(actorCtx, application.GrantInput{TenantID: "authorization-tenant", ApplicationID: app.ID})
+	if err != nil || grant.Status != "active" || grant.Version != 1 {
+		t.Fatalf("tenant application grant=%+v err=%v", grant, err)
+	}
+	currentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: "authorization-tenant", MembershipID: "authorization-admin-member"})
+	currentApplications, err := access.Current(currentCtx)
+	if err != nil || len(currentApplications) != 1 || currentApplications[0].ID != app.ID {
+		t.Fatalf("current applications=%+v err=%v", currentApplications, err)
+	}
 	root, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, Key: "system", Name: "系统", Type: "directory", Visible: true, Status: "active"})
 	if err != nil {
 		t.Fatal(err)
@@ -872,6 +882,10 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	page, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, ParentID: &root.ID, Key: "permissions", Name: "权限", Type: "menu", RoutePath: "/permissions", Component: "system/permissions", Resource: "integration.permissions", Action: "read", Visible: true, Status: "active"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	currentTree, err := navigations.CurrentTree(currentCtx, app.ID)
+	if err != nil || len(currentTree) != 1 || len(currentTree[0].Children) != 1 {
+		t.Fatalf("current navigation tree=%+v err=%v", currentTree, err)
 	}
 	tree, err := navigations.Tree(actorCtx, navigation.TreeInput{ApplicationID: app.ID, Keyword: "权限", Types: []string{"menu"}})
 	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
@@ -893,8 +907,15 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if err := navigations.Delete(actorCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
 	}
-	if err := applications.Delete(actorCtx, app.ID, app.Version); err != nil {
+	if err := access.Revoke(actorCtx, "authorization-tenant", grant.ID, grant.Version); err != nil {
 		t.Fatal(err)
+	}
+	currentApplications, err = access.Current(currentCtx)
+	if err != nil || len(currentApplications) != 0 {
+		t.Fatalf("applications after revoke=%+v err=%v", currentApplications, err)
+	}
+	if err := applications.Delete(actorCtx, app.ID, app.Version); err != nil {
+		t.Fatalf("delete application after revoke error=%v", err)
 	}
 }
 

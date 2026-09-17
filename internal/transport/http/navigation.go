@@ -135,7 +135,7 @@ func (h *NavigationHandler) Current(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	tree, err := h.service.Tree(c.Request.Context(), navigation.TreeInput{ApplicationID: request.ApplicationID, Statuses: []string{"active"}})
+	tree, err := h.service.CurrentTree(c.Request.Context(), request.ApplicationID)
 	if err != nil {
 		h.respond(c, nil, err)
 		return

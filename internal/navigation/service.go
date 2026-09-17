@@ -128,6 +128,30 @@ func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*Node, error) {
 	return Build(records)
 }
 
+// CurrentTree reads the source tree only through an active tenant grant and an
+// active membership. This SQL boundary prevents a caller from using a globally
+// visible application ID to enumerate another tenant's navigation.
+func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Node, error) {
+	actor, err := platformprincipal.Require(ctx)
+	applicationID = strings.TrimSpace(applicationID)
+	if err != nil || actor.Type != platformprincipal.TypeUser || actor.TenantID == "" || actor.MembershipID == "" || applicationID == "" || len(applicationID) > 128 {
+		return nil, ErrInvalid
+	}
+	records := []Record{}
+	now := time.Now()
+	query := `SELECT ` + prefixedColumns("n") + ` FROM navigations n JOIN applications a ON a.id=n.application_id AND a.status='active' AND a.deleted_at IS NULL JOIN tenant_application_grants g ON g.application_id=a.id AND g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE n.application_id=? AND n.status='active' AND n.visible=true AND n.deleted_at IS NULL ORDER BY n.sort_order,n.id LIMIT ?`
+	if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), actor.TenantID, now, now, actor.MembershipID, actor.ID, applicationID, maxTreeNodes+1); err != nil {
+		return nil, err
+	}
+	if len(records) > maxTreeNodes {
+		return nil, ErrConflict
+	}
+	if err := s.present(ctx, records); err != nil {
+		return nil, err
+	}
+	return Build(records)
+}
+
 func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
 	if err != nil {
@@ -335,3 +359,11 @@ func set(values []string) map[string]struct{} {
 	return result
 }
 func has(values map[string]struct{}, value string) bool { _, ok := values[value]; return ok }
+
+func prefixedColumns(alias string) string {
+	parts := strings.Split(columns, ",")
+	for index := range parts {
+		parts[index] = alias + "." + parts[index]
+	}
+	return strings.Join(parts, ",")
+}

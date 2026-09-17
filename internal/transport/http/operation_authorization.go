@@ -27,7 +27,7 @@ func jwtEndpoint(path, resource, action string, data accesscontrol.DataPermissio
 
 func dataPermissionExemption(resource, action string) string {
 	switch resource {
-	case "identity.user", "identity.service-account", "tenant", "permission.definition", "application", "navigation", "dictionary.definition", "dictionary.item", "platform.config", "pbac.resource-action", "pbac.global-policy", "data-permission.global-policy":
+	case "identity.user", "identity.service-account", "tenant", "permission.definition", "application", "tenant.application-grant", "navigation", "dictionary.definition", "dictionary.item", "platform.config", "pbac.resource-action", "pbac.global-policy", "data-permission.global-policy":
 		return "platform-scoped resource; operation PBAC is the complete authorization boundary"
 	case "identity.profile", "identity.session", "identity.credential", "tenant.selection", "authorization.capability":
 		return "service enforces the authenticated principal ownership predicate"
@@ -35,6 +35,8 @@ func dataPermissionExemption(resource, action string) string {
 		return "service enforces the authenticated principal tenant boundary"
 	case "tenant.context", "tenant.authorization":
 		return "service enforces the current tenant and membership boundary"
+	case "application.current":
+		return "service enforces active tenant membership and tenant application grants in SQL"
 	case "navigation.current":
 		return "service derives menu visibility from current-principal PBAC capability decisions"
 	case "file.object", "operation.log", "security.log":

@@ -70,6 +70,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Invoke(startDataPermissionRuntime),
 		fx.Provide(platformconfig.New),
 		fx.Provide(application.New),
+		fx.Provide(application.NewTenantAccessService),
 		fx.Provide(navigation.New),
 		fx.Provide(dictionary.New, dictionary.NewProviderRegistry),
 		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), tenant.NewMembershipService, tenant.NewContextService),

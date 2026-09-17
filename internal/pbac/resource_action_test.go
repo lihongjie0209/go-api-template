@@ -82,7 +82,7 @@ func TestPlatformResourceDefinitions(t *testing.T) {
 	t.Parallel()
 	registry, err := NewRegistryFromDefinitions(PlatformResourceDefinitions())
 	require.NoError(t, err)
-	require.Len(t, registry.Definitions(), 30)
+	require.Len(t, registry.Definitions(), 32)
 
 	tests := []struct {
 		name     string
@@ -97,6 +97,8 @@ func TestPlatformResourceDefinitions(t *testing.T) {
 		{name: "tenant profile", resource: "tenant.profile", action: "update", scope: ResourceScopeTenant},
 		{name: "current tenant navigation", resource: "navigation.current", action: "read", scope: ResourceScopeTenant},
 		{name: "application", resource: "application", action: "update", scope: ResourceScopePlatform},
+		{name: "tenant application grant", resource: "tenant.application-grant", action: "grant", scope: ResourceScopePlatform},
+		{name: "current applications", resource: "application.current", action: "list", scope: ResourceScopeTenant},
 		{name: "navigation", resource: "navigation", action: "create", scope: ResourceScopePlatform},
 		{name: "tenant selection", resource: "tenant.selection", action: "switch", scope: ResourceScopePrincipal},
 		{name: "dictionary item", resource: "dictionary.item", action: "list", scope: ResourceScopePlatform},

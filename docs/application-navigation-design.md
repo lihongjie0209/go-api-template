@@ -33,10 +33,10 @@
 | Shared capability | Shared pagination, response/errors, stable ID, operation log | Shared PBAC registry, tree SDK, stable ID, response/errors, operation log |
 | Dictionary | Suitable as a bounded application selector provider in a later delivery | Unsuitable: navigation is structural frontend configuration, not a business dictionary |
 
-Application and navigation are platform-scoped configuration. Tenant grants to
-applications are intentionally outside this delivery and must be modeled as a
-separate tenant-owned association rather than adding nullable tenant columns to
-these tables.
+Application and navigation are platform-scoped configuration. Tenant grants are
+implemented as the separate tenant-owned `tenant_application_grants`
+association documented in `tenant-application-design.md`; neither platform
+table carries a nullable tenant column.
 
 Migration `000031` retires the legacy global `menus` table. The old menu HTTP,
 DI, configuration, and PBAC registrations are removed so navigation has one

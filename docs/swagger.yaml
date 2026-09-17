@@ -1,5 +1,65 @@
 basePath: /
 definitions:
+  application.Current:
+    properties:
+      code:
+        type: string
+      expires_at:
+        type: string
+      home_path:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      sort_order:
+        type: integer
+      starts_at:
+        type: string
+    type: object
+  application.Grant:
+    properties:
+      application_code:
+        type: string
+      application_home_path:
+        type: string
+      application_icon:
+        type: string
+      application_id:
+        type: string
+      application_name:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      starts_at:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: string
+      tenant_name:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  application.GrantPage:
+    type: object
   application.Page:
     type: object
   application.Record:
@@ -1418,6 +1478,25 @@ definitions:
     required:
     - id
     type: object
+  httptransport.GrantTenantApplicationRequest:
+    properties:
+      application_id:
+        maxLength: 128
+        type: string
+      expires_at:
+        type: string
+      starts_at:
+        type: string
+      tenant_id:
+        maxLength: 128
+        type: string
+      version:
+        minimum: 0
+        type: integer
+    required:
+    - application_id
+    - tenant_id
+    type: object
   httptransport.LoginRequest:
     properties:
       client_id:
@@ -1961,6 +2040,21 @@ definitions:
     - session_id
     - version
     type: object
+  httptransport.RevokeTenantApplicationRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+      tenant_id:
+        maxLength: 128
+        type: string
+      version:
+        type: integer
+    required:
+    - id
+    - tenant_id
+    - version
+    type: object
   httptransport.RowCapabilityEvaluateRequest:
     properties:
       actions:
@@ -2100,6 +2194,52 @@ definitions:
       tenant_id:
         type: string
     required:
+    - tenant_id
+    type: object
+  httptransport.TenantApplicationIDRequest:
+    properties:
+      id:
+        maxLength: 128
+        type: string
+      tenant_id:
+        maxLength: 128
+        type: string
+    required:
+    - id
+    - tenant_id
+    type: object
+  httptransport.TenantApplicationPageRequest:
+    properties:
+      application_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      created_at_from:
+        type: string
+      created_at_to:
+        type: string
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      sort:
+        items:
+          $ref: '#/definitions/pagination.Sort'
+        maxItems: 3
+        type: array
+      statuses:
+        items:
+          type: string
+        maxItems: 2
+        type: array
+      tenant_id:
+        maxLength: 128
+        type: string
+    required:
+    - application_ids
     - tenant_id
     type: object
   httptransport.TenantMemberIDRequest:
@@ -4996,6 +5136,32 @@ paths:
       summary: Return the authenticated subject
       tags:
       - authentication
+  /api/v1/me/applications:
+    post:
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  items:
+                    $ref: '#/definitions/application.Current'
+                  type: array
+              type: object
+      security:
+      - Bearer: []
+      summary: List applications available to the current tenant principal
+      tags:
+      - applications
   /api/v1/me/navigations:
     post:
       parameters:
@@ -6044,6 +6210,97 @@ paths:
       summary: Update a platform configuration
       tags:
       - platform-configs
+  /api/v1/platform/tenant-applications/get:
+    post:
+      parameters:
+      - description: Tenant application grant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantApplicationIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Grant'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get one tenant application grant
+      tags:
+      - tenant-applications
+  /api/v1/platform/tenant-applications/grant:
+    post:
+      parameters:
+      - description: Tenant application grant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GrantTenantApplicationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.Grant'
+              type: object
+      security:
+      - Bearer: []
+      summary: Grant or reactivate an application for a tenant
+      tags:
+      - tenant-applications
+  /api/v1/platform/tenant-applications/page:
+    post:
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantApplicationPageRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.GrantPage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page one tenant's application grants
+      tags:
+      - tenant-applications
+  /api/v1/platform/tenant-applications/revoke:
+    post:
+      parameters:
+      - description: Tenant application grant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.RevokeTenantApplicationRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Revoke a tenant application grant
+      tags:
+      - tenant-applications
   /api/v1/platform/tenant-authorization/administrators/set:
     post:
       consumes:

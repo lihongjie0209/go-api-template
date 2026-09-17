@@ -136,7 +136,7 @@ func updateTenant(ctx context.Context, tx *sqlx.Tx, id, name, description string
 }
 func deleteTenant(ctx context.Context, tx *sqlx.Tx, id string, version int64, actorID string) error {
 	now := time.Now()
-	for _, table := range []string{"tenant_member_roles", "tenant_department_members", "tenant_role_permissions", "tenant_roles", "tenant_administrators", "tenant_permission_grants", "tenant_memberships", "tenant_departments"} {
+	for _, table := range []string{"tenant_member_roles", "tenant_department_members", "tenant_role_permissions", "tenant_roles", "tenant_administrators", "tenant_permission_grants", "tenant_application_grants", "tenant_memberships", "tenant_departments"} {
 		query := tx.Rebind(`UPDATE ` + table + ` SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ?, version = version + 1 WHERE tenant_id = ? AND deleted_at IS NULL`)
 		if _, err := tx.ExecContext(ctx, query, now, actorID, now, actorID, id); err != nil {
 			return fmt.Errorf("delete tenant dependents from %s: %w", table, err)

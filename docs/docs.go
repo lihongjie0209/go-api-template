@@ -2482,6 +2482,53 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/me/applications": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "List applications available to the current tenant principal",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/application.Current"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me/navigations": {
             "post": {
                 "security": [
@@ -4335,6 +4382,170 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Get one tenant application grant",
+                "parameters": [
+                    {
+                        "description": "Tenant application grant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Grant"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/grant": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Grant or reactivate an application for a tenant",
+                "parameters": [
+                    {
+                        "description": "Tenant application grant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GrantTenantApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.Grant"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Page one tenant's application grants",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantApplicationPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.GrantPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/revoke": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Revoke a tenant application grant",
+                "parameters": [
+                    {
+                        "description": "Tenant application grant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.RevokeTenantApplicationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -6831,6 +7042,97 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "application.Current": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "home_path": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "starts_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "application.Grant": {
+            "type": "object",
+            "properties": {
+                "application_code": {
+                    "type": "string"
+                },
+                "application_home_path": {
+                    "type": "string"
+                },
+                "application_icon": {
+                    "type": "string"
+                },
+                "application_id": {
+                    "type": "string"
+                },
+                "application_name": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "starts_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "application.GrantPage": {
+            "type": "object"
+        },
         "application.Page": {
             "type": "object"
         },
@@ -8938,6 +9240,33 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.GrantTenantApplicationRequest": {
+            "type": "object",
+            "required": [
+                "application_id",
+                "tenant_id"
+            ],
+            "properties": {
+                "application_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "starts_at": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "version": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
         "httptransport.LoginRequest": {
             "type": "object",
             "required": [
@@ -9740,6 +10069,27 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.RevokeTenantApplicationRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "tenant_id",
+                "version"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.RowCapabilityEvaluateRequest": {
             "type": "object",
             "required": [
@@ -9947,6 +10297,72 @@ const docTemplate = `{
             "properties": {
                 "tenant_id": {
                     "type": "string"
+                }
+            }
+        },
+        "httptransport.TenantApplicationIDRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "tenant_id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "httptransport.TenantApplicationPageRequest": {
+            "type": "object",
+            "required": [
+                "application_ids",
+                "tenant_id"
+            ],
+            "properties": {
+                "application_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at_from": {
+                    "type": "string"
+                },
+                "created_at_to": {
+                    "type": "string"
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "sort": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "$ref": "#/definitions/pagination.Sort"
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },

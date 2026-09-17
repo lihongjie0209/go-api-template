@@ -196,6 +196,13 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		if children > 0 {
 			return ErrConflict
 		}
+		var grants int
+		if err := tx.GetContext(ctx, &grants, tx.Rebind(`SELECT count(*) FROM tenant_application_grants WHERE application_id=? AND status='active' AND deleted_at IS NULL`), id); err != nil {
+			return err
+		}
+		if grants > 0 {
+			return ErrConflict
+		}
 		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE applications SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), time.Now(), actor.ID, time.Now(), actor.ID, id, version)
 		if err != nil {
 			return err
