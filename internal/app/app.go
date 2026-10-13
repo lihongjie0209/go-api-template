@@ -34,6 +34,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
 	"github.com/lihongjie0209/go-api-template/internal/policysync"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
+	"github.com/lihongjie0209/go-api-template/internal/resourcecatalog"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
@@ -65,6 +66,8 @@ func New(cfg config.Config) *fx.App {
 		securitylog.Module,
 		fx.Provide(permission.NewRepository, permission.New),
 		fx.Provide(pbac.PlatformResourceDefinitions, pbac.NewRegistryFromDefinitions, pbac.NewRepository, pbac.NewRuntimeEngine, newPBACRuntimeLoader, pbac.NewLifecycleService, pbac.NewSimulator),
+		fx.Provide(resourcecatalog.New),
+		fx.Invoke(startResourceCatalog),
 		fx.Invoke(startPBACRuntime),
 		fx.Provide(newDataPermissionSchemas, datapermission.NewRuntimeEngine, datapermission.NewRepository, newDataPermissionRuntimeLoader, datapermission.NewLifecycleService, datapermission.NewService, datapermission.NewSimulator),
 		fx.Invoke(startDataPermissionRuntime),
@@ -101,6 +104,18 @@ func New(cfg config.Config) *fx.App {
 
 func newDataPermissionSchemas() (*datapermission.SchemaRegistry, error) {
 	return datapermission.NewSchemaRegistry(tenant.NewMemberDataPermissionSchema(), tenant.NewDepartmentDataPermissionSchema(), authorization.NewTenantRoleDataPermissionSchema())
+}
+
+func startResourceCatalog(lc fx.Lifecycle, cfg config.Config, syncer *resourcecatalog.Syncer) {
+	lc.Append(fx.StartHook(func(ctx context.Context) error {
+		if !cfg.Database.Enabled {
+			return nil
+		}
+		if err := syncer.Sync(ctx, buildinfo.BuildTime, buildinfo.Commit); err != nil {
+			return fmt.Errorf("sync code resource/action catalog: %w", err)
+		}
+		return nil
+	}))
 }
 
 func newPBACRuntimeLoader(repository *pbac.Repository, engine *pbac.Engine, client *redis.Client, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics) *pbac.RuntimeLoader {

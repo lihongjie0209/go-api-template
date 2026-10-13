@@ -38,6 +38,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/resourcecatalog"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
@@ -146,6 +147,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testServiceAccountLifecycle(t, ctx, db)
 			testLogQueryPresentation(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
+			testResourceCatalogLifecycle(t, ctx, db)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testApplicationNavigationLifecycle(t, ctx, db)
 			testPlatformConfigLifecycle(t, ctx, db)
@@ -162,6 +164,87 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testResourceCatalogLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	actorCtx := platformprincipal.SystemContext(ctx, "integration-catalog-test")
+	transactor := appdb.NewTransactor(db)
+	err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, insertErr := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO authorization_resources (id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,'manual','active',?,?,?,?,1)`), "manual-resource", "manual.feature", "Manual feature", "", "tenant", now, "integration-catalog-test", now, "integration-catalog-test")
+		if insertErr != nil {
+			return insertErr
+		}
+		_, insertErr = tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO authorization_resource_actions (id,resource_id,action_key,name,description,source,status,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,'manual','active',?,?,?,?,1)`), "manual-action", "manual-resource", "view", "View", "", now, "integration-catalog-test", now, "integration-catalog-test")
+		return insertErr
+	})
+	if err != nil {
+		t.Fatalf("insert manual catalog records: %v", err)
+	}
+	first, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "integration.catalog", Name: "Catalog", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const firstBuild = "2026-10-13T08:00:00Z"
+	if err := resourcecatalog.New(db, transactor, first).Sync(ctx, firstBuild, "catalog-1"); err != nil {
+		t.Fatalf("sync first code registry: %v", err)
+	}
+	var version int64
+	if err := db.GetContext(ctx, &version, db.Rebind(`SELECT version FROM authorization_resources WHERE resource_key=?`), "integration.catalog"); err != nil || version != 1 {
+		t.Fatalf("first resource version=%d err=%v", version, err)
+	}
+	if err := resourcecatalog.New(db, transactor, first).Sync(ctx, firstBuild, "catalog-1"); err != nil {
+		t.Fatalf("repeat code registry sync: %v", err)
+	}
+	if err := db.GetContext(ctx, &version, db.Rebind(`SELECT version FROM authorization_resources WHERE resource_key=?`), "integration.catalog"); err != nil || version != 1 {
+		t.Fatalf("repeat sync must preserve audit version: version=%d err=%v", version, err)
+	}
+	second, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "integration.catalog", Name: "Updated catalog", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "update", Name: "Update"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resourcecatalog.New(db, transactor, second).Sync(ctx, "2026-10-13T08:01:00Z", "catalog-2"); err != nil {
+		t.Fatalf("sync changed code registry: %v", err)
+	}
+	var codeResource struct {
+		Name    string `db:"name"`
+		Status  string `db:"status"`
+		Version int64  `db:"version"`
+	}
+	if err := db.GetContext(ctx, &codeResource, db.Rebind(`SELECT name,status,version FROM authorization_resources WHERE resource_key=?`), "integration.catalog"); err != nil || codeResource.Name != "Updated catalog" || codeResource.Status != "active" || codeResource.Version != 2 {
+		t.Fatalf("code resource was not replaced: %#v err=%v", codeResource, err)
+	}
+	var actions []struct {
+		Key    string `db:"action_key"`
+		Status string `db:"status"`
+	}
+	if err := db.SelectContext(ctx, &actions, db.Rebind(`SELECT a.action_key,a.status FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? ORDER BY a.action_key`), "integration.catalog"); err != nil || len(actions) != 2 || actions[0].Key != "read" || actions[0].Status != "disabled" || actions[1].Key != "update" || actions[1].Status != "active" {
+		t.Fatalf("code actions were not reconciled: %#v err=%v", actions, err)
+	}
+	var manualStatus string
+	if err := db.GetContext(ctx, &manualStatus, `SELECT status FROM authorization_resources WHERE id='manual-resource'`); err != nil || manualStatus != "active" {
+		t.Fatalf("manual resource changed: status=%q err=%v", manualStatus, err)
+	}
+	if err := db.GetContext(ctx, &manualStatus, `SELECT status FROM authorization_resource_actions WHERE id='manual-action'`); err != nil || manualStatus != "active" {
+		t.Fatalf("manual action changed: status=%q err=%v", manualStatus, err)
+	}
+	if err := resourcecatalog.New(db, transactor, first).Sync(ctx, firstBuild, "catalog-1"); !errors.Is(err, resourcecatalog.ErrStaleBuild) {
+		t.Fatalf("old build unexpectedly replaced the newer catalog: %v", err)
+	}
+	empty, err := pbac.NewRegistry(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resourcecatalog.New(db, transactor, empty).Sync(ctx, "2026-10-13T08:02:00Z", "catalog-3"); err != nil {
+		t.Fatalf("retire removed code resources: %v", err)
+	}
+	if err := db.GetContext(ctx, &codeResource, db.Rebind(`SELECT name,status,version FROM authorization_resources WHERE resource_key=?`), "integration.catalog"); err != nil || codeResource.Status != "disabled" {
+		t.Fatalf("removed code resource was not disabled: %#v err=%v", codeResource, err)
+	}
+	if err := db.GetContext(ctx, &manualStatus, `SELECT status FROM authorization_resources WHERE id='manual-resource'`); err != nil || manualStatus != "active" {
+		t.Fatalf("manual resource changed during code retirement: status=%q err=%v", manualStatus, err)
 	}
 }
 

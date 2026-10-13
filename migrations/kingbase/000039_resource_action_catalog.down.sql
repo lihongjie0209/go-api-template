@@ -1,0 +1,3 @@
+DROP TABLE authorization_catalog_syncs;
+DROP TABLE authorization_resource_actions;
+DROP TABLE authorization_resources;
