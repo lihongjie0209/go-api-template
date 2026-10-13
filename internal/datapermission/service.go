@@ -7,7 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -38,7 +38,7 @@ func (s *Service) Compile(ctx context.Context, expectedResource string) (SQLPred
 	if err != nil {
 		return SQLPredicate{}, fmt.Errorf("resolve data permission subject: %w", err)
 	}
-	subject := pbac.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
+	subject := resourceaction.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
 	attributes := SubjectAttributes{"id": principal.ID, "tenant_id": principal.TenantID, "membership_id": principal.MembershipID, "role_codes": roles, "department_ids": departments}
 	return s.engine.CompileSQL(ctx, endpoint.Resource, endpoint.Action, subject, attributes)
 }
@@ -78,7 +78,7 @@ func (s *Service) EvaluateRowActions(ctx context.Context, resource string, actio
 	if err != nil {
 		return nil, fmt.Errorf("resolve data permission subject: %w", err)
 	}
-	subject := pbac.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
+	subject := resourceaction.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
 	attributes := SubjectAttributes{"id": principal.ID, "tenant_id": principal.TenantID, "membership_id": principal.MembershipID, "role_codes": roles, "department_ids": departments}
 	result := make(map[string][]bool, len(actions))
 	for _, action := range actions {
@@ -113,7 +113,7 @@ func (s *Service) authorizeObject(ctx context.Context, expectedResource string, 
 	if err != nil {
 		return fmt.Errorf("resolve data permission subject: %w", err)
 	}
-	subject := pbac.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
+	subject := resourceaction.Subject{ID: principal.ID, Type: string(principal.Type), Authenticated: true, TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles}
 	attributes := SubjectAttributes{"id": principal.ID, "tenant_id": principal.TenantID, "membership_id": principal.MembershipID, "role_codes": roles, "department_ids": departments}
 	allowed, err := s.engine.EvaluateTransition(ctx, endpoint.Resource, endpoint.Action, subject, attributes, resource, proposed)
 	if err != nil {

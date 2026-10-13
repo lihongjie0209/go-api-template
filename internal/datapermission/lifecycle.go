@@ -12,7 +12,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -186,13 +186,13 @@ type LifecycleService struct {
 	repository *Repository
 	transactor *database.Transactor
 	schemas    *SchemaRegistry
-	resources  *pbac.Registry
+	resources  *resourceaction.Registry
 	runtime    *RuntimeLoader
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
 }
 
-func NewLifecycleService(repository *Repository, transactor *database.Transactor, schemas *SchemaRegistry, resources *pbac.Registry, runtime *RuntimeLoader, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder) *LifecycleService {
+func NewLifecycleService(repository *Repository, transactor *database.Transactor, schemas *SchemaRegistry, resources *resourceaction.Registry, runtime *RuntimeLoader, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder) *LifecycleService {
 	return &LifecycleService{repository: repository, transactor: transactor, schemas: schemas, resources: resources, runtime: runtime, operations: operations, security: security}
 }
 

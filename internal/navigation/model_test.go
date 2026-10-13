@@ -3,12 +3,12 @@ package navigation
 import (
 	"testing"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
 
 func TestValidateNavigationTypeAndAuthorizationTarget(t *testing.T) {
-	registry, err := pbac.NewRegistryFromDefinitions(pbac.ResourceDefinitions{{Key: "tenant.member", Name: "member", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "list", Name: "list"}}}})
+	registry, err := resourceaction.NewRegistryFromDefinitions(resourceaction.ResourceDefinitions{{Key: "tenant.member", Name: "member", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "list", Name: "list"}}}})
 	require.NoError(t, err)
 	require.NoError(t, Validate(Input{ApplicationID: "app-1", Key: "members", Name: "Members", Type: "menu", RoutePath: "/members", Component: "system/members", Resource: "tenant.member", Action: "list", Status: "active"}, registry))
 	require.ErrorIs(t, Validate(Input{ApplicationID: "app-1", Key: "members", Name: "Members", Type: "menu", RoutePath: "/members", Component: "system/members", Status: "active"}, registry), ErrInvalid)

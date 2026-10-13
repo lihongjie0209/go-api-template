@@ -10,7 +10,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -71,8 +71,8 @@ type DataPermissionStatusRequest struct {
 type DataPermissionSimulationRequest struct {
 	Policy             datapermission.Policy             `json:"policy" binding:"required"`
 	Action             string                            `json:"action" binding:"required,max=128"`
-	Subject            pbac.Subject                      `json:"subject" binding:"required"`
-	Resource           pbac.Resource                     `json:"resource" binding:"required"`
+	Subject            resourceaction.Subject            `json:"subject" binding:"required"`
+	Resource           resourceaction.Resource           `json:"resource" binding:"required"`
 	SubjectAttributes  datapermission.SubjectAttributes  `json:"subject_attributes" binding:"required"`
 	ResourceAttributes datapermission.ResourceAttributes `json:"resource_attributes" binding:"required"`
 	ProposedAttributes datapermission.ResourceAttributes `json:"proposed_attributes"`
@@ -99,6 +99,22 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 	}
 	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, Resource: request.Resource, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
 	h.respond(c, result, err)
+}
+
+func simulationTenantAllowed(c *gin.Context, tenantIDs ...string) bool {
+	if !strings.Contains(c.FullPath(), "/tenant-policies/") {
+		return true
+	}
+	principal, err := platformprincipal.Require(c.Request.Context())
+	if err != nil || principal.TenantID == "" {
+		return false
+	}
+	for _, tenantID := range tenantIDs {
+		if tenantID != principal.TenantID {
+			return false
+		}
+	}
+	return true
 }
 
 // CreateDataPermissionPolicy godoc

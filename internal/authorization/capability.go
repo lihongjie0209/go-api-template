@@ -10,7 +10,7 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -19,6 +19,8 @@ var (
 	ErrCapabilityInvalid     = errors.New("authorization capability request is invalid")
 	ErrCapabilityUnavailable = errors.New("authorization capability evaluation is unavailable")
 )
+
+var operationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 const (
 	MaxCapabilityItems   = 100
@@ -60,7 +62,7 @@ type RowCapabilityResult struct {
 type CapabilityService struct {
 	authorizer platformauthz.Authorizer
 	dataScopes *datapermission.Service
-	resources  *pbac.Registry
+	resources  *resourceaction.Registry
 	providers  *RowCapabilityRegistry
 	revisions  policyRevisions
 	now        func() time.Time
@@ -71,11 +73,11 @@ type policyRevisions interface {
 	Revision() string
 }
 
-func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *pbac.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) *CapabilityService {
+func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) *CapabilityService {
 	return newCapabilityService(authorizer, dataScopes, resources, providers, revisions, time.Now)
 }
 
-func newCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *pbac.Registry, providers *RowCapabilityRegistry, revisions policyRevisions, now func() time.Time) *CapabilityService {
+func newCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions policyRevisions, now func() time.Time) *CapabilityService {
 	return &CapabilityService{authorizer: authorizer, dataScopes: dataScopes, resources: resources, providers: providers, revisions: revisions, now: now}
 }
 
@@ -130,7 +132,7 @@ func (s *CapabilityService) EvaluateRows(ctx context.Context, resource string, a
 		return RowCapabilityResult{}, err
 	}
 	definition, ok := s.resources.Resource(resource)
-	if !ok || definition.Scope != pbac.ResourceScopeTenant || principal.TenantID == "" {
+	if !ok || definition.Scope != resourceaction.ResourceScopeTenant || principal.TenantID == "" {
 		return RowCapabilityResult{}, ErrCapabilityInvalid
 	}
 	provider, ok := s.providers.Provider(resource)
@@ -238,9 +240,9 @@ func (s *CapabilityService) evaluateOperation(ctx context.Context, principal pla
 	}
 	scope := platformauthz.ScopeTenant
 	switch definition.Scope {
-	case pbac.ResourceScopePlatform:
+	case resourceaction.ResourceScopePlatform:
 		scope = platformauthz.ScopePlatform
-	case pbac.ResourceScopePrincipal:
+	case resourceaction.ResourceScopePrincipal:
 		scope = platformauthz.ScopePrincipal
 	}
 	denied := false

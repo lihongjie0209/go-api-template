@@ -6,14 +6,14 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRowCapabilityRegistryRejectsDuplicateResources(t *testing.T) {
 	t.Parallel()
 	provider := staticRowCapabilityProvider{resource: "tenant.member"}
-	resources, schemas := rowCapabilityContracts(t, "tenant.member", pbac.ResourceScopeTenant)
+	resources, schemas := rowCapabilityContracts(t, "tenant.member", resourceaction.ResourceScopeTenant)
 	_, err := NewRowCapabilityRegistry([]RowCapabilityProvider{provider, provider}, resources, schemas)
 	require.ErrorIs(t, err, ErrRowCapabilityProviderDuplicate)
 }
@@ -23,20 +23,20 @@ func TestRowCapabilityRegistryRejectsMissingOrNonTenantContracts(t *testing.T) {
 	tests := []struct {
 		name      string
 		resource  string
-		scope     pbac.ResourceScope
+		scope     resourceaction.ResourceScope
 		addSchema bool
 	}{
-		{name: "unknown resource", resource: "tenant.unknown", scope: pbac.ResourceScopeTenant, addSchema: true},
-		{name: "platform resource", resource: "identity.user", scope: pbac.ResourceScopePlatform, addSchema: true},
-		{name: "missing schema", resource: "tenant.member", scope: pbac.ResourceScopeTenant},
+		{name: "unknown resource", resource: "tenant.unknown", scope: resourceaction.ResourceScopeTenant, addSchema: true},
+		{name: "platform resource", resource: "identity.user", scope: resourceaction.ResourceScopePlatform, addSchema: true},
+		{name: "missing schema", resource: "tenant.member", scope: resourceaction.ResourceScopeTenant},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			definitions := pbac.ResourceDefinitions{}
+			definitions := resourceaction.ResourceDefinitions{}
 			if test.name != "unknown resource" {
-				definitions = append(definitions, pbac.ResourceDefinition{Key: test.resource, Name: test.resource, Scope: test.scope, Actions: []pbac.ActionDefinition{{Key: "read", Name: "read"}}})
+				definitions = append(definitions, resourceaction.ResourceDefinition{Key: test.resource, Name: test.resource, Scope: test.scope, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "read"}}})
 			}
-			resources, err := pbac.NewRegistryFromDefinitions(definitions)
+			resources, err := resourceaction.NewRegistryFromDefinitions(definitions)
 			require.NoError(t, err)
 			schemas, err := datapermission.NewSchemaRegistry()
 			require.NoError(t, err)
@@ -52,9 +52,9 @@ func TestRowCapabilityRegistryRejectsMissingOrNonTenantContracts(t *testing.T) {
 	}
 }
 
-func rowCapabilityContracts(t *testing.T, resource string, scope pbac.ResourceScope) (*pbac.Registry, *datapermission.SchemaRegistry) {
+func rowCapabilityContracts(t *testing.T, resource string, scope resourceaction.ResourceScope) (*resourceaction.Registry, *datapermission.SchemaRegistry) {
 	t.Helper()
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.ResourceDefinitions{{Key: resource, Name: resource, Scope: scope, Actions: []pbac.ActionDefinition{{Key: "read", Name: "read"}}}})
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.ResourceDefinitions{{Key: resource, Name: resource, Scope: scope, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "read"}}}})
 	require.NoError(t, err)
 	schema, err := datapermission.NewSchema(resource, map[string]datapermission.Field{"id": {Column: "t.id", Type: datapermission.ValueTypeText}})
 	require.NoError(t, err)

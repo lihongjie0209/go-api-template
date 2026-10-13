@@ -38,6 +38,11 @@ type PermissionTreeRequest struct {
 	NodeTypes []string `json:"node_types" binding:"max=20,dive,oneof=group permission"`
 	Statuses  []string `json:"statuses" binding:"max=20,dive,oneof=active disabled"`
 }
+type PermissionActionsSetRequest struct {
+	ID        string   `json:"id" binding:"required,uuid"`
+	Version   int64    `json:"version" binding:"required,gt=0"`
+	ActionIDs []string `json:"action_ids" binding:"required,min=1,max=100,dive,uuid"`
+}
 
 func (r PermissionMutationRequest) input() permission.Input {
 	return permission.Input{ParentID: r.ParentID, Key: r.PermissionKey, Name: r.Name, NodeType: r.NodeType, Resource: r.Resource, Action: r.Action, Description: r.Description, SortOrder: r.SortOrder, Status: r.Status}
@@ -173,4 +178,48 @@ func (h *PermissionHandler) Tree(c *gin.Context) {
 		return
 	}
 	OK(c, value)
+}
+
+// GetPermissionActions godoc
+// @Summary Get Resource/Action links for a permission
+// @Tags permissions
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PermissionIDRequest true "Permission ID"
+// @Success 200 {object} Response{body=[]permission.ActionReference}
+// @Router /api/v1/permissions/actions/get [post]
+func (h *PermissionHandler) GetActions(c *gin.Context) {
+	var r PermissionIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	v, e := h.service.GetActions(c.Request.Context(), r.ID)
+	if e != nil {
+		h.fail(c, e)
+		return
+	}
+	OK(c, v)
+}
+
+// SetPermissionActions godoc
+// @Summary Replace Resource/Action links using the permission version
+// @Tags permissions
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PermissionActionsSetRequest true "Permission, version and actions"
+// @Success 200 {object} Response{body=permission.Record}
+// @Router /api/v1/permissions/actions/set [post]
+func (h *PermissionHandler) SetActions(c *gin.Context) {
+	var r PermissionActionsSetRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	v, e := h.service.SetActions(c.Request.Context(), r.ID, r.Version, r.ActionIDs)
+	if e != nil {
+		h.fail(c, e)
+		return
+	}
+	OK(c, v)
 }

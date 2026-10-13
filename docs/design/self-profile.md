@@ -17,7 +17,7 @@ accepts an arbitrary user ID or account status.
 | Audit | `database.Transactor.Within` injects the authenticated user actor; existing audit triggers/columns maintain timestamps, actor IDs, and version. |
 | Presentation | RFC3339 timestamps, stable username, display name, email and phone. The frontend masks no values because the subject is viewing its own profile. |
 | Tests | Unit tests prove user-principal ownership, service-account denial, status preservation, optimistic conflict, and parameterized SQL. Handler/route invariants cover the registered authorization descriptors. |
-| Shared capability | Reuses identity service, transaction, cache, operation/security log, response, errors and PBAC registry. No parallel profile repository is added. |
+| Shared capability | Reuses identity service, transaction, cache, operation/security log, response, errors and Resource/Action registry. No parallel profile repository is added. |
 
 Profile data is not a dictionary provider: it is sensitive, transactional, and
 has exactly one record for the current principal rather than a bounded shared

@@ -1,4 +1,4 @@
-package pbac
+package resourceaction
 
 import (
 	"errors"
@@ -106,7 +106,7 @@ func TestPlatformResourceDefinitions(t *testing.T) {
 		{name: "navigation", resource: "navigation", action: "create", scope: ResourceScopePlatform},
 		{name: "tenant selection", resource: "tenant.selection", action: "switch", scope: ResourceScopePrincipal},
 		{name: "dictionary item", resource: "dictionary.item", action: "list", scope: ResourceScopePlatform},
-		{name: "tenant policy", resource: "pbac.tenant-policy", action: "publish", scope: ResourceScopeTenant},
+		{name: "tenant data policy", resource: "data-permission.tenant-policy", action: "publish", scope: ResourceScopeTenant},
 		{name: "global data policy", resource: "data-permission.global-policy", action: "publish", scope: ResourceScopePlatform},
 		{name: "tenant data policy", resource: "data-permission.tenant-policy", action: "set-status", scope: ResourceScopeTenant},
 		{name: "internal authentication", resource: "identity.internal-authentication", action: "validate-session", scope: ResourceScopePlatform},

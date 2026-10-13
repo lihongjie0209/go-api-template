@@ -15,7 +15,7 @@
 | Audit | No writes. Soft-deleted grants and permissions are excluded. |
 | Presentation | Return permission ID, stable key, name, resource and action; never return opaque IDs alone. |
 | Tests | Platform allow, tenant-principal deny, validation, missing tenant, empty result, ordering and database failure. |
-| Shared capability | Reuses the global response, principal, PBAC descriptor and permission presentation model. |
+| Shared capability | Reuses the global response, principal, Resource/Action descriptor and permission presentation model. |
 | Dictionary provider | Not exposed: permission ceilings are sensitive authorization configuration, not bounded reference data for general selection. |
 
 ## `POST /api/v1/platform/tenant-authorization/administrators/page`
@@ -33,7 +33,7 @@
 | Audit | No writes. Membership, tenant and administrator soft-delete predicates are applied in SQL. |
 | Presentation | Include username and display name beside user/membership IDs; timestamps use RFC3339 with the platform timezone. |
 | Tests | Platform scope, input validation, tenant isolation, identical count/item predicates, stable sorting, inactive-member visibility, empty page and cancellation/database failures. |
-| Shared capability | Reuses pagination, principal, response and PBAC registration components. |
+| Shared capability | Reuses pagination, principal, response and Resource/Action registration components. |
 | Dictionary provider | Not exposed: tenant membership and administrator assignment are sensitive transactional data. |
 
 ## `POST /api/v1/tenant-authorization/administrators/page`
@@ -51,7 +51,7 @@
 | Audit | No writes. The query filters soft-deleted tenants, memberships and assignments. |
 | Presentation | Return username and display name with IDs; render joined timestamps as RFC3339 in `Asia/Shanghai`. |
 | Tests | Missing/platform/wrong-tenant principals fail before candidate SQL; non-administrator deny; exact tenant predicate on count and items; validation, cancellation and database failures. HTTP route/Swagger/authorization coverage remain CI invariants. |
-| Shared capability | Reuses pagination, principal, PBAC descriptors, response envelope and the existing candidate query implementation. |
+| Shared capability | Reuses pagination, principal, Resource/Action descriptors, response envelope and the existing candidate query implementation. |
 | Dictionary provider | Not exposed because membership and privilege assignment are sensitive transactional data. |
 
 ## `POST /api/v1/tenant-authorization/effective-permissions`

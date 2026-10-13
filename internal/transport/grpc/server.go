@@ -24,7 +24,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformidempotency "github.com/lihongjie0209/microservice-platform-go/idempotency"
@@ -51,7 +51,7 @@ type Server struct {
 	logger          *slog.Logger
 }
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, healthService *apphealth.Service, identityService *identity.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, healthService *apphealth.Service, identityService *identity.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	definitions := grpcEndpointDefinitions()
 	for _, endpoint := range definitions {
 		if err := schemas.ValidateEndpoint(endpoint); err != nil {
@@ -120,13 +120,13 @@ func grpcBusinessOperations(server *grpc.Server) []accesscontrol.Operation {
 func grpcEndpointDefinitions() []accesscontrol.Endpoint {
 	return []accesscontrol.Endpoint{
 		{Transport: accesscontrol.TransportGRPC, Operation: hellov1.HelloService_Ping_FullMethodName, Authentication: accesscontrol.AuthenticationPublic, DataPermission: accesscontrol.DataPermissionNone},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_GetUser_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.user", Action: "read", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation PBAC is the complete authorization boundary"},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_BatchGetUsers_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.user", Action: "list", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation PBAC is the complete authorization boundary"},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_ListUsers_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.user", Action: "list", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation PBAC is the complete authorization boundary"},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_ValidateSession_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.internal-authentication", Action: "validate-session", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped internal resource; operation PBAC is the complete authorization boundary"},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_RevokeTenantSessions_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.internal-authentication", Action: "revoke-tenant-sessions", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped internal resource; operation PBAC is the complete authorization boundary"},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_IssueTenantToken_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.internal-authentication", Action: "issue-tenant-token", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped internal resource; operation PBAC is the complete authorization boundary"},
-		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_GetServiceAccount_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.service-account", Action: "read", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation PBAC is the complete authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_GetUser_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.user", Action: "read", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation grants are the authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_BatchGetUsers_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.user", Action: "list", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation grants are the authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_ListUsers_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.user", Action: "list", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation grants are the authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_ValidateSession_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.internal-authentication", Action: "validate-session", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped internal resource; operation grants are the authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_RevokeTenantSessions_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.internal-authentication", Action: "revoke-tenant-sessions", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped internal resource; operation grants are the authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_IssueTenantToken_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.internal-authentication", Action: "issue-tenant-token", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped internal resource; operation grants are the authorization boundary"},
+		{Transport: accesscontrol.TransportGRPC, Operation: identityv1.IdentityService_GetServiceAccount_FullMethodName, Authentication: accesscontrol.AuthenticationService, Resource: "identity.service-account", Action: "read", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform-scoped resource; operation grants are the authorization boundary"},
 	}
 }
 

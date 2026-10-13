@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -39,9 +40,9 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestServiceValidationRequiresRegisteredPBACResourceAction(t *testing.T) {
+func TestServiceValidationRequiresRegisteredResourceAction(t *testing.T) {
 	t.Parallel()
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	service := &Service{resources: resources}
 	require.NoError(t, service.validateInput(Input{Key: "platform.users.read", Name: "查询用户", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"}))
@@ -49,11 +50,39 @@ func TestServiceValidationRequiresRegisteredPBACResourceAction(t *testing.T) {
 	require.ErrorIs(t, service.validateInput(Input{Key: "platform.users.unknown", Name: "未知操作", NodeType: "permission", Resource: "identity.user", Action: "unknown", Status: "active"}), ErrInvalid)
 }
 
-func TestPermissionSeedIDGoldenMapping(t *testing.T) {
+func TestSetActionsRejectsDuplicateAndUnboundedInputBeforeDatabase(t *testing.T) {
 	t.Parallel()
-	id, err := SeedID("platform.pbac-policy.manage")
+	service := &Service{}
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	actionID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	_, err := service.SetActions(t.Context(), permissionID, 1, []string{actionID, actionID})
+	require.ErrorIs(t, err, ErrInvalid)
+	_, err = service.SetActions(t.Context(), permissionID, 1, nil)
+	require.ErrorIs(t, err, ErrInvalid)
+	_, err = service.SetActions(t.Context(), permissionID, 1, []string{"not-uuid"})
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestSetActionsRejectsCrossScopeLink(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	require.Equal(t, "a0d93b54-6f9d-5136-abb5-27897aef65ad", id)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := &Service{transactor: database.NewTransactor(sqlxDB)}
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	actionID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\?`).WithArgs(permissionID).WillReturnRows(
+		sqlmock.NewRows(strings.Split(columns, ", ")).AddRow(permissionID, nil, "platform.user.read", "Read users", "permission", "identity.user", "read", "", 0, "active", false, now, "actor", now, "actor", 1),
+	)
+	mock.ExpectQuery(`SELECT r.scope FROM authorization_resources`).WithArgs("identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"scope"}).AddRow("platform"))
+	mock.ExpectQuery(`SELECT a.id,r.scope FROM authorization_resource_actions`).WithArgs(actionID).WillReturnRows(sqlmock.NewRows([]string{"id", "scope"}).AddRow(actionID, "tenant"))
+	mock.ExpectRollback()
+	_, err = service.SetActions(platformprincipal.SystemContext(t.Context(), "actor"), permissionID, 1, []string{actionID})
+	require.ErrorIs(t, err, ErrInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCapabilityPermissionSeedIDGoldenMapping(t *testing.T) {

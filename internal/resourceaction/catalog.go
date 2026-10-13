@@ -1,4 +1,4 @@
-package pbac
+package resourceaction
 
 // PlatformResourceDefinitions contains the first platform authorization
 // vocabulary. Resource keys are stable API contracts; changing a key requires
@@ -35,9 +35,9 @@ func PlatformResourceDefinitions() ResourceDefinitions {
 		resource("scheduled-job", "定时任务", ResourceScopePlatform, "create", "read", "list", "update", "delete", "execute"),
 		resource("operation.log", "操作日志", ResourceScopeTenant, "create", "read", "list"),
 		resource("security.log", "安全日志", ResourceScopeTenant, "read", "list"),
-		resource("pbac.resource-action", "PBAC 资源动作注册表", ResourceScopePlatform, "list"),
-		resource("pbac.global-policy", "全局策略", ResourceScopePlatform, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
-		resource("pbac.tenant-policy", "租户策略", ResourceScopeTenant, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
+		resource("authorization.resource", "资源注册表", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
+		resource("authorization.action", "资源动作注册表", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
+		resource("authorization.platform-grant", "平台主体授权", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("data-permission.global-policy", "全局数据权限策略", ResourceScopePlatform, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
 		resource("data-permission.tenant-policy", "租户数据权限策略", ResourceScopeTenant, "create", "read", "list", "create-version", "simulate", "publish", "set-status"),
 	}

@@ -14,8 +14,8 @@
 | Optimistic lock | Not applicable because no state is mutated. |
 | Audit | Not applicable because no table is written. |
 | Presentation | Timestamps remain RFC 3339 values with an explicit offset; dependency names are bounded server-owned identifiers and latency is returned as a Go duration string. |
-| Tests | Handler test covers the response envelope and unavailable Redis state; invariant tests cover PBAC registration and Swagger coverage. Frontend tests cover loading, refresh, degraded state, and contract paths. |
-| Shared capability | Reuses `health.Service`, `buildinfo.Current`, the shared response envelope, request client, and PBAC route middleware. |
+| Tests | Handler test covers the response envelope and unavailable Redis state; invariant tests cover Resource/Action registration and Swagger coverage. Frontend tests cover loading, refresh, degraded state, and contract paths. |
+| Shared capability | Reuses `health.Service`, `buildinfo.Current`, the shared response envelope, request client, and operation authorization middleware. |
 
 This transient operational resource is not a data-dictionary provider: its
 values are live probe results rather than bounded reference data.

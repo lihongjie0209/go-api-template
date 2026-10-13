@@ -243,7 +243,7 @@ Authorized administrators use `POST /api/v1/operation-logs/get` and `POST /api/v
 
 ## Security logs
 
-Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Both standalone `Record` and caller-transaction `RecordTx` persist through the database outbox before asynchronous delivery. Events cover authentication/session lifecycle and security-sensitive changes to identities, tenants, PBAC policies, menus and platform configuration. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON-object metadata. Consumer-side validation rejects unsupported versions, inconsistent envelope identities, invalid timestamps and malformed or oversized payloads before insertion.
+Security logs use a deliberately separate `securitylog.Recorder`, JetStream subject, durable consumer and `security_logs` table. Both standalone `Record` and caller-transaction `RecordTx` persist through the database outbox before asynchronous delivery. Events cover authentication/session lifecycle and security-sensitive changes to identities, tenants, permission grants, menus and platform configuration. The record contains actor and target subject, tenant, success, reason/error, session, IP, user agent, Request ID, Trace ID and bounded JSON-object metadata. Consumer-side validation rejects unsupported versions, inconsistent envelope identities, invalid timestamps and malformed or oversized payloads before insertion.
 
 Login has no authenticated principal yet, so `POST /api/v1/auth/login` records the attempted identifier using a keyed HMAC-SHA256 digest and fills the subject only after successful authentication. Token and refresh-token bodies are never accepted as metadata; callers may provide a JTI through `TokenID`, which is also stored only as a keyed digest. Inject an independent `APP_SECURITY_LOG_HASH_KEY` of at least 32 random bytes.
 
@@ -280,8 +280,10 @@ Configure `http.trusted_proxies` explicitly before trusting forwarding headers. 
 
 Every business HTTP route and gRPC method declares its authentication mode,
 canonical resource/action and data-permission obligation in code. Public access
-must be explicit; undeclared operations fail closed. PBAC policies remain
-database-owned and versioned, while transport paths are not policy identities.
+must be explicit; undeclared operations fail closed. Operation authorization
+uses database-owned permission-to-Resource/Action links and platform/tenant
+grants. Data-permission policies remain separate and versioned; transport paths
+are not permission identities.
 Enable PSK verification with `APP_AUTH_PSK_ENABLED=true` and inject a key of at
 least 32 bytes through `APP_AUTH_PSK_KEY`; never store a production key in YAML.
 

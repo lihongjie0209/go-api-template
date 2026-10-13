@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 )
 
 var ErrInvalidSimulation = errors.New("data permission: invalid simulation")
@@ -15,8 +15,8 @@ var ErrInvalidSimulation = errors.New("data permission: invalid simulation")
 type SimulationInput struct {
 	Policy             Policy             `json:"policy"`
 	Action             string             `json:"action"`
-	Subject            pbac.Subject       `json:"subject"`
-	Resource           pbac.Resource      `json:"resource"`
+	Subject            resourceaction.Subject       `json:"subject"`
+	Resource           resourceaction.Resource      `json:"resource"`
 	SubjectAttributes  SubjectAttributes  `json:"subject_attributes"`
 	ResourceAttributes ResourceAttributes `json:"resource_attributes"`
 	ProposedAttributes ResourceAttributes `json:"proposed_attributes"`
@@ -41,11 +41,11 @@ type SimulationResult struct {
 
 type Simulator struct {
 	schemas   *SchemaRegistry
-	resources *pbac.Registry
+	resources *resourceaction.Registry
 	runtime   *Engine
 }
 
-func NewSimulator(schemas *SchemaRegistry, resources *pbac.Registry, runtime *Engine) *Simulator {
+func NewSimulator(schemas *SchemaRegistry, resources *resourceaction.Registry, runtime *Engine) *Simulator {
 	return &Simulator{schemas: schemas, resources: resources, runtime: runtime}
 }
 
@@ -122,7 +122,7 @@ func replacePolicy(policies []Policy, candidate Policy) []Policy {
 	return append(result, candidate)
 }
 
-func validateSimulationTarget(resources *pbac.Registry, input SimulationInput) error {
+func validateSimulationTarget(resources *resourceaction.Registry, input SimulationInput) error {
 	if input.Action == "" || input.Resource.Type != input.Policy.Spec.Resource ||
 		!slices.Contains(input.Policy.Spec.Actions, input.Action) {
 		return fmt.Errorf("%w: resource and action must be declared by the candidate policy", ErrInvalidSimulation)
@@ -131,7 +131,7 @@ func validateSimulationTarget(resources *pbac.Registry, input SimulationInput) e
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSimulation, err)
 	}
-	if definition.Scope != pbac.ResourceScopeTenant {
+	if definition.Scope != resourceaction.ResourceScopeTenant {
 		return nil
 	}
 	if input.Subject.TenantID == "" || input.Resource.TenantID == "" ||

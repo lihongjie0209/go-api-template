@@ -14,7 +14,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -37,7 +37,7 @@ type TreeInput struct {
 type Service struct {
 	db         *sqlx.DB
 	tx         *database.Transactor
-	resources  *pbac.Registry
+	resources  *resourceaction.Registry
 	operations operationlog.TransactionalRecorder
 	actors     presentation.ActorResolver
 	cache      cache.Store
@@ -45,7 +45,7 @@ type Service struct {
 	logger     *slog.Logger
 }
 
-func New(db *sqlx.DB, tx *database.Transactor, resources *pbac.Registry, store cache.Store, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger, cfg config.Config) *Service {
+func New(db *sqlx.DB, tx *database.Transactor, resources *resourceaction.Registry, store cache.Store, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver, logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{db: db, tx: tx, resources: resources, operations: operations, actors: actors, cache: store, cacheTTL: cfg.Navigation.CacheTTL, logger: logger}
 }
 

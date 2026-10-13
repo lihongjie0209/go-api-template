@@ -6,7 +6,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +19,7 @@ func TestServiceAuthorizesTrustedProposedObject(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	authenticated := true
 	policy := Policy{
@@ -27,7 +27,7 @@ func TestServiceAuthorizesTrustedProposedObject(t *testing.T) {
 		Metadata: PolicyMetadata{Code: "department-create-own", Name: "Create department"},
 		Scope:    PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
 		Spec: PolicySpec{
-			Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"create"},
+			Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"create"},
 			Condition: "resource.created_by == subject.id", Effect: EffectAllow,
 		},
 	}
@@ -60,7 +60,7 @@ func TestServiceAuthorizesTrustedStateTransition(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	policy := Policy{
 		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
@@ -92,7 +92,7 @@ func TestServiceEvaluatesMultipleRowActionsWithOneSubjectProjection(t *testing.T
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	engine, err := NewEngine(schemas, resources, []Policy{{
 		APIVersion: PolicyAPIVersion, Kind: PolicyKind,

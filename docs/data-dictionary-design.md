@@ -5,7 +5,7 @@
 | Concern | Decision and rationale |
 | --- | --- |
 | Contract | Dictionaries are `enum` or `tree`, and are backed by `static` items or one registered `provider`. Management uses POST+JSON create/get/page/update/delete operations. Public `POST /api/v1/public/dictionaries/query` returns one normalized result contract for both sources. Enum results are paged; tree results are complete bounded forests because paging would break ancestry. |
-| Authentication | Public query allows anonymous and authenticated callers. Management routes use the shared Resource/Action PBAC interceptor. Providers are in-process Go implementations and have no separate transport/authentication surface. |
+| Authentication | Public query allows anonymous and authenticated callers. Management routes use the shared Resource/Action authorization interceptor. Providers are in-process Go implementations and have no separate transport/authentication surface. |
 | Authorization | Public query has the database expression `anonymous || authenticated`. Definition/item management uses `platform.dictionary.manage` with platform scope. Provider implementations must only expose data suitable for this public endpoint. |
 | Operation log | Successful definition/item mutations enqueue `dictionary.*` events in the same transaction; failed mutations enqueue a sanitized failure event. Reads are not logged because dictionary values are public presentation data. |
 | Security log | No security event is emitted: dictionary configuration is auditable business configuration, not an authentication/session event. Every mutation emits an operation log. |

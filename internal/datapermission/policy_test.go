@@ -3,7 +3,7 @@ package datapermission
 import (
 	"testing"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
 
@@ -11,7 +11,7 @@ func TestDataPolicyUsesSharedBoundedSubjectContract(t *testing.T) {
 	t.Parallel()
 	schema, err := NewSchemaRegistry(memberSchema(t))
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 
 	policy := dataPolicyFixture()

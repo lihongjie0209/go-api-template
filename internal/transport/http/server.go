@@ -23,8 +23,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/health"
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/ratelimit"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	swaggerFiles "github.com/swaggo/files"
@@ -33,7 +33,7 @@ import (
 	"go.uber.org/fx"
 )
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, scheduledJobHandler *ScheduledJobHandler, dictionaryHandler *DictionaryHandler, pbacHandler *PBACHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, scheduledJobHandler *ScheduledJobHandler, dictionaryHandler *DictionaryHandler, resourceCatalogHandler *ResourceCatalogHandler, platformGrantHandler *PlatformGrantHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -187,30 +187,28 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/dictionaries/page", "dictionary.definition", "list", accesscontrol.DataPermissionNone, dictionaryHandler.PageDefinitions)
 	jwt("/dictionaries/update", "dictionary.definition", "update", accesscontrol.DataPermissionNone, dictionaryHandler.UpdateDefinition)
 	jwt("/dictionaries/delete", "dictionary.definition", "delete", accesscontrol.DataPermissionNone, dictionaryHandler.DeleteDefinition)
+	jwt("/authorization/resources/create", "authorization.resource", "create", accesscontrol.DataPermissionNone, resourceCatalogHandler.CreateResource)
+	jwt("/authorization/resources/get", "authorization.resource", "read", accesscontrol.DataPermissionNone, resourceCatalogHandler.GetResource)
+	jwt("/authorization/resources/page", "authorization.resource", "list", accesscontrol.DataPermissionNone, resourceCatalogHandler.PageResources)
+	jwt("/authorization/resources/update", "authorization.resource", "update", accesscontrol.DataPermissionNone, resourceCatalogHandler.UpdateResource)
+	jwt("/authorization/resources/delete", "authorization.resource", "delete", accesscontrol.DataPermissionNone, resourceCatalogHandler.DeleteResource)
+	jwt("/authorization/actions/create", "authorization.action", "create", accesscontrol.DataPermissionNone, resourceCatalogHandler.CreateAction)
+	jwt("/authorization/actions/get", "authorization.action", "read", accesscontrol.DataPermissionNone, resourceCatalogHandler.GetAction)
+	jwt("/authorization/actions/page", "authorization.action", "list", accesscontrol.DataPermissionNone, resourceCatalogHandler.PageActions)
+	jwt("/authorization/actions/update", "authorization.action", "update", accesscontrol.DataPermissionNone, resourceCatalogHandler.UpdateAction)
+	jwt("/authorization/actions/delete", "authorization.action", "delete", accesscontrol.DataPermissionNone, resourceCatalogHandler.DeleteAction)
+	jwt("/platform/permission-grants/create", "authorization.platform-grant", "create", accesscontrol.DataPermissionNone, platformGrantHandler.Create)
+	jwt("/platform/permission-grants/get", "authorization.platform-grant", "read", accesscontrol.DataPermissionNone, platformGrantHandler.Get)
+	jwt("/platform/permission-grants/page", "authorization.platform-grant", "list", accesscontrol.DataPermissionNone, platformGrantHandler.Page)
+	jwt("/platform/permission-grants/update", "authorization.platform-grant", "update", accesscontrol.DataPermissionNone, platformGrantHandler.Update)
+	jwt("/platform/permission-grants/delete", "authorization.platform-grant", "delete", accesscontrol.DataPermissionNone, platformGrantHandler.Delete)
+	jwt("/permissions/actions/get", "permission.definition", "read", accesscontrol.DataPermissionNone, permissionHandler.GetActions)
+	jwt("/permissions/actions/set", "permission.definition", "update", accesscontrol.DataPermissionNone, permissionHandler.SetActions)
 	jwt("/dictionary-items/create", "dictionary.item", "create", accesscontrol.DataPermissionNone, dictionaryHandler.CreateItem)
 	jwt("/dictionary-items/get", "dictionary.item", "read", accesscontrol.DataPermissionNone, dictionaryHandler.GetItem)
 	jwt("/dictionary-items/page", "dictionary.item", "list", accesscontrol.DataPermissionNone, dictionaryHandler.PageItems)
 	jwt("/dictionary-items/update", "dictionary.item", "update", accesscontrol.DataPermissionNone, dictionaryHandler.UpdateItem)
 	jwt("/dictionary-items/delete", "dictionary.item", "delete", accesscontrol.DataPermissionNone, dictionaryHandler.DeleteItem)
-	jwt("/pbac/resources/list", "pbac.resource-action", "list", accesscontrol.DataPermissionNone, pbacHandler.ListResources)
-	jwt("/pbac/global-policies/create", "pbac.global-policy", "create", accesscontrol.DataPermissionNone, pbacHandler.Create)
-	jwt("/pbac/global-policies/get", "pbac.global-policy", "read", accesscontrol.DataPermissionNone, pbacHandler.Get)
-	jwt("/pbac/global-policies/page", "pbac.global-policy", "list", accesscontrol.DataPermissionNone, pbacHandler.Page)
-	jwt("/pbac/global-policies/versions/create", "pbac.global-policy", "create-version", accesscontrol.DataPermissionNone, pbacHandler.CreateVersion)
-	jwt("/pbac/global-policies/versions/get", "pbac.global-policy", "read", accesscontrol.DataPermissionNone, pbacHandler.GetVersion)
-	jwt("/pbac/global-policies/versions/page", "pbac.global-policy", "list", accesscontrol.DataPermissionNone, pbacHandler.PageVersions)
-	jwt("/pbac/global-policies/simulate", "pbac.global-policy", "simulate", accesscontrol.DataPermissionNone, pbacHandler.Simulate)
-	jwt("/pbac/global-policies/publish", "pbac.global-policy", "publish", accesscontrol.DataPermissionNone, pbacHandler.Publish)
-	jwt("/pbac/global-policies/status/set", "pbac.global-policy", "set-status", accesscontrol.DataPermissionNone, pbacHandler.SetStatus)
-	jwt("/pbac/tenant-policies/create", "pbac.tenant-policy", "create", accesscontrol.DataPermissionNone, pbacHandler.Create)
-	jwt("/pbac/tenant-policies/get", "pbac.tenant-policy", "read", accesscontrol.DataPermissionNone, pbacHandler.Get)
-	jwt("/pbac/tenant-policies/page", "pbac.tenant-policy", "list", accesscontrol.DataPermissionNone, pbacHandler.Page)
-	jwt("/pbac/tenant-policies/versions/create", "pbac.tenant-policy", "create-version", accesscontrol.DataPermissionNone, pbacHandler.CreateVersion)
-	jwt("/pbac/tenant-policies/versions/get", "pbac.tenant-policy", "read", accesscontrol.DataPermissionNone, pbacHandler.GetVersion)
-	jwt("/pbac/tenant-policies/versions/page", "pbac.tenant-policy", "list", accesscontrol.DataPermissionNone, pbacHandler.PageVersions)
-	jwt("/pbac/tenant-policies/simulate", "pbac.tenant-policy", "simulate", accesscontrol.DataPermissionNone, pbacHandler.Simulate)
-	jwt("/pbac/tenant-policies/publish", "pbac.tenant-policy", "publish", accesscontrol.DataPermissionNone, pbacHandler.Publish)
-	jwt("/pbac/tenant-policies/status/set", "pbac.tenant-policy", "set-status", accesscontrol.DataPermissionNone, pbacHandler.SetStatus)
 	jwt("/data-permissions/global-policies/create", "data-permission.global-policy", "create", accesscontrol.DataPermissionNone, dataPermissionHandler.Create)
 	jwt("/data-permissions/global-policies/get", "data-permission.global-policy", "read", accesscontrol.DataPermissionNone, dataPermissionHandler.Get)
 	jwt("/data-permissions/global-policies/page", "data-permission.global-policy", "list", accesscontrol.DataPermissionNone, dataPermissionHandler.Page)
@@ -332,4 +330,4 @@ func registerPprof(group *gin.RouterGroup) {
 	}
 }
 
-var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewApplicationHandler, NewNavigationHandler, NewPlatformConfigHandler, NewScheduledJobHandler, NewDictionaryHandler, NewPBACHandler, NewDataPermissionHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))
+var Module = fx.Module("http", fx.Provide(auth.NewRuntime, health.New, ratelimit.New, serviceaccount.New, NewHandler, NewFileHandler, NewUserHandler, NewServiceAccountHandler, NewTenantHandler, NewTenantMemberHandler, NewDepartmentHandler, NewTenantAuthorizationHandler, NewCapabilityHandler, NewApplicationHandler, NewNavigationHandler, NewPlatformConfigHandler, NewScheduledJobHandler, NewDictionaryHandler, NewResourceCatalogHandler, NewPlatformGrantHandler, NewDataPermissionHandler, NewPermissionHandler, NewOperationLogHandler, NewSecurityLogHandler, NewAuthenticationHandler, NewUserAuthenticationHandler, NewServer), fx.Invoke(func(*http.Server) {}))

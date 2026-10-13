@@ -7,7 +7,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +20,7 @@ func dataPolicyFixture() Policy {
 		Metadata:   PolicyMetadata{Code: "member-own-records", Name: "Member own records"},
 		Scope:      PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
 		Spec: PolicySpec{
-			Subject:   pbac.SubjectMatcher{Authenticated: &authenticated},
+			Subject:   resourceaction.SubjectMatcher{Authenticated: &authenticated},
 			Resource:  "tenant.member",
 			Actions:   []string{"read", "list"},
 			Condition: "resource.owner_id == subject.id",
@@ -41,7 +41,7 @@ func dataLifecycleFixture(t *testing.T, withRuntime bool) (*LifecycleService, sq
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	repository := NewRepository(db)
 	var runtime *RuntimeLoader

@@ -422,7 +422,7 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 
 // DatabaseAuthentication verifies credentials when supplied. The immutable
 // endpoint descriptor decides whether an anonymous principal may proceed, and
-// protected operations are subsequently evaluated by the PBAC engine.
+// protected operations are subsequently evaluated by the authorization layer.
 func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := strings.TrimSpace(c.GetHeader("Authorization"))

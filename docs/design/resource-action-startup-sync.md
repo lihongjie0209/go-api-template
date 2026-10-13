@@ -7,12 +7,12 @@ future administration and are never changed by this sync.
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Startup sync takes the complete validated backend registry, build time and commit. Resource keys and action keys are immutable; names, descriptions and scopes are replaced from code. Missing code-owned rows become disabled. There is no request API in this phase. |
+| Contract | Startup sync takes the complete validated backend registry, build time and commit. Resource keys and action keys are immutable; names, descriptions and scopes are replaced from code. Missing code-owned rows become disabled. Manual records have protected POST management APIs. |
 | Authentication | An in-process startup command uses the explicit `system:resource-catalog` principal. No public HTTP or gRPC registration endpoint exists. |
 | Authorization | Only `source=code` rows may be updated or disabled. A manual key colliding with a code declaration aborts startup. Existing endpoint descriptors and their fail-closed checks remain in force. |
 | Operation log | No queue operation event is emitted during startup; database audit records the system actor and each changed row. Startup failure is logged and prevents readiness. |
 | Security log | No user security event: startup sync does not grant a principal or role. Registry source conflicts and stale builds fail startup. |
-| Cache | No response cache is introduced. The current immutable code registry remains the request-path resolver. A later manual-registration phase must add a revisioned runtime catalog before those entries can be authorized. |
+| Cache | No response cache is introduced. The immutable code registry remains the request-path resolver. Manual records can be linked to permissions, but a manual-only target requires a separately registered endpoint/provider before it can be evaluated at runtime. |
 | Distributed lock | The audited `authorization_catalog_syncs` row is locked `FOR UPDATE` in the same transaction. The build-time/commit fence rejects an older or ambiguous build. |
 | Optimistic lock | Not used for a startup snapshot: row-level versions are audit output, and the transaction lock serializes complete reconciliations. |
 | Audit | All three catalog tables include the mandatory audit columns and triggers. Repeated identical startup produces no record updates. |
@@ -25,8 +25,7 @@ provider. It is small and administered through deployment ownership; publishing
 it through the public dictionary query contract would blur the authorization
 boundary.
 
-The current authorization engine still uses the in-memory Resource/Action
-registry and published PBAC policies. Persisting the backend catalog is the
-first step toward a simpler permission-to-Resource/Action mapping; it does not
-silently change effective grants. A future phase will remove PBAC only after
-the replacement authorizer and permission mappings are in place.
+The operation authorizer uses permission-to-Resource/Action links and explicit
+platform or tenant grants. Published operation policy documents are not used.
+See [authorization-resource-grants.md](authorization-resource-grants.md) for
+management endpoints, migration and bootstrap rules.

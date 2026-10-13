@@ -8,24 +8,24 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
 	"github.com/stretchr/testify/require"
 )
 
 const testBuildTime = "2026-10-13T08:00:00Z"
 
-func testRegistry(t *testing.T) *pbac.Registry {
+func testRegistry(t *testing.T) *resourceaction.Registry {
 	t.Helper()
-	registry, err := pbac.NewRegistry([]pbac.ResourceDefinition{{
-		Key: "tenant.member", Name: "成员", Description: "租户成员", Scope: pbac.ResourceScopeTenant,
-		Actions: []pbac.ActionDefinition{{Key: "read", Name: "查看", Description: "查看成员"}},
+	registry, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{
+		Key: "tenant.member", Name: "成员", Description: "租户成员", Scope: resourceaction.ResourceScopeTenant,
+		Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "查看", Description: "查看成员"}},
 	}})
 	require.NoError(t, err)
 	return registry
 }
 
-func testSyncer(t *testing.T, registry *pbac.Registry) (*Syncer, sqlmock.Sqlmock) {
+func testSyncer(t *testing.T, registry *resourceaction.Registry) (*Syncer, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -55,6 +55,27 @@ func TestStableCatalogIDs(t *testing.T) {
 	require.Equal(t, "9030bd35-3480-5e72-afd5-73f2b49bee04", actionID)
 }
 
+func TestBackfillLegacyPermissionLinksOnce(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	generator, err := stableid.New(Namespace)
+	require.NoError(t, err)
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}))
+	mock.ExpectQuery("SELECT p.id AS permission_id,a.id AS action_id").WillReturnRows(sqlmock.NewRows([]string{"permission_id", "action_id"}).AddRow("08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58"))
+	mock.ExpectQuery("SELECT id,deleted_at FROM permission_resource_actions").WithArgs("08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58").WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}))
+	mock.ExpectExec("INSERT INTO permission_resource_actions").WithArgs(sqlmock.AnyArg(), "08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58", sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO authorization_catalog_syncs").WithArgs(sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	tx, err := sqlxDB.Beginx()
+	require.NoError(t, err)
+	require.NoError(t, backfillLegacyPermissionLinks(t.Context(), tx, generator))
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func expectStart(mock sqlmock.Sqlmock, buildTime, commit string) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs(codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -67,11 +88,12 @@ func TestSyncInsertsCodeDefinitionsAndIsIdempotent(t *testing.T) {
 	syncer, mock := testSyncer(t, testRegistry(t))
 	expectStart(mock, "", "")
 	mock.ExpectQuery("SELECT id,name,description,scope,source,status,deleted_at FROM authorization_resources").WithArgs("tenant.member").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "description", "scope", "source", "status", "deleted_at"}))
-	mock.ExpectExec("INSERT INTO authorization_resources").WithArgs(resourceID, "tenant.member", "成员", "租户成员", pbac.ResourceScopeTenant, sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO authorization_resources").WithArgs(resourceID, "tenant.member", "成员", "租户成员", resourceaction.ResourceScopeTenant, sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT id,name,description,source,status,deleted_at FROM authorization_resource_actions").WithArgs(resourceID, "read").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "description", "source", "status", "deleted_at"}))
 	mock.ExpectExec("INSERT INTO authorization_resource_actions").WithArgs(actionID, resourceID, "read", "查看", "查看成员", sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE authorization_resource_actions SET status='disabled' WHERE source='code'").WithArgs(actionID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE authorization_resources SET status='disabled' WHERE source='code'").WithArgs(resourceID).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}).AddRow("legacy-permissions"))
 	mock.ExpectExec("UPDATE authorization_catalog_syncs SET build_time=").WithArgs(testBuildTime, "commit-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, syncer.Sync(t.Context(), testBuildTime, "commit-1"))
@@ -81,6 +103,7 @@ func TestSyncInsertsCodeDefinitionsAndIsIdempotent(t *testing.T) {
 	mock.ExpectQuery("SELECT id,name,description,source,status,deleted_at FROM authorization_resource_actions").WithArgs(resourceID, "read").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "description", "source", "status", "deleted_at"}).AddRow(actionID, "查看", "查看成员", "code", "active", nil))
 	mock.ExpectExec("UPDATE authorization_resource_actions SET status='disabled' WHERE source='code'").WithArgs(actionID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE authorization_resources SET status='disabled' WHERE source='code'").WithArgs(resourceID).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}).AddRow("legacy-permissions"))
 	mock.ExpectCommit()
 	require.NoError(t, syncer.Sync(t.Context(), testBuildTime, "commit-1"))
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -92,13 +115,14 @@ func TestSyncReplacesCodeDefinitionsAndPreservesManualRows(t *testing.T) {
 	syncer, mock := testSyncer(t, testRegistry(t))
 	expectStart(mock, "", "")
 	mock.ExpectQuery("SELECT id,name,description,scope,source,status,deleted_at FROM authorization_resources").WithArgs("tenant.member").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "description", "scope", "source", "status", "deleted_at"}).AddRow(resourceID, "旧名称", "旧描述", "platform", "code", "disabled", nil))
-	mock.ExpectExec("UPDATE authorization_resources SET name=").WithArgs("成员", "租户成员", pbac.ResourceScopeTenant, resourceID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE authorization_resources SET name=").WithArgs("成员", "租户成员", resourceaction.ResourceScopeTenant, resourceID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT id,name,description,source,status,deleted_at FROM authorization_resource_actions").WithArgs(resourceID, "read").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "description", "source", "status", "deleted_at"}).AddRow(actionID, "旧名称", "旧描述", "code", "disabled", nil))
 	mock.ExpectExec("UPDATE authorization_resource_actions SET name=").WithArgs("查看", "查看成员", actionID).WillReturnResult(sqlmock.NewResult(0, 1))
 	// Both retirement queries are explicitly source='code'. A manual row is
 	// never targeted even if its ID is absent from the code registry.
 	mock.ExpectExec("UPDATE authorization_resource_actions SET status='disabled' WHERE source='code'").WithArgs(actionID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE authorization_resources SET status='disabled' WHERE source='code'").WithArgs(resourceID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}).AddRow("legacy-permissions"))
 	mock.ExpectExec("UPDATE authorization_catalog_syncs SET build_time=").WithArgs(testBuildTime, "commit-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, syncer.Sync(t.Context(), testBuildTime, "commit-1"))
@@ -107,12 +131,13 @@ func TestSyncReplacesCodeDefinitionsAndPreservesManualRows(t *testing.T) {
 
 func TestSyncRemovedCodeDefinitions(t *testing.T) {
 	t.Parallel()
-	registry, err := pbac.NewRegistry(nil)
+	registry, err := resourceaction.NewRegistry(nil)
 	require.NoError(t, err)
 	syncer, mock := testSyncer(t, registry)
 	expectStart(mock, "", "")
 	mock.ExpectExec("UPDATE authorization_resource_actions SET status='disabled' WHERE source='code'").WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec("UPDATE authorization_resources SET status='disabled' WHERE source='code'").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}).AddRow("legacy-permissions"))
 	mock.ExpectExec("UPDATE authorization_catalog_syncs SET build_time=").WithArgs(testBuildTime, "commit-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, syncer.Sync(t.Context(), testBuildTime, "commit-1"))

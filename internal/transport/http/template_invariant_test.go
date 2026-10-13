@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 )
 
 func TestTemplateHandlerDocumentsOnlyImplementedEndpoints(t *testing.T) {
@@ -86,7 +86,7 @@ func TestEveryRegisteredBusinessPOSTRouteIsInSwagger(t *testing.T) {
 
 func TestHTTPAuthorizationDescriptorsExactlyCoverRuntimeBusinessRoutes(t *testing.T) {
 	t.Parallel()
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestHTTPAuthorizationDescriptorsExactlyCoverRuntimeBusinessRoutes(t *testin
 	}
 }
 
-func TestPrivilegedPasswordResetIsPBACProtected(t *testing.T) {
+func TestPrivilegedPasswordResetIsResourceActionProtected(t *testing.T) {
 	t.Parallel()
 	source, err := os.ReadFile("server.go")
 	if err != nil {
@@ -121,10 +121,10 @@ func TestPrivilegedPasswordResetIsPBACProtected(t *testing.T) {
 	}
 	registration := `jwt("/auth/password/reset", "identity.user", "reset-password", accesscontrol.DataPermissionNone`
 	if !strings.Contains(string(source), registration) {
-		t.Fatalf("password reset must be registered as the identity.user:reset-password PBAC operation")
+		t.Fatalf("password reset must be registered as the identity.user:reset-password ResourceAction operation")
 	}
 	if strings.Contains(string(source), `public("/auth/password/reset"`) {
-		t.Fatal("password reset must never bypass PBAC as a public route")
+		t.Fatal("password reset must never bypass ResourceAction as a public route")
 	}
 }
 

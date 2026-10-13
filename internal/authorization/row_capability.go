@@ -8,7 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 )
 
 var (
@@ -27,7 +27,7 @@ type RowCapabilityRegistry struct {
 	providers map[string]RowCapabilityProvider
 }
 
-func NewRowCapabilityRegistry(providers []RowCapabilityProvider, resources *pbac.Registry, schemas *datapermission.SchemaRegistry) (*RowCapabilityRegistry, error) {
+func NewRowCapabilityRegistry(providers []RowCapabilityProvider, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry) (*RowCapabilityRegistry, error) {
 	if resources == nil || schemas == nil {
 		return nil, ErrRowCapabilityProviderInvalid
 	}
@@ -38,7 +38,7 @@ func NewRowCapabilityRegistry(providers []RowCapabilityProvider, resources *pbac
 		}
 		resource := provider.Resource()
 		definition, ok := resources.Resource(resource)
-		if !ok || definition.Scope != pbac.ResourceScopeTenant {
+		if !ok || definition.Scope != resourceaction.ResourceScopeTenant {
 			return nil, fmt.Errorf("%w: resource %s must be registered with tenant scope", ErrRowCapabilityProviderInvalid, resource)
 		}
 		if _, ok := schemas.Get(resource); !ok {

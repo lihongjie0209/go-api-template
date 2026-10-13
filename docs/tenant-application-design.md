@@ -21,5 +21,5 @@ be reactivated only with the current optimistic version.
 | Audit | Shared transaction actor plus mandatory database audit triggers. No physical delete. |
 | Presentation | Current results contain application ID/code/name/icon/home path plus grant expiry; RFC3339 timestamps render in Asia/Shanghai. No opaque application ID is returned without its display fields. |
 | Tests | Unit validation, tenant-context rejection, SQL tenant predicate, stale versions, current filtering and mutation logging; PostgreSQL/MySQL Testcontainers lifecycle under the integration tag. |
-| Shared capability | Reuses transaction, principal, pagination, PBAC, response/error, operation/security log and presentation components. |
+| Shared capability | Reuses transaction, principal, pagination, operation authorization, response/error, operation/security log and presentation components. |
 | Dictionary | Applications remain suitable for the bounded application-selector provider; the current-principal interface is authorization-sensitive and is not a public dictionary. |

@@ -8,7 +8,7 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -31,7 +31,7 @@ func (f capabilityAuthorizerFunc) Authorize(ctx context.Context, principal platf
 }
 
 func TestCapabilityServiceEvaluatesAnyRegisteredTargetOperation(t *testing.T) {
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{
 		{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/update", Authentication: accesscontrol.AuthenticationJWT, Resource: "identity.user", Action: "update", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform resource"},
@@ -59,7 +59,7 @@ func TestCapabilityServiceEvaluatesAnyRegisteredTargetOperation(t *testing.T) {
 }
 
 func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{
 		"id": {Column: "tm.id", Type: datapermission.ValueTypeText}, "owner_id": {Column: "tm.user_id", Type: datapermission.ValueTypeText},
@@ -95,7 +95,7 @@ func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {
 }
 
 func TestCapabilityServiceRejectsProviderRowsOutsideRequestedSet(t *testing.T) {
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{
 		"id": {Column: "tm.id", Type: datapermission.ValueTypeText},
@@ -129,7 +129,7 @@ func TestCapabilityServiceRejectsProviderRowsOutsideRequestedSet(t *testing.T) {
 }
 
 func TestCapabilityServiceFailsClosedWhenDecisionIsUnavailable(t *testing.T) {
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/update", Authentication: accesscontrol.AuthenticationJWT, Resource: "identity.user", Action: "update", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform resource"}})
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ func TestCapabilityServiceFailsClosedWhenDecisionIsUnavailable(t *testing.T) {
 }
 
 func TestCapabilityServiceRejectsDuplicateRowIDs(t *testing.T) {
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	service := newCapabilityService(nil, nil, resources, nil, nil, time.Now)
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})

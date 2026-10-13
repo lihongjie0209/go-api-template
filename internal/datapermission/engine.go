@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 )
 
 var ErrSnapshotUnavailable = errors.New("data permission: snapshot unavailable")
@@ -19,11 +19,11 @@ type snapshot struct {
 
 type Engine struct {
 	schemas   *SchemaRegistry
-	resources *pbac.Registry
+	resources *resourceaction.Registry
 	snapshot  atomic.Pointer[snapshot]
 }
 
-func NewEngine(schemas *SchemaRegistry, resources *pbac.Registry, policies []Policy) (*Engine, error) {
+func NewEngine(schemas *SchemaRegistry, resources *resourceaction.Registry, policies []Policy) (*Engine, error) {
 	engine := &Engine{schemas: schemas, resources: resources}
 	if err := engine.Replace(policies); err != nil {
 		return nil, err
@@ -31,7 +31,7 @@ func NewEngine(schemas *SchemaRegistry, resources *pbac.Registry, policies []Pol
 	return engine, nil
 }
 
-func NewRuntimeEngine(schemas *SchemaRegistry, resources *pbac.Registry) (*Engine, error) {
+func NewRuntimeEngine(schemas *SchemaRegistry, resources *resourceaction.Registry) (*Engine, error) {
 	return NewEngine(schemas, resources, nil)
 }
 
@@ -73,7 +73,7 @@ func (e *Engine) Policies() ([]Policy, error) {
 
 // CompileSQL matches policies and produces the fixed allow-union minus
 // deny-union SQL scope for one already operation-authorized request.
-func (e *Engine) CompileSQL(ctx context.Context, resource, action string, subject pbac.Subject, attributes SubjectAttributes) (SQLPredicate, error) {
+func (e *Engine) CompileSQL(ctx context.Context, resource, action string, subject resourceaction.Subject, attributes SubjectAttributes) (SQLPredicate, error) {
 	if err := ctx.Err(); err != nil {
 		return SQLPredicate{}, err
 	}
@@ -94,14 +94,14 @@ func (e *Engine) CompileSQL(ctx context.Context, resource, action string, subjec
 // EvaluateObject applies the same published policy snapshot to one trusted,
 // server-constructed object before it is inserted. A create has no old row, so
 // the constructed object is used for both current and proposed predicates.
-func (e *Engine) EvaluateObject(ctx context.Context, resource, action string, subject pbac.Subject, subjectAttributes SubjectAttributes, resourceAttributes ResourceAttributes) (bool, error) {
+func (e *Engine) EvaluateObject(ctx context.Context, resource, action string, subject resourceaction.Subject, subjectAttributes SubjectAttributes, resourceAttributes ResourceAttributes) (bool, error) {
 	return e.EvaluateTransition(ctx, resource, action, subject, subjectAttributes, resourceAttributes, resourceAttributes)
 }
 
 // EvaluateCurrent evaluates only the persisted-row predicate. Proposed-state
 // predicates are intentionally ignored because a generic row capability has no
 // validated target state; the mutation endpoint must evaluate the transition.
-func (e *Engine) EvaluateCurrent(ctx context.Context, resource, action string, subject pbac.Subject, subjectAttributes SubjectAttributes, resourceAttributes ResourceAttributes) (bool, error) {
+func (e *Engine) EvaluateCurrent(ctx context.Context, resource, action string, subject resourceaction.Subject, subjectAttributes SubjectAttributes, resourceAttributes ResourceAttributes) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -122,7 +122,7 @@ func (e *Engine) EvaluateCurrent(ctx context.Context, resource, action string, s
 // EvaluateTransition applies current-row and proposed-object predicates to a
 // server-constructed state transition after the current row was selected under
 // the SQL data scope.
-func (e *Engine) EvaluateTransition(ctx context.Context, resource, action string, subject pbac.Subject, subjectAttributes SubjectAttributes, resourceAttributes, proposedAttributes ResourceAttributes) (bool, error) {
+func (e *Engine) EvaluateTransition(ctx context.Context, resource, action string, subject resourceaction.Subject, subjectAttributes SubjectAttributes, resourceAttributes, proposedAttributes ResourceAttributes) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -140,7 +140,7 @@ func (e *Engine) EvaluateTransition(ctx context.Context, resource, action string
 	return NewEvaluator(schema).EvaluateTransition(matched, subjectAttributes, resourceAttributes, proposedAttributes)
 }
 
-func (e *Engine) matchedScopes(resource, action string, subject pbac.Subject) ([]PolicyScope, error) {
+func (e *Engine) matchedScopes(resource, action string, subject resourceaction.Subject) ([]PolicyScope, error) {
 	if e == nil || e.schemas == nil || e.resources == nil {
 		return nil, ErrSnapshotUnavailable
 	}
@@ -153,7 +153,7 @@ func (e *Engine) matchedScopes(resource, action string, subject pbac.Subject) ([
 		if policy.Policy.Scope.Type == PolicyScopeTenant && policy.Policy.Scope.TenantID != subject.TenantID {
 			continue
 		}
-		if !pbac.MatchSubject(policy.Policy.Spec.Subject, subject) {
+		if !resourceaction.MatchSubject(policy.Policy.Spec.Subject, subject) {
 			continue
 		}
 		matched = append(matched, PolicyScope{

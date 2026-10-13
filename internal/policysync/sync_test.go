@@ -30,7 +30,7 @@ func TestPollingRecoversLostNotification(t *testing.T) {
 	var refreshes atomic.Int64
 	var revisionMu sync.Mutex
 	revision := "revision-1"
-	syncer := New(nil, "", "pbac", 10*time.Millisecond, time.Second, func(context.Context) (string, error) {
+	syncer := New(nil, "", "data_permission", 10*time.Millisecond, time.Second, func(context.Context) (string, error) {
 		revisionMu.Lock()
 		defer revisionMu.Unlock()
 		return revision, nil
@@ -64,7 +64,7 @@ func TestChangedRefreshesAndPublishesHint(t *testing.T) {
 	require.NoError(t, err)
 
 	var refreshes atomic.Int64
-	syncer := New(client, "policies", "pbac", time.Second, time.Second, func(context.Context) (string, error) {
+	syncer := New(client, "policies", "data_permission", time.Second, time.Second, func(context.Context) (string, error) {
 		return "revision-1", nil
 	}, func(context.Context) error {
 		refreshes.Add(1)
@@ -83,7 +83,7 @@ func TestChangedDoesNotFailCommittedMutationWhenRedisIsUnavailable(t *testing.T)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr(), DialTimeout: time.Millisecond, ReadTimeout: time.Millisecond, WriteTimeout: time.Millisecond, MaxRetries: -1})
 	t.Cleanup(func() { _ = client.Close() })
 	server.Close()
-	syncer := New(client, "policies", "pbac", time.Second, 50*time.Millisecond, func(context.Context) (string, error) {
+	syncer := New(client, "policies", "data_permission", time.Second, 50*time.Millisecond, func(context.Context) (string, error) {
 		return "revision-1", nil
 	}, func(context.Context) error { return nil }, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	require.NoError(t, syncer.Changed(t.Context()))
@@ -95,13 +95,13 @@ func TestChangedObservesRefreshAndPublish(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	metrics := &metricsStub{}
-	syncer := New(client, "policies", "pbac", time.Second, time.Second, func(context.Context) (string, error) {
+	syncer := New(client, "policies", "data_permission", time.Second, time.Second, func(context.Context) (string, error) {
 		return "revision-1", nil
 	}, func(context.Context) error { return nil }, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics)
 	require.NoError(t, syncer.Changed(t.Context()))
 	metrics.mu.Lock()
 	defer metrics.mu.Unlock()
-	require.ElementsMatch(t, []string{"policy_sync:pbac:refresh:success", "policy_sync:pbac:publish:success"}, metrics.entries)
+	require.ElementsMatch(t, []string{"policy_sync:data_permission:refresh:success", "policy_sync:data_permission:publish:success"}, metrics.entries)
 }
 
 func TestNotificationConvergesAnotherInstance(t *testing.T) {
@@ -119,11 +119,11 @@ func TestNotificationConvergesAnotherInstance(t *testing.T) {
 	revision := func(context.Context) (string, error) {
 		return databaseRevision.Load().(string), nil
 	}
-	publisher := New(client, "policies", "pbac", time.Hour, time.Second, revision, func(context.Context) error {
+	publisher := New(client, "policies", "data_permission", time.Hour, time.Second, revision, func(context.Context) error {
 		publisherSnapshot.Store(databaseRevision.Load().(string))
 		return nil
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
-	subscriber := New(client, "policies", "pbac", time.Hour, time.Second, revision, func(context.Context) error {
+	subscriber := New(client, "policies", "data_permission", time.Hour, time.Second, revision, func(context.Context) error {
 		subscriberSnapshot.Store(databaseRevision.Load().(string))
 		return nil
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)

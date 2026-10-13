@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSimulatorReturnsParameterizedPreviewWithoutValues(t *testing.T) {
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.ResourceDefinitions{{Key: "tenant.member", Name: "member", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "update", Name: "update"}}}})
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.ResourceDefinitions{{Key: "tenant.member", Name: "member", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "update", Name: "update"}}}})
 	require.NoError(t, err)
 	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}, "status": {Column: "tm.status", Type: ValueTypeText}})
 	require.NoError(t, err)
@@ -19,9 +19,9 @@ func TestSimulatorReturnsParameterizedPreviewWithoutValues(t *testing.T) {
 	require.NoError(t, err)
 	authenticated := true
 	result, err := NewSimulator(schemas, resources, runtime).Simulate(t.Context(), SimulationInput{
-		Policy:  Policy{APIVersion: PolicyAPIVersion, Kind: PolicyKind, Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"}, Condition: "resource.owner_id == subject.id", ProposedCondition: `proposed.status == "active"`, Effect: EffectAllow}},
+		Policy:  Policy{APIVersion: PolicyAPIVersion, Kind: PolicyKind, Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"}, Condition: "resource.owner_id == subject.id", ProposedCondition: `proposed.status == "active"`, Effect: EffectAllow}},
 		Action:  "update",
-		Subject: pbac.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"}, Resource: pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"}, SubjectAttributes: SubjectAttributes{"id": "user-1"},
+		Subject: resourceaction.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"}, Resource: resourceaction.Resource{Type: "tenant.member", TenantID: "tenant-1"}, SubjectAttributes: SubjectAttributes{"id": "user-1"},
 		ResourceAttributes: ResourceAttributes{"owner_id": "user-1", "status": "active"}, ProposedAttributes: ResourceAttributes{"owner_id": "user-1", "status": "disabled"},
 	})
 	require.NoError(t, err)
@@ -45,8 +45,8 @@ func TestSimulatorCombinesCandidateWithActiveDataPolicies(t *testing.T) {
 
 	result, err := simulator.Simulate(t.Context(), SimulationInput{
 		Policy: candidate, Action: "update",
-		Subject:           pbac.Subject{ID: "user-1", Authenticated: authenticated, TenantID: "tenant-1"},
-		Resource:          pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"},
+		Subject:           resourceaction.Subject{ID: "user-1", Authenticated: authenticated, TenantID: "tenant-1"},
+		Resource:          resourceaction.Resource{Type: "tenant.member", TenantID: "tenant-1"},
 		SubjectAttributes: SubjectAttributes{"id": "user-1"}, ResourceAttributes: ResourceAttributes{"owner_id": "user-1"},
 	})
 	require.NoError(t, err)
@@ -62,8 +62,8 @@ func TestSimulatorReportsUnchangedForIdenticalActiveDataPolicy(t *testing.T) {
 
 	result, err := simulator.Simulate(t.Context(), SimulationInput{
 		Policy: policy, Action: "update",
-		Subject:           pbac.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
-		Resource:          pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"},
+		Subject:           resourceaction.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
+		Resource:          resourceaction.Resource{Type: "tenant.member", TenantID: "tenant-1"},
 		SubjectAttributes: SubjectAttributes{"id": "user-1"}, ResourceAttributes: ResourceAttributes{"owner_id": "user-1"},
 	})
 	require.NoError(t, err)
@@ -90,17 +90,17 @@ func TestSimulatorRejectsTargetOutsideCandidatePolicy(t *testing.T) {
 	tests := []struct {
 		name     string
 		action   string
-		resource pbac.Resource
+		resource resourceaction.Resource
 	}{
-		{name: "action mismatch", action: "read", resource: pbac.Resource{Type: "tenant.member", TenantID: "tenant-1"}},
-		{name: "resource mismatch", action: "update", resource: pbac.Resource{Type: "tenant.department", TenantID: "tenant-1"}},
-		{name: "resource tenant mismatch", action: "update", resource: pbac.Resource{Type: "tenant.member", TenantID: "tenant-2"}},
+		{name: "action mismatch", action: "read", resource: resourceaction.Resource{Type: "tenant.member", TenantID: "tenant-1"}},
+		{name: "resource mismatch", action: "update", resource: resourceaction.Resource{Type: "tenant.department", TenantID: "tenant-1"}},
+		{name: "resource tenant mismatch", action: "update", resource: resourceaction.Resource{Type: "tenant.member", TenantID: "tenant-2"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := simulator.Simulate(t.Context(), SimulationInput{
 				Policy: policy, Action: test.action,
-				Subject:  pbac.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
+				Subject:  resourceaction.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
 				Resource: test.resource, SubjectAttributes: SubjectAttributes{"id": "user-1"},
 				ResourceAttributes: ResourceAttributes{"owner_id": "user-1"},
 			})
@@ -119,9 +119,9 @@ func TestSimulatorReturnsCanceledContext(t *testing.T) {
 
 func newDataPermissionSimulator(t *testing.T) (*Simulator, Policy) {
 	t.Helper()
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.ResourceDefinitions{
-		{Key: "tenant.member", Name: "member", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "update", Name: "update"}, {Key: "read", Name: "read"}}},
-		{Key: "tenant.department", Name: "department", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "update", Name: "update"}}},
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.ResourceDefinitions{
+		{Key: "tenant.member", Name: "member", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "update", Name: "update"}, {Key: "read", Name: "read"}}},
+		{Key: "tenant.department", Name: "department", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "update", Name: "update"}}},
 	})
 	require.NoError(t, err)
 	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
@@ -131,6 +131,6 @@ func newDataPermissionSimulator(t *testing.T) (*Simulator, Policy) {
 	runtime, err := NewRuntimeEngine(schemas, resources)
 	require.NoError(t, err)
 	authenticated := true
-	policy := Policy{APIVersion: PolicyAPIVersion, Kind: PolicyKind, Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"}, Condition: "resource.owner_id == subject.id", Effect: EffectAllow}}
+	policy := Policy{APIVersion: PolicyAPIVersion, Kind: PolicyKind, Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"}, Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"}, Spec: PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"}, Condition: "resource.owner_id == subject.id", Effect: EffectAllow}}
 	return NewSimulator(schemas, resources, runtime), policy
 }

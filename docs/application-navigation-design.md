@@ -9,7 +9,7 @@
 - Directories organize children and never carry a component or authorization
   target.
 - Menus are leaves. They carry a frontend route/component and may bind exactly
-  one canonical PBAC `resource + action` pair. Resource/action values are
+  one canonical `resource + action` pair. Resource/action values are
   validated against the code-owned registry; HTTP paths are not authorization
   identities.
 - Parent and child must belong to the same application. Cycles, missing parents,
@@ -24,13 +24,13 @@
 | Authorization | Platform `application:<action>`; session context uses tenant-scoped `application.current:read/switch` and SQL-validates the exact user, session, tenant, membership, application and active grant | Platform `navigation:<action>`; `/me/navigations` uses tenant `navigation.current:read`, then batch-evaluates each menu Resource/Action |
 | Operation log | Record create/update/delete and successful/failed application context switches | Record create/update/delete and move |
 | Security log | Application context switching records the independent `application_context_switch` event with tenant/session/IP/UA request context; public dictionary lookup is query-only | None; navigation metadata does not grant authority |
-| Cache | None; management reads are not hot | `/me/navigations` caches only the application-scoped active/visible source records in the shared Redis Store for `navigation.cache_ttl` (default 5m). Every request still validates active membership, tenant grant validity, and application status in SQL, derives the cache key from the authoritative navigation version sum/count, and re-evaluates PBAC for the current principal. Old revision keys become unreachable and expire; cache failure falls back to SQL. Final principal decisions are never cached. |
+| Cache | None; management reads are not hot | `/me/navigations` caches only the application-scoped active/visible source records in the shared Redis Store for `navigation.cache_ttl` (default 5m). Every request still validates active membership, tenant grant validity, and application status in SQL, derives the cache key from the authoritative navigation version sum/count, and re-evaluates operation grants for the current principal. Old revision keys become unreachable and expire; cache failure falls back to SQL. Final principal decisions are never cached. |
 | Distributed lock | None; code uniqueness and optimistic version are authoritative | None; serializable transaction, FK checks, cycle validation, and optimistic version protect mutations |
 | Optimistic lock | Update/delete require version; changing an existing session application requires its current context version | Update/delete/move require version |
 | Audit | Shared transaction actor and database audit triggers; session application context is application-owned and does not modify the identity module's session table | Shared transaction actor and database audit triggers |
 | Presentation | RFC3339 +08 timestamps and actor display names | Same; Resource/Action are semantic display fields rather than opaque IDs |
 | Tests | Validation, filtering, not-found, conflict, cancellation; Testcontainers repository coverage | Type/target matrix, parent/application/cycle/leaf rules, stable tree order; Testcontainers repository coverage |
-| Shared capability | Shared pagination, response/errors, stable ID, operation log | Shared PBAC registry, tree SDK, stable ID, response/errors, operation log |
+| Shared capability | Shared pagination, response/errors, stable ID, operation log | Shared Resource/Action registry, tree SDK, stable ID, response/errors, operation log |
 | Dictionary | `platform.application` is an in-process bounded enum provider for public display metadata (`id/code/name/icon/home_path/status`). It conveys no tenant grant; entry and navigation still require `/me/applications` plus authorization checks. | Unsuitable: navigation is structural frontend configuration, not a business dictionary |
 
 Application and navigation are platform-scoped configuration. Tenant grants are
@@ -39,5 +39,5 @@ association documented in `tenant-application-design.md`; neither platform
 table carries a nullable tenant column.
 
 Migration `000031` retires the legacy global `menus` table. The old menu HTTP,
-DI, configuration, and PBAC registrations are removed so navigation has one
+DI, configuration, and legacy menu authorization registrations are removed so navigation has one
 authoritative model.

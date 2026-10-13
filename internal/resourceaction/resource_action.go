@@ -1,4 +1,4 @@
-package pbac
+package resourceaction
 
 import (
 	"errors"
@@ -14,11 +14,11 @@ const (
 )
 
 var (
-	ErrInvalidResourceAction = errors.New("pbac: invalid resource action")
-	ErrDuplicateResource     = errors.New("pbac: duplicate resource")
-	ErrDuplicateAction       = errors.New("pbac: duplicate action")
-	ErrUnknownResource       = errors.New("pbac: unknown resource")
-	ErrUnknownAction         = errors.New("pbac: unknown action")
+	ErrInvalidResourceAction = errors.New("resourceaction: invalid resource action")
+	ErrDuplicateResource     = errors.New("resourceaction: duplicate resource")
+	ErrDuplicateAction       = errors.New("resourceaction: duplicate action")
+	ErrUnknownResource       = errors.New("resourceaction: unknown resource")
+	ErrUnknownAction         = errors.New("resourceaction: unknown action")
 
 	resourceKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$`)
 	actionKeyPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -210,6 +210,10 @@ func validResourceKey(value string) bool {
 	return len(value) > 0 && len(value) <= MaxResourceKeyLength && resourceKeyPattern.MatchString(value)
 }
 
+func ValidResourceKey(value string) bool { return validResourceKey(value) }
+
 func validActionKey(value string) bool {
 	return len(value) > 0 && len(value) <= MaxActionKeyLength && actionKeyPattern.MatchString(value)
 }
+
+func ValidActionKey(value string) bool { return validActionKey(value) }

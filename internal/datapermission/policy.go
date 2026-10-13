@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -51,7 +51,7 @@ type PolicyBoundary struct {
 }
 
 type PolicySpec struct {
-	Subject           pbac.SubjectMatcher `json:"subject" yaml:"subject"`
+	Subject           resourceaction.SubjectMatcher `json:"subject" yaml:"subject"`
 	Resource          string              `json:"resource" yaml:"resource"`
 	Actions           []string            `json:"actions" yaml:"actions"`
 	Condition         string              `json:"condition,omitempty" yaml:"condition,omitempty"`
@@ -102,7 +102,7 @@ func (p *Policy) normalize() {
 	for i := range p.Spec.Actions {
 		p.Spec.Actions[i] = strings.TrimSpace(p.Spec.Actions[i])
 	}
-	pbac.NormalizeSubjectMatcher(&p.Spec.Subject)
+	resourceaction.NormalizeSubjectMatcher(&p.Spec.Subject)
 }
 
 func clonePolicy(policy Policy) Policy {
@@ -119,7 +119,7 @@ func clonePolicy(policy Policy) Policy {
 	return policy
 }
 
-func (p Policy) Compile(schemas *SchemaRegistry, resources *pbac.Registry) (CompiledPolicy, error) {
+func (p Policy) Compile(schemas *SchemaRegistry, resources *resourceaction.Registry) (CompiledPolicy, error) {
 	if p.APIVersion != PolicyAPIVersion || p.Kind != PolicyKind || !policyCode.MatchString(p.Metadata.Code) || strings.TrimSpace(p.Metadata.Name) == "" {
 		return CompiledPolicy{}, ErrInvalidPolicy
 	}
@@ -129,7 +129,7 @@ func (p Policy) Compile(schemas *SchemaRegistry, resources *pbac.Registry) (Comp
 	if p.Scope.Type != PolicyScopeGlobal && p.Scope.Type != PolicyScopeTenant || (p.Spec.Effect != EffectAllow && p.Spec.Effect != EffectDeny) || len(p.Spec.Actions) == 0 || len(p.Spec.Actions) > 64 {
 		return CompiledPolicy{}, ErrInvalidPolicy
 	}
-	if err := pbac.ValidateSubjectMatcher(p.Spec.Subject); err != nil {
+	if err := resourceaction.ValidateSubjectMatcher(p.Spec.Subject); err != nil {
 		return CompiledPolicy{}, fmt.Errorf("%w: subject: %v", ErrInvalidPolicy, err)
 	}
 	schema, ok := schemas.Get(p.Spec.Resource)
@@ -143,7 +143,7 @@ func (p Policy) Compile(schemas *SchemaRegistry, resources *pbac.Registry) (Comp
 	}
 	for _, action := range p.Spec.Actions {
 		resource, _, err := resources.Resolve(p.Spec.Resource, action)
-		if err != nil || p.Scope.Type == PolicyScopeTenant && resource.Scope != pbac.ResourceScopeTenant {
+		if err != nil || p.Scope.Type == PolicyScopeTenant && resource.Scope != resourceaction.ResourceScopeTenant {
 			return CompiledPolicy{}, fmt.Errorf("%w: resource action", ErrInvalidPolicy)
 		}
 		if p.Spec.ProposedCondition != "" && action != "create" && action != "add" && action != "update" {

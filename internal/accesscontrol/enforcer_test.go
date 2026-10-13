@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -18,7 +18,7 @@ func (f authorizerFunc) Authorize(ctx context.Context, principal platformprincip
 }
 
 func TestEnforcerAuthorizesDeclaredOperation(t *testing.T) {
-	resources, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "tenant.member", Name: "member", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "read"}}}})
+	resources, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "tenant.member", Name: "member", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "read"}}}})
 	require.NoError(t, err)
 	registry, err := NewEndpointRegistry(resources, []Endpoint{{Transport: TransportHTTP, Operation: "POST /members/get", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "read", DataPermission: DataPermissionRequired}})
 	require.NoError(t, err)
@@ -36,11 +36,11 @@ func TestEnforcerAuthorizesDeclaredOperation(t *testing.T) {
 	endpoint, err := enforcer.Authorize(ctx, TransportHTTP, "POST /members/get")
 	require.NoError(t, err)
 	require.True(t, called)
-	require.Equal(t, pbac.ResourceScopeTenant, endpoint.Scope)
+	require.Equal(t, resourceaction.ResourceScopeTenant, endpoint.Scope)
 }
 
 func TestEnforcerMapsPrincipalResourceScope(t *testing.T) {
-	resources, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "identity.session", Name: "session", Scope: pbac.ResourceScopePrincipal, Actions: []pbac.ActionDefinition{{Key: "list", Name: "list"}}}})
+	resources, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "identity.session", Name: "session", Scope: resourceaction.ResourceScopePrincipal, Actions: []resourceaction.ActionDefinition{{Key: "list", Name: "list"}}}})
 	require.NoError(t, err)
 	registry, err := NewEndpointRegistry(resources, []Endpoint{{Transport: TransportHTTP, Operation: "POST /sessions/page", Authentication: AuthenticationJWT, Resource: "identity.session", Action: "list", DataPermission: DataPermissionNone, DataPermissionReason: "service enforces subject ownership"}})
 	require.NoError(t, err)
@@ -51,11 +51,11 @@ func TestEnforcerMapsPrincipalResourceScope(t *testing.T) {
 	ctx := WithCredentialScheme(platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "u1", Type: platformprincipal.TypeUser}), CredentialSchemeBearer)
 	endpoint, err := enforcer.Authorize(ctx, TransportHTTP, "POST /sessions/page")
 	require.NoError(t, err)
-	require.Equal(t, pbac.ResourceScopePrincipal, endpoint.Scope)
+	require.Equal(t, resourceaction.ResourceScopePrincipal, endpoint.Scope)
 }
 
 func TestEnforcerFailsClosed(t *testing.T) {
-	resources, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "identity.user", Name: "user", Scope: pbac.ResourceScopePlatform, Actions: []pbac.ActionDefinition{{Key: "read", Name: "read"}}}})
+	resources, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "identity.user", Name: "user", Scope: resourceaction.ResourceScopePlatform, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "read"}}}})
 	require.NoError(t, err)
 	registry, err := NewEndpointRegistry(resources, []Endpoint{{Transport: TransportGRPC, Operation: "/identity.v1.IdentityService/GetUser", Authentication: AuthenticationJWT, Resource: "identity.user", Action: "read", DataPermission: DataPermissionRequired}})
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestEnforcerFailsClosed(t *testing.T) {
 }
 
 func TestEnforcerAllowsOnlyExplicitPublicOperation(t *testing.T) {
-	resources, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "identity.user", Name: "user", Scope: pbac.ResourceScopePlatform, Actions: []pbac.ActionDefinition{{Key: "read", Name: "read"}}}})
+	resources, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "identity.user", Name: "user", Scope: resourceaction.ResourceScopePlatform, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "read"}}}})
 	require.NoError(t, err)
 	registry, err := NewEndpointRegistry(resources, []Endpoint{{Transport: TransportHTTP, Operation: "POST /version", Authentication: AuthenticationPublic, DataPermission: DataPermissionNone}})
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestEnforcerAllowsOnlyExplicitPublicOperation(t *testing.T) {
 }
 
 func TestEnforcerRequiresDeclaredCredentialScheme(t *testing.T) {
-	resources, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "callback", Name: "callback", Scope: pbac.ResourceScopePlatform, Actions: []pbac.ActionDefinition{{Key: "invoke", Name: "invoke"}}}})
+	resources, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "callback", Name: "callback", Scope: resourceaction.ResourceScopePlatform, Actions: []resourceaction.ActionDefinition{{Key: "invoke", Name: "invoke"}}}})
 	require.NoError(t, err)
 	for _, test := range []struct {
 		name    string

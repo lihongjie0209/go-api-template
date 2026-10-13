@@ -15,6 +15,6 @@
 | Audit | No writes. Department, link and membership logical-delete predicates are applied; every query requires the principal tenant ID. |
 | Presentation | Related membership/user IDs always include username and display name. Joined time is returned in the platform timezone using RFC3339 JSON encoding. |
 | Tests | Invalid ID, missing/denied department, tenant isolation, logical-delete filters, bounded result, inactive-member visibility, ordering and database errors. |
-| Shared capability | Reuses principal, PBAC descriptor, data-permission compiler, response envelope and presentation timezone. |
+| Shared capability | Reuses principal, Resource/Action descriptor, data-permission compiler, response envelope and presentation timezone. |
 | Dictionary provider | Not exposed: department membership is sensitive, transactional and tenant-scoped. |
 

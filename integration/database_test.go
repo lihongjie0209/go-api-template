@@ -35,9 +35,9 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/resourcecatalog"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
@@ -146,14 +146,14 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testIdentityUserLifecycle(t, ctx, db)
 			testServiceAccountLifecycle(t, ctx, db)
 			testLogQueryPresentation(t, ctx, db)
-			permissionID := testPermissionLifecycle(t, ctx, db)
 			testResourceCatalogLifecycle(t, ctx, db)
+			permissionID := testPermissionLifecycle(t, ctx, db)
+			testManagedAuthorizationLifecycle(t, ctx, db)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testApplicationNavigationLifecycle(t, ctx, db)
 			testPlatformConfigLifecycle(t, ctx, db)
 			testScheduledJobLifecycle(t, ctx, db)
 			testDictionaryLifecycle(t, ctx, db)
-			testPBACLifecycle(t, ctx, db)
 			testDataPermissionLifecycle(t, ctx, db)
 			assertFileQueryIndexes(t, ctx, db, databaseType)
 			testFileLifecycle(t, ctx, db)
@@ -183,7 +183,7 @@ func testResourceCatalogLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB
 	if err != nil {
 		t.Fatalf("insert manual catalog records: %v", err)
 	}
-	first, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "integration.catalog", Name: "Catalog", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}}})
+	first, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "integration.catalog", Name: "Catalog", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "Read"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func testResourceCatalogLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB
 	if err := db.GetContext(ctx, &version, db.Rebind(`SELECT version FROM authorization_resources WHERE resource_key=?`), "integration.catalog"); err != nil || version != 1 {
 		t.Fatalf("repeat sync must preserve audit version: version=%d err=%v", version, err)
 	}
-	second, err := pbac.NewRegistry([]pbac.ResourceDefinition{{Key: "integration.catalog", Name: "Updated catalog", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "update", Name: "Update"}}}})
+	second, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{Key: "integration.catalog", Name: "Updated catalog", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "update", Name: "Update"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func testResourceCatalogLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB
 	if err := resourcecatalog.New(db, transactor, first).Sync(ctx, firstBuild, "catalog-1"); !errors.Is(err, resourcecatalog.ErrStaleBuild) {
 		t.Fatalf("old build unexpectedly replaced the newer catalog: %v", err)
 	}
-	empty, err := pbac.NewRegistry(nil)
+	empty, err := resourceaction.NewRegistry(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,90 +297,6 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 }
 
-func testPBACLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
-	t.Helper()
-	definitions := pbac.PlatformResourceDefinitions()
-	definitions = append(definitions, pbac.ResourceDefinition{
-		Key: "integration.member", Name: "Integration member", Scope: pbac.ResourceScopeTenant,
-		Actions: []pbac.ActionDefinition{{Key: "update", Name: "Update"}},
-	})
-	registry, err := pbac.NewRegistry(definitions)
-	if err != nil {
-		t.Fatalf("create pbac registry: %v", err)
-	}
-	service := pbac.NewLifecycleService(
-		pbac.NewRepository(db), appdb.NewTransactor(db), registry, nil, nil, nil,
-	)
-	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{
-		ID: "pbac-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-a",
-	})
-	authenticated := true
-	document := pbac.Policy{
-		APIVersion: pbac.APIVersionV1,
-		Kind:       pbac.KindPolicy,
-		Metadata: pbac.PolicyMetadata{
-			Code: "integration-member-update", Name: "Integration member update",
-		},
-		Scope: pbac.PolicyScope{Type: pbac.PolicyScopeTenant, TenantID: "tenant-a"},
-		Spec: pbac.PolicySpec{
-			Subject:  pbac.SubjectMatcher{Authenticated: &authenticated},
-			Resource: pbac.ResourceMatcher{Type: "integration.member"},
-			Actions:  []string{"update"},
-			When:     `environment.profile == "integration"`,
-			Effect:   pbac.EffectAllow,
-		},
-	}
-	created, err := service.Create(actorCtx, pbac.CreatePolicyInput{Document: document})
-	if err != nil {
-		t.Fatalf("create pbac policy: %v", err)
-	}
-	if created.Policy.Version != 1 || created.Version.Status != pbac.VersionStatusDraft {
-		t.Fatalf("created pbac policy=%+v version=%+v", created.Policy, created.Version)
-	}
-	published, err := service.Publish(actorCtx, pbac.PublishInput{
-		PolicyID: created.Policy.ID, VersionNumber: 1, ExpectedPolicyVersion: created.Policy.Version,
-	})
-	if err != nil {
-		t.Fatalf("publish pbac policy: %v", err)
-	}
-	if published.Policy.PublishedVersionNumber == nil || *published.Policy.PublishedVersionNumber != 1 ||
-		published.Version.Status != pbac.VersionStatusPublished {
-		t.Fatalf("published pbac policy=%+v version=%+v", published.Policy, published.Version)
-	}
-	engine, err := pbac.NewEngine(registry, nil)
-	if err != nil {
-		t.Fatalf("create pbac engine: %v", err)
-	}
-	if err := pbac.NewRuntimeLoader(pbac.NewRepository(db), engine).Refresh(ctx); err != nil {
-		t.Fatalf("refresh pbac runtime: %v", err)
-	}
-	decision, err := engine.Evaluate(ctx, pbac.EvaluationRequest{
-		Subject:  pbac.Subject{Authenticated: true, TenantID: "tenant-a"},
-		Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
-		Action:   "update",
-		Context:  pbac.OperationContext{Profile: "integration"},
-	})
-	if err != nil || decision.Effect != pbac.DecisionEffectAllow {
-		t.Fatalf("pbac decision=%+v err=%v", decision, err)
-	}
-	denied, err := engine.Evaluate(ctx, pbac.EvaluationRequest{
-		Subject:  pbac.Subject{Authenticated: true, TenantID: "tenant-b"},
-		Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
-		Action:   "update",
-		Context:  pbac.OperationContext{Profile: "integration"},
-	})
-	if err != nil || denied.Effect != pbac.DecisionEffectDeny || denied.ReasonCode != pbac.ReasonTenantMismatch {
-		t.Fatalf("cross-tenant pbac decision=%+v err=%v", denied, err)
-	}
-	outsideContext, err := engine.Evaluate(ctx, pbac.EvaluationRequest{
-		Subject: pbac.Subject{Authenticated: true, TenantID: "tenant-a"}, Resource: pbac.Resource{Type: "integration.member", TenantID: "tenant-a"},
-		Action: "update", Context: pbac.OperationContext{Profile: "production"},
-	})
-	if err != nil || outsideContext.Effect != pbac.DecisionEffectDeny || outsideContext.ReasonCode != pbac.ReasonNoMatchingPolicy {
-		t.Fatalf("context-restricted pbac decision=%+v err=%v", outsideContext, err)
-	}
-}
-
 func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{
@@ -393,7 +309,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil {
 		t.Fatalf("create data permission schema registry: %v", err)
 	}
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	if err != nil {
 		t.Fatalf("create data permission resource registry: %v", err)
 	}
@@ -410,7 +326,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-owner", Name: "Integration member owner"},
 		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: "tenant-data"},
 		Spec: datapermission.PolicySpec{
-			Subject:   pbac.SubjectMatcher{Authenticated: &authenticated},
+			Subject:   resourceaction.SubjectMatcher{Authenticated: &authenticated},
 			Resource:  "tenant.member",
 			Actions:   []string{"read", "list"},
 			Condition: "resource.owner_id == subject.id",
@@ -426,7 +342,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
 		t.Fatalf("publish data permission policy=%+v err=%v", published, err)
 	}
-	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", pbac.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
+	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || predicate.Clause != "(tm.user_id = ?)" || len(predicate.Args) != 1 || predicate.Args[0] != "member-1" {
 		t.Fatalf("compiled data permission predicate=%+v err=%v", predicate, err)
 	}
@@ -434,7 +350,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || disabled.Status != datapermission.StatusDisabled {
 		t.Fatalf("disable data permission policy=%+v err=%v", disabled, err)
 	}
-	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", pbac.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
+	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || denied.Clause != "(1 = 0)" {
 		t.Fatalf("disabled data permission predicate=%+v err=%v", denied, err)
 	}
@@ -660,9 +576,9 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 
 	cfg := config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	definitions := pbac.PlatformResourceDefinitions()
-	definitions = append(definitions, pbac.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}})
-	registry, registryErr := pbac.NewRegistryFromDefinitions(definitions)
+	definitions := resourceaction.PlatformResourceDefinitions()
+	definitions = append(definitions, resourceaction.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "Read"}}})
+	registry, registryErr := resourceaction.NewRegistryFromDefinitions(definitions)
 	if registryErr != nil {
 		t.Fatal(registryErr)
 	}
@@ -729,7 +645,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 }
 
-func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, resources *pbac.Registry, tenantID, membershipID string, visible *authorization.TenantRole) {
+func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, resources *resourceaction.Registry, tenantID, membershipID string, visible *authorization.TenantRole) {
 	t.Helper()
 	const hiddenID = "integration-hidden-role"
 	now := time.Now()
@@ -749,7 +665,7 @@ func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sq
 		APIVersion: datapermission.PolicyAPIVersion, Kind: datapermission.PolicyKind,
 		Metadata: datapermission.PolicyMetadata{Code: "integration-role-owner", Name: "Integration role owner scope"},
 		Scope:    datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
-		Spec:     datapermission.PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.role", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
+		Spec:     datapermission.PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.role", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -934,11 +850,14 @@ func (discardSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.E
 
 func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) string {
 	t.Helper()
-	definitions := pbac.PlatformResourceDefinitions()
-	definitions = append(definitions, pbac.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}})
-	resources, err := pbac.NewRegistryFromDefinitions(definitions)
+	definitions := resourceaction.PlatformResourceDefinitions()
+	definitions = append(definitions, resourceaction.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "Read"}}})
+	resources, err := resourceaction.NewRegistryFromDefinitions(definitions)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := resourcecatalog.New(db, appdb.NewTransactor(db), resources).Sync(ctx, "2026-10-13T08:03:00Z", "permission-integration"); err != nil {
+		t.Fatalf("sync permission resource catalog: %v", err)
 	}
 	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, nil, resources, slog.Default())
 	actorCtx := platformprincipal.SystemContext(ctx, "permission-integration")
@@ -958,11 +877,110 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	return leaf.ID
 }
 
+func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	actorCtx := platformprincipal.SystemContext(ctx, "authorization-integration")
+	transactor := appdb.NewTransactor(db)
+	catalog := resourcecatalog.NewService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
+	resource, err := catalog.CreateResource(actorCtx, resourcecatalog.ResourceInput{Key: "integration.manual", Name: "Manual", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, err := catalog.CreateAction(actorCtx, resourcecatalog.ActionInput{ResourceID: resource.ID, Key: "read", Name: "Read", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := catalog.PageResources(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "manual"}, Statuses: []string{"active"}})
+	if err != nil || page.Total != 1 || page.Items[0].ID != resource.ID {
+		t.Fatalf("resource page=%+v err=%v", page, err)
+	}
+	actionPage, err := catalog.PageActions(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ResourceID: resource.ID})
+	if err != nil || actionPage.Total != 1 || actionPage.Items[0].ResourceKey != "integration.manual" {
+		t.Fatalf("action page=%+v err=%v", actionPage, err)
+	}
+	action, err = catalog.UpdateAction(actorCtx, action.ID, action.Version, resourcecatalog.ActionInput{ResourceID: resource.ID, Key: "read", Name: "View", Status: "active"})
+	if err != nil || action.Version != 2 {
+		t.Fatalf("action update=%+v err=%v", action, err)
+	}
+	if err := catalog.DeleteAction(actorCtx, action.ID, action.Version); err != nil {
+		t.Fatal(err)
+	}
+	resource, err = catalog.UpdateResource(actorCtx, resource.ID, resource.Version, resourcecatalog.ResourceInput{Key: "integration.manual", Name: "Manual Updated", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
+	if err != nil || resource.Version != 2 {
+		t.Fatalf("resource update=%+v err=%v", resource, err)
+	}
+	if err := catalog.DeleteResource(actorCtx, resource.ID, resource.Version); err != nil {
+		t.Fatal(err)
+	}
+	definitions := resourceaction.PlatformResourceDefinitions()
+	registry, err := resourceaction.NewRegistryFromDefinitions(definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := permission.New(permission.NewRepository(db), transactor, discardOperationRecorder{}, discardSecurityRecorder{}, nil, registry, slog.Default())
+	grantPermission, err := permissions.Create(actorCtx, permission.Input{Key: "integration.platform.catalog.read", Name: "Read catalog", NodeType: "permission", Resource: "authorization.resource", Action: "read", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secondActionID string
+	if err := db.GetContext(ctx, &secondActionID, db.Rebind(`SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?`), "authorization.action", "read"); err != nil {
+		t.Fatal(err)
+	}
+	links, err := permissions.GetActions(actorCtx, grantPermission.ID)
+	if err != nil || len(links) != 1 {
+		t.Fatalf("permission links=%+v err=%v", links, err)
+	}
+	grantPermission, err = permissions.SetActions(actorCtx, grantPermission.ID, grantPermission.Version, []string{links[0].ID, secondActionID})
+	if err != nil || grantPermission.Version != 2 {
+		t.Fatalf("set permission links=%+v err=%v", grantPermission, err)
+	}
+	links, err = permissions.GetActions(actorCtx, grantPermission.ID)
+	if err != nil || len(links) != 2 {
+		t.Fatalf("multiple permission links=%+v err=%v", links, err)
+	}
+	users := identity.New(identity.NewRepository(db), transactor, nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default(), config.Config{User: config.User{CacheTTL: time.Minute}})
+	user, err := users.Create(actorCtx, identity.CreateInput{Username: "grant.integration", DisplayName: "Grant Test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := authorization.NewPlatformGrantService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
+	grant, err := grants.Create(actorCtx, authorization.PlatformGrantInput{PrincipalType: "user", PrincipalID: user.ID, PermissionID: grantPermission.ID})
+	if err != nil || grant.PrincipalName != "Grant Test" {
+		t.Fatalf("platform grant=%+v err=%v", grant, err)
+	}
+	principal := platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser}
+	authorizer := authorization.New(db, registry)
+	if err := authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "authorization.resource", Action: "read", Scope: platformauthz.ScopePlatform}); err != nil {
+		t.Fatalf("platform grant denied: %v", err)
+	}
+	grantPage, err := grants.Page(actorCtx, authorization.PlatformGrantPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, PrincipalID: user.ID})
+	if err != nil || grantPage.Total != 1 {
+		t.Fatalf("platform grant page=%+v err=%v", grantPage, err)
+	}
+	grant, err = grants.Update(actorCtx, grant.ID, grant.Version, authorization.PlatformGrantInput{PrincipalType: "user", PrincipalID: user.ID, PermissionID: grantPermission.ID})
+	if err != nil || grant.Version != 2 {
+		t.Fatalf("platform grant update=%+v err=%v", grant, err)
+	}
+	if err := grants.Delete(actorCtx, grant.ID, grant.Version); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "authorization.resource", Action: "read", Scope: platformauthz.ScopePlatform}); !errors.Is(err, platformauthz.ErrDenied) {
+		t.Fatalf("revoked platform grant authorized: %v", err)
+	}
+	regrant, err := grants.Create(actorCtx, authorization.PlatformGrantInput{PrincipalType: "user", PrincipalID: user.ID, PermissionID: grantPermission.ID})
+	if err != nil || regrant.ID == grant.ID {
+		t.Fatalf("regrant after logical delete=%+v err=%v", regrant, err)
+	}
+	if err := authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "authorization.resource", Action: "read", Scope: platformauthz.ScopePlatform}); err != nil {
+		t.Fatalf("regrant not effective: %v", err)
+	}
+}
+
 func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
-	definitions := pbac.PlatformResourceDefinitions()
-	definitions = append(definitions, pbac.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: pbac.ResourceScopeTenant, Actions: []pbac.ActionDefinition{{Key: "read", Name: "Read"}}})
-	resources, err := pbac.NewRegistryFromDefinitions(definitions)
+	definitions := resourceaction.PlatformResourceDefinitions()
+	definitions = append(definitions, resourceaction.ResourceDefinition{Key: "integration.permissions", Name: "Integration permissions", Scope: resourceaction.ResourceScopeTenant, Actions: []resourceaction.ActionDefinition{{Key: "read", Name: "Read"}}})
+	resources, err := resourceaction.NewRegistryFromDefinitions(definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1369,7 +1387,7 @@ func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1382,7 +1400,7 @@ func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, 
 		APIVersion: datapermission.PolicyAPIVersion, Kind: datapermission.PolicyKind,
 		Metadata: datapermission.PolicyMetadata{Code: "integration-department-owner", Name: "Integration department owner scope"},
 		Scope:    datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
-		Spec:     datapermission.PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
+		Spec:     datapermission.PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -1415,7 +1433,7 @@ func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, 
 
 func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, tenantID, ownerMembershipID string, member tenant.Member) {
 	t.Helper()
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1430,7 +1448,7 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-self", Name: "Integration member self scope"},
 		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
 		Spec: datapermission.PolicySpec{
-			Subject:   pbac.SubjectMatcher{Authenticated: &authenticated},
+			Subject:   resourceaction.SubjectMatcher{Authenticated: &authenticated},
 			Resource:  "tenant.member",
 			Actions:   []string{"read", "list", "remove"},
 			Condition: "resource.owner_id == subject.id",
@@ -1442,7 +1460,7 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-self-update", Name: "Integration active member update"},
 		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
 		Spec: datapermission.PolicySpec{
-			Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"},
+			Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"update"},
 			Condition: "resource.owner_id == subject.id", ProposedCondition: `proposed.status == "active"`, Effect: datapermission.EffectAllow,
 		},
 	}})

@@ -9,7 +9,7 @@ password.
 | --- | --- |
 | Contract | `POST /api/v1/auth/user/login` and `POST /api/v1/auth/refresh` return `must_change_password`; `POST /api/v1/auth/password/change` requires `old_password` and `new_password`. Invalid credentials use the shared authentication error mapping. |
 | Authentication | Login and refresh remain public credential exchanges. Password change and logout require the restricted JWT. |
-| Authorization | A JWT claim records the immutable password state at issue time. HTTP middleware fails closed for a restricted user token except password change, refresh, and logout. PBAC still authorizes each allowed operation. |
+| Authorization | A JWT claim records the immutable password state at issue time. HTTP middleware fails closed for a restricted user token except password change, refresh, and logout. The shared operation authorizer still checks each allowed operation. |
 | Operation log | None. Credential changes use the independent security log rather than duplicating an operation log. |
 | Security log | Administrator reset records `password_reset`; successful self-service change records `password_changed`; login, refresh, and logout keep their existing security events. |
 | Cache | None. Credential state is authoritative database data and is copied only into bounded-lifetime signed access tokens. Password reset/change revokes existing sessions. |

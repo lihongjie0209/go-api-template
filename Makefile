@@ -13,7 +13,6 @@ build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/api ./cmd/api
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/migrate ./cmd/migrate
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/outboxctl ./cmd/outboxctl
-	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/pbacctl ./cmd/pbacctl
 # microgen:template-only:start
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/microgen ./cmd/microgen
 # microgen:template-only:end

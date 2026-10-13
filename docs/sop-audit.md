@@ -5,6 +5,13 @@ This ledger applies only to the repository rooted at
 services, sibling repositories, or historical green builds does not establish
 compliance for this repository.
 
+Historical entries below record decisions at the time they were made. The
+operation-policy/PBAC entries are superseded by migration `000040` and
+[authorization-resource-grants.md](design/authorization-resource-grants.md):
+current operation authorization uses permission-to-Resource/Action links, not
+policy expressions. Historical verification statuses must not be interpreted
+as current evidence for removed components.
+
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,
 optimistic-lock, audit, presentation, observability, unit-test, integration-test

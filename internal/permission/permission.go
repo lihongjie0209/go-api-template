@@ -14,8 +14,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
@@ -68,6 +68,15 @@ type TreeInput struct {
 	Statuses  []string
 }
 
+type ActionReference struct {
+	ID           string `db:"id" json:"id"`
+	ResourceKey  string `db:"resource_key" json:"resource_key"`
+	ActionKey    string `db:"action_key" json:"action_key"`
+	ResourceName string `db:"resource_name" json:"resource_name"`
+	ActionName   string `db:"action_name" json:"action_name"`
+	Scope        string `db:"scope" json:"scope"`
+}
+
 type Repository struct{ db *sqlx.DB }
 
 func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
@@ -109,10 +118,10 @@ type Service struct {
 	security   securitylog.TransactionalRecorder
 	actors     presentation.ActorResolver
 	logger     *slog.Logger
-	resources  *pbac.Registry
+	resources  *resourceaction.Registry
 }
 
-func New(repository *Repository, transactor *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, resources *pbac.Registry, logger *slog.Logger) *Service {
+func New(repository *Repository, transactor *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, resources *resourceaction.Registry, logger *slog.Logger) *Service {
 	return &Service{repository: repository, transactor: transactor, operations: operations, security: security, actors: actors, resources: resources, logger: logger}
 }
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
@@ -121,6 +130,111 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, ErrInvalid
 	}
 	return s.get(ctx, id)
+}
+
+func (s *Service) GetActions(ctx context.Context, id string) ([]ActionReference, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrInvalid
+	}
+	if _, err := s.repository.Get(ctx, id); err != nil {
+		return nil, err
+	}
+	rows := []ActionReference{}
+	err := s.repository.db.SelectContext(ctx, &rows, s.repository.db.Rebind(`SELECT a.id,r.resource_key,a.action_key,r.name AS resource_name,a.name AS action_name,r.scope FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id JOIN authorization_resources r ON r.id=a.resource_id WHERE l.permission_id=? AND l.deleted_at IS NULL AND a.deleted_at IS NULL AND r.deleted_at IS NULL ORDER BY r.resource_key,a.action_key,a.id`), id)
+	return rows, err
+}
+
+// SetActions atomically replaces the bounded action set and increments the
+// permission version. All actions must share one scope.
+func (s *Service) SetActions(ctx context.Context, id string, version int64, actionIDs []string) (Record, error) {
+	if _, err := uuid.Parse(id); err != nil || version <= 0 || len(actionIDs) == 0 || len(actionIDs) > 100 {
+		return Record{}, ErrInvalid
+	}
+	seen := make(map[string]struct{}, len(actionIDs))
+	for _, actionID := range actionIDs {
+		if _, err := uuid.Parse(actionID); err != nil {
+			return Record{}, ErrInvalid
+		}
+		if _, ok := seen[actionID]; ok {
+			return Record{}, ErrInvalid
+		}
+		seen[actionID] = struct{}{}
+	}
+	a, err := actor(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	err = s.mutate(ctx, "permission.actions.set", id, map[string]any{"action_ids": actionIDs, "version": version}, func(tx *sqlx.Tx) error {
+		current, err := getForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if current.Version != version || current.IsSystem || current.NodeType != "permission" {
+			return ErrConflict
+		}
+		primaryScope, err := primaryActionScope(ctx, tx, current.Resource, current.Action)
+		if err != nil {
+			return err
+		}
+		query, args, err := sqlx.In(`SELECT a.id,r.scope FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE a.id IN (?) AND a.status='active' AND r.status='active' AND a.deleted_at IS NULL AND r.deleted_at IS NULL`, actionIDs)
+		if err != nil {
+			return err
+		}
+		rows := []struct {
+			ID    string `db:"id"`
+			Scope string `db:"scope"`
+		}{}
+		if err := tx.SelectContext(ctx, &rows, tx.Rebind(query), args...); err != nil {
+			return err
+		}
+		if len(rows) != len(actionIDs) {
+			return ErrInvalid
+		}
+		for _, row := range rows {
+			if row.Scope != primaryScope {
+				return ErrInvalid
+			}
+		}
+		if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND deleted_at IS NULL`), id); err != nil {
+			return err
+		}
+		for _, actionID := range actionIDs {
+			var link struct {
+				ID        string       `db:"id"`
+				DeletedAt sql.NullTime `db:"deleted_at"`
+			}
+			err := tx.GetContext(ctx, &link, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? FOR UPDATE`), id, actionID)
+			if err == nil {
+				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=?`), link.ID); err != nil {
+					return err
+				}
+				continue
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			now := time.Now()
+			if _, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO permission_resource_actions(id,permission_id,action_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,1)`), uuid.NewString(), id, actionID, now, a, now, a); err != nil {
+				return err
+			}
+		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), id, version)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return ErrConflict
+		}
+		return nil
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *Service) get(ctx context.Context, id string) (Record, error) {
@@ -302,7 +416,10 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 		}
 		q := tx.Rebind(`INSERT INTO permissions (id,parent_id,permission_key,name,node_type,resource,action,description,sort_order,status,is_system,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,false,?,?,?,?,1)`)
 		_, err := tx.ExecContext(ctx, q, id, input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, now, a)
-		return err
+		if err != nil {
+			return err
+		}
+		return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
 	})
 	if e != nil {
 		return Record{}, fmt.Errorf("create permission: %w", e)
@@ -354,7 +471,10 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		now := time.Now()
 		if current.ID == "" {
 			_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO permissions (id,parent_id,permission_key,name,node_type,resource,action,description,sort_order,status,is_system,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,true,?,?,?,?,1)`), id, input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, now, a)
-			return err
+			if err != nil {
+				return err
+			}
+			return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
 		}
 		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET parent_id=?,permission_key=?,name=?,node_type=?,resource=?,action=?,description=?,sort_order=?,status=?,is_system=true,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND is_system=true`), input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, id)
 		if err != nil {
@@ -367,7 +487,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		if rows != 1 {
 			return ErrConflict
 		}
-		return nil
+		return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
 	})
 	if err != nil {
 		return Record{}, false, err
@@ -499,6 +619,16 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		if current.IsSystem {
 			return ErrConflict
 		}
+		if current.NodeType == "permission" && (current.Resource != input.Resource || current.Action != input.Action) {
+			oldScope, err := primaryActionScope(ctx, tx, current.Resource, current.Action)
+			if err != nil {
+				return err
+			}
+			newScope, err := primaryActionScope(ctx, tx, input.Resource, input.Action)
+			if err != nil || newScope != oldScope {
+				return ErrInvalid
+			}
+		}
 		if err := s.validateTreeTx(ctx, tx, id, input.ParentID); err != nil {
 			return err
 		}
@@ -513,6 +643,12 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		}
 		if n != 1 {
 			return ErrConflict
+		}
+		if current.Resource != input.Resource || current.Action != input.Action {
+			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?) AND deleted_at IS NULL`), id, current.Resource, current.Action); err != nil {
+				return err
+			}
+			return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
 		}
 		return nil
 	})
@@ -533,9 +669,56 @@ func (s *Service) validateInput(input Input) error {
 		return ErrInvalid
 	}
 	if _, _, err := s.resources.Resolve(input.Resource, input.Action); err != nil {
-		return fmt.Errorf("%w: resource/action is not registered", ErrInvalid)
+		if s.repository == nil || s.repository.db == nil {
+			return ErrInvalid
+		}
+		var count int
+		query := s.repository.db.Rebind(`SELECT count(*) FROM authorization_resources r JOIN authorization_resource_actions a ON a.resource_id=r.id WHERE r.resource_key=? AND a.action_key=? AND r.status='active' AND a.status='active' AND r.deleted_at IS NULL AND a.deleted_at IS NULL`)
+		if queryErr := s.repository.db.Get(&count, query, input.Resource, input.Action); queryErr != nil || count == 0 {
+			return fmt.Errorf("%w: resource/action is not registered", ErrInvalid)
+		}
 	}
 	return nil
+}
+
+func syncPrimaryLink(ctx context.Context, tx *sqlx.Tx, permissionID, resource, action, actorID string) error {
+	if resource == "" || action == "" {
+		return nil
+	}
+	var actionID string
+	err := tx.GetContext(ctx, &actionID, tx.Rebind(`SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=? AND r.status='active' AND a.status='active' AND r.deleted_at IS NULL AND a.deleted_at IS NULL`), resource, action)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalid
+	}
+	if err != nil {
+		return err
+	}
+	var link struct {
+		ID        string       `db:"id"`
+		DeletedAt sql.NullTime `db:"deleted_at"`
+	}
+	err = tx.GetContext(ctx, &link, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? FOR UPDATE`), permissionID, actionID)
+	if err == nil {
+		if link.DeletedAt.Valid {
+			_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=?`), link.ID)
+		}
+		return err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	now := time.Now()
+	_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO permission_resource_actions(id,permission_id,action_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,1)`), uuid.NewString(), permissionID, actionID, now, actorID, now, actorID)
+	return err
+}
+
+func primaryActionScope(ctx context.Context, tx *sqlx.Tx, resource, action string) (string, error) {
+	var scope string
+	err := tx.GetContext(ctx, &scope, tx.Rebind(`SELECT r.scope FROM authorization_resources r JOIN authorization_resource_actions a ON a.resource_id=r.id WHERE r.resource_key=? AND a.action_key=? AND r.deleted_at IS NULL AND a.deleted_at IS NULL`), resource, action)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrInvalid
+	}
+	return scope, err
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	id = strings.TrimSpace(id)

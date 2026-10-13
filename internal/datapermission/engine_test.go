@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,13 +28,13 @@ func TestEngineMatchesAndCombinesPublishedPolicies(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	authenticated := true
 	base := Policy{
 		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
 		Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
-		Spec:  PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated, Roles: pbac.RolesMatcher{AnyOf: []string{"manager"}}}, Resource: "tenant.member", Actions: []string{"read"}, Effect: EffectAllow},
+		Spec:  PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated, Roles: resourceaction.RolesMatcher{AnyOf: []string{"manager"}}}, Resource: "tenant.member", Actions: []string{"read"}, Effect: EffectAllow},
 	}
 	allow := base
 	allow.Metadata = PolicyMetadata{Code: "manager-departments", Name: "Manager departments"}
@@ -46,7 +46,7 @@ func TestEngineMatchesAndCombinesPublishedPolicies(t *testing.T) {
 	engine, err := NewEngine(schemas, resources, []Policy{allow, deny})
 	require.NoError(t, err)
 
-	sql, err := engine.CompileSQL(t.Context(), "tenant.member", "read", pbac.Subject{ID: "u1", Type: "user", Authenticated: true, TenantID: "tenant-1", Roles: []string{"manager"}}, SubjectAttributes{"department_ids": []string{"d1", "d2"}})
+	sql, err := engine.CompileSQL(t.Context(), "tenant.member", "read", resourceaction.Subject{ID: "u1", Type: "user", Authenticated: true, TenantID: "tenant-1", Roles: []string{"manager"}}, SubjectAttributes{"department_ids": []string{"d1", "d2"}})
 	require.NoError(t, err)
 	require.Equal(t, "((tm.department_id IN (?, ?)) AND (NOT (tm.user_id = ?)))", sql.Clause)
 	require.Equal(t, []any{"d1", "d2", "blocked-user"}, sql.Args)
@@ -57,11 +57,11 @@ func TestEngineNoMatchingAllowIsFalse(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	engine, err := NewEngine(schemas, resources, nil)
 	require.NoError(t, err)
-	sql, err := engine.CompileSQL(t.Context(), "tenant.member", "list", pbac.Subject{Authenticated: true, TenantID: "tenant-1"}, nil)
+	sql, err := engine.CompileSQL(t.Context(), "tenant.member", "list", resourceaction.Subject{Authenticated: true, TenantID: "tenant-1"}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(1 = 0)", sql.Clause)
 }
@@ -71,13 +71,13 @@ func TestEngineEvaluatesProposedObjectWithDenyOverrides(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	authenticated := true
 	base := Policy{
 		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
 		Scope: PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
-		Spec:  PolicySpec{Subject: pbac.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"add"}, Effect: EffectAllow},
+		Spec:  PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"add"}, Effect: EffectAllow},
 	}
 	allow := base
 	allow.Metadata = PolicyMetadata{Code: "member-create-own", Name: "Create own member"}
@@ -88,7 +88,7 @@ func TestEngineEvaluatesProposedObjectWithDenyOverrides(t *testing.T) {
 	deny.Spec.Condition = `resource.owner_id == "blocked"`
 	engine, err := NewEngine(schemas, resources, []Policy{allow, deny})
 	require.NoError(t, err)
-	subject := pbac.Subject{ID: "user-1", Type: "user", Authenticated: true, TenantID: "tenant-1"}
+	subject := resourceaction.Subject{ID: "user-1", Type: "user", Authenticated: true, TenantID: "tenant-1"}
 	attributes := SubjectAttributes{"id": "user-1"}
 
 	allowed, err := engine.EvaluateObject(t.Context(), "tenant.member", "add", subject, attributes, ResourceAttributes{"owner_id": "user-1"})
@@ -107,7 +107,7 @@ func TestEngineEvaluatesCurrentAndProposedStateTogether(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	policy := Policy{
 		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
@@ -120,7 +120,7 @@ func TestEngineEvaluatesCurrentAndProposedStateTogether(t *testing.T) {
 	}
 	engine, err := NewEngine(schemas, resources, []Policy{policy})
 	require.NoError(t, err)
-	subject := pbac.Subject{ID: "user-1", TenantID: "tenant-1"}
+	subject := resourceaction.Subject{ID: "user-1", TenantID: "tenant-1"}
 	attributes := SubjectAttributes{"id": "user-1"}
 
 	allowed, err := engine.EvaluateTransition(t.Context(), "tenant.member", "update", subject, attributes,
@@ -142,7 +142,7 @@ func TestPolicyRejectsProposedConditionForReadAction(t *testing.T) {
 	require.NoError(t, err)
 	schemas, err := NewSchemaRegistry(schema)
 	require.NoError(t, err)
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	policy := Policy{
 		APIVersion: PolicyAPIVersion, Kind: PolicyKind,

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -54,7 +54,7 @@ type Endpoint struct {
 	Authentication AuthenticationMode `json:"authentication"`
 	Resource       string             `json:"resource,omitempty"`
 	Action         string             `json:"action,omitempty"`
-	Scope          pbac.ResourceScope `json:"scope,omitempty"`
+	Scope          resourceaction.ResourceScope `json:"scope,omitempty"`
 	DataPermission DataPermissionMode `json:"data_permission"`
 	// DataPermissionReason is mandatory for protected operations that
 	// deliberately do not use row-level data permission.
@@ -116,7 +116,7 @@ type EndpointRegistry struct {
 }
 
 // NewEndpointRegistry validates descriptors against the Resource/Action registry.
-func NewEndpointRegistry(resources *pbac.Registry, endpoints []Endpoint) (*EndpointRegistry, error) {
+func NewEndpointRegistry(resources *resourceaction.Registry, endpoints []Endpoint) (*EndpointRegistry, error) {
 	if resources == nil {
 		return nil, ErrInvalidEndpoint
 	}
@@ -206,32 +206,32 @@ func (r *EndpointRegistry) ValidateCoverage(operations []Operation) error {
 	return nil
 }
 
-func validateEndpoint(resources *pbac.Registry, endpoint Endpoint) (pbac.ResourceDefinition, error) {
+func validateEndpoint(resources *resourceaction.Registry, endpoint Endpoint) (resourceaction.ResourceDefinition, error) {
 	if !validOperation(endpoint.Transport, endpoint.Operation) || !validAuthentication(endpoint.Authentication) || !validDataPermission(endpoint.DataPermission) {
-		return pbac.ResourceDefinition{}, ErrInvalidEndpoint
+		return resourceaction.ResourceDefinition{}, ErrInvalidEndpoint
 	}
 	if endpoint.Scope != "" {
-		return pbac.ResourceDefinition{}, fmt.Errorf("%w: scope is derived from the resource", ErrInvalidEndpoint)
+		return resourceaction.ResourceDefinition{}, fmt.Errorf("%w: scope is derived from the resource", ErrInvalidEndpoint)
 	}
 	if endpoint.Authentication == AuthenticationPublic {
 		if endpoint.Resource != "" || endpoint.Action != "" || endpoint.DataPermission != DataPermissionNone || endpoint.DataPermissionReason != "" {
-			return pbac.ResourceDefinition{}, fmt.Errorf("%w: public operation cannot declare business authorization", ErrInvalidEndpoint)
+			return resourceaction.ResourceDefinition{}, fmt.Errorf("%w: public operation cannot declare business authorization", ErrInvalidEndpoint)
 		}
-		return pbac.ResourceDefinition{}, nil
+		return resourceaction.ResourceDefinition{}, nil
 	}
 	if endpoint.Resource == "" || endpoint.Action == "" {
-		return pbac.ResourceDefinition{}, fmt.Errorf("%w: protected operation requires resource and action", ErrInvalidEndpoint)
+		return resourceaction.ResourceDefinition{}, fmt.Errorf("%w: protected operation requires resource and action", ErrInvalidEndpoint)
 	}
 	definition, _, err := resources.Resolve(endpoint.Resource, endpoint.Action)
 	if err != nil {
-		return pbac.ResourceDefinition{}, err
+		return resourceaction.ResourceDefinition{}, err
 	}
 	if endpoint.DataPermission == DataPermissionNone {
 		if endpoint.DataPermissionReason == "" || endpoint.DataPermissionReason != strings.TrimSpace(endpoint.DataPermissionReason) || len(endpoint.DataPermissionReason) > 256 {
-			return pbac.ResourceDefinition{}, fmt.Errorf("%w: protected operation without data permission requires a bounded justification", ErrInvalidEndpoint)
+			return resourceaction.ResourceDefinition{}, fmt.Errorf("%w: protected operation without data permission requires a bounded justification", ErrInvalidEndpoint)
 		}
 	} else if endpoint.DataPermissionReason != "" {
-		return pbac.ResourceDefinition{}, fmt.Errorf("%w: data-permission enforcement cannot declare an exemption", ErrInvalidEndpoint)
+		return resourceaction.ResourceDefinition{}, fmt.Errorf("%w: data-permission enforcement cannot declare an exemption", ErrInvalidEndpoint)
 	}
 	return definition, nil
 }
@@ -274,9 +274,9 @@ func (e *Enforcer) Authorize(ctx context.Context, transport Transport, operation
 	}
 	scope := platformauthz.ScopeTenant
 	switch endpoint.Scope {
-	case pbac.ResourceScopePlatform:
+	case resourceaction.ResourceScopePlatform:
 		scope = platformauthz.ScopePlatform
-	case pbac.ResourceScopePrincipal:
+	case resourceaction.ResourceScopePrincipal:
 		scope = platformauthz.ScopePrincipal
 	}
 	// Make the registry-resolved descriptor available while the authorization

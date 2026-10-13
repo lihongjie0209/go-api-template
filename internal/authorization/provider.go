@@ -3,27 +3,20 @@ package authorization
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
-	"github.com/lihongjie0209/go-api-template/internal/environment"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
-// Authorizer adapts the in-process PBAC engine to the shared enforcement
-// contract. Tenant role codes are resolved from trusted local tables.
+// Authorizer resolves operation grants; data permissions remain an independent boundary.
 type Authorizer struct {
 	db       *sqlx.DB
-	engine   *pbac.Engine
-	registry *pbac.Registry
-	now      func() time.Time
+	registry *resourceaction.Registry
 }
 
 type authorizationMemoKey struct{}
-
 type authorizationMemo struct {
 	rolesLoaded  bool
 	roles        []string
@@ -37,80 +30,65 @@ func withAuthorizationMemo(ctx context.Context) context.Context {
 	return context.WithValue(ctx, authorizationMemoKey{}, &authorizationMemo{})
 }
 
-var operationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
-
-func New(db *sqlx.DB, engine *pbac.Engine, registry *pbac.Registry) platformauthz.Authorizer {
-	return newAuthorizer(db, engine, registry, time.Now)
-}
-
-func newAuthorizer(db *sqlx.DB, engine *pbac.Engine, registry *pbac.Registry, now func() time.Time) *Authorizer {
-	return &Authorizer{db: db, engine: engine, registry: registry, now: now}
+func New(db *sqlx.DB, registry *resourceaction.Registry) platformauthz.Authorizer {
+	return &Authorizer{db: db, registry: registry}
 }
 
 func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) error {
-	if a == nil || a.db == nil || a.engine == nil || a.registry == nil {
+	if a == nil || a.db == nil || a.registry == nil {
 		return platformauthz.ErrDecisionUnavailable
 	}
 	resource, _, err := a.registry.Resolve(requirement.Resource, requirement.Action)
 	if err != nil || !scopeMatches(resource.Scope, requirement.Scope) {
 		return platformauthz.ErrDecisionUnavailable
 	}
-	roles, err := a.roles(ctx, principal)
-	if err != nil {
-		return platformauthz.ErrDecisionUnavailable
+	if principal.ID == "" {
+		return platformauthz.ErrDenied
 	}
-	now := a.now
-	if now == nil {
-		now = time.Now
-	}
-	decisionTime := now().In(operationLocation)
-	endpoint, _ := accesscontrol.EndpointFromContext(ctx)
-	profile, _ := environment.FromContext(ctx)
-	credential, _ := accesscontrol.CredentialSchemeFromContext(ctx)
-	weekday := int(decisionTime.Weekday())
-	if weekday == 0 {
-		weekday = 7
-	}
-	decision, err := a.engine.Evaluate(ctx, pbac.EvaluationRequest{
-		Subject: pbac.Subject{
-			ID: principal.ID, Type: string(principal.Type), Authenticated: true,
-			TenantID: principal.TenantID, MembershipID: principal.MembershipID, Roles: roles,
-		},
-		Resource: pbac.Resource{
-			Type: requirement.Resource, TenantID: principal.TenantID,
-		},
-		Action: requirement.Action,
-		Context: pbac.OperationContext{
-			Transport: string(endpoint.Transport), Operation: endpoint.Operation,
-			Profile: profile, Timezone: "Asia/Shanghai", LocalHour: decisionTime.Hour(), Weekday: weekday,
-			BusinessDay: weekday <= 5, AuthenticationScheme: string(credential),
-		},
-	})
-	if err != nil || decision.Effect == pbac.DecisionEffectIndeterminate {
-		return platformauthz.ErrDecisionUnavailable
-	}
-	if decision.Effect == pbac.DecisionEffectAllow {
+	if principal.Type == platformprincipal.TypeSystem {
 		return nil
 	}
-	// Published PBAC deny policies are authoritative. Tenant role grants are a
-	// managed allow source and may only fill the no-matching-policy case.
-	if decision.ReasonCode != pbac.ReasonNoMatchingPolicy || resource.Scope != pbac.ResourceScopeTenant {
-		return platformauthz.ErrDenied
+	switch resource.Scope {
+	case resourceaction.ResourceScopePrincipal:
+		return nil // The owning service checks current-principal object ownership.
+	case resourceaction.ResourceScopePlatform:
+		allowed, err := a.hasPlatformGrant(ctx, principal, requirement)
+		if err != nil {
+			return platformauthz.ErrDecisionUnavailable
+		}
+		if allowed {
+			return nil
+		}
+	case resourceaction.ResourceScopeTenant:
+		allowed, err := a.hasManagedTenantGrant(ctx, principal, requirement)
+		if err != nil {
+			return platformauthz.ErrDecisionUnavailable
+		}
+		if allowed {
+			return nil
+		}
 	}
-	allowed, err := a.hasManagedTenantGrant(ctx, principal, requirement)
-	if err != nil {
-		return platformauthz.ErrDecisionUnavailable
-	}
-	if !allowed {
-		return platformauthz.ErrDenied
-	}
-	return nil
+	return platformauthz.ErrDenied
 }
 
-func scopeMatches(resourceScope pbac.ResourceScope, requirementScope platformauthz.Scope) bool {
-	return resourceScope == pbac.ResourceScopeTenant && requirementScope == platformauthz.ScopeTenant ||
-		resourceScope == pbac.ResourceScopePlatform && requirementScope == platformauthz.ScopePlatform ||
-		resourceScope == pbac.ResourceScopePrincipal && requirementScope == platformauthz.ScopePrincipal
+func scopeMatches(resourceScope resourceaction.ResourceScope, requirementScope platformauthz.Scope) bool {
+	return resourceScope == resourceaction.ResourceScopeTenant && requirementScope == platformauthz.ScopeTenant ||
+		resourceScope == resourceaction.ResourceScopePlatform && requirementScope == platformauthz.ScopePlatform ||
+		resourceScope == resourceaction.ResourceScopePrincipal && requirementScope == platformauthz.ScopePrincipal
+}
+
+func (a *Authorizer) hasPlatformGrant(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) (bool, error) {
+	query := a.db.Rebind(`SELECT count(*) FROM platform_principal_permissions g
+		JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
+		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
+		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
+		JOIN authorization_resources res ON res.id=act.resource_id AND res.scope='platform' AND res.status='active' AND res.deleted_at IS NULL
+		WHERE g.principal_type=? AND g.principal_id=? AND g.deleted_at IS NULL AND res.resource_key=? AND act.action_key=?`)
+	var count int
+	if err := a.db.GetContext(ctx, &count, query, string(principal.Type), principal.ID, requirement.Resource, requirement.Action); err != nil {
+		return false, fmt.Errorf("resolve platform grant: %w", err)
+	}
+	return count > 0, nil
 }
 
 func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) (bool, error) {
@@ -128,47 +106,30 @@ func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platfo
 		_, allowed := memo.grants[requirement.Resource+"\x00"+requirement.Action]
 		return allowed, nil
 	}
-	query := a.db.Rebind(`SELECT count(*)
-		FROM permissions p
-		JOIN tenant_permission_grants g ON g.permission_id=p.id AND g.tenant_id=? AND g.deleted_at IS NULL
-		JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL
-		JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL
-		WHERE p.resource=? AND p.action=? AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
-		  AND (
-			EXISTS (SELECT 1 FROM tenant_administrators a WHERE a.tenant_id=g.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL)
-			OR EXISTS (
-				SELECT 1 FROM tenant_member_roles mr
-				JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id AND r.status='active' AND r.deleted_at IS NULL
-				JOIN tenant_role_permissions rp ON rp.tenant_id=mr.tenant_id AND rp.role_id=mr.role_id AND rp.permission_id=p.id AND rp.deleted_at IS NULL
-				WHERE mr.tenant_id=g.tenant_id AND mr.membership_id=m.id AND mr.deleted_at IS NULL
-			)
-		)`)
-	var count int
-	if err := a.db.GetContext(ctx, &count, query, principal.TenantID, principal.MembershipID, principal.ID, requirement.Resource, requirement.Action); err != nil {
-		return false, fmt.Errorf("resolve managed tenant grant: %w", err)
+	grants, err := a.managedTenantGrants(ctx, principal)
+	if err != nil {
+		return false, err
 	}
-	return count > 0, nil
+	_, allowed := grants[requirement.Resource+"\x00"+requirement.Action]
+	return allowed, nil
 }
 
 func (a *Authorizer) managedTenantGrants(ctx context.Context, principal platformprincipal.Principal) (map[string]struct{}, error) {
-	query := a.db.Rebind(`SELECT DISTINCT p.resource,p.action
-		FROM permissions p
+	query := a.db.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions p
+		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
+		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
+		JOIN authorization_resources res ON res.id=act.resource_id AND res.scope='tenant' AND res.status='active' AND res.deleted_at IS NULL
 		JOIN tenant_permission_grants g ON g.permission_id=p.id AND g.tenant_id=? AND g.deleted_at IS NULL
 		JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL
 		JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL
 		WHERE p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
-		  AND (
-			EXISTS (SELECT 1 FROM tenant_administrators a WHERE a.tenant_id=g.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL)
-			OR EXISTS (
-				SELECT 1 FROM tenant_member_roles mr
-				JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id AND r.status='active' AND r.deleted_at IS NULL
-				JOIN tenant_role_permissions rp ON rp.tenant_id=mr.tenant_id AND rp.role_id=mr.role_id AND rp.permission_id=p.id AND rp.deleted_at IS NULL
-				WHERE mr.tenant_id=g.tenant_id AND mr.membership_id=m.id AND mr.deleted_at IS NULL
-			)
-		)`)
+		AND (EXISTS (SELECT 1 FROM tenant_administrators a WHERE a.tenant_id=g.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL)
+		OR EXISTS (SELECT 1 FROM tenant_member_roles mr JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id AND r.status='active' AND r.deleted_at IS NULL
+		JOIN tenant_role_permissions rp ON rp.tenant_id=mr.tenant_id AND rp.role_id=mr.role_id AND rp.permission_id=p.id AND rp.deleted_at IS NULL
+		WHERE mr.tenant_id=g.tenant_id AND mr.membership_id=m.id AND mr.deleted_at IS NULL))`)
 	rows := []struct {
-		Resource string `db:"resource"`
-		Action   string `db:"action"`
+		Resource string `db:"resource_key"`
+		Action   string `db:"action_key"`
 	}{}
 	if err := a.db.SelectContext(ctx, &rows, query, principal.TenantID, principal.MembershipID, principal.ID); err != nil {
 		return nil, fmt.Errorf("resolve managed tenant grants: %w", err)
@@ -196,15 +157,12 @@ func (a *Authorizer) roles(ctx context.Context, principal platformprincipal.Prin
 
 func (a *Authorizer) queryRoles(ctx context.Context, principal platformprincipal.Principal) ([]string, error) {
 	roles := []string{}
-	query := a.db.Rebind(`SELECT DISTINCT r.code
-		FROM tenant_member_roles mr
+	query := a.db.Rebind(`SELECT DISTINCT r.code FROM tenant_member_roles mr
 		JOIN tenant_memberships m ON m.id=mr.membership_id AND m.tenant_id=mr.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL
 		JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id
-		WHERE mr.tenant_id=? AND mr.membership_id=?
-		  AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL
-		ORDER BY r.code`)
+		WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL ORDER BY r.code`)
 	if err := a.db.SelectContext(ctx, &roles, query, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
-		return nil, fmt.Errorf("resolve pbac subject roles: %w", err)
+		return nil, fmt.Errorf("resolve subject roles: %w", err)
 	}
 	return roles, nil
 }

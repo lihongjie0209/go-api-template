@@ -16,7 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -38,7 +38,7 @@ func TestGRPCEndpointDescriptorsExactlyCoverRegisteredBusinessMethods(t *testing
 	hellov1.RegisterHelloServiceServer(server, &helloServer{})
 	identityv1.RegisterIdentityServiceServer(server, &identityServer{})
 	grpc_health_v1.RegisterHealthServer(server, grpchealth.NewServer())
-	resources, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	if err != nil {
 		t.Fatal(err)
 	}

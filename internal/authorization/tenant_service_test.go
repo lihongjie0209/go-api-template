@@ -14,7 +14,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -622,9 +622,9 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func testAuthorizationRegistry(t *testing.T) *pbac.Registry {
+func testAuthorizationRegistry(t *testing.T) *resourceaction.Registry {
 	t.Helper()
-	registry, err := pbac.NewRegistryFromDefinitions(pbac.PlatformResourceDefinitions())
+	registry, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	return registry
 }

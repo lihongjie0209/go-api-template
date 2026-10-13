@@ -19,7 +19,7 @@ testable owner.
 | Audit | All three database variants contain mandatory fields. PostgreSQL/Kingbase use `app_enable_audit`; MySQL uses BI/BU/BD audit triggers. Writes run through `database.Transactor`. |
 | Presentation | RFC 3339 timestamps with `Asia/Shanghai` presentation and actor display names. Definition durations are seconds; execution duration is milliseconds. |
 | Tests | Unit tests cover normalization, cron/timezone/handler validation, page/sort allowlists, atomic snapshot replacement, lock-protected execution, and history persistence. Integration behavior remains under the `integration` build tag in CI. |
-| Shared capability | Reuses pagination, transactor, operation log, actor presentation, PBAC registry and the existing cron/lock runner. |
+| Shared capability | Reuses pagination, transactor, operation log, actor presentation, Resource/Action registry and the existing cron/lock runner. |
 
 Definitions are operational configuration rather than a bounded business
 dictionary, so this module does not register a data-dictionary provider.

@@ -20,17 +20,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func TestS3AdapterAgainstMinIO(t *testing.T) {
+func TestS3AdapterAgainstS3Mock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	const accessKey, secretKey, bucket = "integration-access", "integration-secret-key", "integration-bucket"
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
-			ExposedPorts: []string{"9000/tcp"},
-			Env:          map[string]string{"MINIO_ROOT_USER": accessKey, "MINIO_ROOT_PASSWORD": secretKey},
-			Cmd:          []string{"server", "/data", "--address", ":9000"},
-			WaitingFor:   wait.ForHTTP("/minio/health/ready").WithPort("9000/tcp").WithStartupTimeout(time.Minute),
+			Image:        "adobe/s3mock:5.2.3",
+			ExposedPorts: []string{"9090/tcp"},
+			WaitingFor:   wait.ForHTTP("/favicon.ico").WithPort("9090/tcp").WithStartupTimeout(time.Minute),
 		},
 		Started: true,
 	})
@@ -42,7 +40,7 @@ func TestS3AdapterAgainstMinIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port, err := container.MappedPort(ctx, "9000/tcp")
+	port, err := container.MappedPort(ctx, "9090/tcp")
 	if err != nil {
 		t.Fatal(err)
 	}

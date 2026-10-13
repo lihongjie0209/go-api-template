@@ -3,15 +3,15 @@ package accesscontrol
 import (
 	"testing"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
 
-func endpointResourceRegistry(t *testing.T) *pbac.Registry {
+func endpointResourceRegistry(t *testing.T) *resourceaction.Registry {
 	t.Helper()
-	registry, err := pbac.NewRegistry([]pbac.ResourceDefinition{{
-		Key: "tenant.member", Name: "Tenant member", Scope: pbac.ResourceScopeTenant,
-		Actions: []pbac.ActionDefinition{{Key: "list", Name: "List"}, {Key: "update", Name: "Update"}},
+	registry, err := resourceaction.NewRegistry([]resourceaction.ResourceDefinition{{
+		Key: "tenant.member", Name: "Tenant member", Scope: resourceaction.ResourceScopeTenant,
+		Actions: []resourceaction.ActionDefinition{{Key: "list", Name: "List"}, {Key: "update", Name: "Update"}},
 	}})
 	require.NoError(t, err)
 	return registry
@@ -44,7 +44,7 @@ func TestNewEndpointRegistryRejectsUnsafeDescriptors(t *testing.T) {
 		{name: "public endpoint declares resource", endpoints: []Endpoint{{Transport: TransportHTTP, Operation: "POST /api/v1/public/members", Authentication: AuthenticationPublic, Resource: "tenant.member", Action: "list"}}, target: ErrInvalidEndpoint},
 		{name: "public endpoint requires data permission", endpoints: []Endpoint{{Transport: TransportHTTP, Operation: "POST /api/v1/public/members", Authentication: AuthenticationPublic, DataPermission: DataPermissionRequired}}, target: ErrInvalidEndpoint},
 		{name: "protected endpoint lacks data permission justification", endpoints: []Endpoint{{Transport: TransportHTTP, Operation: "POST /api/v1/members/page", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "list", DataPermission: DataPermissionNone}}, target: ErrInvalidEndpoint},
-		{name: "unknown action", endpoints: []Endpoint{{Transport: TransportHTTP, Operation: "POST /api/v1/members/delete", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "delete", DataPermission: DataPermissionNone}}, target: pbac.ErrUnknownAction},
+		{name: "unknown action", endpoints: []Endpoint{{Transport: TransportHTTP, Operation: "POST /api/v1/members/delete", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "delete", DataPermission: DataPermissionNone}}, target: resourceaction.ErrUnknownAction},
 		{name: "duplicate operation", endpoints: []Endpoint{{Transport: TransportHTTP, Operation: "POST /api/v1/members/page", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "list", DataPermission: DataPermissionNone, DataPermissionReason: "tenant-wide operation"}, {Transport: TransportHTTP, Operation: "POST /api/v1/members/page", Authentication: AuthenticationJWT, Resource: "tenant.member", Action: "list", DataPermission: DataPermissionNone, DataPermissionReason: "tenant-wide operation"}}, target: ErrDuplicateEndpoint},
 	}
 	for _, test := range tests {

@@ -145,7 +145,7 @@ otherwise unsuitable for dictionary use.
   `platform.tenant.update`; UI route names and HTTP paths must not become the
   authorization contract. Renaming or removing a permission requires a
   migration and compatibility review because roles may reference it.
-- Services use the shared SDK policy registry and authorization interceptors.
+- Services use the shared SDK resource/action registry and authorization interceptors.
   Business routes and RPCs not explicitly declared public or assigned a
   permission must fail closed with the global policy-missing error. Never add a
   local allowlist or duplicate authorization middleware.
@@ -156,16 +156,13 @@ otherwise unsuitable for dictionary use.
   unavailable, and undeclared-route fail-closed behavior. CI must compare the
   registered permission matrix with HTTP/gRPC routes and OpenAPI/protobuf
   operations to catch omissions.
-- Operation authorization and data permission are separate modules and policy
-  models. Operation policies answer whether a subject may invoke a resource
-  action and use boolean deny-overrides. An operation policy may use `when`
-  only for bounded server-derived subject, tenant, endpoint, authentication,
-  and environment attributes such as trusted local time; it must never inspect
-  request bodies, current resource fields, or proposed mutations. Data-permission
-  policies answer which rows that already-authorized action may access; matching
-  Allow predicates are unioned and the union of Deny predicates is subtracted.
-  Never put a data condition in an operation policy or treat an operation Allow
-  as unrestricted row access.
+- Operation authorization and data permission are separate modules. Operation
+  authorization maps a registered resource/action to one or more permissions,
+  then checks platform grants, tenant ceilings and role grants; it fails closed
+  when no grant applies. A permission may cover multiple resource/actions.
+  Data-permission policies answer which rows an already-authorized action may
+  access; matching Allow predicates are unioned and the union of Deny predicates
+  is subtracted. A permission grant never implies unrestricted row access.
 - Data-permission `condition` applies to the current persisted row and must be
   compilable into the shared parameterized SQL Predicate. Optional
   `proposed_condition` applies only to a server-validated, server-constructed
@@ -182,9 +179,9 @@ otherwise unsuitable for dictionary use.
   descriptor in the same code registration call: public/internal/authenticated
   mode, canonical resource, action, and whether data permission is required.
   Missing metadata fails startup and CI. Paths and handler names are not policy
-  identities; after complete descriptor coverage and decision migration, remove
-  the legacy database route-policy module rather than maintaining two sources
-  of authorization truth.
+  identities. Resource/action definitions owned by code are reconciled at
+  startup; only code-owned definitions absent from code are disabled. Manual
+  definitions remain independently manageable.
 - Frontend authorization uses server-side capability evaluation only. Page
   capabilities evaluate canonical resource/action pairs against registered
   target operations. Row capabilities accept only bounded resource IDs and

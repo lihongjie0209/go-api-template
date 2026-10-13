@@ -15,7 +15,7 @@
 | Audit | The operation-log consumer maintains mandatory audit fields. Query scope uses the trusted principal ID and exact tenant ID, including an empty platform context. |
 | Presentation | `last_clicked_at` is RFC 3339 with an explicit Asia/Shanghai offset. Application and menu IDs are consumed with names already owned by the navigation response. |
 | Tests | Unit tests cover exact actor/tenant SQL scope, event validation, best-effort frontend delivery, success/failure button events, and router menu events. Integration coverage remains service-local under the existing operation-log integration suite. |
-| Shared capability | Reuses the operation-log outbox, common request client, router metadata, PBAC descriptors, and standard resource components. The frontend telemetry helper becomes the shared entry point; components must not call the endpoint directly. |
+| Shared capability | Reuses the operation-log outbox, common request client, router metadata, Resource/Action descriptors, and standard resource components. The frontend telemetry helper becomes the shared entry point; components must not call the endpoint directly. |
 | Data dictionary | Not exposed. Usage records are actor-specific, time-varying telemetry rather than bounded reference data. |
 
 The usage query intentionally uses a rolling 90-day window so PostgreSQL and

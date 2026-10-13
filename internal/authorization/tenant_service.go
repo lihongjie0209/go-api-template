@@ -18,7 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -124,10 +124,10 @@ type TenantAuthorizationService struct {
 	actors     presentation.ActorResolver
 	cfg        config.Config
 	dataScopes *datapermission.Service
-	registry   *pbac.Registry
+	registry   *resourceaction.Registry
 }
 
-func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config, dataScopes *datapermission.Service, registry *pbac.Registry) *TenantAuthorizationService {
+func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config, dataScopes *datapermission.Service, registry *resourceaction.Registry) *TenantAuthorizationService {
 	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, actors: actors, cfg: cfg, dataScopes: dataScopes, registry: registry}
 }
 
@@ -1030,7 +1030,7 @@ func (s *TenantAuthorizationService) validateTenantPermissions(ctx context.Conte
 	}
 	for _, permission := range permissions {
 		definition, _, err := s.registry.Resolve(permission.Resource, permission.Action)
-		if err != nil || definition.Scope != pbac.ResourceScopeTenant {
+		if err != nil || definition.Scope != resourceaction.ResourceScopeTenant {
 			return ErrTenantAuthorizationInvalid
 		}
 	}

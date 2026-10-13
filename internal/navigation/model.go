@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
 	platformtree "github.com/lihongjie0209/microservice-platform-go/tree"
 )
@@ -80,7 +80,7 @@ func Normalize(input Input) Input {
 	return input
 }
 
-func Validate(input Input, resources *pbac.Registry) error {
+func Validate(input Input, resources *resourceaction.Registry) error {
 	input = Normalize(input)
 	if input.ApplicationID == "" || !keyPattern.MatchString(input.Key) || input.Name == "" || len(input.Name) > 256 ||
 		len(input.Icon) > 256 || (input.Status != "active" && input.Status != "disabled") ||

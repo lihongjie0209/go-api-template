@@ -9,7 +9,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
-	"github.com/lihongjie0209/go-api-template/internal/pbac"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 )
 
@@ -27,8 +27,8 @@ func jwtEndpoint(path, resource, action string, data accesscontrol.DataPermissio
 
 func dataPermissionExemption(resource, action string) string {
 	switch resource {
-	case "identity.user", "identity.service-account", "tenant", "permission.definition", "application", "tenant.application-grant", "navigation", "dictionary.definition", "dictionary.item", "platform.config", "platform.runtime", "scheduled-job", "pbac.resource-action", "pbac.global-policy", "data-permission.global-policy":
-		return "platform-scoped resource; operation PBAC is the complete authorization boundary"
+	case "identity.user", "identity.service-account", "tenant", "permission.definition", "application", "tenant.application-grant", "navigation", "dictionary.definition", "dictionary.item", "platform.config", "platform.runtime", "scheduled-job", "authorization.resource", "authorization.action", "authorization.platform-grant", "data-permission.global-policy":
+		return "platform-scoped resource; operation grants are the authorization boundary"
 	case "identity.profile", "identity.session", "identity.credential", "tenant.selection", "authorization.capability", "frontend.telemetry":
 		return "service enforces the authenticated principal ownership predicate"
 	case "tenant.profile":
@@ -38,10 +38,10 @@ func dataPermissionExemption(resource, action string) string {
 	case "application.current":
 		return "service enforces active tenant membership and tenant application grants in SQL"
 	case "navigation.current":
-		return "service derives menu visibility from current-principal PBAC capability decisions"
+		return "service derives menu visibility from current-principal capability decisions"
 	case "file.object", "operation.log", "security.log":
 		return "resource is intentionally tenant-wide and repository SQL enforces tenant isolation"
-	case "pbac.tenant-policy", "data-permission.tenant-policy":
+	case "data-permission.tenant-policy":
 		return "policy lifecycle repository enforces its intrinsic tenant boundary"
 	case "tenant.member":
 		if action == "add" {
@@ -56,7 +56,7 @@ func dataPermissionExemption(resource, action string) string {
 }
 
 // registerPOST binds the handler and its authorization contract atomically.
-func registerPOST(group *gin.RouterGroup, resources *pbac.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, logger *slog.Logger, endpoint accesscontrol.Endpoint, handlers ...gin.HandlerFunc) error {
+func registerPOST(group *gin.RouterGroup, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, logger *slog.Logger, endpoint accesscontrol.Endpoint, handlers ...gin.HandlerFunc) error {
 	if err := schemas.ValidateEndpoint(endpoint); err != nil {
 		return err
 	}

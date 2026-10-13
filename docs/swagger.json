@@ -674,6 +674,244 @@
                 }
             }
         },
+        "/api/v1/authorization/actions/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Create a manually owned resource action",
+                "parameters": [
+                    {
+                        "description": "Action",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogActionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.Action"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/actions/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Soft-delete a manually owned resource action",
+                "parameters": [
+                    {
+                        "description": "Action and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/actions/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Get a resource action",
+                "parameters": [
+                    {
+                        "description": "Action ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.Action"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/actions/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Page resource actions",
+                "parameters": [
+                    {
+                        "description": "Page request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.ActionPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/actions/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Update a manually owned resource action",
+                "parameters": [
+                    {
+                        "description": "Action and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogActionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.Action"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/authorization/capabilities/evaluate": {
             "post": {
                 "security": [
@@ -715,6 +953,244 @@
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/authorization.CapabilityResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Create a manually owned authorization resource",
+                "parameters": [
+                    {
+                        "description": "Resource",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogResourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.Resource"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Soft-delete a manually owned authorization resource",
+                "parameters": [
+                    {
+                        "description": "Resource and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Get an authorization resource",
+                "parameters": [
+                    {
+                        "description": "Resource ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.Resource"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Page authorization resources",
+                "parameters": [
+                    {
+                        "description": "Page request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.ResourcePage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Update a manually owned authorization resource",
+                "parameters": [
+                    {
+                        "description": "Resource and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogResourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.Resource"
                                         }
                                     }
                                 }
@@ -3106,7 +3582,7 @@
                 }
             }
         },
-        "/api/v1/pbac/global-policies/create": {
+        "/api/v1/permissions/actions/get": {
             "post": {
                 "security": [
                     {
@@ -3120,467 +3596,17 @@
                     "application/json"
                 ],
                 "tags": [
-                    "pbac"
+                    "permissions"
                 ],
-                "summary": "Create a PBAC policy and its first draft",
+                "summary": "Get Resource/Action links for a permission",
                 "parameters": [
                     {
-                        "description": "Policy",
+                        "description": "Permission ID",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyCreateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.Publication"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/get": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Get a PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Policy ID",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyGetRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Page PBAC policies visible to the current tenant context",
-                "parameters": [
-                    {
-                        "description": "Filters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyPage"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/publish": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Atomically publish a PBAC policy draft",
-                "parameters": [
-                    {
-                        "description": "Publication",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyPublishRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.Publication"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/simulate": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Validate and simulate one unpersisted PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Simulation",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACSimulationRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.SimulationResult"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/status/set": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Enable or disable a PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Status",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyStatusSetRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/versions/create": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Append an immutable PBAC policy draft",
-                "parameters": [
-                    {
-                        "description": "Draft",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyVersionCreateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyVersionRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/versions/get": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Get one PBAC policy version",
-                "parameters": [
-                    {
-                        "description": "Version",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyVersionGetRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyVersionRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/global-policies/versions/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Page immutable versions of a PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Filters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyVersionPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyVersionPage"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/resources/list": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "List registered PBAC resources and actions",
-                "parameters": [
-                    {
-                        "description": "Filter",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACResourceListRequest"
+                            "$ref": "#/definitions/httptransport.PermissionIDRequest"
                         }
                     }
                 ],
@@ -3598,7 +3624,7 @@
                                         "body": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/pbac.ResourceDefinition"
+                                                "$ref": "#/definitions/permission.ActionReference"
                                             }
                                         }
                                     }
@@ -3609,7 +3635,7 @@
                 }
             }
         },
-        "/api/v1/pbac/tenant-policies/create": {
+        "/api/v1/permissions/actions/set": {
             "post": {
                 "security": [
                     {
@@ -3623,17 +3649,17 @@
                     "application/json"
                 ],
                 "tags": [
-                    "pbac"
+                    "permissions"
                 ],
-                "summary": "Create a PBAC policy and its first draft",
+                "summary": "Replace Resource/Action links using the permission version",
                 "parameters": [
                     {
-                        "description": "Policy",
+                        "description": "Permission, version and actions",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyCreateRequest"
+                            "$ref": "#/definitions/httptransport.PermissionActionsSetRequest"
                         }
                     }
                 ],
@@ -3649,407 +3675,7 @@
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/pbac.Publication"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/get": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Get a PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Policy ID",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyGetRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Page PBAC policies visible to the current tenant context",
-                "parameters": [
-                    {
-                        "description": "Filters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyPage"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/publish": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Atomically publish a PBAC policy draft",
-                "parameters": [
-                    {
-                        "description": "Publication",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyPublishRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.Publication"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/simulate": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Validate and simulate one unpersisted PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Simulation",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACSimulationRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.SimulationResult"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/status/set": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Enable or disable a PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Status",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyStatusSetRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/versions/create": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Append an immutable PBAC policy draft",
-                "parameters": [
-                    {
-                        "description": "Draft",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyVersionCreateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyVersionRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/versions/get": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Get one PBAC policy version",
-                "parameters": [
-                    {
-                        "description": "Version",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyVersionGetRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyVersionRecord"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/pbac/tenant-policies/versions/page": {
-            "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "pbac"
-                ],
-                "summary": "Page immutable versions of a PBAC policy",
-                "parameters": [
-                    {
-                        "description": "Filters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/httptransport.PBACPolicyVersionPageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/httptransport.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "body": {
-                                            "$ref": "#/definitions/pbac.PolicyVersionPage"
+                                            "$ref": "#/definitions/permission.Record"
                                         }
                                     }
                                 }
@@ -4529,6 +4155,244 @@
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/platformconfig.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Grant a platform permission to a principal",
+                "parameters": [
+                    {
+                        "description": "Grant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantMutationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrant"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Revoke a platform principal permission grant",
+                "parameters": [
+                    {
+                        "description": "Grant and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Get a platform principal permission grant",
+                "parameters": [
+                    {
+                        "description": "Grant ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrant"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Page platform principal permission grants",
+                "parameters": [
+                    {
+                        "description": "Page request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrantPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Update a platform principal permission grant",
+                "parameters": [
+                    {
+                        "description": "Grant and version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantMutationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrant"
                                         }
                                     }
                                 }
@@ -8443,6 +8307,50 @@
                 }
             }
         },
+        "authorization.PlatformGrant": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "permission_id": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "permission_name": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_name": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.PlatformGrantPage": {
+            "type": "object"
+        },
         "authorization.RowCapabilityDecision": {
             "type": "object",
             "properties": {
@@ -8716,7 +8624,7 @@
                     "type": "string"
                 },
                 "subject": {
-                    "$ref": "#/definitions/pbac.SubjectMatcher"
+                    "$ref": "#/definitions/resourceaction.SubjectMatcher"
                 }
             }
         },
@@ -9307,6 +9215,158 @@
                 }
             }
         },
+        "httptransport.CatalogActionRequest": {
+            "type": "object",
+            "required": [
+                "action_key",
+                "name",
+                "resource_id",
+                "status"
+            ],
+            "properties": {
+                "action_key": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 4096
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "resource_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.CatalogDeleteRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "version"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.CatalogIDRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "httptransport.CatalogPageRequest": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "resource_id": {
+                    "type": "string"
+                },
+                "sources": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "httptransport.CatalogResourceRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "resource_key",
+                "scope",
+                "status"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "maxLength": 4096
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "resource_key": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "scope": {
+                    "enum": [
+                        "platform",
+                        "tenant",
+                        "principal"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/resourceaction.ResourceScope"
+                        }
+                    ]
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "disabled"
+                    ]
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.ChangePasswordRequest": {
             "type": "object",
             "required": [
@@ -9847,13 +9907,13 @@
                     "$ref": "#/definitions/datapermission.ResourceAttributes"
                 },
                 "resource": {
-                    "$ref": "#/definitions/pbac.Resource"
+                    "$ref": "#/definitions/resourceaction.Resource"
                 },
                 "resource_attributes": {
                     "$ref": "#/definitions/datapermission.ResourceAttributes"
                 },
                 "subject": {
-                    "$ref": "#/definitions/pbac.Subject"
+                    "$ref": "#/definitions/resourceaction.Subject"
                 },
                 "subject_attributes": {
                     "$ref": "#/definitions/datapermission.SubjectAttributes"
@@ -10573,208 +10633,6 @@
                 }
             }
         },
-        "httptransport.PBACPolicyCreateRequest": {
-            "type": "object",
-            "required": [
-                "policy"
-            ],
-            "properties": {
-                "policy": {
-                    "$ref": "#/definitions/pbac.Policy"
-                }
-            }
-        },
-        "httptransport.PBACPolicyGetRequest": {
-            "type": "object",
-            "required": [
-                "id"
-            ],
-            "properties": {
-                "id": {
-                    "type": "string"
-                }
-            }
-        },
-        "httptransport.PBACPolicyPageRequest": {
-            "type": "object",
-            "properties": {
-                "codes": {
-                    "type": "array",
-                    "maxItems": 200,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "created_at_from": {
-                    "type": "string"
-                },
-                "created_at_to": {
-                    "type": "string"
-                },
-                "ids": {
-                    "type": "array",
-                    "maxItems": 200,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "keyword": {
-                    "type": "string",
-                    "maxLength": 256
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "statuses": {
-                    "type": "array",
-                    "maxItems": 2,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "updated_at_from": {
-                    "type": "string"
-                },
-                "updated_at_to": {
-                    "type": "string"
-                }
-            }
-        },
-        "httptransport.PBACPolicyPublishRequest": {
-            "type": "object",
-            "required": [
-                "expected_policy_version",
-                "policy_id",
-                "version_number"
-            ],
-            "properties": {
-                "expected_policy_version": {
-                    "type": "integer"
-                },
-                "policy_id": {
-                    "type": "string"
-                },
-                "version_number": {
-                    "type": "integer"
-                }
-            }
-        },
-        "httptransport.PBACPolicyStatusSetRequest": {
-            "type": "object",
-            "required": [
-                "expected_policy_version",
-                "policy_id",
-                "status"
-            ],
-            "properties": {
-                "expected_policy_version": {
-                    "type": "integer"
-                },
-                "policy_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string",
-                    "enum": [
-                        "active",
-                        "disabled"
-                    ]
-                }
-            }
-        },
-        "httptransport.PBACPolicyVersionCreateRequest": {
-            "type": "object",
-            "required": [
-                "expected_policy_version",
-                "policy",
-                "policy_id"
-            ],
-            "properties": {
-                "expected_policy_version": {
-                    "type": "integer"
-                },
-                "policy": {
-                    "$ref": "#/definitions/pbac.Policy"
-                },
-                "policy_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "httptransport.PBACPolicyVersionGetRequest": {
-            "type": "object",
-            "required": [
-                "policy_id",
-                "version_number"
-            ],
-            "properties": {
-                "policy_id": {
-                    "type": "string"
-                },
-                "version_number": {
-                    "type": "integer"
-                }
-            }
-        },
-        "httptransport.PBACPolicyVersionPageRequest": {
-            "type": "object",
-            "required": [
-                "policy_id"
-            ],
-            "properties": {
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "policy_id": {
-                    "type": "string"
-                },
-                "statuses": {
-                    "type": "array",
-                    "maxItems": 3,
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "httptransport.PBACResourceListRequest": {
-            "type": "object",
-            "properties": {
-                "scope": {
-                    "enum": [
-                        "platform",
-                        "tenant",
-                        "principal"
-                    ],
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/pbac.ResourceScope"
-                        }
-                    ]
-                }
-            }
-        },
-        "httptransport.PBACSimulationRequest": {
-            "type": "object",
-            "required": [
-                "policy",
-                "request"
-            ],
-            "properties": {
-                "policy": {
-                    "$ref": "#/definitions/pbac.Policy"
-                },
-                "request": {
-                    "$ref": "#/definitions/pbac.EvaluationRequest"
-                }
-            }
-        },
         "httptransport.PageServiceAccountsRequest": {
             "type": "object",
             "properties": {
@@ -10929,6 +10787,30 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "httptransport.PermissionActionsSetRequest": {
+            "type": "object",
+            "required": [
+                "action_ids",
+                "id",
+                "version"
+            ],
+            "properties": {
+                "action_ids": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -11119,6 +11001,93 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "httptransport.PlatformGrantDeleteRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "version"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.PlatformGrantIDRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "httptransport.PlatformGrantMutationRequest": {
+            "type": "object",
+            "required": [
+                "permission_id",
+                "principal_id",
+                "principal_type"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "permission_id": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "service_account"
+                    ]
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.PlatformGrantPageRequest": {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "permission_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "service_account"
+                    ]
                 }
             }
         },
@@ -12858,457 +12827,26 @@
                 }
             }
         },
-        "pbac.ActionDefinition": {
+        "permission.ActionReference": {
             "type": "object",
             "properties": {
-                "description": {
+                "action_key": {
                     "type": "string"
                 },
-                "key": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "pbac.Decision": {
-            "type": "object",
-            "properties": {
-                "denied_by_policy_id": {
-                    "type": "string"
-                },
-                "effect": {
-                    "$ref": "#/definitions/pbac.DecisionEffect"
-                },
-                "matched_policies": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "reason_code": {
-                    "type": "string"
-                }
-            }
-        },
-        "pbac.DecisionEffect": {
-            "type": "string",
-            "enum": [
-                "allow",
-                "deny",
-                "indeterminate"
-            ],
-            "x-enum-varnames": [
-                "DecisionEffectAllow",
-                "DecisionEffectDeny",
-                "DecisionEffectIndeterminate"
-            ]
-        },
-        "pbac.Effect": {
-            "type": "string",
-            "enum": [
-                "allow",
-                "deny"
-            ],
-            "x-enum-varnames": [
-                "EffectAllow",
-                "EffectDeny"
-            ]
-        },
-        "pbac.EvaluationRequest": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string"
-                },
-                "context": {
-                    "$ref": "#/definitions/pbac.OperationContext"
-                },
-                "resource": {
-                    "$ref": "#/definitions/pbac.Resource"
-                },
-                "subject": {
-                    "$ref": "#/definitions/pbac.Subject"
-                }
-            }
-        },
-        "pbac.OperationContext": {
-            "type": "object",
-            "properties": {
-                "authentication_scheme": {
-                    "type": "string"
-                },
-                "business_day": {
-                    "type": "boolean"
-                },
-                "local_hour": {
-                    "type": "integer"
-                },
-                "operation": {
-                    "type": "string"
-                },
-                "profile": {
-                    "type": "string"
-                },
-                "timezone": {
-                    "type": "string"
-                },
-                "transport": {
-                    "type": "string"
-                },
-                "weekday": {
-                    "type": "integer"
-                }
-            }
-        },
-        "pbac.Policy": {
-            "type": "object",
-            "properties": {
-                "api_version": {
-                    "type": "string"
-                },
-                "kind": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "$ref": "#/definitions/pbac.PolicyMetadata"
-                },
-                "scope": {
-                    "$ref": "#/definitions/pbac.PolicyScope"
-                },
-                "spec": {
-                    "$ref": "#/definitions/pbac.PolicySpec"
-                }
-            }
-        },
-        "pbac.PolicyMetadata": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "pbac.PolicyPage": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/pbac.PolicyRecord"
-                    }
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "pbac.PolicyRecord": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "created_by": {
-                    "type": "string"
-                },
-                "description": {
+                "action_name": {
                     "type": "string"
                 },
                 "id": {
                     "type": "string"
                 },
-                "name": {
+                "resource_key": {
                     "type": "string"
                 },
-                "published_version_number": {
-                    "type": "integer"
-                },
-                "scope": {
-                    "$ref": "#/definitions/pbac.PolicyScopeType"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "tenant_id": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "updated_by": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "integer"
-                }
-            }
-        },
-        "pbac.PolicyScope": {
-            "type": "object",
-            "properties": {
-                "tenant_id": {
-                    "type": "string"
-                },
-                "type": {
-                    "$ref": "#/definitions/pbac.PolicyScopeType"
-                }
-            }
-        },
-        "pbac.PolicyScopeType": {
-            "type": "string",
-            "enum": [
-                "global",
-                "tenant"
-            ],
-            "x-enum-varnames": [
-                "PolicyScopeGlobal",
-                "PolicyScopeTenant"
-            ]
-        },
-        "pbac.PolicySpec": {
-            "type": "object",
-            "properties": {
-                "actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "effect": {
-                    "$ref": "#/definitions/pbac.Effect"
-                },
-                "resource": {
-                    "$ref": "#/definitions/pbac.ResourceMatcher"
-                },
-                "subject": {
-                    "$ref": "#/definitions/pbac.SubjectMatcher"
-                },
-                "when": {
-                    "type": "string"
-                }
-            }
-        },
-        "pbac.PolicyVersionPage": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/pbac.PolicyVersionRecord"
-                    }
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "pbac.PolicyVersionRecord": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "created_by": {
-                    "type": "string"
-                },
-                "document": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "policy_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "updated_by": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "integer"
-                },
-                "version_number": {
-                    "type": "integer"
-                }
-            }
-        },
-        "pbac.Publication": {
-            "type": "object",
-            "properties": {
-                "policy": {
-                    "$ref": "#/definitions/pbac.PolicyRecord"
-                },
-                "version": {
-                    "$ref": "#/definitions/pbac.PolicyVersionRecord"
-                }
-            }
-        },
-        "pbac.Resource": {
-            "type": "object",
-            "properties": {
-                "tenant_id": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "pbac.ResourceDefinition": {
-            "type": "object",
-            "properties": {
-                "actions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/pbac.ActionDefinition"
-                    }
-                },
-                "description": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "name": {
+                "resource_name": {
                     "type": "string"
                 },
                 "scope": {
-                    "$ref": "#/definitions/pbac.ResourceScope"
-                }
-            }
-        },
-        "pbac.ResourceMatcher": {
-            "type": "object",
-            "properties": {
-                "type": {
                     "type": "string"
-                }
-            }
-        },
-        "pbac.ResourceScope": {
-            "type": "string",
-            "enum": [
-                "platform",
-                "tenant",
-                "principal"
-            ],
-            "x-enum-varnames": [
-                "ResourceScopePlatform",
-                "ResourceScopeTenant",
-                "ResourceScopePrincipal"
-            ]
-        },
-        "pbac.RolesMatcher": {
-            "type": "object",
-            "properties": {
-                "all_of": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "any_of": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "none_of": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "pbac.SimulationResult": {
-            "type": "object",
-            "properties": {
-                "baseline": {
-                    "$ref": "#/definitions/pbac.Decision"
-                },
-                "candidate": {
-                    "$ref": "#/definitions/pbac.Decision"
-                },
-                "changed": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "pbac.Subject": {
-            "type": "object",
-            "properties": {
-                "authenticated": {
-                    "type": "boolean"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "membership_id": {
-                    "type": "string"
-                },
-                "roles": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "tenant_id": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "pbac.SubjectMatcher": {
-            "type": "object",
-            "properties": {
-                "authenticated": {
-                    "type": "boolean"
-                },
-                "ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "roles": {
-                    "$ref": "#/definitions/pbac.RolesMatcher"
-                },
-                "types": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 }
             }
         },
@@ -13529,6 +13067,193 @@
                 }
             }
         },
+        "resourceaction.Resource": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "resourceaction.ResourceScope": {
+            "type": "string",
+            "enum": [
+                "platform",
+                "tenant",
+                "principal"
+            ],
+            "x-enum-varnames": [
+                "ResourceScopePlatform",
+                "ResourceScopeTenant",
+                "ResourceScopePrincipal"
+            ]
+        },
+        "resourceaction.RolesMatcher": {
+            "type": "object",
+            "properties": {
+                "all_of": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "any_of": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "none_of": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "resourceaction.Subject": {
+            "type": "object",
+            "properties": {
+                "authenticated": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "membership_id": {
+                    "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "resourceaction.SubjectMatcher": {
+            "type": "object",
+            "properties": {
+                "authenticated": {
+                    "type": "boolean"
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "roles": {
+                    "$ref": "#/definitions/resourceaction.RolesMatcher"
+                },
+                "types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "resourcecatalog.Action": {
+            "type": "object",
+            "properties": {
+                "action_key": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_id": {
+                    "type": "string"
+                },
+                "resource_key": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "resourcecatalog.ActionPage": {
+            "type": "object"
+        },
+        "resourcecatalog.Resource": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_key": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/resourceaction.ResourceScope"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "resourcecatalog.ResourcePage": {
+            "type": "object"
+        },
         "scheduler.Definition": {
             "type": "object",
             "properties": {
@@ -13687,7 +13412,6 @@
                 "membership_added",
                 "membership_changed",
                 "membership_removed",
-                "pbac_policy_changed",
                 "data_permission_policy_changed",
                 "permission_definition_changed",
                 "identity_user_changed",
@@ -13712,7 +13436,6 @@
                 "EventMembershipAdded",
                 "EventMembershipChanged",
                 "EventMembershipRemoved",
-                "EventPBACPolicyChanged",
                 "EventDataPolicyChanged",
                 "EventPermissionChanged",
                 "EventIdentityUserChanged",
