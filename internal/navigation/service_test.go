@@ -60,11 +60,13 @@ type memoryCache struct {
 	mu     sync.Mutex
 	values map[string][]byte
 	sets   int
+	gets   int
 }
 
 func (c *memoryCache) Get(_ context.Context, key string) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gets++
 	value, ok := c.values[key]
 	if !ok {
 		return nil, errors.New("cache miss")
@@ -123,7 +125,7 @@ func TestCurrentTreeScopesGrantAndMembershipInSQL(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
-	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g.*g.tenant_id=\?.*JOIN tenant_memberships m.*LEFT JOIN navigations n.*a.id=\?`).
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g.*g.tenant_id=\?.*JOIN tenant_memberships m.*JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL.*LEFT JOIN navigations n.*a.id=\?`).
 		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "app-1").
 		WillReturnRows(sqlmock.NewRows([]string{"version_sum", "node_count"}).AddRow(0, 0))
 	mock.ExpectQuery(`FROM navigations n WHERE n.application_id=\?.*n.deleted_at IS NULL`).
@@ -134,6 +136,24 @@ func TestCurrentTreeScopesGrantAndMembershipInSQL(t *testing.T) {
 	tree, err := service.CurrentTree(ctx, "app-1")
 	require.NoError(t, err)
 	require.Empty(t, tree)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCurrentTreeNeverReadsCacheWithoutActiveTenant(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g.*JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL`).
+		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "app-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version_sum", "node_count"}))
+	store := &memoryCache{values: map[string][]byte{currentSourceCacheKey("app-1", 0, 0): []byte(`[]`)}}
+	service := &Service{db: db, cache: store}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"})
+	tree, err := service.CurrentTree(ctx, "app-1")
+	require.NoError(t, err)
+	require.Empty(t, tree)
+	require.Zero(t, store.gets)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

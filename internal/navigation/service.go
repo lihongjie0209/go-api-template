@@ -136,8 +136,8 @@ func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*Node, error) {
 	return Build(records)
 }
 
-// CurrentTree reads the source tree only through an active tenant grant and an
-// active membership. This SQL boundary prevents a caller from using a globally
+// CurrentTree reads the source tree only through an active tenant, grant, and
+// membership. This SQL boundary prevents a caller from using a globally
 // visible application ID to enumerate another tenant's navigation.
 func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Node, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -150,7 +150,7 @@ func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Nod
 		VersionSum int64 `db:"version_sum"`
 		NodeCount  int64 `db:"node_count"`
 	}
-	revisionQuery := `SELECT COALESCE(SUM(n.version),0) version_sum,COUNT(n.id) node_count FROM applications a JOIN tenant_application_grants g ON g.application_id=a.id AND g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL LEFT JOIN navigations n ON n.application_id=a.id WHERE a.id=? AND a.status='active' AND a.deleted_at IS NULL GROUP BY a.id`
+	revisionQuery := `SELECT COALESCE(SUM(n.version),0) version_sum,COUNT(n.id) node_count FROM applications a JOIN tenant_application_grants g ON g.application_id=a.id AND g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL LEFT JOIN navigations n ON n.application_id=a.id WHERE a.id=? AND a.status='active' AND a.deleted_at IS NULL GROUP BY a.id`
 	if err := s.db.GetContext(ctx, &revision, s.db.Rebind(revisionQuery), actor.TenantID, now, now, actor.MembershipID, actor.ID, applicationID); errors.Is(err, sql.ErrNoRows) {
 		return []*Node{}, nil
 	} else if err != nil {

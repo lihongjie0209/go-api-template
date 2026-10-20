@@ -1392,6 +1392,11 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if err != nil {
 		t.Fatal(err)
 	}
+	setTenantStatus("disabled")
+	if tree, err := navigations.CurrentTree(currentCtx, app.ID); err != nil || len(tree) != 0 {
+		t.Fatalf("disabled tenant navigation tree=%+v err=%v", tree, err)
+	}
+	setTenantStatus("active")
 	if root.ParentName != "" {
 		t.Fatalf("root navigation parent name=%q, want empty", root.ParentName)
 	}
