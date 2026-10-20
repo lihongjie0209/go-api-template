@@ -16,8 +16,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/environment"
 	apphealth "github.com/lihongjie0209/go-api-template/internal/health"
-	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
@@ -250,6 +250,69 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	}
 	if scheme, schemeOK := accesscontrol.CredentialSchemeFromContext(ctx); !schemeOK || scheme != accesscontrol.CredentialSchemeBearer {
 		t.Fatalf("credential scheme = %q, %v", scheme, schemeOK)
+	}
+}
+
+func TestGRPCPasswordChangeRequirementBlocksBusinessCalls(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		method   string
+		forced   bool
+		stream   bool
+		wantCode codes.Code
+	}{
+		{name: "unary business requires password change", method: hellov1.HelloService_Ping_FullMethodName, forced: true, wantCode: codes.PermissionDenied},
+		{name: "stream business requires password change", method: "/example.v1.ExampleService/Watch", forced: true, stream: true, wantCode: codes.PermissionDenied},
+		{name: "health remains available", method: "/grpc.health.v1.Health/Check", forced: true, wantCode: codes.OK},
+		{name: "normal user can call business method", method: hellov1.HelloService_Ping_FullMethodName, wantCode: codes.OK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			jwtConfig, err := testutil.JWTConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rawDB, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = rawDB.Close() })
+			service := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(rawDB, "sqlmock"))
+			token, err := service.IssuePrincipalWithState(
+				platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"},
+				auth.TokenState{MustChangePassword: test.forced},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions s JOIN identity_users u`).
+				WithArgs("session-1", "user-1", sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token))
+			called := false
+			if test.stream {
+				interceptor := optionalAuthStreamInterceptor(service, config.Auth{})
+				err = interceptor(nil, &contextServerStream{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: test.method}, func(_ any, _ grpc.ServerStream) error {
+					called = true
+					return nil
+				})
+			} else {
+				interceptor := optionalAuthInterceptor(service, config.Auth{})
+				_, err = interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: test.method}, func(_ context.Context, _ any) (any, error) {
+					called = true
+					return nil, nil
+				})
+			}
+			if got := status.Code(err); got != test.wantCode {
+				t.Fatalf("status code = %s, want %s", got, test.wantCode)
+			}
+			if called != (test.wantCode == codes.OK) {
+				t.Fatalf("handler called = %v, want %v", called, test.wantCode == codes.OK)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

@@ -156,6 +156,10 @@ otherwise unsuitable for dictionary use.
   unavailable, and undeclared-route fail-closed behavior. CI must compare the
   registered permission matrix with HTTP/gRPC routes and OpenAPI/protobuf
   operations to catch omissions.
+- Credential-state restrictions such as mandatory password change, disabled
+  accounts, and revoked sessions must have equivalent enforcement for HTTP and
+  gRPC unary/stream business operations. Test each transport explicitly;
+  infrastructure health probes remain independently available.
 - Operation authorization and data permission are separate modules. Operation
   authorization maps a registered resource/action to one or more permissions,
   then checks platform grants, tenant ceilings and role grants; it fails closed

@@ -24,8 +24,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
-	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformidempotency "github.com/lihongjie0209/microservice-platform-go/idempotency"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -277,8 +277,8 @@ func authInterceptor(service *auth.Service, cfg config.Auth) grpc.UnaryServerInt
 }
 
 func optionalAuthInterceptor(service *auth.Service, cfg config.Auth) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		authenticated, err := authenticateGRPCOptional(ctx, service, cfg)
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		authenticated, err := authenticateGRPCOptional(ctx, info.FullMethod, service, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +286,7 @@ func optionalAuthInterceptor(service *auth.Service, cfg config.Auth) grpc.UnaryS
 	}
 }
 
-func authenticateGRPCOptional(ctx context.Context, service *auth.Service, cfg config.Auth) (context.Context, error) {
+func authenticateGRPCOptional(ctx context.Context, method string, service *auth.Service, cfg config.Auth) (context.Context, error) {
 	values := metadata.ValueFromIncomingContext(ctx, "authorization")
 	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
 		return ctx, nil
@@ -299,9 +299,12 @@ func authenticateGRPCOptional(ctx context.Context, service *auth.Service, cfg co
 	var identity platformprincipal.Principal
 	switch {
 	case strings.EqualFold(scheme, "Bearer"):
-		verified, err := service.Verify(ctx, raw)
+		verified, state, err := service.VerifyWithState(ctx, raw)
 		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
+		}
+		if state.MustChangePassword && !isInfrastructureMethod(method) {
+			return nil, status.Error(codes.PermissionDenied, "password change required")
 		}
 		identity = verified
 		ctx = accesscontrol.WithCredentialScheme(ctx, accesscontrol.CredentialSchemeBearer)
@@ -353,8 +356,7 @@ func isInfrastructureMethod(method string) bool {
 }
 
 func authenticateGRPC(ctx context.Context, method string, service *auth.Service, cfg config.Auth) (context.Context, error) {
-	_ = method
-	return authenticateGRPCOptional(ctx, service, cfg)
+	return authenticateGRPCOptional(ctx, method, service, cfg)
 }
 
 type contextServerStream struct {
@@ -397,8 +399,8 @@ func idempotencyStreamInterceptor(srv any, stream grpc.ServerStream, info *grpc.
 }
 
 func optionalAuthStreamInterceptor(service *auth.Service, cfg config.Auth) grpc.StreamServerInterceptor {
-	return func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		ctx, err := authenticateGRPCOptional(stream.Context(), service, cfg)
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		ctx, err := authenticateGRPCOptional(stream.Context(), info.FullMethod, service, cfg)
 		if err != nil {
 			return err
 		}
