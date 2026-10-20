@@ -45,6 +45,30 @@ func TestLoad_IdempotencyRouteListsCanBeOverriddenByEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoad_IdempotencyCoversRegisteredTenantAuthorizationMutations(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadWithProfile("../../config/config.yaml", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := make(map[string]bool, len(cfg.Idempotency.HTTPPaths))
+	for _, route := range cfg.Idempotency.HTTPPaths {
+		routes[route] = true
+	}
+	for _, route := range []string{
+		"/api/v1/platform/tenant-authorization/permissions/set",
+		"/api/v1/platform/tenant-authorization/administrators/set",
+		"/api/v1/tenant-authorization/administrators/set",
+	} {
+		if !routes[route] {
+			t.Errorf("idempotency.http_paths is missing %q", route)
+		}
+	}
+	if routes["/api/v1/tenant-authorization/permissions/set"] {
+		t.Error("idempotency.http_paths contains the removed tenant permission-ceiling route")
+	}
+}
+
 func TestLoad_UsesCanonicalPlatformEventStreamDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

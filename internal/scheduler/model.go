@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	ErrInvalidDefinition  = errors.New("invalid scheduled job definition")
-	ErrDefinitionNotFound = errors.New("scheduled job definition not found")
-	ErrDefinitionConflict = errors.New("scheduled job definition conflict")
-	definitionKeyPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{1,63}$`)
-	handlerKeyPattern     = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
-	definitionParser      = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	ErrInvalidDefinition      = errors.New("invalid scheduled job definition")
+	ErrDefinitionNotFound     = errors.New("scheduled job definition not found")
+	ErrDefinitionConflict     = errors.New("scheduled job definition conflict")
+	ErrDefinitionStaleVersion = errors.New("scheduled job definition version is stale")
+	definitionKeyPattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{1,63}$`)
+	handlerKeyPattern         = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
+	definitionParser          = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 )
 
 type Definition struct {
@@ -54,26 +55,26 @@ type DefinitionInput struct {
 }
 
 type Run struct {
-	ID             string    `db:"id" json:"id"`
-	ScheduledJobID string    `db:"scheduled_job_id" json:"scheduled_job_id"`
-	JobCode        string    `db:"job_code" json:"job_code"`
-	JobName        string    `db:"job_name" json:"job_name"`
-	Handler        string    `db:"handler" json:"handler"`
-	TriggerSource  string    `db:"trigger_source" json:"trigger_source"`
-	Status         string    `db:"status" json:"status"`
-	RequestID      string    `db:"request_id" json:"request_id"`
-	TraceID        string    `db:"trace_id" json:"trace_id"`
-	StartedAt      time.Time `db:"started_at" json:"started_at"`
-	FinishedAt     time.Time `db:"finished_at" json:"finished_at"`
-	DurationMS     int64     `db:"duration_ms" json:"duration_ms"`
-	ErrorMessage   string    `db:"error_message" json:"error_message"`
-	CreatedAt      time.Time `db:"created_at" json:"created_at"`
-	CreatedBy      string    `db:"created_by" json:"created_by"`
-	CreatedByName  string    `db:"-" json:"created_by_name"`
-	UpdatedAt      time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy      string    `db:"updated_by" json:"updated_by"`
-	UpdatedByName  string    `db:"-" json:"updated_by_name"`
-	Version        int64     `db:"version" json:"version"`
+	ID             string     `db:"id" json:"id"`
+	ScheduledJobID string     `db:"scheduled_job_id" json:"scheduled_job_id"`
+	JobCode        string     `db:"job_code" json:"job_code"`
+	JobName        string     `db:"job_name" json:"job_name"`
+	Handler        string     `db:"handler" json:"handler"`
+	TriggerSource  string     `db:"trigger_source" json:"trigger_source"`
+	Status         string     `db:"status" json:"status"`
+	RequestID      string     `db:"request_id" json:"request_id"`
+	TraceID        string     `db:"trace_id" json:"trace_id"`
+	StartedAt      *time.Time `db:"started_at" json:"started_at"`
+	FinishedAt     *time.Time `db:"finished_at" json:"finished_at"`
+	DurationMS     int64      `db:"duration_ms" json:"duration_ms"`
+	ErrorMessage   string     `db:"error_message" json:"error_message"`
+	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
+	CreatedBy      string     `db:"created_by" json:"created_by"`
+	CreatedByName  string     `db:"-" json:"created_by_name"`
+	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
+	UpdatedBy      string     `db:"updated_by" json:"updated_by"`
+	UpdatedByName  string     `db:"-" json:"updated_by_name"`
+	Version        int64      `db:"version" json:"version"`
 }
 
 func normalizeDefinition(input DefinitionInput) DefinitionInput {

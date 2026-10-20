@@ -76,7 +76,7 @@ func (*testStore) Get(context.Context, string) (*Object, error) {
 }
 func (*testStore) Stat(context.Context, string) (Info, error) { return Info{}, nil }
 func (*testStore) Delete(context.Context, string) error       { return nil }
-func (*testStore) Presign(context.Context, string, Operation, time.Duration) (SignedURL, error) {
+func (*testStore) Presign(context.Context, PresignInput) (SignedURL, error) {
 	return SignedURL{}, nil
 }
 
@@ -97,7 +97,7 @@ func (s *contextStore) Stat(ctx context.Context, _ string) (Info, error) {
 	return Info{}, nil
 }
 func (s *contextStore) Delete(ctx context.Context, _ string) error { s.capture(ctx); return nil }
-func (s *contextStore) Presign(ctx context.Context, _ string, _ Operation, _ time.Duration) (SignedURL, error) {
+func (s *contextStore) Presign(ctx context.Context, _ PresignInput) (SignedURL, error) {
 	s.capture(ctx)
 	return SignedURL{}, nil
 }
@@ -114,6 +114,35 @@ func TestValidation(t *testing.T) {
 	}
 	if _, err := effectivePresignTTL(time.Minute, 25*time.Hour); err == nil {
 		t.Fatal("effectivePresignTTL() error = nil")
+	}
+}
+
+func TestDownloadDisposition(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		input   PresignInput
+		wantErr bool
+	}{
+		{name: "attachment filename", input: PresignInput{Operation: OperationGet, DownloadName: "报表 2026.csv"}},
+		{name: "plain presign", input: PresignInput{Operation: OperationGet}},
+		{name: "put cannot specify filename", input: PresignInput{Operation: OperationPut, DownloadName: "report.csv"}, wantErr: true},
+		{name: "path separators rejected", input: PresignInput{Operation: OperationGet, DownloadName: `../report.csv`}, wantErr: true},
+		{name: "header injection rejected", input: PresignInput{Operation: OperationGet, DownloadName: "report\r\n.csv"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disposition, err := downloadDisposition(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("downloadDisposition() = %q, %v", disposition, err)
+			}
+			if tt.wantErr || tt.input.DownloadName == "" {
+				return
+			}
+			if !strings.HasPrefix(disposition, "attachment;") || !strings.Contains(disposition, "filename") {
+				t.Fatalf("downloadDisposition() = %q", disposition)
+			}
+		})
 	}
 }
 

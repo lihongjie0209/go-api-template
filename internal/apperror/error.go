@@ -31,6 +31,7 @@ const (
 	CodeForbidden                = int(platformcode.Forbidden)
 	CodeConflict                 = int(platformcode.Conflict)
 	CodeRequestInProgress        = int(platformcode.RequestInProgress)
+	CodeStaleVersion             = int(platformcode.StaleVersion)
 	CodeInternal                 = int(platformcode.Internal)
 	CodeDependencyUnavailable    = int(platformcode.DependencyUnavailable)
 	CodeAuthorizationUnavailable = int(platformcode.AuthorizationUnavailable)
@@ -51,6 +52,9 @@ func MethodNotAllowed() *Error {
 }
 func Conflict(message string, err error) *Error {
 	return New(CodeConflict, message, http.StatusConflict, err)
+}
+func StaleVersion(err error) *Error {
+	return New(CodeStaleVersion, "record version is stale", http.StatusConflict, err)
 }
 func RequestInProgress() *Error {
 	return New(CodeRequestInProgress, "request is already processing", http.StatusConflict, nil)

@@ -40,6 +40,8 @@ type UpdateInput struct {
 type PageInput struct {
 	pagination.Request
 	IDs           []string
+	Codes         []string
+	OwnerUserIDs  []string
 	Statuses      []Status
 	CreatedAtFrom *time.Time
 	CreatedAtTo   *time.Time
@@ -123,6 +125,32 @@ func (s *Service) AdminGet(ctx context.Context, id string) (View, error) {
 	return views[0], nil
 }
 
+// AdminDeleteTarget returns a fresh narrow projection for a platform operator
+// that may hold delete permission without tenant read or list permissions.
+func (s *Service) AdminDeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	if _, err := requirePlatformActor(ctx); err != nil {
+		return DeleteTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength {
+		return DeleteTarget{}, ErrInvalid
+	}
+	return s.repository.AdminDeleteTarget(ctx, id)
+}
+
+// AdminUpdateTarget returns fresh editable fields to platform operators with
+// tenant update permission but no tenant read or list permission.
+func (s *Service) AdminUpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	if _, err := requirePlatformActor(ctx); err != nil {
+		return UpdateTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxTenantIDLength {
+		return UpdateTarget{}, ErrInvalid
+	}
+	return s.repository.AdminUpdateTarget(ctx, id)
+}
+
 // AdminPage is the only service operation allowed to list tenants without a
 // tenant predicate. Operation authorization must additionally grant its platform
 // permission before the handler is entered.
@@ -196,6 +224,32 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 		return View{}, err
 	}
 	return views[0], nil
+}
+
+// DeleteTarget reads the current tenant directly from the database so its
+// optimistic version cannot be served from the normal tenant cache.
+func (s *Service) DeleteTarget(ctx context.Context) (DeleteTarget, error) {
+	actor, err := requireActor(ctx)
+	if err != nil {
+		return DeleteTarget{}, err
+	}
+	if strings.TrimSpace(actor.TenantID) == "" {
+		return DeleteTarget{}, ErrForbidden
+	}
+	return s.repository.DeleteTarget(ctx, actor.TenantID)
+}
+
+// UpdateTarget derives the tenant from the principal and bypasses cached reads
+// so an update-only caller receives the current optimistic version.
+func (s *Service) UpdateTarget(ctx context.Context) (UpdateTarget, error) {
+	actor, err := requireActor(ctx)
+	if err != nil {
+		return UpdateTarget{}, err
+	}
+	if strings.TrimSpace(actor.TenantID) == "" {
+		return UpdateTarget{}, ErrForbidden
+	}
+	return s.repository.UpdateTarget(ctx, actor.TenantID)
 }
 
 func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[View], error) {
@@ -364,8 +418,18 @@ func normalizePageInput(input *PageInput) (pagination.Request, error) {
 		return pagination.Request{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	input.Keyword = strings.TrimSpace(input.Keyword)
-	if len(input.Keyword) > maxTenantKeywordLength || len(input.IDs) > 200 || len(input.Statuses) > 20 || !boundedStrings(input.IDs, maxTenantIDLength) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+	if len(input.Keyword) > maxTenantKeywordLength || len(input.IDs) > 200 || len(input.Codes) > 200 || len(input.OwnerUserIDs) > 200 || len(input.Statuses) > 20 || !boundedStrings(input.IDs, maxTenantIDLength) || !boundedStrings(input.OwnerUserIDs, maxTenantIDLength) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
 		return pagination.Request{}, fmt.Errorf("%w: invalid tenant filters", ErrInvalid)
+	}
+	for index, code := range input.Codes {
+		code = strings.ToLower(strings.TrimSpace(code))
+		if !validCode.MatchString(code) {
+			return pagination.Request{}, fmt.Errorf("%w: invalid tenant code", ErrInvalid)
+		}
+		input.Codes[index] = code
+	}
+	for index, id := range input.OwnerUserIDs {
+		input.OwnerUserIDs[index] = strings.TrimSpace(id)
 	}
 	for _, status := range input.Statuses {
 		if status != StatusActive && status != StatusDisabled {

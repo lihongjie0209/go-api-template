@@ -348,7 +348,11 @@ func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 		return Download{}, err
 	}
 	entry.ResourceName = record.OriginalName
-	signed, err := s.storage.Presign(ctx, record.ObjectKey, objectstorage.OperationGet, 0)
+	signed, err := s.storage.Presign(ctx, objectstorage.PresignInput{
+		Key:          record.ObjectKey,
+		Operation:    objectstorage.OperationGet,
+		DownloadName: record.OriginalName,
+	})
 	if err != nil {
 		s.recordFailure(ctx, entry, started)
 		return Download{}, fmt.Errorf("presign file download: %w", err)

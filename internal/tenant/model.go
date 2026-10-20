@@ -8,6 +8,25 @@ import (
 
 type Status string
 
+// DeleteTarget is the fresh, minimal confirmation data for the current tenant.
+type DeleteTarget struct {
+	ID      string `db:"id" json:"id"`
+	Code    string `db:"code" json:"code"`
+	Name    string `db:"name" json:"name"`
+	Status  Status `db:"status" json:"status"`
+	Version int64  `db:"version" json:"version"`
+}
+
+// UpdateTarget is the fresh, minimal editable projection for the current tenant.
+type UpdateTarget struct {
+	ID          string `db:"id" json:"id"`
+	Code        string `db:"code" json:"code"`
+	Name        string `db:"name" json:"name"`
+	Description string `db:"description" json:"description"`
+	Status      Status `db:"status" json:"status"`
+	Version     int64  `db:"version" json:"version"`
+}
+
 const (
 	StatusActive   Status = "active"
 	StatusDisabled Status = "disabled"

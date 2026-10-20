@@ -153,6 +153,28 @@ func (h *PlatformConfigHandler) Update(c *gin.Context) {
 	OK(c, v)
 }
 
+// UpdatePlatformConfigTarget godoc
+// @Summary Get an action-scoped platform configuration update target
+// @Tags platform-configs
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PlatformConfigIDRequest true "Config"
+// @Success 200 {object} Response{body=platformconfig.UpdateTarget}
+// @Router /api/v1/platform-configs/update-target [post]
+func (h *PlatformConfigHandler) UpdateTarget(c *gin.Context) {
+	var request PlatformConfigIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // Delete godoc
 // @Summary Delete a platform configuration
 // @Tags platform-configs
@@ -172,6 +194,28 @@ func (h *PlatformConfigHandler) Delete(c *gin.Context) {
 		return
 	}
 	OK(c, gin.H{})
+}
+
+// DeletePlatformConfigTarget godoc
+// @Summary Get an action-scoped platform configuration delete target
+// @Tags platform-configs
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PlatformConfigIDRequest true "Config"
+// @Success 200 {object} Response{body=platformconfig.DeleteTarget}
+// @Router /api/v1/platform-configs/delete-target [post]
+func (h *PlatformConfigHandler) DeleteTarget(c *gin.Context) {
+	var request PlatformConfigIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
 }
 
 // GetPublic godoc
@@ -228,6 +272,8 @@ func (h *PlatformConfigHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Invalid("invalid platform config", e))
 	case errors.Is(e, platformconfig.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("platform config not found"))
+	case errors.Is(e, platformconfig.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, platformconfig.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("platform config conflict", e))
 	default:

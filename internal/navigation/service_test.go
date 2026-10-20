@@ -3,6 +3,7 @@ package navigation
 import (
 	"context"
 	"errors"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,48 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetNavigationResolvesOnlySameApplicationNonDeletedParent(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	query := `SELECT ` + prefixedColumns("n") + `,COALESCE(parent.name,'') AS parent_name FROM navigations n LEFT JOIN navigations parent ON parent.id=n.parent_id AND parent.application_id=n.application_id AND parent.deleted_at IS NULL WHERE n.id=? AND n.deleted_at IS NULL`
+	now := time.Now()
+	columns := []string{"id", "application_id", "parent_id", "navigation_key", "name", "navigation_type", "route_path", "component", "icon", "resource", "action", "visible", "status", "sort_order", "metadata", "created_at", "created_by", "updated_at", "updated_by", "version", "parent_name"}
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs("child").
+		WillReturnRows(sqlmock.NewRows(columns).AddRow("child", "app-1", "root", "child", "Child", "menu", "/child", "home/index", "", "tenant.member", "list", true, "active", 0, []byte(`{}`), now, "system", now, "system", 1, "Root"))
+	service := &Service{db: db}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem})
+	record, err := service.Get(ctx, "child")
+	require.NoError(t, err)
+	require.Equal(t, "Root", record.ParentName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNavigationTreePresentsParentNameAfterFiltering(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	rowColumns := []string{"id", "application_id", "parent_id", "navigation_key", "name", "navigation_type", "route_path", "component", "icon", "resource", "action", "visible", "status", "sort_order", "metadata", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+columns+` FROM navigations WHERE application_id=? AND deleted_at IS NULL ORDER BY sort_order,id LIMIT ?`)).
+		WithArgs("app-1", maxTreeNodes+1).
+		WillReturnRows(sqlmock.NewRows(rowColumns).
+			AddRow("root", "app-1", nil, "root", "Root", "directory", "/root", "", "", "", "", true, "active", 0, []byte(`{}`), now, "system", now, "system", 1).
+			AddRow("child", "app-1", "root", "child", "Child", "menu", "/child", "home/index", "", "tenant.member", "list", true, "active", 0, []byte(`{}`), now, "system", now, "system", 1))
+	service := &Service{db: db}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem})
+	tree, err := service.Tree(ctx, TreeInput{ApplicationID: "app-1", Keyword: "child"})
+	require.NoError(t, err)
+	require.Len(t, tree, 1)
+	require.Len(t, tree[0].Children, 1)
+	require.Equal(t, "Root", tree[0].Children[0].ParentName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 type memoryCache struct {
 	mu     sync.Mutex
@@ -83,7 +126,7 @@ func TestCurrentTreeScopesGrantAndMembershipInSQL(t *testing.T) {
 	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g.*g.tenant_id=\?.*JOIN tenant_memberships m.*LEFT JOIN navigations n.*a.id=\?`).
 		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "app-1").
 		WillReturnRows(sqlmock.NewRows([]string{"version_sum", "node_count"}).AddRow(0, 0))
-	mock.ExpectQuery(`FROM navigations n WHERE n.application_id=\?.*n.status='active'.*n.visible=true`).
+	mock.ExpectQuery(`FROM navigations n WHERE n.application_id=\?.*n.deleted_at IS NULL`).
 		WithArgs("app-1", maxTreeNodes+1).
 		WillReturnRows(sqlmock.NewRows([]string{}))
 	service := &Service{db: db}
@@ -91,6 +134,33 @@ func TestCurrentTreeScopesGrantAndMembershipInSQL(t *testing.T) {
 	tree, err := service.CurrentTree(ctx, "app-1")
 	require.NoError(t, err)
 	require.Empty(t, tree)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCurrentTreeKeepsHiddenAncestorsUntilVisibilityPruning(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g`).
+		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "app-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version_sum", "node_count"}).AddRow(2, 2))
+	rows := sqlmock.NewRows([]string{"id", "application_id", "parent_id", "navigation_key", "name", "navigation_type", "route_path", "component", "icon", "resource", "action", "visible", "status", "sort_order", "metadata", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow("root", "app-1", nil, "root", "Root", "directory", "/root", "", "", "", "", false, "active", 0, []byte(`{}`), time.Now(), "system", time.Now(), "system", 1).
+		AddRow("child", "app-1", "root", "child", "Child", "menu", "/child", "home/index", "", "tenant.member", "list", true, "active", 0, []byte(`{}`), time.Now(), "system", time.Now(), "system", 1)
+	mock.ExpectQuery(`FROM navigations n WHERE n.application_id=\?.*n.deleted_at IS NULL`).
+		WithArgs("app-1", maxTreeNodes+1).
+		WillReturnRows(rows)
+	service := &Service{db: db}
+	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"})
+
+	tree, err := service.CurrentTree(ctx, "app-1")
+	require.NoError(t, err)
+	require.Len(t, tree, 1)
+	require.Equal(t, "root", tree[0].ID)
+	require.Len(t, tree[0].Children, 1)
+	require.Equal(t, "child", tree[0].Children[0].ID)
+	require.Empty(t, PruneVisible(tree, map[string]struct{}{"child": {}}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -126,6 +196,7 @@ func TestCurrentTreeCachesOnlyRevisionedSourceRecords(t *testing.T) {
 func TestCurrentSourceCacheKeyChangesWithRevision(t *testing.T) {
 	t.Parallel()
 	base := currentSourceCacheKey("app-1", 1, 1)
+	require.Equal(t, "navigation:current-source:v2:app-1:1:1", base)
 	require.NotEqual(t, base, currentSourceCacheKey("app-1", 2, 1))
 	require.NotEqual(t, base, currentSourceCacheKey("app-1", 1, 2))
 }

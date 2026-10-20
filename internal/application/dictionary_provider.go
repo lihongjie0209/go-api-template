@@ -52,6 +52,9 @@ func (p *DictionaryProvider) Query(ctx context.Context, query dictionary.Query) 
 	if err == nil {
 		where, args, err = appendDictionaryIn(where, args, "code", query.Codes)
 	}
+	if err == nil {
+		where, args, err = appendDictionaryIn(where, args, "id", query.Values)
+	}
 	if err != nil {
 		return dictionary.Result{}, err
 	}

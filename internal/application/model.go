@@ -13,10 +13,11 @@ import (
 const Namespace = "319595d8-2486-54cb-a522-82b9d6b2d36a"
 
 var (
-	ErrInvalid  = errors.New("invalid application")
-	ErrNotFound = errors.New("application not found")
-	ErrConflict = errors.New("application conflict")
-	codePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,63}$`)
+	ErrInvalid      = errors.New("invalid application")
+	ErrNotFound     = errors.New("application not found")
+	ErrConflict     = errors.New("application conflict")
+	ErrStaleVersion = errors.New("application version is stale")
+	codePattern     = regexp.MustCompile(`^[a-z][a-z0-9-]{1,63}$`)
 )
 
 type Record struct {

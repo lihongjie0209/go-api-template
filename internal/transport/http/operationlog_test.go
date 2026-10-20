@@ -37,3 +37,11 @@ func TestRecordFrontendRequiresAuthenticatedPrincipal(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
+
+func TestOperationLogPageRequestMapsTraceFilters(t *testing.T) {
+	t.Parallel()
+	input := (OperationLogPageRequest{TraceIDs: []string{"trace-a", "trace-b"}}).input()
+	if len(input.TraceIDs) != 2 || input.TraceIDs[0] != "trace-a" || input.TraceIDs[1] != "trace-b" {
+		t.Fatalf("trace filters = %v", input.TraceIDs)
+	}
+}

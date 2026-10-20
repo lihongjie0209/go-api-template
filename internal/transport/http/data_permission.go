@@ -1,12 +1,16 @@
 package httptransport
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
@@ -47,6 +51,14 @@ type DataPermissionVersionCreateRequest struct {
 	ExpectedPolicyVersion int64                 `json:"expected_policy_version" binding:"required,gt=0"`
 	Policy                datapermission.Policy `json:"policy" binding:"required"`
 }
+type DataPermissionVersionCreateTarget struct {
+	ID       string                         `json:"id"`
+	Code     string                         `json:"code"`
+	Name     string                         `json:"name"`
+	Scope    datapermission.PolicyScopeType `json:"scope"`
+	TenantID string                         `json:"tenant_id"`
+	Version  int64                          `json:"version"`
+}
 type DataPermissionVersionGetRequest struct {
 	PolicyID      string `json:"policy_id" binding:"required,uuid"`
 	VersionNumber int64  `json:"version_number" binding:"required,gt=0"`
@@ -62,10 +74,33 @@ type DataPermissionPublishRequest struct {
 	VersionNumber         int64  `json:"version_number" binding:"required,gt=0"`
 	ExpectedPolicyVersion int64  `json:"expected_policy_version" binding:"required,gt=0"`
 }
+type DataPermissionPublishTargetRequest struct {
+	ID            string `json:"id" binding:"required,uuid"`
+	VersionNumber int64  `json:"version_number" binding:"required,gt=0"`
+}
+type DataPermissionPublishTarget struct {
+	ID            string                         `json:"id"`
+	Code          string                         `json:"code"`
+	Name          string                         `json:"name"`
+	Scope         datapermission.PolicyScopeType `json:"scope"`
+	Status        string                         `json:"status"`
+	Version       int64                          `json:"version"`
+	VersionNumber int64                          `json:"version_number"`
+	VersionStatus string                         `json:"version_status"`
+}
 type DataPermissionStatusRequest struct {
 	PolicyID              string `json:"policy_id" binding:"required,uuid"`
 	Status                string `json:"status" binding:"required,oneof=active disabled"`
 	ExpectedPolicyVersion int64  `json:"expected_policy_version" binding:"required,gt=0"`
+}
+
+type DataPermissionStatusTarget struct {
+	ID      string                         `json:"id"`
+	Code    string                         `json:"code"`
+	Name    string                         `json:"name"`
+	Scope   datapermission.PolicyScopeType `json:"scope"`
+	Status  string                         `json:"status"`
+	Version int64                          `json:"version"`
 }
 
 type DataPermissionSimulationRequest struct {
@@ -76,6 +111,10 @@ type DataPermissionSimulationRequest struct {
 	SubjectAttributes  datapermission.SubjectAttributes  `json:"subject_attributes" binding:"required"`
 	ResourceAttributes datapermission.ResourceAttributes `json:"resource_attributes" binding:"required"`
 	ProposedAttributes datapermission.ResourceAttributes `json:"proposed_attributes"`
+}
+
+type DataPermissionSimulationContext struct {
+	TenantID string `json:"tenant_id"`
 }
 
 // SimulateDataPermissionPolicy godoc
@@ -99,6 +138,43 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 	}
 	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, Resource: request.Resource, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
 	h.respond(c, result, err)
+}
+
+// GetDataPermissionSimulationContext godoc
+// @Summary Get the active tenant ID for a tenant policy simulation
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} Response{body=DataPermissionSimulationContext}
+// @Router /api/v1/data-permissions/tenant-policies/simulate/context [post]
+func (h *DataPermissionHandler) SimulationContext(c *gin.Context) {
+	h.tenantContext(c)
+}
+
+// GetDataPermissionCreateContext godoc
+// @Summary Get the active tenant ID for tenant policy creation
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} Response{body=DataPermissionSimulationContext}
+// @Router /api/v1/data-permissions/tenant-policies/create/context [post]
+func (h *DataPermissionHandler) CreateContext(c *gin.Context) {
+	h.tenantContext(c)
+}
+
+func (h *DataPermissionHandler) tenantContext(c *gin.Context) {
+	principal, err := platformprincipal.Require(c.Request.Context())
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	if principal.TenantID == "" {
+		h.respond(c, nil, datapermission.ErrPolicyScope)
+		return
+	}
+	h.respond(c, DataPermissionSimulationContext{TenantID: principal.TenantID}, nil)
 }
 
 func simulationTenantAllowed(c *gin.Context, tenantIDs ...string) bool {
@@ -208,6 +284,50 @@ func (h *DataPermissionHandler) CreateVersion(c *gin.Context) {
 	h.respond(c, result, err)
 }
 
+// GetDataPermissionVersionCreateTarget godoc
+// @Summary Get a narrow policy target for appending a draft version
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DataPermissionPolicyGetRequest true "Policy ID"
+// @Success 200 {object} Response{body=DataPermissionVersionCreateTarget}
+// @Router /api/v1/data-permissions/global-policies/versions/create-target [post]
+// @Router /api/v1/data-permissions/tenant-policies/versions/create-target [post]
+func (h *DataPermissionHandler) VersionCreateTarget(c *gin.Context) {
+	var request DataPermissionPolicyGetRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	policy, err := h.service.Get(c.Request.Context(), request.ID)
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	target, err := dataPermissionVersionCreateTarget(policy, expectedDataPolicyScope(c))
+	h.respond(c, target, err)
+}
+
+func dataPermissionVersionCreateTarget(
+	policy datapermission.PolicyRecord,
+	scope datapermission.PolicyScopeType,
+) (DataPermissionVersionCreateTarget, error) {
+	if policy.Scope != scope {
+		return DataPermissionVersionCreateTarget{}, datapermission.ErrPolicyNotFound
+	}
+	tenantID := ""
+	if scope == datapermission.PolicyScopeTenant {
+		if !policy.TenantID.Valid || strings.TrimSpace(policy.TenantID.String) == "" {
+			return DataPermissionVersionCreateTarget{}, datapermission.ErrPolicyNotFound
+		}
+		tenantID = policy.TenantID.String
+	}
+	return DataPermissionVersionCreateTarget{
+		ID: policy.ID, Code: policy.Code, Name: policy.Name,
+		Scope: policy.Scope, TenantID: tenantID, Version: policy.Version,
+	}, nil
+}
+
 // GetDataPermissionVersion godoc
 // @Summary Get one data-permission policy version
 // @Tags data-permission
@@ -237,7 +357,7 @@ func (h *DataPermissionHandler) GetVersion(c *gin.Context) {
 // @Produce json
 // @Security Bearer
 // @Param request body DataPermissionVersionPageRequest true "Filters"
-// @Success 200 {object} Response{body=datapermission.VersionPage}
+// @Success 200 {object} Response{body=DataPermissionVersionSummaryPage}
 // @Router /api/v1/data-permissions/global-policies/versions/page [post]
 // @Router /api/v1/data-permissions/tenant-policies/versions/page [post]
 func (h *DataPermissionHandler) PageVersions(c *gin.Context) {
@@ -249,7 +369,11 @@ func (h *DataPermissionHandler) PageVersions(c *gin.Context) {
 		return
 	}
 	result, err := h.service.PageVersions(c.Request.Context(), datapermission.VersionPageInput{PolicyID: request.PolicyID, Request: pagination.Request{Page: request.Page, PageSize: request.PageSize}, Statuses: request.Statuses})
-	h.respond(c, result, err)
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	h.respond(c, summarizeDataPermissionVersions(result), nil)
 }
 
 // PublishDataPermissionPolicy godoc
@@ -271,6 +395,63 @@ func (h *DataPermissionHandler) Publish(c *gin.Context) {
 	h.respond(c, result, err)
 }
 
+// GetDataPermissionPublishTarget godoc
+// @Summary Get a narrow policy and draft target for publishing
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DataPermissionPublishTargetRequest true "Policy and draft version"
+// @Success 200 {object} Response{body=DataPermissionPublishTarget}
+// @Router /api/v1/data-permissions/global-policies/publish/target [post]
+// @Router /api/v1/data-permissions/tenant-policies/publish/target [post]
+func (h *DataPermissionHandler) PublishTarget(c *gin.Context) {
+	var request DataPermissionPublishTargetRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	policy, err := h.service.Get(c.Request.Context(), request.ID)
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	if policy.Scope != expectedDataPolicyScope(c) {
+		h.respond(c, nil, datapermission.ErrPolicyNotFound)
+		return
+	}
+	version, err := h.service.GetVersion(c.Request.Context(), request.ID, request.VersionNumber)
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	target, err := dataPermissionPublishTarget(policy, version, expectedDataPolicyScope(c), request.VersionNumber)
+	h.respond(c, target, err)
+}
+
+func dataPermissionPublishTarget(
+	policy datapermission.PolicyRecord,
+	version datapermission.VersionRecord,
+	scope datapermission.PolicyScopeType,
+	number int64,
+) (DataPermissionPublishTarget, error) {
+	if policy.Scope != scope || version.PolicyID != policy.ID || version.VersionNumber != number {
+		return DataPermissionPublishTarget{}, datapermission.ErrPolicyNotFound
+	}
+	if version.Status != datapermission.VersionDraft {
+		return DataPermissionPublishTarget{}, datapermission.ErrVersionNotDraft
+	}
+	return DataPermissionPublishTarget{
+		ID:            policy.ID,
+		Code:          policy.Code,
+		Name:          policy.Name,
+		Scope:         policy.Scope,
+		Status:        policy.Status,
+		Version:       policy.Version,
+		VersionNumber: version.VersionNumber,
+		VersionStatus: version.Status,
+	}, nil
+}
+
 // SetDataPermissionPolicyStatus godoc
 // @Summary Enable or disable a data-permission policy
 // @Tags data-permission
@@ -288,6 +469,44 @@ func (h *DataPermissionHandler) SetStatus(c *gin.Context) {
 	}
 	result, err := h.service.SetStatus(c.Request.Context(), datapermission.SetPolicyStatusInput{PolicyID: request.PolicyID, Status: request.Status, ExpectedPolicyVersion: request.ExpectedPolicyVersion})
 	h.respond(c, result, err)
+}
+
+// GetDataPermissionStatusTarget godoc
+// @Summary Get a narrow policy target for a versioned status change
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DataPermissionPolicyGetRequest true "Policy ID"
+// @Success 200 {object} Response{body=DataPermissionStatusTarget}
+// @Router /api/v1/data-permissions/global-policies/status/target [post]
+// @Router /api/v1/data-permissions/tenant-policies/status/target [post]
+func (h *DataPermissionHandler) StatusTarget(c *gin.Context) {
+	var request DataPermissionPolicyGetRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	policy, err := h.service.Get(c.Request.Context(), request.ID)
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	target, err := dataPermissionStatusTarget(policy, expectedDataPolicyScope(c))
+	h.respond(c, target, err)
+}
+
+func dataPermissionStatusTarget(policy datapermission.PolicyRecord, scope datapermission.PolicyScopeType) (DataPermissionStatusTarget, error) {
+	if policy.Scope != scope {
+		return DataPermissionStatusTarget{}, datapermission.ErrPolicyNotFound
+	}
+	return DataPermissionStatusTarget{
+		ID:      policy.ID,
+		Code:    policy.Code,
+		Name:    policy.Name,
+		Scope:   policy.Scope,
+		Status:  policy.Status,
+		Version: policy.Version,
+	}, nil
 }
 
 func (h *DataPermissionHandler) policyMatches(c *gin.Context, id string) bool {
@@ -310,11 +529,27 @@ func expectedDataPolicyScope(c *gin.Context) datapermission.PolicyScopeType {
 }
 
 func (h *DataPermissionHandler) bind(c *gin.Context, target any) bool {
-	if err := c.ShouldBindJSON(target); err != nil {
+	if err := decodeStrictDataPermissionJSON(c.Request.Body, target); err != nil {
 		Fail(c, h.logger, apperror.Invalid("invalid request", err))
 		return false
 	}
 	return true
+}
+
+func decodeStrictDataPermissionJSON(body io.Reader, target any) error {
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("multiple JSON values")
+	}
+	return binding.Validator.ValidateStruct(target)
 }
 
 func (h *DataPermissionHandler) respond(c *gin.Context, body any, err error) {

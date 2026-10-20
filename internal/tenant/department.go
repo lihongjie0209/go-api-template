@@ -17,6 +17,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	platformtree "github.com/lihongjie0209/microservice-platform-go/tree"
 )
@@ -33,6 +34,7 @@ type Department struct {
 	ID            string    `db:"id" json:"id"`
 	TenantID      string    `db:"tenant_id" json:"tenant_id"`
 	ParentID      *string   `db:"parent_id" json:"parent_id"`
+	ParentName    string    `db:"-" json:"parent_name"`
 	Code          string    `db:"code" json:"code"`
 	Name          string    `db:"name" json:"name"`
 	SortOrder     int64     `db:"sort_order" json:"sort_order"`
@@ -47,6 +49,21 @@ type Department struct {
 type DepartmentNode struct {
 	Department
 	Children []*DepartmentNode `json:"children"`
+}
+type DepartmentUpdateTarget struct {
+	ID         string  `json:"id"`
+	ParentID   *string `json:"parent_id"`
+	ParentName string  `json:"parent_name"`
+	Code       string  `json:"code"`
+	Name       string  `json:"name"`
+	SortOrder  int64   `json:"sort_order"`
+	Version    int64   `json:"version"`
+}
+type DepartmentDeleteTarget struct {
+	ID      string `json:"id"`
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
 }
 type DepartmentInput struct {
 	ParentID   *string
@@ -79,13 +96,14 @@ type DepartmentService struct {
 	tx         *database.Transactor
 	locker     cache.Locker
 	operations operationlog.TransactionalRecorder
+	security   securitylog.TransactionalRecorder
 	users      UserResolver
 	cfg        config.Config
 	dataScopes *datapermission.Service
 }
 
-func NewDepartmentService(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, users UserResolver, cfg config.Config, dataScopes *datapermission.Service) *DepartmentService {
-	return &DepartmentService{db: db, tx: tx, locker: locker, operations: operations, users: users, cfg: cfg, dataScopes: dataScopes}
+func NewDepartmentService(db *sqlx.DB, tx *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, users UserResolver, cfg config.Config, dataScopes *datapermission.Service) *DepartmentService {
+	return &DepartmentService{db: db, tx: tx, locker: locker, operations: operations, security: security, users: users, cfg: cfg, dataScopes: dataScopes}
 }
 
 const departmentColumns = `td.id,td.tenant_id,td.parent_id,td.code,td.name,td.sort_order,td.created_at,td.created_by,td.updated_at,td.updated_by,td.version`
@@ -168,6 +186,35 @@ func (s *DepartmentService) Get(ctx context.Context, id string) (Department, err
 	return s.get(ctx, actor.TenantID, id, scope)
 }
 
+func (s *DepartmentService) actionTarget(ctx context.Context, id string) (Department, error) {
+	parsedID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return Department{}, ErrInvalid
+	}
+	return s.Get(ctx, parsedID.String())
+}
+
+func (s *DepartmentService) UpdateTarget(ctx context.Context, id string) (DepartmentUpdateTarget, error) {
+	record, err := s.actionTarget(ctx, id)
+	if err != nil {
+		return DepartmentUpdateTarget{}, err
+	}
+	return DepartmentUpdateTarget{
+		ID: record.ID, ParentID: record.ParentID, ParentName: record.ParentName,
+		Code: record.Code, Name: record.Name, SortOrder: record.SortOrder, Version: record.Version,
+	}, nil
+}
+
+func (s *DepartmentService) DeleteTarget(ctx context.Context, id string) (DepartmentDeleteTarget, error) {
+	record, err := s.actionTarget(ctx, id)
+	if err != nil {
+		return DepartmentDeleteTarget{}, err
+	}
+	return DepartmentDeleteTarget{
+		ID: record.ID, Code: record.Code, Name: record.Name, Version: record.Version,
+	}, nil
+}
+
 func (s *DepartmentService) get(ctx context.Context, tenantID, id string, scope datapermission.SQLPredicate) (Department, error) {
 	var record Department
 	args := append([]any{tenantID, id}, scope.Args...)
@@ -177,6 +224,15 @@ func (s *DepartmentService) get(ctx context.Context, tenantID, id string, scope 
 	}
 	if err != nil {
 		return record, err
+	}
+	if record.ParentID != nil {
+		var parentName string
+		parentArgs := append([]any{tenantID, *record.ParentID}, scope.Args...)
+		parentQuery := `SELECT td.name FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND ` + scope.Clause
+		if err := s.db.GetContext(ctx, &parentName, s.db.Rebind(parentQuery), parentArgs...); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Department{}, err
+		}
+		record.ParentName = parentName
 	}
 	records := []Department{record}
 	if err := s.presentDepartments(ctx, records); err != nil {
@@ -204,7 +260,16 @@ func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*Depart
 	if len(records) > maxDepartmentNodes {
 		return nil, fmt.Errorf("%w: department tree exceeds %d nodes", ErrInvalid, maxDepartmentNodes)
 	}
+	parentNames := make(map[string]string, len(records))
+	for _, record := range records {
+		parentNames[record.ID] = record.Name
+	}
 	filtered := filterDepartments(records, keyword)
+	for i := range filtered {
+		if filtered[i].ParentID != nil {
+			filtered[i].ParentName = parentNames[*filtered[i].ParentID]
+		}
+	}
 	if err := s.presentDepartments(ctx, filtered); err != nil {
 		return nil, err
 	}
@@ -351,7 +416,7 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 				return fmt.Errorf("update department affected rows: %w", rowsErr)
 			}
 			if rows != 1 {
-				return ErrConflict
+				return ErrStaleVersion
 			}
 			return nil
 		})
@@ -402,19 +467,19 @@ func (s *DepartmentService) Delete(ctx context.Context, id string, version int64
 				return fmt.Errorf("delete department affected rows: %w", rowsErr)
 			}
 			if rows != 1 {
-				return ErrConflict
+				return ErrStaleVersion
 			}
 			return nil
 		})
 	})
 }
-func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string, assignments []DepartmentMemberAssignment) error {
+func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string, version int64, assignments []DepartmentMemberAssignment) error {
 	actor, err := departmentActor(ctx)
 	if err != nil {
 		return err
 	}
 	departmentID = strings.TrimSpace(departmentID)
-	if departmentID == "" || len(departmentID) > maxTenantIDLength || len(assignments) > 1000 {
+	if departmentID == "" || len(departmentID) > maxTenantIDLength || version <= 0 || len(assignments) > 1000 {
 		return ErrInvalid
 	}
 	seen := make(map[string]struct{}, len(assignments))
@@ -435,25 +500,21 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 	if err != nil {
 		return err
 	}
-	return s.withDepartmentLock(ctx, actor.TenantID, "members", func(ctx context.Context) error {
+	securityEntry := securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: departmentID, SubjectType: "tenant_department", TenantID: actor.TenantID, Metadata: map[string]any{"assignment_count": len(assignments)}}
+	err = s.withDepartmentLock(ctx, actor.TenantID, "members", func(ctx context.Context) error {
 		primaryCount := 0
 		for _, assignment := range assignments {
 			if assignment.IsPrimary {
 				primaryCount++
 			}
 		}
-		request := map[string]any{"assignment_count": len(assignments), "primary_count": primaryCount}
+		request := map[string]any{"assignment_count": len(assignments), "primary_count": primaryCount, "version": version}
 		return s.mutate(ctx, "tenant.department.members.set", departmentID, request, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 				return err
 			}
-			var departmentName string
-			query := tx.Rebind(`SELECT td.name FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND ` + scope.Clause)
-			args := append([]any{actor.TenantID, departmentID}, scope.Args...)
-			if err := tx.GetContext(ctx, &departmentName, query, args...); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					return ErrNotFound
-				}
+			departmentName, err := claimDepartmentAssignmentVersion(ctx, tx, actor.TenantID, departmentID, version, actor.ID, scope)
+			if err != nil {
 				return err
 			}
 			request["name"] = departmentName
@@ -500,9 +561,52 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 					return err
 				}
 			}
+			securityEntry.SubjectName = departmentName
+			securityEntry.Succeeded = true
+			if s.security != nil {
+				return s.security.RecordTx(ctx, tx, securityEntry)
+			}
 			return nil
 		})
 	})
+	if err != nil && s.security != nil {
+		securityEntry.Succeeded = false
+		securityEntry.ErrorCode = "operation_failed"
+		securityEntry.ErrorMessage = "operation failed"
+		_ = s.security.Record(ctx, securityEntry)
+	}
+	return err
+}
+
+func claimDepartmentAssignmentVersion(ctx context.Context, tx *sqlx.Tx, tenantID, departmentID string, version int64, actorID string, scope datapermission.SQLPredicate) (string, error) {
+	var department struct {
+		Name    string `db:"name"`
+		Version int64  `db:"version"`
+	}
+	query := tx.Rebind(`SELECT td.name,td.version FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND ` + scope.Clause + ` FOR UPDATE`)
+	args := append([]any{tenantID, departmentID}, scope.Args...)
+	if err := tx.GetContext(ctx, &department, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("load department assignment version: %w", err)
+	}
+	if department.Version != version {
+		return "", ErrStaleVersion
+	}
+	updateArgs := append([]any{time.Now(), actorID, tenantID, departmentID, version}, scope.Args...)
+	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_departments AS td SET updated_at=?,updated_by=?,version=version+1 WHERE td.tenant_id=? AND td.id=? AND td.version=? AND td.deleted_at IS NULL AND `+scope.Clause), updateArgs...)
+	if err != nil {
+		return "", fmt.Errorf("claim department assignment version: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("department assignment affected rows: %w", err)
+	}
+	if rows != 1 {
+		return "", ErrStaleVersion
+	}
+	return department.Name, nil
 }
 
 func (s *DepartmentService) Members(ctx context.Context, departmentID string) ([]DepartmentMemberView, error) {

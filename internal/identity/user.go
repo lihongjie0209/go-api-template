@@ -22,11 +22,12 @@ import (
 )
 
 var (
-	ErrInvalid   = errors.New("invalid user")
-	ErrNotFound  = errors.New("user not found")
-	ErrConflict  = errors.New("user conflict")
-	ErrInUse     = errors.New("user is in use")
-	ErrForbidden = errors.New("user operation forbidden")
+	ErrInvalid      = errors.New("invalid user")
+	ErrNotFound     = errors.New("user not found")
+	ErrConflict     = errors.New("user conflict")
+	ErrStaleVersion = errors.New("user version is stale")
+	ErrInUse        = errors.New("user is in use")
+	ErrForbidden    = errors.New("user operation forbidden")
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,63}$`)
@@ -64,6 +65,37 @@ type User struct {
 	Version       int64     `db:"version" json:"version"`
 }
 
+// SecurityTarget is the minimal, authoritative identity shown before a
+// privileged account operation. It deliberately excludes contact details.
+type SecurityTarget struct {
+	ID          string `db:"id" json:"id"`
+	Username    string `db:"username" json:"username"`
+	DisplayName string `db:"display_name" json:"display_name"`
+	Status      Status `db:"status" json:"status"`
+}
+
+// DeleteTarget exposes only the identity and current version needed to
+// confirm an optimistic, action-scoped deletion.
+type DeleteTarget struct {
+	ID          string `db:"id" json:"id"`
+	Username    string `db:"username" json:"username"`
+	DisplayName string `db:"display_name" json:"display_name"`
+	Status      Status `db:"status" json:"status"`
+	Version     int64  `db:"version" json:"version"`
+}
+
+// UpdateTarget contains only the editable identity fields and fresh version.
+// Contact fields are needed to preserve values in an update-only editor.
+type UpdateTarget struct {
+	ID          string `db:"id" json:"id"`
+	Username    string `db:"username" json:"username"`
+	DisplayName string `db:"display_name" json:"display_name"`
+	Email       string `db:"email" json:"email"`
+	Phone       string `db:"phone" json:"phone"`
+	Status      Status `db:"status" json:"status"`
+	Version     int64  `db:"version" json:"version"`
+}
+
 type CreateInput struct{ Username, DisplayName, Email, Phone string }
 type UpdateInput struct {
 	ID, DisplayName, Email, Phone string
@@ -93,6 +125,42 @@ COALESCE((SELECT actor.display_name FROM identity_users actor WHERE actor.id=u.u
 
 func (r *Repository) Get(ctx context.Context, id string) (User, error) {
 	return r.get(ctx, "id = ?", id)
+}
+
+func (r *Repository) SecurityTarget(ctx context.Context, id string) (SecurityTarget, error) {
+	var target SecurityTarget
+	query := r.db.Rebind(`SELECT id,username,display_name,status FROM identity_users WHERE id=? AND status<>'closed' AND deleted_at IS NULL`)
+	if err := r.db.GetContext(ctx, &target, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SecurityTarget{}, ErrNotFound
+		}
+		return SecurityTarget{}, fmt.Errorf("get user security target: %w", err)
+	}
+	return target, nil
+}
+
+func (r *Repository) DeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	var target DeleteTarget
+	query := r.db.Rebind(`SELECT id,username,display_name,status,version FROM identity_users WHERE id=? AND status<>'closed' AND deleted_at IS NULL`)
+	if err := r.db.GetContext(ctx, &target, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DeleteTarget{}, ErrNotFound
+		}
+		return DeleteTarget{}, fmt.Errorf("get user delete target: %w", err)
+	}
+	return target, nil
+}
+
+func (r *Repository) UpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	var target UpdateTarget
+	query := r.db.Rebind(`SELECT id,username,display_name,email,phone,status,version FROM identity_users WHERE id=? AND deleted_at IS NULL`)
+	if err := r.db.GetContext(ctx, &target, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return UpdateTarget{}, ErrNotFound
+		}
+		return UpdateTarget{}, fmt.Errorf("get user update target: %w", err)
+	}
+	return target, nil
 }
 
 func (r *Repository) ResolveUsername(ctx context.Context, username string) (User, error) {
@@ -174,6 +242,37 @@ func (s *Service) Get(ctx context.Context, id string) (User, error) {
 	}
 	return s.cached(ctx, "id:"+id, func() (User, error) { return s.repository.Get(ctx, id) })
 }
+func (s *Service) SecurityTarget(ctx context.Context, id string) (SecurityTarget, error) {
+	if _, err := actor(ctx); err != nil {
+		return SecurityTarget{}, err
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil || parsed.String() != strings.TrimSpace(id) {
+		return SecurityTarget{}, ErrInvalid
+	}
+	return s.repository.SecurityTarget(ctx, parsed.String())
+}
+func (s *Service) DeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	if _, err := actor(ctx); err != nil {
+		return DeleteTarget{}, err
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil || parsed.String() != strings.TrimSpace(id) {
+		return DeleteTarget{}, ErrInvalid
+	}
+	return s.repository.DeleteTarget(ctx, parsed.String())
+}
+
+func (s *Service) UpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	if _, err := actor(ctx); err != nil {
+		return UpdateTarget{}, err
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil || parsed.String() != strings.TrimSpace(id) {
+		return UpdateTarget{}, ErrInvalid
+	}
+	return s.repository.UpdateTarget(ctx, parsed.String())
+}
 func (s *Service) Self(ctx context.Context) (User, error) {
 	principal, ok := platformprincipal.FromContext(ctx)
 	if !ok {
@@ -220,7 +319,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 		q := tx.Rebind(`INSERT INTO identity_users (id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`)
 		_, err := tx.ExecContext(ctx, q, id, input.Username, input.DisplayName, input.Email, input.Phone, StatusActive, now, a, now, a)
 		if uniqueViolation(err) {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return err
 	})
@@ -293,7 +392,7 @@ func (s *Service) UpdateSelf(ctx context.Context, input SelfUpdateInput) (User, 
 			return fmt.Errorf("self profile update affected rows: %w", rowsErr)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -337,7 +436,7 @@ func (s *Service) update(ctx context.Context, input UpdateInput, operation strin
 			return fmt.Errorf("user update affected rows: %w", err)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -390,7 +489,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 			return fmt.Errorf("user delete affected rows: %w", err)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})

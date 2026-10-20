@@ -26,6 +26,22 @@ type transactionalSecurityRecorder struct {
 	entries []securitylog.Entry
 }
 
+func TestForceLogoutAllRejectsMissingUserBeforeRevocation(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "operator-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users WHERE id=\? AND status<>'closed' AND deleted_at IS NULL`).
+		WithArgs("missing-user").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectRollback()
+	require.ErrorIs(t, service.ForceLogoutAll(ctx, "missing-user"), identity.ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func (*transactionalSecurityRecorder) Enabled() bool    { return true }
 func (*transactionalSecurityRecorder) FailClosed() bool { return true }
 func (r *transactionalSecurityRecorder) Record(_ context.Context, entry securitylog.Entry) error {
@@ -80,6 +96,95 @@ func TestService_SessionsAlwaysScopesQueryToCurrentUser(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, page.Total)
 	require.NotNil(t, page.Items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SessionRevokeTargetScopesToCurrentUser(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	service := New(sqlx.NewDb(db, "sqlmock"), nil, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	expires := time.Now().Add(time.Hour)
+	mock.ExpectQuery(`SELECT id,client_ip,user_agent,expires_at,revoked_at,version FROM identity_sessions WHERE id=\? AND user_id=\? AND deleted_at IS NULL`).
+		WithArgs("session-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_ip", "user_agent", "expires_at", "revoked_at", "version"}).AddRow("session-1", "203.0.113.1", "Browser", expires, nil, 4))
+	target, err := service.SessionRevokeTarget(ctx, "session-1")
+	require.NoError(t, err)
+	require.Equal(t, "session-1", target.ID)
+	require.Equal(t, SessionStatusActive, target.Status)
+	require.EqualValues(t, 4, target.Version)
+	require.Equal(t, "+08:00", target.ExpiresAt.Format("-07:00"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SessionRevokeTargetHidesOtherUsers(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	service := New(sqlx.NewDb(db, "sqlmock"), nil, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	mock.ExpectQuery(`SELECT id,client_ip,user_agent,expires_at,revoked_at,version FROM identity_sessions WHERE id=\? AND user_id=\? AND deleted_at IS NULL`).
+		WithArgs("other-session", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_ip", "user_agent", "expires_at", "revoked_at", "version"}))
+	_, err = service.SessionRevokeTarget(ctx, "other-session")
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SessionRevokeTargetRejectsInvalidContextAndID(t *testing.T) {
+	t.Parallel()
+	service := New(nil, nil, nil, nil, config.Config{})
+	_, err := service.SessionRevokeTarget(t.Context(), "session-1")
+	require.ErrorIs(t, err, ErrForbidden)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	for _, id := range []string{"", " ", strings.Repeat("a", maxSessionID+1)} {
+		_, err := service.SessionRevokeTarget(ctx, id)
+		require.ErrorIs(t, err, ErrInvalid)
+	}
+}
+
+func TestService_RevokeSessionReportsVersionConflict(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "session-1", "user-1", int64(4)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT version FROM identity_sessions WHERE id=\? AND user_id=\? AND deleted_at IS NULL`).
+		WithArgs("session-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(5))
+	mock.ExpectRollback()
+	err = service.RevokeSession(ctx, "session-1", 4)
+	require.ErrorIs(t, err, ErrSessionVersionConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RevokeSessionDoesNotExposeAnotherUsersSession(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "other-session", "user-1", int64(4)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT version FROM identity_sessions WHERE id=\? AND user_id=\? AND deleted_at IS NULL`).
+		WithArgs("other-session", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}))
+	mock.ExpectRollback()
+	err = service.RevokeSession(ctx, "other-session", 4)
+	require.ErrorIs(t, err, ErrSessionNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

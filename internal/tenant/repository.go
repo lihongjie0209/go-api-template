@@ -15,12 +15,68 @@ import (
 var (
 	ErrNotFound            = errors.New("tenant not found")
 	ErrConflict            = errors.New("tenant conflict")
+	ErrStaleVersion        = errors.New("tenant stale version")
 	ErrSecurityUnavailable = errors.New("tenant security audit unavailable")
 )
 
 type Repository struct{ db *sqlx.DB }
 
 func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
+
+func (r *Repository) DeleteTarget(ctx context.Context, tenantID string) (DeleteTarget, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return DeleteTarget{}, ErrForbidden
+	}
+	return r.deleteTarget(ctx, tenantID)
+}
+
+func (r *Repository) UpdateTarget(ctx context.Context, tenantID string) (UpdateTarget, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return UpdateTarget{}, ErrForbidden
+	}
+	return r.updateTarget(ctx, tenantID)
+}
+
+// AdminUpdateTarget is called only after the platform principal is checked.
+func (r *Repository) AdminUpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	if strings.TrimSpace(id) == "" {
+		return UpdateTarget{}, ErrInvalid
+	}
+	return r.updateTarget(ctx, id)
+}
+
+func (r *Repository) updateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	var target UpdateTarget
+	query := r.db.Rebind(`SELECT id, code, name, description, status, version FROM tenants WHERE id = ? AND deleted_at IS NULL`)
+	if err := r.db.GetContext(ctx, &target, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return UpdateTarget{}, ErrNotFound
+		}
+		return UpdateTarget{}, fmt.Errorf("get tenant update target: %w", err)
+	}
+	return target, nil
+}
+
+// AdminDeleteTarget is called only after Service.AdminDeleteTarget establishes
+// a platform principal; it must not be used for tenant-scoped traffic.
+func (r *Repository) AdminDeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	if strings.TrimSpace(id) == "" {
+		return DeleteTarget{}, ErrInvalid
+	}
+	return r.deleteTarget(ctx, id)
+}
+
+func (r *Repository) deleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	var target DeleteTarget
+	query := r.db.Rebind(`SELECT id, code, name, status, version FROM tenants WHERE id = ? AND deleted_at IS NULL`)
+	if err := r.db.GetContext(ctx, &target, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DeleteTarget{}, ErrNotFound
+		}
+		return DeleteTarget{}, fmt.Errorf("get tenant delete target: %w", err)
+	}
+	return target, nil
+}
 
 func (r *Repository) Get(ctx context.Context, id, tenantID string) (Record, error) {
 	if tenantID == "" {
@@ -60,6 +116,14 @@ func (r *Repository) Page(ctx context.Context, tenantID string, input PageInput,
 	if len(input.IDs) > 0 {
 		where += " AND id IN (?)"
 		args = append(args, input.IDs)
+	}
+	if len(input.Codes) > 0 {
+		where += " AND code IN (?)"
+		args = append(args, input.Codes)
+	}
+	if len(input.OwnerUserIDs) > 0 {
+		where += " AND owner_user_id IN (?)"
+		args = append(args, input.OwnerUserIDs)
 	}
 	if len(input.Statuses) > 0 {
 		where += " AND status IN (?)"
@@ -130,7 +194,7 @@ func updateTenant(ctx context.Context, tx *sqlx.Tx, id, name, description string
 		return err
 	}
 	if rows != 1 {
-		return ErrConflict
+		return ErrStaleVersion
 	}
 	return nil
 }
@@ -152,7 +216,7 @@ func deleteTenant(ctx context.Context, tx *sqlx.Tx, id string, version int64, ac
 		return err
 	}
 	if rows != 1 {
-		return ErrConflict
+		return ErrStaleVersion
 	}
 	return nil
 }

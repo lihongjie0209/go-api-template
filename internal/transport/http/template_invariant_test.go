@@ -256,7 +256,7 @@ func TestDepartmentMemberAssignmentReadUsesSamePrivilegedScopeAsWrite(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"get", "set"} {
+	for _, path := range []string{"get", "set", "target"} {
 		registration := `jwt("/tenant-departments/members/` + path + `", "tenant.department", "assign-member", accesscontrol.DataPermissionRequired`
 		if !strings.Contains(string(source), registration) {
 			t.Errorf("department member %s must use assign-member with required data permission", path)

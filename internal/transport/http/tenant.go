@@ -34,6 +34,8 @@ type PageTenantRequest struct {
 	PageSize      int             `json:"page_size"`
 	Keyword       string          `json:"keyword" binding:"omitempty,max=256"`
 	IDs           []string        `json:"ids" binding:"max=200"`
+	Codes         []string        `json:"codes" binding:"max=200"`
+	OwnerUserIDs  []string        `json:"owner_user_ids" binding:"max=200"`
 	Statuses      []tenant.Status `json:"statuses" binding:"max=20,dive,oneof=active disabled"`
 	CreatedAtFrom *time.Time      `json:"created_at_from"`
 	CreatedAtTo   *time.Time      `json:"created_at_to"`
@@ -55,6 +57,9 @@ type DeleteTenantRequest struct {
 	ID      string `json:"id" binding:"required"`
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
+
+type TenantDeleteTargetRequest struct{}
+type TenantUpdateTargetRequest struct{}
 
 // CreateTenant godoc
 // @Summary Create a tenant and its owner membership
@@ -116,7 +121,8 @@ func (h *TenantHandler) Page(c *gin.Context) {
 	}
 	result, err := h.service.Page(c.Request.Context(), tenant.PageInput{
 		Request: pagination.Request{Page: request.Page, PageSize: request.PageSize, Keyword: request.Keyword},
-		IDs:     request.IDs, Statuses: request.Statuses, CreatedAtFrom: request.CreatedAtFrom, CreatedAtTo: request.CreatedAtTo,
+		IDs:     request.IDs, Codes: request.Codes, OwnerUserIDs: request.OwnerUserIDs,
+		Statuses: request.Statuses, CreatedAtFrom: request.CreatedAtFrom, CreatedAtTo: request.CreatedAtTo,
 	})
 	if err != nil {
 		h.fail(c, err)
@@ -168,6 +174,50 @@ func (h *TenantHandler) Delete(c *gin.Context) {
 	OK(c, gin.H{})
 }
 
+// DeleteTarget godoc
+// @Summary Get fresh confirmation fields for deleting the current tenant
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantDeleteTargetRequest true "Empty JSON object"
+// @Success 200 {object} Response{body=tenant.DeleteTarget}
+// @Router /api/v1/tenants/delete-target [post]
+func (h *TenantHandler) DeleteTarget(c *gin.Context) {
+	var request TenantDeleteTargetRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.DeleteTarget(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// UpdateTarget godoc
+// @Summary Get fresh editable fields for the current tenant
+// @Tags tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantUpdateTargetRequest true "Empty JSON object"
+// @Success 200 {object} Response{body=tenant.UpdateTarget}
+// @Router /api/v1/tenants/update-target [post]
+func (h *TenantHandler) UpdateTarget(c *gin.Context) {
+	var request TenantUpdateTargetRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.UpdateTarget(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // AdminGetTenant godoc
 // @Summary Get any tenant from platform context
 // @Tags platform-tenants
@@ -206,7 +256,8 @@ func (h *TenantHandler) AdminPage(c *gin.Context) {
 	}
 	result, err := h.service.AdminPage(c.Request.Context(), tenant.PageInput{
 		Request: pagination.Request{Page: request.Page, PageSize: request.PageSize, Keyword: request.Keyword},
-		IDs:     request.IDs, Statuses: request.Statuses, CreatedAtFrom: request.CreatedAtFrom, CreatedAtTo: request.CreatedAtTo,
+		IDs:     request.IDs, Codes: request.Codes, OwnerUserIDs: request.OwnerUserIDs,
+		Statuses: request.Statuses, CreatedAtFrom: request.CreatedAtFrom, CreatedAtTo: request.CreatedAtTo,
 	})
 	if err != nil {
 		h.fail(c, err)
@@ -237,6 +288,28 @@ func (h *TenantHandler) AdminUpdate(c *gin.Context) {
 	OK(c, view)
 }
 
+// AdminUpdateTarget godoc
+// @Summary Get fresh editable fields for a platform-managed tenant
+// @Tags platform-tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetTenantRequest true "Tenant ID"
+// @Success 200 {object} Response{body=tenant.UpdateTarget}
+// @Router /api/v1/platform/tenants/update-target [post]
+func (h *TenantHandler) AdminUpdateTarget(c *gin.Context) {
+	var request GetTenantRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.AdminUpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // AdminDeleteTenant godoc
 // @Summary Logically delete any tenant from platform context using optimistic locking
 // @Tags platform-tenants
@@ -258,6 +331,28 @@ func (h *TenantHandler) AdminDelete(c *gin.Context) {
 	OK(c, gin.H{})
 }
 
+// AdminDeleteTarget godoc
+// @Summary Get fresh confirmation fields for deleting a platform-managed tenant
+// @Tags platform-tenants
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetTenantRequest true "Tenant ID"
+// @Success 200 {object} Response{body=tenant.DeleteTarget}
+// @Router /api/v1/platform/tenants/delete-target [post]
+func (h *TenantHandler) AdminDeleteTarget(c *gin.Context) {
+	var request GetTenantRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.AdminDeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 func (h *TenantHandler) bind(c *gin.Context, value any) bool {
 	if err := c.ShouldBindJSON(value); err != nil {
 		Fail(c, h.logger, apperror.Invalid("invalid request", err))
@@ -272,8 +367,10 @@ func (h *TenantHandler) fail(c *gin.Context, err error) {
 		Fail(c, h.logger, apperror.NotFound("tenant not found"))
 	case errors.Is(err, tenant.ErrForbidden):
 		Fail(c, h.logger, apperror.Forbidden("tenant access denied"))
+	case errors.Is(err, tenant.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, tenant.ErrConflict):
-		Fail(c, h.logger, apperror.Conflict("tenant version or unique constraint conflict", err))
+		Fail(c, h.logger, apperror.Conflict("tenant conflict", err))
 	case errors.Is(err, tenant.ErrInvalid):
 		Fail(c, h.logger, apperror.Invalid("invalid tenant input", err))
 	default:

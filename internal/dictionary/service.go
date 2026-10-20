@@ -24,11 +24,13 @@ import (
 )
 
 var (
-	ErrInvalid             = errors.New("invalid data dictionary")
-	ErrNotFound            = errors.New("data dictionary not found")
-	ErrConflict            = errors.New("data dictionary conflict")
-	ErrProviderUnavailable = errors.New("data dictionary provider unavailable")
-	codePattern            = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{0,127}$`)
+	ErrInvalid               = errors.New("invalid data dictionary")
+	ErrNotFound              = errors.New("data dictionary not found")
+	ErrConflict              = errors.New("data dictionary conflict")
+	ErrStaleVersion          = errors.New("data dictionary stale version")
+	ErrProviderNotRegistered = errors.New("data dictionary provider not registered")
+	ErrProviderUnavailable   = errors.New("data dictionary provider unavailable")
+	codePattern              = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{0,127}$`)
 )
 
 const definitionColumns = `id,dictionary_code,name,dictionary_type,source_type,description,status,extension,created_at,created_by,updated_at,updated_by,version`
@@ -94,6 +96,9 @@ func (s *Service) CreateDefinition(ctx context.Context, in DefinitionInput) (Def
 	if !validDefinition(in) {
 		return Definition{}, ErrInvalid
 	}
+	if in.Source == SourceProvider && !s.providers.Has(in.Code) {
+		return Definition{}, ErrProviderNotRegistered
+	}
 	id := uuid.NewString()
 	started := time.Now()
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
@@ -145,16 +150,48 @@ func (s *Service) presentDefinitions(ctx context.Context, records []Definition) 
 }
 func (s *Service) presentItems(ctx context.Context, records []Item) error {
 	ids := make([]string, 0, len(records)*2)
+	parentIDs := make([]string, 0, len(records))
+	seenParents := make(map[string]struct{}, len(records))
 	for _, record := range records {
 		ids = append(ids, record.CreatedBy, record.UpdatedBy)
+		if record.ParentID != nil {
+			if _, seen := seenParents[*record.ParentID]; !seen {
+				seenParents[*record.ParentID] = struct{}{}
+				parentIDs = append(parentIDs, *record.ParentID)
+			}
+		}
 	}
 	names, err := presentation.ActorNames(ctx, s.actors, ids...)
 	if err != nil {
 		return err
 	}
+	type parentRecord struct {
+		ID           string `db:"id"`
+		DictionaryID string `db:"dictionary_id"`
+		Name         string `db:"name"`
+	}
+	parents := make(map[string]parentRecord, len(parentIDs))
+	if len(parentIDs) > 0 {
+		query, args, err := sqlx.In(`SELECT id,dictionary_id,name FROM dictionary_items WHERE id IN (?) AND deleted_at IS NULL`, parentIDs)
+		if err != nil {
+			return fmt.Errorf("build dictionary parent lookup: %w", err)
+		}
+		var rows []parentRecord
+		if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
+			return fmt.Errorf("load dictionary parent names: %w", err)
+		}
+		for _, parent := range rows {
+			parents[parent.ID] = parent
+		}
+	}
 	for index := range records {
 		records[index].CreatedByName = names[records[index].CreatedBy]
 		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		if records[index].ParentID != nil {
+			if parent, ok := parents[*records[index].ParentID]; ok && parent.DictionaryID == records[index].DictionaryID {
+				records[index].ParentName = parent.Name
+			}
+		}
 		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
 		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
 	}
@@ -254,6 +291,21 @@ func (s *Service) PageItems(ctx context.Context, in ItemPageInput) (ItemPage, er
 	if in.ParentID != nil && uuid.Validate(*in.ParentID) != nil {
 		return ItemPage{}, ErrInvalid
 	}
+	if in.ExcludeSubtreeID != "" && uuid.Validate(in.ExcludeSubtreeID) != nil {
+		return ItemPage{}, ErrInvalid
+	}
+	prefix := ""
+	prefixArgs := []any{}
+	if in.ExcludeSubtreeID != "" {
+		// UNION de-duplicates rows, so even a corrupted cycle cannot recurse forever.
+		prefix = `WITH RECURSIVE excluded(id) AS (
+			SELECT id FROM dictionary_items WHERE id=? AND dictionary_id=? AND deleted_at IS NULL
+			UNION
+			SELECT child.id FROM dictionary_items child JOIN excluded parent ON child.parent_id=parent.id
+			WHERE child.dictionary_id=? AND child.deleted_at IS NULL
+		) `
+		prefixArgs = []any{in.ExcludeSubtreeID, in.DictionaryID, in.DictionaryID}
+	}
 	where := `dictionary_id=? AND deleted_at IS NULL`
 	args := []any{in.DictionaryID}
 	if in.Keyword != "" {
@@ -269,13 +321,17 @@ func (s *Service) PageItems(ctx context.Context, in ItemPageInput) (ItemPage, er
 		where += ` AND parent_id=?`
 		args = append(args, *in.ParentID)
 	}
+	if in.ExcludeSubtreeID != "" {
+		where += ` AND id NOT IN (SELECT id FROM excluded)`
+	}
 	var total int64
-	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT COUNT(*) FROM dictionary_items WHERE `+where), args...); err != nil {
+	countArgs := append(append([]any{}, prefixArgs...), args...)
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(prefix+`SELECT COUNT(*) FROM dictionary_items WHERE `+where), countArgs...); err != nil {
 		return ItemPage{}, err
 	}
-	queryArgs := append(append([]any{}, args...), page.PageSize, pagination.Offset(page))
+	queryArgs := append(append(append([]any{}, prefixArgs...), args...), page.PageSize, pagination.Offset(page))
 	items := []Item{}
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY sort_order,code LIMIT ? OFFSET ?`), queryArgs...); err != nil {
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(prefix+`SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY sort_order,code,id LIMIT ? OFFSET ?`), queryArgs...); err != nil {
 		return ItemPage{}, err
 	}
 	if err := s.presentItems(ctx, items); err != nil {
@@ -286,6 +342,23 @@ func (s *Service) PageItems(ctx context.Context, in ItemPageInput) (ItemPage, er
 
 func validItem(in ItemInput) bool {
 	return uuid.Validate(in.DictionaryID) == nil && codePattern.MatchString(in.Code) && strings.TrimSpace(in.Name) != "" && len(in.Name) <= 256 && len(in.Value) <= maxValueLength && validJSON(in.Extension)
+}
+
+// The caller holds the dictionary definition row lock, serializing all item
+// creates and value changes within this dictionary before checking the value.
+func ensureSelectableValueAvailable(ctx context.Context, tx *sqlx.Tx, dictionaryID, itemID, value string) error {
+	if value == "" {
+		value = itemID
+	}
+	var conflictingID string
+	err := tx.GetContext(ctx, &conflictingID, tx.Rebind(`SELECT id FROM dictionary_items WHERE dictionary_id=? AND id<>? AND deleted_at IS NULL AND COALESCE(NULLIF(value,''),id)=? LIMIT 1 FOR UPDATE`), dictionaryID, itemID, value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check dictionary selectable value: %w", err)
+	}
+	return ErrConflict
 }
 func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 	actor, err := platformprincipal.Require(ctx)
@@ -328,6 +401,9 @@ func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 			if e := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM dictionary_items WHERE id=? AND dictionary_id=? AND deleted_at IS NULL`), *in.ParentID, in.DictionaryID); e != nil || count != 1 {
 				return ErrInvalid
 			}
+		}
+		if e := ensureSelectableValueAvailable(ctx, tx, in.DictionaryID, id, in.Value); e != nil {
+			return e
 		}
 		now := time.Now()
 		_, e := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO dictionary_items(id,dictionary_id,parent_id,code,name,value,disabled,sort_order,extension,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, in.DictionaryID, in.ParentID, in.Code, in.Name, in.Value, in.Disabled, in.SortOrder, string(in.Extension), now, actor.ID, now, actor.ID)
@@ -372,9 +448,12 @@ func (s *Service) UpdateDefinition(ctx context.Context, in DefinitionUpdate) (De
 		if e != nil {
 			return e
 		}
-		n, _ := result.RowsAffected()
+		n, e := result.RowsAffected()
+		if e != nil {
+			return e
+		}
 		if n == 0 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return s.recordTx(ctx, tx, "dictionary.definition.update", "dictionary", in.ID, in.Name, map[string]any{"status": in.Status, "version": in.Version}, started)
 	})
@@ -402,7 +481,7 @@ func (s *Service) DeleteDefinition(ctx context.Context, id string, version int64
 			return e
 		}
 		if existingVersion != version {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		var n int
 		if e := tx.GetContext(ctx, &n, tx.Rebind(`SELECT COUNT(*) FROM dictionary_items WHERE dictionary_id=? AND deleted_at IS NULL`), id); e != nil {
@@ -416,9 +495,12 @@ func (s *Service) DeleteDefinition(ctx context.Context, id string, version int64
 		if e != nil {
 			return e
 		}
-		rows, _ := result.RowsAffected()
+		rows, e := result.RowsAffected()
+		if e != nil {
+			return e
+		}
 		if rows == 0 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return s.recordTx(ctx, tx, "dictionary.definition.delete", "dictionary", id, "", map[string]any{"version": version}, started)
 	})
@@ -440,15 +522,31 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 	started := time.Now()
 	var dictionaryID string
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		var currentItem struct {
-			DictionaryID string `db:"dictionary_id"`
-			Kind         Kind   `db:"dictionary_type"`
-		}
-		if e := tx.GetContext(ctx, &currentItem, tx.Rebind(`SELECT i.dictionary_id,d.dictionary_type FROM dictionary_items i JOIN dictionary_definitions d ON d.id=i.dictionary_id WHERE i.id=? AND i.deleted_at IS NULL FOR UPDATE`), in.ID); e != nil {
+		var candidateDictionaryID string
+		if e := tx.GetContext(ctx, &candidateDictionaryID, tx.Rebind(`SELECT dictionary_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), in.ID); e != nil {
 			return e
 		}
+		var definition struct {
+			Kind   Kind   `db:"dictionary_type"`
+			Source Source `db:"source_type"`
+		}
+		if e := tx.GetContext(ctx, &definition, tx.Rebind(`SELECT dictionary_type,source_type FROM dictionary_definitions WHERE id=? AND deleted_at IS NULL FOR UPDATE`), candidateDictionaryID); e != nil {
+			return e
+		}
+		if definition.Source != SourceStatic {
+			return ErrInvalid
+		}
+		var currentItem struct {
+			DictionaryID string `db:"dictionary_id"`
+		}
+		if e := tx.GetContext(ctx, &currentItem, tx.Rebind(`SELECT dictionary_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), in.ID); e != nil {
+			return e
+		}
+		if currentItem.DictionaryID != candidateDictionaryID {
+			return ErrConflict
+		}
 		dictionaryID = currentItem.DictionaryID
-		if currentItem.Kind == KindEnum && in.ParentID != nil {
+		if definition.Kind == KindEnum && in.ParentID != nil {
 			return ErrInvalid
 		}
 		if in.ParentID != nil {
@@ -461,7 +559,7 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 					DictionaryID string  `db:"dictionary_id"`
 					ParentID     *string `db:"parent_id"`
 				}
-				if e := tx.GetContext(ctx, &parent, tx.Rebind(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), *current); e != nil || parent.DictionaryID != dictionaryID {
+				if e := tx.GetContext(ctx, &parent, tx.Rebind(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), *current); e != nil || parent.DictionaryID != dictionaryID {
 					return ErrInvalid
 				}
 				current = parent.ParentID
@@ -470,14 +568,20 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 				}
 			}
 		}
+		if e := ensureSelectableValueAvailable(ctx, tx, dictionaryID, in.ID, in.Value); e != nil {
+			return e
+		}
 		now := time.Now()
 		result, e := tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_items SET parent_id=?,name=?,value=?,disabled=?,sort_order=?,extension=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), in.ParentID, in.Name, in.Value, in.Disabled, in.SortOrder, string(in.Extension), now, actor.ID, in.ID, in.Version)
 		if e != nil {
 			return e
 		}
-		n, _ := result.RowsAffected()
+		n, e := result.RowsAffected()
+		if e != nil {
+			return e
+		}
 		if n == 0 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		_, e = tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_definitions SET updated_at=?,updated_by=? WHERE id=?`), now, actor.ID, dictionaryID)
 		if e != nil {
@@ -513,27 +617,46 @@ func (s *Service) DeleteItem(ctx context.Context, id string, version int64) erro
 	started := time.Now()
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var dictionaryID string
-		if e := tx.GetContext(ctx, &dictionaryID, tx.Rebind(`SELECT dictionary_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), id); e != nil {
+		if e := tx.GetContext(ctx, &dictionaryID, tx.Rebind(`SELECT dictionary_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), id); e != nil {
 			if errors.Is(e, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return e
 		}
-		var children int
-		if e := tx.GetContext(ctx, &children, tx.Rebind(`SELECT COUNT(*) FROM dictionary_items WHERE parent_id=? AND deleted_at IS NULL`), id); e != nil {
+		var lockedDefinitionID string
+		if e := tx.GetContext(ctx, &lockedDefinitionID, tx.Rebind(`SELECT id FROM dictionary_definitions WHERE id=? AND deleted_at IS NULL FOR UPDATE`), dictionaryID); e != nil {
+			if errors.Is(e, sql.ErrNoRows) {
+				return ErrNotFound
+			}
 			return e
 		}
-		if children > 0 {
+		var lockedDictionaryID string
+		if e := tx.GetContext(ctx, &lockedDictionaryID, tx.Rebind(`SELECT dictionary_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), id); e != nil {
+			if errors.Is(e, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return e
+		}
+		if lockedDictionaryID != dictionaryID {
 			return ErrConflict
+		}
+		var childID string
+		if e := tx.GetContext(ctx, &childID, tx.Rebind(`SELECT id FROM dictionary_items WHERE parent_id=? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`), id); e == nil {
+			return ErrConflict
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return e
 		}
 		now := time.Now()
 		result, e := tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_items SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, id, version)
 		if e != nil {
 			return e
 		}
-		n, _ := result.RowsAffected()
+		n, e := result.RowsAffected()
+		if e != nil {
+			return e
+		}
 		if n == 0 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		_, e = tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_definitions SET updated_at=?,updated_by=? WHERE id=?`), now, actor.ID, dictionaryID)
 		if e != nil {
@@ -547,8 +670,15 @@ func (s *Service) DeleteItem(ctx context.Context, id string, version int64) erro
 	return err
 }
 func validateQuery(q Query) error {
-	if !codePattern.MatchString(strings.ToLower(strings.TrimSpace(q.Code))) || len(q.Keyword) > 256 || len(q.IDs) > 200 || len(q.Codes) > 200 || !validJSON(q.Extension) {
+	if !codePattern.MatchString(strings.ToLower(strings.TrimSpace(q.Code))) || len(q.Keyword) > 256 || len(q.IDs) > 200 || len(q.Codes) > 200 || len(q.Values) > 200 || !validJSON(q.Extension) {
 		return ErrInvalid
+	}
+	valueBytes := 0
+	for _, value := range q.Values {
+		valueBytes += len(value)
+		if strings.TrimSpace(value) == "" || valueBytes > 16*1024 {
+			return ErrInvalid
+		}
 	}
 	for _, id := range q.IDs {
 		if uuid.Validate(id) != nil {
@@ -621,6 +751,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	}
 	count := 0
 	seen := map[string]struct{}{}
+	seenValues := map[string]struct{}{}
 	var walk func([]ResultItem, *string) bool
 	walk = func(items []ResultItem, expectedParent *string) bool {
 		for _, item := range items {
@@ -635,6 +766,14 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 				return false
 			}
 			seen[item.ID] = struct{}{}
+			selectableValue := item.Value
+			if selectableValue == "" {
+				selectableValue = item.ID
+			}
+			if _, exists := seenValues[selectableValue]; exists {
+				return false
+			}
+			seenValues[selectableValue] = struct{}{}
 			if result.Type == KindEnum && len(item.Children) != 0 {
 				return false
 			}
@@ -651,6 +790,21 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 		}
 	} else if result.Page != 0 || result.PageSize != 0 {
 		return false
+	}
+	if result.Type == KindEnum && len(query.Values) > 0 {
+		allowedValues := make(map[string]struct{}, len(query.Values))
+		for _, value := range query.Values {
+			allowedValues[value] = struct{}{}
+		}
+		for _, item := range result.Items {
+			selectedValue := item.Value
+			if selectedValue == "" {
+				selectedValue = item.ID
+			}
+			if _, ok := allowedValues[selectedValue]; !ok {
+				return false
+			}
+		}
 	}
 	if !walk(result.Items, nil) {
 		return false
@@ -682,6 +836,7 @@ func (s *Service) queryStatic(ctx context.Context, d Definition, q Query) (Resul
 		}
 		where, args = appendIn(where, args, "id", q.IDs)
 		where, args = appendIn(where, args, "code", q.Codes)
+		where, args = appendIn(where, args, "COALESCE(NULLIF(value,''),id)", q.Values)
 		n, err := normalizePage(q.Page, q.PageSize)
 		if err != nil {
 			return Result{}, err
@@ -752,6 +907,10 @@ func filterTreeItems(items []Item, query Query) []Item {
 	for _, code := range query.Codes {
 		codeFilter[code] = struct{}{}
 	}
+	valueFilter := make(map[string]struct{}, len(query.Values))
+	for _, value := range query.Values {
+		valueFilter[value] = struct{}{}
+	}
 	keep := map[string]struct{}{}
 	for _, item := range items {
 		if !query.IncludeDisabled && item.Disabled {
@@ -765,6 +924,13 @@ func filterTreeItems(items []Item, query Query) []Item {
 			matched = false
 		}
 		if _, ok := codeFilter[item.Code]; len(codeFilter) != 0 && !ok {
+			matched = false
+		}
+		selectedValue := item.Value
+		if selectedValue == "" {
+			selectedValue = item.ID
+		}
+		if _, ok := valueFilter[selectedValue]; len(valueFilter) != 0 && !ok {
 			matched = false
 		}
 		if !matched {

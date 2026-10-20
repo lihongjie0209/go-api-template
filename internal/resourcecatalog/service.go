@@ -19,11 +19,12 @@ import (
 )
 
 var (
-	ErrInvalid   = errors.New("invalid resource catalog entry")
-	ErrNotFound  = errors.New("resource catalog entry not found")
-	ErrConflict  = errors.New("resource catalog entry conflict")
-	ErrCodeOwned = errors.New("code-owned resource catalog entry is read-only")
-	ErrInUse     = errors.New("resource catalog entry is in use")
+	ErrInvalid      = errors.New("invalid resource catalog entry")
+	ErrNotFound     = errors.New("resource catalog entry not found")
+	ErrConflict     = errors.New("resource catalog entry conflict")
+	ErrStaleVersion = errors.New("resource catalog entry stale version")
+	ErrCodeOwned    = errors.New("code-owned resource catalog entry is read-only")
+	ErrInUse        = errors.New("resource catalog entry is in use")
 )
 
 type Resource struct {
@@ -42,19 +43,20 @@ type Resource struct {
 }
 
 type Action struct {
-	ID          string    `db:"id" json:"id"`
-	ResourceID  string    `db:"resource_id" json:"resource_id"`
-	ResourceKey string    `db:"resource_key" json:"resource_key"`
-	Key         string    `db:"action_key" json:"action_key"`
-	Name        string    `db:"name" json:"name"`
-	Description string    `db:"description" json:"description"`
-	Source      string    `db:"source" json:"source"`
-	Status      string    `db:"status" json:"status"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	CreatedBy   string    `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string    `db:"updated_by" json:"updated_by"`
-	Version     int64     `db:"version" json:"version"`
+	ID           string    `db:"id" json:"id"`
+	ResourceID   string    `db:"resource_id" json:"resource_id"`
+	ResourceKey  string    `db:"resource_key" json:"resource_key"`
+	ResourceName string    `db:"resource_name" json:"resource_name"`
+	Key          string    `db:"action_key" json:"action_key"`
+	Name         string    `db:"name" json:"name"`
+	Description  string    `db:"description" json:"description"`
+	Source       string    `db:"source" json:"source"`
+	Status       string    `db:"status" json:"status"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	CreatedBy    string    `db:"created_by" json:"created_by"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy    string    `db:"updated_by" json:"updated_by"`
+	Version      int64     `db:"version" json:"version"`
 }
 
 type ResourceInput struct {
@@ -67,6 +69,9 @@ type PageInput struct {
 	pagination.Request
 	IDs, Statuses, Sources []string
 	ResourceID             string
+	ResourceKey            string
+	Scope                  resourceaction.ResourceScope
+	ActiveResourcesOnly    bool
 }
 type ResourcePage = pagination.Result[Resource]
 type ActionPage = pagination.Result[Action]
@@ -151,10 +156,18 @@ func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) 
 
 func (s *Service) PageResources(ctx context.Context, input PageInput) (pagination.Result[Resource], error) {
 	request, err := pagination.Normalize(input.Request)
-	if err != nil || !validPage(input) || input.ResourceID != "" {
+	if err != nil || !validPage(input) || input.ResourceID != "" || input.ActiveResourcesOnly {
 		return pagination.Result[Resource]{}, ErrInvalid
 	}
 	where, args := pageConditions(input, "id", "resource_key")
+	if input.ResourceKey != "" {
+		where += " AND resource_key=?"
+		args = append(args, input.ResourceKey)
+	}
+	if input.Scope != "" {
+		where += " AND scope=?"
+		args = append(args, input.Scope)
+	}
 	var total int64
 	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM authorization_resources WHERE `+where), args...); err != nil {
 		return pagination.Result[Resource]{}, err
@@ -181,7 +194,7 @@ func (s *Service) UpdateResource(ctx context.Context, id string, version int64, 
 			return ErrCodeOwned
 		}
 		if current.Version != version {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		if current.Key != input.Key || current.Scope != input.Scope {
 			return ErrInvalid
@@ -208,7 +221,7 @@ func (s *Service) DeleteResource(ctx context.Context, id string, version int64) 
 			return ErrCodeOwned
 		}
 		if current.Version != version {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		var count int
 		if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT count(*) FROM authorization_resource_actions WHERE resource_id=? AND deleted_at IS NULL`), id); err != nil {
@@ -272,8 +285,19 @@ func (s *Service) PageActions(ctx context.Context, input PageInput) (pagination.
 			return pagination.Result[Action]{}, ErrInvalid
 		}
 	}
-	where, args := pageConditions(input, "a.id", "a.action_key")
+	where, args := pageConditions(input, "a.id", "a.action_key", "r.resource_key", "r.name")
 	where += " AND r.deleted_at IS NULL"
+	if input.ResourceKey != "" {
+		where += " AND r.resource_key=?"
+		args = append(args, input.ResourceKey)
+	}
+	if input.Scope != "" {
+		where += " AND r.scope=?"
+		args = append(args, input.Scope)
+	}
+	if input.ActiveResourcesOnly {
+		where += " AND r.status='active'"
+	}
 	if input.ResourceID != "" {
 		where += " AND a.resource_id=?"
 		args = append(args, input.ResourceID)
@@ -304,7 +328,7 @@ func (s *Service) UpdateAction(ctx context.Context, id string, version int64, in
 			return ErrCodeOwned
 		}
 		if current.Version != version {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		if current.ResourceID != input.ResourceID || current.Key != input.Key {
 			return ErrInvalid
@@ -338,7 +362,7 @@ func (s *Service) DeleteAction(ctx context.Context, id string, version int64) er
 			return ErrCodeOwned
 		}
 		if current.Version != version {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		var count int
 		if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT count(*) FROM permission_resource_actions WHERE action_id=? AND deleted_at IS NULL`), id); err != nil {
@@ -352,7 +376,7 @@ func (s *Service) DeleteAction(ctx context.Context, id string, version int64) er
 	})
 }
 
-const actionSelect = `SELECT a.id,a.resource_id,r.resource_key,a.action_key,a.name,a.description,a.source,a.status,a.created_at,a.created_by,a.updated_at,a.updated_by,a.version FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id`
+const actionSelect = `SELECT a.id,a.resource_id,r.resource_key,r.name AS resource_name,a.action_key,a.name,a.description,a.source,a.status,a.created_at,a.created_by,a.updated_at,a.updated_by,a.version FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id`
 
 func lockResource(ctx context.Context, tx *sqlx.Tx, id string) (Resource, error) {
 	var row Resource
@@ -380,13 +404,19 @@ func affected(result sql.Result, err error) error {
 		return err
 	}
 	if count != 1 {
-		return ErrConflict
+		return ErrStaleVersion
 	}
 	return nil
 }
 
 func validPage(input PageInput) bool {
 	if len(input.Keyword) > 256 || len(input.IDs) > 200 || len(input.Statuses) > 2 || len(input.Sources) > 2 {
+		return false
+	}
+	if input.ResourceKey != "" && !resourceaction.ValidResourceKey(input.ResourceKey) {
+		return false
+	}
+	if input.Scope != "" && input.Scope != resourceaction.ResourceScopePlatform && input.Scope != resourceaction.ResourceScopeTenant && input.Scope != resourceaction.ResourceScopePrincipal {
 		return false
 	}
 	for _, id := range input.IDs {
@@ -406,7 +436,7 @@ func validPage(input PageInput) bool {
 	}
 	return true
 }
-func pageConditions(input PageInput, idColumn, keyColumn string) (string, []any) {
+func pageConditions(input PageInput, idColumn, keyColumn string, extraKeywordColumns ...string) (string, []any) {
 	alias := ""
 	if strings.Contains(idColumn, ".") {
 		alias = strings.SplitN(idColumn, ".", 2)[0] + "."
@@ -414,9 +444,15 @@ func pageConditions(input PageInput, idColumn, keyColumn string) (string, []any)
 	where := alias + "deleted_at IS NULL"
 	args := []any{}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		where += " AND (LOWER(" + keyColumn + ") LIKE LOWER(?) OR LOWER(" + alias + "name) LIKE LOWER(?))"
+		// All columns come from fixed repository call sites, never from request data.
+		columns := append([]string{keyColumn, alias + "name"}, extraKeywordColumns...)
+		predicates := make([]string, 0, len(columns))
 		like := "%" + keyword + "%"
-		args = append(args, like, like)
+		for _, column := range columns {
+			predicates = append(predicates, "LOWER("+column+") LIKE LOWER(?)")
+			args = append(args, like)
+		}
+		where += " AND (" + strings.Join(predicates, " OR ") + ")"
 	}
 	if len(input.IDs) > 0 {
 		query, in, err := sqlx.In(idColumn+` IN (?)`, input.IDs)

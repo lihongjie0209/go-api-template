@@ -14,8 +14,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
-	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -77,7 +77,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 		if code != input.ApplicationCode {
 			return ErrConflict
 		}
-		if err := s.validateTree(ctx, tx, input.ApplicationID, "", Record{ID: id, ApplicationID: input.ApplicationID, ParentID: input.ParentID, Key: input.Key, Name: input.Name, Type: input.Type}); err != nil {
+		if err := s.validateTree(ctx, tx, input.ApplicationID, "", Record{ID: id, ApplicationID: input.ApplicationID, ParentID: input.ParentID, Key: input.Key, Name: input.Name, Type: input.Type, RoutePath: input.RoutePath}); err != nil {
 			return err
 		}
 		now := time.Now()
@@ -98,7 +98,8 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, err
 	}
 	var record Record
-	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+columns+` FROM navigations WHERE id=? AND deleted_at IS NULL`), strings.TrimSpace(id))
+	query := `SELECT ` + prefixedColumns("n") + `,COALESCE(parent.name,'') AS parent_name FROM navigations n LEFT JOIN navigations parent ON parent.id=n.parent_id AND parent.application_id=n.application_id AND parent.deleted_at IS NULL WHERE n.id=? AND n.deleted_at IS NULL`
+	err := s.db.GetContext(ctx, &record, s.db.Rebind(query), strings.TrimSpace(id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -159,7 +160,9 @@ func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Nod
 	records, cacheHit := s.cachedCurrentRecords(ctx, cacheKey)
 	if !cacheHit {
 		records = []Record{}
-		query := `SELECT ` + prefixedColumns("n") + ` FROM navigations n WHERE n.application_id=? AND n.status='active' AND n.visible=true AND n.deleted_at IS NULL ORDER BY n.sort_order,n.id LIMIT ?`
+		// Keep hidden and disabled ancestors until Build has validated the full tree.
+		// The HTTP boundary prunes visibility after capability evaluation.
+		query := `SELECT ` + prefixedColumns("n") + ` FROM navigations n WHERE n.application_id=? AND n.deleted_at IS NULL ORDER BY n.sort_order,n.id LIMIT ?`
 		if err := s.db.SelectContext(ctx, &records, s.db.Rebind(query), applicationID, maxTreeNodes+1); err != nil {
 			return nil, err
 		}
@@ -179,7 +182,7 @@ func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Nod
 }
 
 func currentSourceCacheKey(applicationID string, versionSum, nodeCount int64) string {
-	return fmt.Sprintf("navigation:current-source:v1:%s:%d:%d", applicationID, versionSum, nodeCount)
+	return fmt.Sprintf("navigation:current-source:v2:%s:%d:%d", applicationID, versionSum, nodeCount)
 }
 
 func (s *Service) cachedCurrentRecords(ctx context.Context, key string) ([]Record, bool) {
@@ -209,8 +212,11 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if input.Version <= 0 || Validate(candidate, s.resources) != nil {
 		return Record{}, ErrInvalid
 	}
+	if existing.Version != input.Version {
+		return Record{}, ErrStaleVersion
+	}
 	err = s.mutate(ctx, "platform.navigation.update", input.ID, candidate.Name, input, func(tx *sqlx.Tx) error {
-		if err := s.validateTree(ctx, tx, existing.ApplicationID, input.ID, Record{ID: input.ID, ApplicationID: existing.ApplicationID, ParentID: candidate.ParentID, Key: existing.Key, Name: candidate.Name, Type: candidate.Type}); err != nil {
+		if err := s.validateTree(ctx, tx, existing.ApplicationID, input.ID, Record{ID: input.ID, ApplicationID: existing.ApplicationID, ParentID: candidate.ParentID, Key: existing.Key, Name: candidate.Name, Type: candidate.Type, RoutePath: candidate.RoutePath}); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE navigations SET parent_id=?,name=?,navigation_type=?,route_path=?,component=?,icon=?,resource=?,action=?,visible=?,status=?,sort_order=?,metadata=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND application_id=? AND deleted_at IS NULL`), candidate.ParentID, candidate.Name, candidate.Type, candidate.RoutePath, candidate.Component, candidate.Icon, candidate.Resource, candidate.Action, candidate.Visible, candidate.Status, candidate.SortOrder, string(candidate.Metadata), time.Now(), actor.ID, input.ID, input.Version, existing.ApplicationID)
@@ -222,7 +228,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 			return err
 		}
 		if affected != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -244,6 +250,9 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if version <= 0 {
 		return ErrInvalid
 	}
+	if current.Version != version {
+		return ErrStaleVersion
+	}
 	return s.mutate(ctx, "platform.navigation.delete", id, current.Name, map[string]any{"version": version}, func(tx *sqlx.Tx) error {
 		var children int
 		if err := tx.GetContext(ctx, &children, tx.Rebind(`SELECT count(*) FROM navigations WHERE parent_id=? AND application_id=? AND deleted_at IS NULL`), id, current.ApplicationID); err != nil {
@@ -261,7 +270,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 			return err
 		}
 		if affected != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})

@@ -25,10 +25,14 @@ import (
 )
 
 var ErrIdentityUnavailable = errors.New("identity service unavailable")
+var ErrContactFilterTooBroad = errors.New("contact filter matches too many users")
 
 type UserSnapshot struct{ ID, Username, DisplayName string }
 type UserResolver interface {
 	ResolveUsername(context.Context, string) (UserSnapshot, error)
+}
+type MemberContactSearcher interface {
+	SearchContactUserIDs(context.Context, []string, []string) ([]string, error)
 }
 type grpcUserResolver struct {
 	client identityv1.IdentityServiceClient
@@ -124,11 +128,20 @@ type Member struct {
 	UpdatedByName string    `db:"-" json:"updated_by_name"`
 	Version       int64     `db:"version" json:"version"`
 }
+
+type MemberActionTarget struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Status      Status `json:"status"`
+	Version     int64  `json:"version"`
+	IsSelf      bool   `json:"is_self"`
+}
 type MemberPageInput struct {
 	pagination.Request
-	IDs, UserIDs, Usernames []string
-	Statuses                []Status
-	JoinedFrom, JoinedTo    *time.Time
+	IDs, UserIDs, Usernames, Emails, Phones []string
+	Statuses                                []Status
+	JoinedFrom, JoinedTo                    *time.Time
 }
 
 const memberColumns = `id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version`
@@ -217,6 +230,7 @@ type MembershipService struct {
 	repository *Repository
 	transactor *database.Transactor
 	users      UserResolver
+	contacts   MemberContactSearcher
 	locker     cache.Locker
 	cfg        config.Config
 	operations operationlog.TransactionalRecorder
@@ -224,8 +238,8 @@ type MembershipService struct {
 	dataScopes *datapermission.Service
 }
 
-func NewMembershipService(r *Repository, t *database.Transactor, u UserResolver, l cache.Locker, c config.Config, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, dataScopes *datapermission.Service) *MembershipService {
-	return &MembershipService{repository: r, transactor: t, users: u, locker: l, cfg: c, operations: operations, security: security, dataScopes: dataScopes}
+func NewMembershipService(r *Repository, t *database.Transactor, u UserResolver, contacts MemberContactSearcher, l cache.Locker, c config.Config, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, dataScopes *datapermission.Service) *MembershipService {
+	return &MembershipService{repository: r, transactor: t, users: u, contacts: contacts, locker: l, cfg: c, operations: operations, security: security, dataScopes: dataScopes}
 }
 func (s *MembershipService) Add(ctx context.Context, username string) (Member, error) {
 	actor, e := requireActor(ctx)
@@ -313,6 +327,33 @@ func (s *MembershipService) Get(ctx context.Context, id string) (Member, error) 
 	}
 	return s.presentMember(ctx, member)
 }
+
+func (s *MembershipService) ActionTarget(ctx context.Context, id string) (MemberActionTarget, error) {
+	actor, err := requireActor(ctx)
+	if err != nil {
+		return MemberActionTarget{}, err
+	}
+	parsedID, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return MemberActionTarget{}, ErrInvalid
+	}
+	if actor.TenantID == "" {
+		return MemberActionTarget{}, ErrForbidden
+	}
+	scope, err := s.memberScope(ctx)
+	if err != nil {
+		return MemberActionTarget{}, err
+	}
+	member, err := s.repository.GetMember(ctx, actor.TenantID, parsedID.String(), scope)
+	if err != nil {
+		return MemberActionTarget{}, err
+	}
+	return MemberActionTarget{
+		ID: member.ID, Username: member.Username, DisplayName: member.DisplayName,
+		Status: member.Status, Version: member.Version,
+		IsSelf: actor.Type == platformprincipal.TypeUser && member.UserID == actor.ID,
+	}, nil
+}
 func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status Status, version int64) (Member, error) {
 	actor, e := requireActor(ctx)
 	if e != nil {
@@ -360,7 +401,7 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 			return fmt.Errorf("update membership affected rows: %w", rowsErr)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -413,7 +454,7 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 			return fmt.Errorf("remove membership affected rows: %w", rowsErr)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -509,7 +550,7 @@ func (s *MembershipService) Page(ctx context.Context, input MemberPageInput) (pa
 	}
 	request, e := pagination.Normalize(input.Request)
 	input.Keyword = strings.TrimSpace(input.Keyword)
-	if e != nil || actor.TenantID == "" || len(input.Keyword) > maxTenantKeywordLength || len(input.IDs) > 200 || len(input.UserIDs) > 200 || len(input.Usernames) > 200 || len(input.Statuses) > 20 || !boundedStrings(input.IDs, maxTenantIDLength) || !boundedStrings(input.UserIDs, maxTenantIDLength) || !boundedStrings(input.Usernames, 256) || (input.JoinedFrom != nil && input.JoinedTo != nil && !input.JoinedFrom.Before(*input.JoinedTo)) {
+	if e != nil || actor.TenantID == "" || len(input.Keyword) > maxTenantKeywordLength || len(input.IDs) > 200 || len(input.UserIDs) > 200 || len(input.Usernames) > 200 || len(input.Emails) > 200 || len(input.Phones) > 200 || len(input.Statuses) > 20 || !boundedStrings(input.IDs, maxTenantIDLength) || !boundedStrings(input.UserIDs, maxTenantIDLength) || !boundedStrings(input.Usernames, 256) || !boundedStrings(input.Emails, 320) || !boundedStrings(input.Phones, 64) || (input.JoinedFrom != nil && input.JoinedTo != nil && !input.JoinedFrom.Before(*input.JoinedTo)) {
 		return pagination.Result[Member]{}, ErrInvalid
 	}
 	for _, status := range input.Statuses {
@@ -521,6 +562,35 @@ func (s *MembershipService) Page(ctx context.Context, input MemberPageInput) (pa
 	scope, e := s.memberScope(ctx)
 	if e != nil {
 		return pagination.Result[Member]{}, e
+	}
+	if len(input.Emails) > 0 || len(input.Phones) > 0 {
+		if s.contacts == nil {
+			return pagination.Result[Member]{}, ErrIdentityUnavailable
+		}
+		contactIDs, err := s.contacts.SearchContactUserIDs(ctx, input.Emails, input.Phones)
+		if err != nil {
+			return pagination.Result[Member]{}, err
+		}
+		if len(contactIDs) > 200 {
+			return pagination.Result[Member]{}, ErrContactFilterTooBroad
+		}
+		if len(input.UserIDs) > 0 {
+			allowed := make(map[string]struct{}, len(input.UserIDs))
+			for _, id := range input.UserIDs {
+				allowed[id] = struct{}{}
+			}
+			filtered := make([]string, 0, len(contactIDs))
+			for _, id := range contactIDs {
+				if _, ok := allowed[id]; ok {
+					filtered = append(filtered, id)
+				}
+			}
+			contactIDs = filtered
+		}
+		if len(contactIDs) == 0 {
+			return pagination.Result[Member]{Items: []Member{}, Page: request.Page, PageSize: request.PageSize, Total: 0}, nil
+		}
+		input.UserIDs = contactIDs
 	}
 	items, total, e := s.repository.PageMembers(ctx, actor.TenantID, input, scope)
 	if e == nil {

@@ -26,6 +26,7 @@ var (
 	ErrInvalid             = errors.New("invalid service account")
 	ErrNotFound            = errors.New("service account not found")
 	ErrConflict            = errors.New("service account conflict")
+	ErrStaleVersion        = errors.New("service account version is stale")
 	ErrInvalidCredentials  = errors.New("invalid service account credentials")
 	ErrSecurityUnavailable = errors.New("service account security audit unavailable")
 )
@@ -510,7 +511,7 @@ func oneRow(result sql.Result, err error) error {
 		return fmt.Errorf("service account affected rows: %w", err)
 	}
 	if rows != 1 {
-		return ErrConflict
+		return ErrStaleVersion
 	}
 	return nil
 }

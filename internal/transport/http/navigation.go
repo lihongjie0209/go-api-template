@@ -107,6 +107,42 @@ func (h *NavigationHandler) Get(c *gin.Context) {
 	h.respond(c, v, e)
 }
 
+// GetNavigationUpdateTarget godoc
+// @Summary Get an action-scoped navigation update target
+// @Tags navigations
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body NavigationIDRequest true "Navigation"
+// @Success 200 {object} Response{body=navigation.UpdateTarget}
+// @Router /api/v1/navigations/update-target [post]
+func (h *NavigationHandler) UpdateTarget(c *gin.Context) {
+	var request NavigationIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	value, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	h.respond(c, value, err)
+}
+
+// GetNavigationDeleteTarget godoc
+// @Summary Get an action-scoped navigation delete target
+// @Tags navigations
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body NavigationIDRequest true "Navigation"
+// @Success 200 {object} Response{body=navigation.DeleteTarget}
+// @Router /api/v1/navigations/delete-target [post]
+func (h *NavigationHandler) DeleteTarget(c *gin.Context) {
+	var request NavigationIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	value, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	h.respond(c, value, err)
+}
+
 // TreeNavigations godoc
 // @Summary Get one application's navigation tree
 // @Tags navigations
@@ -215,6 +251,8 @@ func (h *NavigationHandler) respond(c *gin.Context, v any, e error) {
 		Fail(c, h.logger, apperror.NotFound("navigation not found"))
 	case errors.Is(e, navigation.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("navigation conflict", e))
+	case errors.Is(e, navigation.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	default:
 		Fail(c, h.logger, apperror.Internal(e))
 	}

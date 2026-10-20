@@ -77,22 +77,30 @@ func (s *ossStore) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (s *ossStore) Presign(ctx context.Context, key string, operation Operation, ttl time.Duration) (SignedURL, error) {
-	if err := validateKey(key); err != nil {
+func (s *ossStore) Presign(ctx context.Context, input PresignInput) (SignedURL, error) {
+	if err := validateKey(input.Key); err != nil {
 		return SignedURL{}, err
 	}
-	ttl, err := effectivePresignTTL(s.ttl, ttl)
+	disposition, err := downloadDisposition(input)
+	if err != nil {
+		return SignedURL{}, err
+	}
+	ttl, err := effectivePresignTTL(s.ttl, input.TTL)
 	if err != nil {
 		return SignedURL{}, err
 	}
 	var request any
-	switch operation {
+	switch input.Operation {
 	case OperationGet:
-		request = &oss.GetObjectRequest{Bucket: &s.bucket, Key: &key}
+		get := &oss.GetObjectRequest{Bucket: &s.bucket, Key: &input.Key}
+		if disposition != "" {
+			get.ResponseContentDisposition = &disposition
+		}
+		request = get
 	case OperationPut:
-		request = &oss.PutObjectRequest{Bucket: &s.bucket, Key: &key}
+		request = &oss.PutObjectRequest{Bucket: &s.bucket, Key: &input.Key}
 	default:
-		return SignedURL{}, fmt.Errorf("unsupported presign operation %q", operation)
+		return SignedURL{}, fmt.Errorf("unsupported presign operation %q", input.Operation)
 	}
 	result, err := s.client.Presign(ctx, request, func(options *oss.PresignOptions) { options.Expires = ttl })
 	if err != nil {

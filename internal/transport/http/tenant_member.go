@@ -34,10 +34,22 @@ type TenantMemberPageRequest struct {
 	IDs        []string        `json:"ids" binding:"max=200"`
 	UserIDs    []string        `json:"user_ids" binding:"max=200"`
 	Usernames  []string        `json:"usernames" binding:"max=200"`
+	Emails     []string        `json:"emails" binding:"max=200"`
+	Phones     []string        `json:"phones" binding:"max=200"`
 	Statuses   []tenant.Status `json:"statuses" binding:"max=20,dive,oneof=active disabled"`
 	JoinedFrom *time.Time      `json:"joined_from"`
 	JoinedTo   *time.Time      `json:"joined_to"`
 }
+
+// TenantMemberPageResponse documents pagination.Result[tenant.Member] for swag v1,
+// which cannot resolve that generic type in an @Success annotation.
+type TenantMemberPageResponse struct {
+	Items    []tenant.Member `json:"items"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
+	Total    int64           `json:"total"`
+}
+
 type UpdateTenantMemberStatusRequest struct {
 	ID      string        `json:"id" binding:"required"`
 	Status  tenant.Status `json:"status" binding:"required,oneof=active disabled"`
@@ -93,19 +105,58 @@ func (h *TenantMemberHandler) Get(c *gin.Context) {
 	OK(c, v)
 }
 
+// TenantMemberStatusTarget godoc
+// @Summary Get a tenant member's current status and version for a status change
+// @Tags tenant-members
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantMemberIDRequest true "Member"
+// @Success 200 {object} Response{body=tenant.MemberActionTarget}
+// @Router /api/v1/tenant-members/status/target [post]
+func (h *TenantMemberHandler) StatusTarget(c *gin.Context) {
+	h.actionTarget(c)
+}
+
+// TenantMemberRemoveTarget godoc
+// @Summary Get a tenant member's identity and version for removal confirmation
+// @Tags tenant-members
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantMemberIDRequest true "Member"
+// @Success 200 {object} Response{body=tenant.MemberActionTarget}
+// @Router /api/v1/tenant-members/remove-target [post]
+func (h *TenantMemberHandler) RemoveTarget(c *gin.Context) {
+	h.actionTarget(c)
+}
+
+func (h *TenantMemberHandler) actionTarget(c *gin.Context) {
+	var request TenantMemberIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.ActionTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // Page godoc
 // @Summary Page current tenant members
 // @Tags tenant-members
 // @Security Bearer
 // @Param request body TenantMemberPageRequest true "Filters"
-// @Success 200 {object} Response
+// @Success 200 {object} Response{body=TenantMemberPageResponse}
 // @Router /api/v1/tenant-members/page [post]
 func (h *TenantMemberHandler) Page(c *gin.Context) {
 	var r TenantMemberPageRequest
 	if !h.bind(c, &r) {
 		return
 	}
-	v, e := h.service.Page(c.Request.Context(), tenant.MemberPageInput{Request: pagination.Request{Page: r.Page, PageSize: r.PageSize, Keyword: r.Keyword}, IDs: r.IDs, UserIDs: r.UserIDs, Usernames: r.Usernames, Statuses: r.Statuses, JoinedFrom: r.JoinedFrom, JoinedTo: r.JoinedTo})
+	v, e := h.service.Page(c.Request.Context(), tenant.MemberPageInput{Request: pagination.Request{Page: r.Page, PageSize: r.PageSize, Keyword: r.Keyword}, IDs: r.IDs, UserIDs: r.UserIDs, Usernames: r.Usernames, Emails: r.Emails, Phones: r.Phones, Statuses: r.Statuses, JoinedFrom: r.JoinedFrom, JoinedTo: r.JoinedTo})
 	if e != nil {
 		h.fail(c, e)
 		return
@@ -210,12 +261,16 @@ func (h *TenantMemberHandler) bind(c *gin.Context, v any) bool {
 }
 func (h *TenantMemberHandler) fail(c *gin.Context, e error) {
 	switch {
+	case errors.Is(e, tenant.ErrContactFilterTooBroad):
+		Fail(c, h.logger, apperror.Invalid("contact filter matches too many users; narrow the search", e))
 	case errors.Is(e, tenant.ErrInvalid):
 		Fail(c, h.logger, apperror.Invalid("invalid tenant member request", e))
 	case errors.Is(e, tenant.ErrForbidden):
 		Fail(c, h.logger, apperror.Forbidden("tenant membership denied"))
 	case errors.Is(e, tenant.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("tenant member not found"))
+	case errors.Is(e, tenant.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, tenant.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("tenant member conflict", e))
 	case errors.Is(e, tenant.ErrIdentityUnavailable):

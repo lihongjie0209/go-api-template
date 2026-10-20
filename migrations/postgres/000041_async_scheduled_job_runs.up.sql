@@ -1,0 +1,13 @@
+ALTER TABLE scheduled_job_runs ALTER COLUMN started_at DROP NOT NULL;
+ALTER TABLE scheduled_job_runs ALTER COLUMN finished_at DROP NOT NULL;
+ALTER TABLE scheduled_job_runs DROP CONSTRAINT scheduled_job_runs_status_check;
+ALTER TABLE scheduled_job_runs ADD CONSTRAINT scheduled_job_runs_status_check CHECK(status IN('queued','running','success','error','skipped'));
+ALTER TABLE scheduled_job_runs ADD COLUMN lease_owner text NOT NULL DEFAULT '';
+ALTER TABLE scheduled_job_runs ADD COLUMN lease_until timestamptz;
+ALTER TABLE scheduled_job_runs ADD COLUMN dispatched_at timestamptz;
+ALTER TABLE scheduled_job_runs ADD COLUMN payload text NOT NULL DEFAULT '{}';
+ALTER TABLE scheduled_job_runs ADD COLUMN timeout_seconds bigint NOT NULL DEFAULT 30;
+ALTER TABLE scheduled_job_runs ADD COLUMN lock_ttl_seconds bigint NOT NULL DEFAULT 60;
+CREATE INDEX scheduled_job_runs_queued_idx ON scheduled_job_runs(created_at,id) WHERE deleted_at IS NULL AND trigger_source='manual' AND status='queued' AND dispatched_at IS NOT NULL;
+CREATE INDEX scheduled_job_runs_running_idx ON scheduled_job_runs(lease_until,id) WHERE deleted_at IS NULL AND trigger_source='manual' AND status='running';
+CREATE INDEX scheduled_job_runs_created_idx ON scheduled_job_runs(scheduled_job_id,created_at DESC,id) WHERE deleted_at IS NULL;

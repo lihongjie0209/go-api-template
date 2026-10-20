@@ -55,10 +55,10 @@ func (s *timeoutStore) Delete(ctx context.Context, key string) error {
 	return s.next.Delete(ctx, key)
 }
 
-func (s *timeoutStore) Presign(ctx context.Context, key string, operation Operation, ttl time.Duration) (SignedURL, error) {
+func (s *timeoutStore) Presign(ctx context.Context, input PresignInput) (SignedURL, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	return s.next.Presign(ctx, key, operation, ttl)
+	return s.next.Presign(ctx, input)
 }
 
 type cancelReadCloser struct {

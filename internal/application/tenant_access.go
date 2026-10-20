@@ -48,15 +48,27 @@ type Grant struct {
 	Version             int64      `db:"version" json:"version"`
 }
 
+type GrantRevokeTarget struct {
+	ID              string `json:"id"`
+	TenantID        string `json:"tenant_id"`
+	TenantName      string `json:"tenant_name"`
+	ApplicationID   string `json:"application_id"`
+	ApplicationCode string `json:"application_code"`
+	ApplicationName string `json:"application_name"`
+	Status          string `json:"status"`
+	Version         int64  `json:"version"`
+}
+
 type Current struct {
-	ID        string     `db:"id" json:"id"`
-	Code      string     `db:"code" json:"code"`
-	Name      string     `db:"name" json:"name"`
-	Icon      string     `db:"icon" json:"icon"`
-	HomePath  string     `db:"home_path" json:"home_path"`
-	SortOrder int64      `db:"sort_order" json:"sort_order"`
-	StartsAt  *time.Time `db:"starts_at" json:"starts_at,omitempty"`
-	ExpiresAt *time.Time `db:"expires_at" json:"expires_at,omitempty"`
+	ID          string     `db:"id" json:"id"`
+	Code        string     `db:"code" json:"code"`
+	Name        string     `db:"name" json:"name"`
+	Description string     `db:"description" json:"description"`
+	Icon        string     `db:"icon" json:"icon"`
+	HomePath    string     `db:"home_path" json:"home_path"`
+	SortOrder   int64      `db:"sort_order" json:"sort_order"`
+	StartsAt    *time.Time `db:"starts_at" json:"starts_at,omitempty"`
+	ExpiresAt   *time.Time `db:"expires_at" json:"expires_at,omitempty"`
 }
 
 type GrantInput struct {
@@ -191,6 +203,26 @@ func (s *TenantAccessService) AdminGet(ctx context.Context, tenantID, id string)
 	return items[0], nil
 }
 
+func (s *TenantAccessService) RevokeTarget(ctx context.Context, tenantID, id string) (GrantRevokeTarget, error) {
+	grant, err := s.AdminGet(ctx, tenantID, id)
+	if err != nil {
+		return GrantRevokeTarget{}, err
+	}
+	if grant.Status != "active" {
+		return GrantRevokeTarget{}, ErrGrantConflict
+	}
+	return GrantRevokeTarget{
+		ID:              grant.ID,
+		TenantID:        grant.TenantID,
+		TenantName:      grant.TenantName,
+		ApplicationID:   grant.ApplicationID,
+		ApplicationCode: grant.ApplicationCode,
+		ApplicationName: grant.ApplicationName,
+		Status:          grant.Status,
+		Version:         grant.Version,
+	}, nil
+}
+
 func (s *TenantAccessService) Page(ctx context.Context, input GrantPageInput) (GrantPage, error) {
 	if _, err := platformActor(ctx); err != nil {
 		return GrantPage{}, err
@@ -278,7 +310,7 @@ func (s *TenantAccessService) Current(ctx context.Context) ([]Current, error) {
 		return nil, ErrGrantForbidden
 	}
 	items := []Current{}
-	query := `SELECT a.id,a.code,a.name,a.icon,a.home_path,a.sort_order,g.starts_at,g.expires_at FROM tenant_application_grants g JOIN applications a ON a.id=g.application_id AND a.status='active' AND a.deleted_at IS NULL JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) ORDER BY a.sort_order,a.id`
+	query := `SELECT a.id,a.code,a.name,a.description,a.icon,a.home_path,a.sort_order,g.starts_at,g.expires_at FROM tenant_application_grants g JOIN applications a ON a.id=g.application_id AND a.status='active' AND a.deleted_at IS NULL JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) ORDER BY a.sort_order,a.id`
 	now := time.Now()
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), actor.MembershipID, actor.ID, actor.TenantID, now, now); err != nil {
 		return nil, err

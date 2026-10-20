@@ -122,6 +122,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/applications/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Get minimal application identity and version before deletion",
+                "parameters": [
+                    {
+                        "description": "Application ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/applications/get": {
             "post": {
                 "security": [
@@ -254,6 +322,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/applications/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "applications"
+                ],
+                "summary": "Get editable application fields and version for update-only operators",
+                "parameters": [
+                    {
+                        "description": "Application ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.UpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/login": {
             "post": {
                 "consumes": [
@@ -325,11 +461,6 @@ const docTemplate = `{
         },
         "/api/v1/auth/logout": {
             "post": {
-                "security": [
-                    {
-                        "Bearer": []
-                    }
-                ],
                 "consumes": [
                     "application/json"
                 ],
@@ -632,6 +763,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/sessions/revoke-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Get a current-user session target for confirmed revocation",
+                "parameters": [
+                    {
+                        "description": "Session ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.SessionRevokeTargetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authentication.SessionRevokeTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/user/login": {
             "post": {
                 "consumes": [
@@ -760,6 +941,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/actions/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Get a manual authorization action deletion target",
+                "parameters": [
+                    {
+                        "description": "Action ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.ActionDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -915,6 +1146,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/authorization/actions/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Get a manual authorization action editing target",
+                "parameters": [
+                    {
+                        "description": "Action ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.ActionUpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/authorization/capabilities/evaluate": {
             "post": {
                 "security": [
@@ -1048,6 +1329,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Get a manual authorization resource deletion target",
+                "parameters": [
+                    {
+                        "description": "Resource ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.ResourceDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -1194,6 +1525,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/resourcecatalog.Resource"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/authorization/resources/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "authorization-catalog"
+                ],
+                "summary": "Get a manual authorization resource editing target",
+                "parameters": [
+                    {
+                        "description": "Resource ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.CatalogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/resourcecatalog.ResourceUpdateTarget"
                                         }
                                     }
                                 }
@@ -1453,6 +1834,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data-permissions/global-policies/publish/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get a narrow policy and draft target for publishing",
+                "parameters": [
+                    {
+                        "description": "Policy and draft version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionPublishTargetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionPublishTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/global-policies/simulate": {
             "post": {
                 "security": [
@@ -1553,6 +1984,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data-permissions/global-policies/status/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get a narrow policy target for a versioned status change",
+                "parameters": [
+                    {
+                        "description": "Policy ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionPolicyGetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionStatusTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/global-policies/versions/create": {
             "post": {
                 "security": [
@@ -1594,6 +2075,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/datapermission.VersionRecord"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data-permissions/global-policies/versions/create-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get a narrow policy target for appending a draft version",
+                "parameters": [
+                    {
+                        "description": "Policy ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionPolicyGetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionVersionCreateTarget"
                                         }
                                     }
                                 }
@@ -1693,7 +2224,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/datapermission.VersionPage"
+                                            "$ref": "#/definitions/httptransport.DataPermissionVersionSummaryPage"
                                         }
                                     }
                                 }
@@ -1744,6 +2275,45 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/datapermission.Publication"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data-permissions/tenant-policies/create/context": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get the active tenant ID for tenant policy creation",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionSimulationContext"
                                         }
                                     }
                                 }
@@ -1903,6 +2473,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data-permissions/tenant-policies/publish/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get a narrow policy and draft target for publishing",
+                "parameters": [
+                    {
+                        "description": "Policy and draft version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionPublishTargetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionPublishTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/tenant-policies/simulate": {
             "post": {
                 "security": [
@@ -1944,6 +2564,45 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/datapermission.SimulationResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data-permissions/tenant-policies/simulate/context": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get the active tenant ID for a tenant policy simulation",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionSimulationContext"
                                         }
                                     }
                                 }
@@ -2003,6 +2662,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data-permissions/tenant-policies/status/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get a narrow policy target for a versioned status change",
+                "parameters": [
+                    {
+                        "description": "Policy ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionPolicyGetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionStatusTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/tenant-policies/versions/create": {
             "post": {
                 "security": [
@@ -2044,6 +2753,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/datapermission.VersionRecord"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data-permissions/tenant-policies/versions/create-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Get a narrow policy target for appending a draft version",
+                "parameters": [
+                    {
+                        "description": "Policy ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionPolicyGetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DataPermissionVersionCreateTarget"
                                         }
                                     }
                                 }
@@ -2143,7 +2902,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "body": {
-                                            "$ref": "#/definitions/datapermission.VersionPage"
+                                            "$ref": "#/definitions/httptransport.DataPermissionVersionSummaryPage"
                                         }
                                     }
                                 }
@@ -2236,6 +2995,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/dictionaries/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get an action-scoped dictionary definition delete target",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/dictionary.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2391,6 +3200,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/dictionaries/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get an action-scoped dictionary definition update target",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/dictionary.UpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/dictionary-items/create": {
             "post": {
                 "security": [
@@ -2441,6 +3300,316 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/dictionary-items/definition-target/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get a dictionary definition target for item creators",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DictionaryItemDefinitionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/dictionary-items/definition-target/delete": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get a dictionary definition target for item deleters",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DictionaryItemDefinitionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/dictionary-items/definition-target/list": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get a dictionary definition target for item list operators",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DictionaryItemDefinitionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/dictionary-items/definition-target/read": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get a dictionary definition target for item readers",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DictionaryItemDefinitionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/dictionary-items/definition-target/update": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get a dictionary definition target for item editors",
+                "parameters": [
+                    {
+                        "description": "Dictionary",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DictionaryItemDefinitionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/dictionary-items/delete": {
             "post": {
                 "security": [
@@ -2474,6 +3643,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/dictionary-items/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get an action-scoped dictionary item delete target",
+                "parameters": [
+                    {
+                        "description": "Item",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/dictionary.ItemDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -2629,6 +3848,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/dictionary-items/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-dictionaries"
+                ],
+                "summary": "Get an action-scoped dictionary item update target",
+                "parameters": [
+                    {
+                        "description": "Item",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DictionaryIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/dictionary.ItemUpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/example/ping": {
             "post": {
                 "consumes": [
@@ -2713,6 +3982,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/files/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Get a versioned file target for confirmed deletion",
+                "parameters": [
+                    {
+                        "description": "File ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.FileIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.FileDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -3206,6 +4525,192 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/navigations/application-target/create": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "navigations"
+                ],
+                "summary": "Get the application name for navigation creators",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.NavigationTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/navigations/application-target/list": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "navigations"
+                ],
+                "summary": "Get the application name for navigation list operators",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.NavigationTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/navigations/application-target/read": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "navigations"
+                ],
+                "summary": "Get the application name for navigation readers",
+                "parameters": [
+                    {
+                        "description": "Application",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.NavigationTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/navigations/create": {
             "post": {
                 "security": [
@@ -3277,6 +4782,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/navigations/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "navigations"
+                ],
+                "summary": "Get an action-scoped navigation delete target",
+                "parameters": [
+                    {
+                        "description": "Navigation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.NavigationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/navigation.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -3408,6 +4963,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/navigation.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/navigations/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "navigations"
+                ],
+                "summary": "Get an action-scoped navigation update target",
+                "parameters": [
+                    {
+                        "description": "Navigation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.NavigationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/navigation.UpdateTarget"
                                         }
                                     }
                                 }
@@ -3688,6 +5293,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/permissions/actions/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "permissions"
+                ],
+                "summary": "Get an editable permission and its Resource/Action links under update authorization",
+                "parameters": [
+                    {
+                        "description": "Permission ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PermissionIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/permission.ActionEditTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/permissions/create": {
             "post": {
                 "security": [
@@ -3771,6 +5426,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/permissions/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "permissions"
+                ],
+                "summary": "Get an action-scoped permission node delete target",
+                "parameters": [
+                    {
+                        "description": "Permission ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PermissionIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/permission.NodeDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -3929,6 +5634,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/permissions/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "permissions"
+                ],
+                "summary": "Get an action-scoped permission node update target",
+                "parameters": [
+                    {
+                        "description": "Permission ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PermissionIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/permission.NodeUpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform-configs/create": {
             "post": {
                 "security": [
@@ -4012,6 +5767,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform-configs/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-configs"
+                ],
+                "summary": "Get an action-scoped platform configuration delete target",
+                "parameters": [
+                    {
+                        "description": "Config",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformConfigIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/platformconfig.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -4167,6 +5972,186 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform-configs/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-configs"
+                ],
+                "summary": "Get an action-scoped platform configuration update target",
+                "parameters": [
+                    {
+                        "description": "Config",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformConfigIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/platformconfig.UpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/operation-logs/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operation-logs"
+                ],
+                "summary": "Get a platform system operation log",
+                "parameters": [
+                    {
+                        "description": "System operation log",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.OperationLogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/operationlog.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/operation-logs/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "operation-logs"
+                ],
+                "summary": "Page platform system operation logs in a bounded time window",
+                "parameters": [
+                    {
+                        "description": "System log filters; time range required, maximum 31 days",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.OperationLogPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/operationlog.Page"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform/permission-grants/create": {
             "post": {
                 "security": [
@@ -4248,6 +6233,74 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Code 30011: stale version",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Get the current platform grant revocation target",
+                "parameters": [
+                    {
+                        "description": "Grant ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrantDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Grant not found",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
                         }
@@ -4355,6 +6408,62 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform/permission-grants/permissions/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Page active permissions linked to a platform-scoped action",
+                "parameters": [
+                    {
+                        "description": "Page request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantPermissionPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrantablePermissionPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform/permission-grants/update": {
             "post": {
                 "security": [
@@ -4400,6 +6509,74 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "409": {
+                        "description": "Code 30011: stale version; Code 30009: duplicate grant",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/permission-grants/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-grants"
+                ],
+                "summary": "Get the current platform grant edit target",
+                "parameters": [
+                    {
+                        "description": "Grant ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.PlatformGrantIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.PlatformGrantUpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Grant not found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -4449,6 +6626,148 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Code 20003: forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/security-logs/get": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "security-logs"
+                ],
+                "summary": "Get a platform system security log",
+                "parameters": [
+                    {
+                        "description": "System security log",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.SecurityLogIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/securitylog.Record"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/security-logs/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "security-logs"
+                ],
+                "summary": "Page platform system security logs in a bounded time window",
+                "parameters": [
+                    {
+                        "description": "System log filters; time range required, maximum 31 days",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.SecurityLogPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/securitylog.Page"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
                         }
@@ -4620,6 +6939,284 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform/tenant-applications/revoke-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Get minimal active grant identity and version before revocation",
+                "parameters": [
+                    {
+                        "description": "Tenant application grant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantApplicationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/application.GrantRevokeTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/target/grant": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Get the tenant name for application-grant operators",
+                "parameters": [
+                    {
+                        "description": "Tenant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantPermissionCeilingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantPermissionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/target/list": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Get the tenant name for application-grant list operators",
+                "parameters": [
+                    {
+                        "description": "Tenant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantPermissionCeilingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantPermissionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-applications/target/read": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-applications"
+                ],
+                "summary": "Get the tenant name for application-grant readers",
+                "parameters": [
+                    {
+                        "description": "Tenant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantPermissionCeilingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantPermissionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform/tenant-authorization/administrators/page": {
             "post": {
                 "security": [
@@ -4708,6 +7305,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform/tenant-authorization/administrators/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get the tenant name for platform administrator assignment",
+                "parameters": [
+                    {
+                        "description": "Tenant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantPermissionCeilingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantPermissionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/platform/tenant-authorization/permissions/get": {
             "post": {
                 "security": [
@@ -4750,12 +7415,68 @@ const docTemplate = `{
                                         "body": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/authorization.PermissionView"
+                                                "$ref": "#/definitions/authorization.TenantCeilingPermission"
                                             }
                                         }
                                     }
                                 }
                             ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-authorization/permissions/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Page active permissions eligible for tenant ceilings",
+                "parameters": [
+                    {
+                        "description": "Page request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantGrantablePermissionPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantGrantablePermissionPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -4792,6 +7513,74 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenant-authorization/permissions/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get the tenant name and expected version for permission-ceiling management",
+                "parameters": [
+                    {
+                        "description": "Tenant",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.tenantPermissionCeilingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantPermissionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
                         }
@@ -4882,6 +7671,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/platform/tenants/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-tenants"
+                ],
+                "summary": "Get fresh confirmation fields for deleting a platform-managed tenant",
+                "parameters": [
+                    {
+                        "description": "Tenant ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetTenantRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -5037,6 +7876,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/platform/tenants/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform-tenants"
+                ],
+                "summary": "Get fresh editable fields for a platform-managed tenant",
+                "parameters": [
+                    {
+                        "description": "Tenant ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetTenantRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.UpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/profile/get": {
             "post": {
                 "security": [
@@ -5139,7 +8028,7 @@ const docTemplate = `{
         },
         "/api/v1/public/dictionaries/query": {
             "post": {
-                "description": "Public endpoint. Enum results are paged; tree results are returned as a bounded complete tree.",
+                "description": "Public endpoint. Enum results are paged; tree results are returned as a bounded complete tree. Optional values filter matches the selectable value (item value, or item ID when value is empty) exactly and combines with IDs, codes, and keyword using AND; trees retain matching ancestors.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5440,6 +8329,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/scheduled-jobs/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Get an action-scoped scheduled job delete target",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/scheduled-jobs/get": {
             "post": {
                 "security": [
@@ -5601,7 +8534,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/httptransport.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.TriggerResult"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -5642,6 +8587,50 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/scheduler.Definition"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scheduled-jobs/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "tags": [
+                    "scheduled-jobs"
+                ],
+                "summary": "Get an action-scoped scheduled job update target",
+                "parameters": [
+                    {
+                        "description": "Scheduled job",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.ScheduledJobIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/scheduler.UpdateTarget"
                                         }
                                     }
                                 }
@@ -5869,6 +8858,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/service-accounts/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Get a service-account target for confirmed deletion",
+                "parameters": [
+                    {
+                        "description": "Service account ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetServiceAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.ServiceAccountMutationTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/service-accounts/get": {
             "post": {
                 "security": [
@@ -5951,7 +8990,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/httptransport.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.ServiceAccountPageResponse"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -6007,6 +9058,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/service-accounts/secret/rotate-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Get a service-account target for confirmed secret rotation",
+                "parameters": [
+                    {
+                        "description": "Service account ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetServiceAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.ServiceAccountMutationTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/service-accounts/update": {
             "post": {
                 "security": [
@@ -6052,6 +9153,74 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/service-accounts/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-accounts"
+                ],
+                "summary": "Get editable service-account fields and version for update-only operators",
+                "parameters": [
+                    {
+                        "description": "Service account ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetServiceAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.ServiceAccountUpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -6205,6 +9374,62 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-authorization/assignable-permissions/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Page permissions the current tenant principal may delegate",
+                "parameters": [
+                    {
+                        "description": "Page and optional IDs",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.assignablePermissionPageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.TenantGrantablePermissionPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -6464,6 +9689,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-departments/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-departments"
+                ],
+                "summary": "Get department identity and version under delete permission",
+                "parameters": [
+                    {
+                        "description": "Department",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DepartmentIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.DepartmentDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-departments/get": {
             "post": {
                 "security": [
@@ -6605,6 +9880,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-departments/members/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-departments"
+                ],
+                "summary": "Get a versioned department target for member assignment",
+                "parameters": [
+                    {
+                        "description": "Department",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DepartmentIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.DepartmentAssignmentTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-departments/tree": {
             "post": {
                 "security": [
@@ -6699,6 +10024,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/tenant.Department"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-departments/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-departments"
+                ],
+                "summary": "Get editable department fields and version under update permission",
+                "parameters": [
+                    {
+                        "description": "Department",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DepartmentIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.DepartmentUpdateTarget"
                                         }
                                     }
                                 }
@@ -6828,7 +10203,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/httptransport.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.TenantMemberPageResponse"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -6861,6 +10248,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-members/remove-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-members"
+                ],
+                "summary": "Get a tenant member's identity and version for removal confirmation",
+                "parameters": [
+                    {
+                        "description": "Member",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantMemberIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.MemberActionTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -6957,6 +10394,124 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-members/roles/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get a tenant member and linked roles for assign-role editing",
+                "parameters": [
+                    {
+                        "description": "Member",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.memberRolesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.MemberRoleAssignmentTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Permission denied or data scope unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Member not found in the current tenant and data scope",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-members/status/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-members"
+                ],
+                "summary": "Get a tenant member's current status and version for a status change",
+                "parameters": [
+                    {
+                        "description": "Member",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantMemberIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.MemberActionTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-members/status/update": {
             "post": {
                 "security": [
@@ -6992,6 +10547,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/tenant.Member"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-roles/assignment-candidates/page": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Page tenant roles eligible for assignment by the current member",
+                "parameters": [
+                    {
+                        "description": "Filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantRolePageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.RoleAssignmentCandidatePage"
                                         }
                                     }
                                 }
@@ -7084,6 +10689,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenant-roles/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get tenant role identity and current version under delete permission",
+                "parameters": [
+                    {
+                        "description": "Role",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantRoleIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.RoleDeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -7280,6 +10935,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-roles/permissions/target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get a tenant role and its linked permissions for grant editing",
+                "parameters": [
+                    {
+                        "description": "Role",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantRoleIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.RoleGrantTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Code 10001: invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Permission denied or data scope unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Role not found in the current tenant and data scope",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenant-roles/update": {
             "post": {
                 "security": [
@@ -7330,6 +11053,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenant-roles/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-authorization"
+                ],
+                "summary": "Get editable tenant role fields and current version under update permission",
+                "parameters": [
+                    {
+                        "description": "Role",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantRoleIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/authorization.RoleUpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tenants/delete": {
             "post": {
                 "security": [
@@ -7363,6 +11136,56 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/httptransport.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tenants/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenants"
+                ],
+                "summary": "Get fresh confirmation fields for deleting the current tenant",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantDeleteTargetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -7518,6 +11341,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tenants/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenants"
+                ],
+                "summary": "Get fresh editable fields for the current tenant",
+                "parameters": [
+                    {
+                        "description": "Empty JSON object",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.TenantUpdateTargetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/tenant.UpdateTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users/create": {
             "post": {
                 "security": [
@@ -7606,6 +11479,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/users/delete-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Resolve a minimal user identity and version before deletion",
+                "parameters": [
+                    {
+                        "description": "User ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/identity.DeleteTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users/get": {
             "post": {
                 "security": [
@@ -7688,7 +11611,119 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/httptransport.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/httptransport.UserPageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/security-target/force-logout": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Resolve a minimal user identity before forced logout",
+                "parameters": [
+                    {
+                        "description": "User ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/identity.SecurityTarget"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/security-target/reset-password": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Resolve a minimal user identity before password reset",
+                "parameters": [
+                    {
+                        "description": "User ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/identity.SecurityTarget"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -7735,6 +11770,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/identity.User"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/update-target": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Resolve fresh editable fields and version for a user",
+                "parameters": [
+                    {
+                        "description": "User ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.GetUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/identity.UpdateTarget"
                                         }
                                     }
                                 }
@@ -7901,6 +11986,9 @@ const docTemplate = `{
                 "code": {
                     "type": "string"
                 },
+                "description": {
+                    "type": "string"
+                },
                 "expires_at": {
                     "type": "string"
                 },
@@ -7921,6 +12009,26 @@ const docTemplate = `{
                 },
                 "starts_at": {
                     "type": "string"
+                }
+            }
+        },
+        "application.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -7986,6 +12094,46 @@ const docTemplate = `{
         "application.GrantPage": {
             "type": "object"
         },
+        "application.GrantRevokeTarget": {
+            "type": "object",
+            "properties": {
+                "application_code": {
+                    "type": "string"
+                },
+                "application_id": {
+                    "type": "string"
+                },
+                "application_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "application.NavigationTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "application.Page": {
             "type": "object"
         },
@@ -8035,6 +12183,41 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "application.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "home_path": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "status": {
                     "type": "string"
                 },
                 "version": {
@@ -8101,6 +12284,29 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authentication.SessionRevokeTarget": {
+            "type": "object",
+            "properties": {
+                "client_ip": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/authentication.SessionStatus"
+                },
+                "user_agent": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "integer"
                 }
             }
@@ -8276,6 +12482,52 @@ const docTemplate = `{
                 }
             }
         },
+        "authorization.MemberRoleAssignmentTarget": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.MemberRoleAssignmentView"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.MemberRoleAssignmentView": {
+            "type": "object",
+            "properties": {
+                "assignable": {
+                    "type": "boolean"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "authorization.MemberRoleView": {
             "type": "object",
             "properties": {
@@ -8286,6 +12538,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }
@@ -8306,6 +12561,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "resource": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }
@@ -8334,6 +12592,9 @@ const docTemplate = `{
                 "principal_id": {
                     "type": "string"
                 },
+                "principal_identifier": {
+                    "type": "string"
+                },
                 "principal_name": {
                     "type": "string"
                 },
@@ -8351,8 +12612,262 @@ const docTemplate = `{
                 }
             }
         },
+        "authorization.PlatformGrantDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "permission_name": {
+                    "type": "string"
+                },
+                "principal_identifier": {
+                    "type": "string"
+                },
+                "principal_name": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "authorization.PlatformGrantPage": {
             "type": "object"
+        },
+        "authorization.PlatformGrantUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "permission_id": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "permission_name": {
+                    "type": "string"
+                },
+                "principal_id": {
+                    "type": "string"
+                },
+                "principal_identifier": {
+                    "type": "string"
+                },
+                "principal_name": {
+                    "type": "string"
+                },
+                "principal_type": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.PlatformGrantablePermission": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                }
+            }
+        },
+        "authorization.PlatformGrantablePermissionPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.PlatformGrantablePermission"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.RoleAssignmentCandidate": {
+            "type": "object",
+            "properties": {
+                "assignable": {
+                    "type": "boolean"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.RoleAssignmentCandidatePage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.RoleAssignmentCandidate"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.RoleDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.RoleGrantPermission": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "assignable": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "authorization.RoleGrantTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.RoleGrantPermission"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.RoleUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "authorization.RowCapabilityDecision": {
             "type": "object",
@@ -8385,6 +12900,63 @@ const docTemplate = `{
                 },
                 "revision": {
                     "type": "string"
+                }
+            }
+        },
+        "authorization.TenantCeilingPermission": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "assignable": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                }
+            }
+        },
+        "authorization.TenantGrantablePermissionPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.PermissionView"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "authorization.TenantPermissionTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -8571,11 +13143,17 @@ const docTemplate = `{
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_name": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
                 "name": {
                     "type": "string"
+                },
+                "published_version_number": {
+                    "type": "integer"
                 },
                 "scope": {
                     "$ref": "#/definitions/datapermission.PolicyScopeType"
@@ -8587,6 +13165,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {
@@ -8675,26 +13256,6 @@ const docTemplate = `{
             "type": "object",
             "additionalProperties": {}
         },
-        "datapermission.VersionPage": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/datapermission.VersionRecord"
-                    }
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
         "datapermission.VersionRecord": {
             "type": "object",
             "properties": {
@@ -8702,6 +13263,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
                     "type": "string"
                 },
                 "document": {
@@ -8713,6 +13277,16 @@ const docTemplate = `{
                 "policy_id": {
                     "type": "string"
                 },
+                "published_at": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "published_by": {
+                    "type": "string"
+                },
+                "published_by_name": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -8720,6 +13294,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
                     "type": "string"
                 },
                 "version": {
@@ -8780,6 +13357,32 @@ const docTemplate = `{
                 }
             }
         },
+        "dictionary.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "source": {
+                    "$ref": "#/definitions/dictionary.Source"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/dictionary.Kind"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "dictionary.Item": {
             "type": "object",
             "properties": {
@@ -8819,6 +13422,9 @@ const docTemplate = `{
                 "parent_id": {
                     "type": "string"
                 },
+                "parent_name": {
+                    "type": "string"
+                },
                 "sort_order": {
                     "type": "integer"
                 },
@@ -8832,6 +13438,26 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "value": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dictionary.ItemDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "dictionary_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 },
                 "version": {
@@ -8855,6 +13481,44 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dictionary.ItemUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "dictionary_id": {
+                    "type": "string"
+                },
+                "disabled": {
+                    "type": "boolean"
+                },
+                "extension": {
+                    "type": "object"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "parent_name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "integer"
                 }
             }
@@ -8927,6 +13591,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/dictionary.Sort"
+                    }
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
                     }
                 }
             }
@@ -9019,6 +13689,38 @@ const docTemplate = `{
                 "SourceStatic",
                 "SourceProvider"
             ]
+        },
+        "dictionary.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "extension": {
+                    "type": "object"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "source": {
+                    "$ref": "#/definitions/dictionary.Source"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/dictionary.Kind"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "files.Download": {
             "type": "object",
@@ -9152,10 +13854,6 @@ const docTemplate = `{
         },
         "httptransport.ApplicationPageRequest": {
             "type": "object",
-            "required": [
-                "codes",
-                "ids"
-            ],
             "properties": {
                 "codes": {
                     "type": "array",
@@ -9286,6 +13984,9 @@ const docTemplate = `{
         "httptransport.CatalogPageRequest": {
             "type": "object",
             "properties": {
+                "active_resources_only": {
+                    "type": "boolean"
+                },
                 "ids": {
                     "type": "array",
                     "maxItems": 200,
@@ -9305,6 +14006,22 @@ const docTemplate = `{
                 },
                 "resource_id": {
                     "type": "string"
+                },
+                "resource_key": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "scope": {
+                    "enum": [
+                        "platform",
+                        "tenant",
+                        "principal"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/resourceaction.ResourceScope"
+                        }
+                    ]
                 },
                 "sources": {
                     "type": "array",
@@ -9888,6 +14605,58 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.DataPermissionPublishTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/datapermission.PolicyScopeType"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "version_number": {
+                    "type": "integer"
+                },
+                "version_status": {
+                    "type": "string"
+                }
+            }
+        },
+        "httptransport.DataPermissionPublishTargetRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "version_number"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.DataPermissionSimulationContext": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {
+                    "type": "string"
+                }
+            }
+        },
         "httptransport.DataPermissionSimulationRequest": {
             "type": "object",
             "required": [
@@ -9946,6 +14715,29 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.DataPermissionStatusTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/datapermission.PolicyScopeType"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.DataPermissionVersionCreateRequest": {
             "type": "object",
             "required": [
@@ -9962,6 +14754,29 @@ const docTemplate = `{
                 },
                 "policy_id": {
                     "type": "string"
+                }
+            }
+        },
+        "httptransport.DataPermissionVersionCreateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/datapermission.PolicyScopeType"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -10001,6 +14816,73 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "httptransport.DataPermissionVersionSummary": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "policy_id": {
+                    "type": "string"
+                },
+                "published_at": {
+                    "type": "string"
+                },
+                "published_by": {
+                    "type": "string"
+                },
+                "published_by_name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "version_number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.DataPermissionVersionSummaryPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/httptransport.DataPermissionVersionSummary"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },
@@ -10160,6 +15042,20 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.DepartmentAssignmentTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.DepartmentIDRequest": {
             "type": "object",
             "required": [
@@ -10191,6 +15087,29 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.DictionaryItemDefinitionTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "source": {
+                    "$ref": "#/definitions/dictionary.Source"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/dictionary.Kind"
+                }
+            }
+        },
         "httptransport.DictionaryItemPageRequest": {
             "type": "object",
             "required": [
@@ -10202,6 +15121,9 @@ const docTemplate = `{
                 },
                 "disabled": {
                     "type": "boolean"
+                },
+                "exclude_subtree_id": {
+                    "type": "string"
                 },
                 "keyword": {
                     "type": "string"
@@ -10260,6 +15182,20 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.FileDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "original_name": {
                     "type": "string"
                 },
                 "version": {
@@ -10633,6 +15569,13 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "trace_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -10686,6 +15629,13 @@ const docTemplate = `{
         "httptransport.PageTenantRequest": {
             "type": "object",
             "properties": {
+                "codes": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "created_at_from": {
                     "type": "string"
                 },
@@ -10702,6 +15652,13 @@ const docTemplate = `{
                 "keyword": {
                     "type": "string",
                     "maxLength": 256
+                },
+                "owner_user_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "page": {
                     "type": "integer"
@@ -11094,6 +16051,28 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.PlatformGrantPermissionPageRequest": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string",
+                    "maxLength": 256
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.PublicPlatformConfigsRequest": {
             "type": "object",
             "properties": {
@@ -11334,7 +16313,7 @@ const docTemplate = `{
                 },
                 "statuses": {
                     "type": "array",
-                    "maxItems": 3,
+                    "maxItems": 5,
                     "items": {
                         "type": "string"
                     }
@@ -11436,6 +16415,79 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "trace_ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "httptransport.ServiceAccountMutationTarget": {
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/serviceaccount.Status"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.ServiceAccountPageResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/serviceaccount.Account"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.ServiceAccountUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/serviceaccount.Status"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -11483,10 +16535,23 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.SessionRevokeTargetRequest": {
+            "type": "object",
+            "required": [
+                "session_id"
+            ],
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "maxLength": 256
+                }
+            }
+        },
         "httptransport.SetDepartmentMembersRequest": {
             "type": "object",
             "required": [
-                "department_id"
+                "department_id",
+                "version"
             ],
             "properties": {
                 "department_id": {
@@ -11498,6 +16563,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/tenant.DepartmentMemberAssignment"
                     }
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -11564,7 +16632,6 @@ const docTemplate = `{
         "httptransport.TenantApplicationPageRequest": {
             "type": "object",
             "required": [
-                "application_ids",
                 "tenant_id"
             ],
             "properties": {
@@ -11610,6 +16677,23 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.TenantDeleteTargetRequest": {
+            "type": "object"
+        },
+        "httptransport.TenantGrantablePermissionPageRequest": {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.TenantMemberIDRequest": {
             "type": "object",
             "required": [
@@ -11624,6 +16708,13 @@ const docTemplate = `{
         "httptransport.TenantMemberPageRequest": {
             "type": "object",
             "properties": {
+                "emails": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "ids": {
                     "type": "array",
                     "maxItems": 200,
@@ -11647,6 +16738,13 @@ const docTemplate = `{
                 "page_size": {
                     "type": "integer"
                 },
+                "phones": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "statuses": {
                     "type": "array",
                     "maxItems": 20,
@@ -11667,6 +16765,26 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "httptransport.TenantMemberPageResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/tenant.Member"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },
@@ -11713,6 +16831,9 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "httptransport.TenantUpdateTargetRequest": {
+            "type": "object"
         },
         "httptransport.UpdateApplicationRequest": {
             "type": "object",
@@ -12225,6 +17346,26 @@ const docTemplate = `{
                 }
             }
         },
+        "httptransport.UserPageResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/identity.User"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "httptransport.administratorPageRequest": {
             "type": "object",
             "required": [
@@ -12272,6 +17413,30 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "httptransport.assignablePermissionPageRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
                 }
             }
         },
@@ -12329,7 +17494,8 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "membership_id",
-                "tenant_id"
+                "tenant_id",
+                "version"
             ],
             "properties": {
                 "enabled": {
@@ -12342,6 +17508,9 @@ const docTemplate = `{
                 "tenant_id": {
                     "type": "string",
                     "maxLength": 128
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -12474,6 +17643,43 @@ const docTemplate = `{
                 }
             }
         },
+        "identity.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/identity.Status"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "identity.SecurityTarget": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/identity.Status"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "identity.Status": {
             "type": "string",
             "enum": [
@@ -12488,6 +17694,32 @@ const docTemplate = `{
                 "StatusLocked",
                 "StatusClosed"
             ]
+        },
+        "identity.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/identity.Status"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "identity.User": {
             "type": "object",
@@ -12526,6 +17758,32 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "username": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "navigation.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "application_id": {
+                    "type": "string"
+                },
+                "application_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "navigation_key": {
+                    "type": "string"
+                },
+                "navigation_type": {
                     "type": "string"
                 },
                 "version": {
@@ -12579,6 +17837,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
+                    "type": "string"
+                },
+                "parent_name": {
                     "type": "string"
                 },
                 "resource": {
@@ -12652,6 +17913,9 @@ const docTemplate = `{
                 "parent_id": {
                     "type": "string"
                 },
+                "parent_name": {
+                    "type": "string"
+                },
                 "resource": {
                     "type": "string"
                 },
@@ -12671,6 +17935,65 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                },
+                "visible": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "navigation.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "application_id": {
+                    "type": "string"
+                },
+                "application_name": {
+                    "type": "string"
+                },
+                "component": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "navigation_key": {
+                    "type": "string"
+                },
+                "navigation_type": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "parent_name": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "route_path": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "status": {
                     "type": "string"
                 },
                 "version": {
@@ -12731,6 +18054,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "application_id": {
+                    "type": "string"
+                },
+                "application_name": {
                     "type": "string"
                 },
                 "client_ip": {
@@ -12799,6 +18125,9 @@ const docTemplate = `{
                 "tenant_id": {
                     "type": "string"
                 },
+                "tenant_name": {
+                    "type": "string"
+                },
                 "trace_id": {
                     "type": "string"
                 },
@@ -12830,6 +18159,35 @@ const docTemplate = `{
                 }
             }
         },
+        "permission.ActionEditTarget": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/permission.ActionReference"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "permission.ActionReference": {
             "type": "object",
             "properties": {
@@ -12850,6 +18208,73 @@ const docTemplate = `{
                 },
                 "scope": {
                     "type": "string"
+                }
+            }
+        },
+        "permission.NodeDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "node_type": {
+                    "type": "string"
+                },
+                "parent_name": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "permission.NodeUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "has_children": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "node_type": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "parent_name": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -12884,6 +18309,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
+                    "type": "string"
+                },
+                "parent_name": {
                     "type": "string"
                 },
                 "permission_key": {
@@ -12951,6 +18379,9 @@ const docTemplate = `{
                 "parent_id": {
                     "type": "string"
                 },
+                "parent_name": {
+                    "type": "string"
+                },
                 "permission_key": {
                     "type": "string"
                 },
@@ -12970,6 +18401,29 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "platformconfig.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 },
                 "version": {
@@ -13057,6 +18511,41 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by_name": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "object"
+                },
+                "value_type": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "platformconfig.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 },
                 "value": {
@@ -13193,6 +18682,9 @@ const docTemplate = `{
                 "resource_key": {
                     "type": "string"
                 },
+                "resource_name": {
+                    "type": "string"
+                },
                 "source": {
                     "type": "string"
                 },
@@ -13210,8 +18702,66 @@ const docTemplate = `{
                 }
             }
         },
+        "resourcecatalog.ActionDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "action_key": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_key": {
+                    "type": "string"
+                },
+                "resource_name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "resourcecatalog.ActionPage": {
             "type": "object"
+        },
+        "resourcecatalog.ActionUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "action_key": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_id": {
+                    "type": "string"
+                },
+                "resource_key": {
+                    "type": "string"
+                },
+                "resource_name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "resourcecatalog.Resource": {
             "type": "object",
@@ -13254,8 +18804,54 @@ const docTemplate = `{
                 }
             }
         },
+        "resourcecatalog.ResourceDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_key": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "resourcecatalog.ResourcePage": {
             "type": "object"
+        },
+        "resourcecatalog.ResourceUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resource_key": {
+                    "type": "string"
+                },
+                "scope": {
+                    "$ref": "#/definitions/resourceaction.ResourceScope"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "scheduler.Definition": {
             "type": "object",
@@ -13318,6 +18914,26 @@ const docTemplate = `{
         },
         "scheduler.DefinitionPage": {
             "type": "object"
+        },
+        "scheduler.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "scheduler.HandlerDefinition": {
             "type": "object",
@@ -13400,6 +19016,58 @@ const docTemplate = `{
         },
         "scheduler.RunPage": {
             "type": "object"
+        },
+        "scheduler.TriggerResult": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "scheduler.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "cron_spec": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "handler": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lock_ttl_seconds": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "object"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "timeout_seconds": {
+                    "type": "integer"
+                },
+                "timezone": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "securitylog.EventType": {
             "type": "string",
@@ -13541,6 +19209,9 @@ const docTemplate = `{
                 "tenant_id": {
                     "type": "string"
                 },
+                "tenant_name": {
+                    "type": "string"
+                },
                 "trace_id": {
                     "type": "string"
                 },
@@ -13676,6 +19347,26 @@ const docTemplate = `{
                 }
             }
         },
+        "tenant.DeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/tenant.Status"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "tenant.Department": {
             "type": "object",
             "properties": {
@@ -13700,6 +19391,9 @@ const docTemplate = `{
                 "parent_id": {
                     "type": "string"
                 },
+                "parent_name": {
+                    "type": "string"
+                },
                 "sort_order": {
                     "type": "integer"
                 },
@@ -13713,6 +19407,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_by_name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "tenant.DepartmentDeleteTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 },
                 "version": {
@@ -13790,6 +19501,9 @@ const docTemplate = `{
                 "parent_id": {
                     "type": "string"
                 },
+                "parent_name": {
+                    "type": "string"
+                },
                 "sort_order": {
                     "type": "integer"
                 },
@@ -13804,6 +19518,32 @@ const docTemplate = `{
                 },
                 "updated_by_name": {
                     "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "tenant.DepartmentUpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "parent_name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
                 },
                 "version": {
                     "type": "integer"
@@ -13857,6 +19597,29 @@ const docTemplate = `{
                 }
             }
         },
+        "tenant.MemberActionTarget": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_self": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "$ref": "#/definitions/tenant.Status"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "tenant.Reference": {
             "type": "object",
             "properties": {
@@ -13878,6 +19641,29 @@ const docTemplate = `{
                 "StatusActive",
                 "StatusDisabled"
             ]
+        },
+        "tenant.UpdateTarget": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/tenant.Status"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
         },
         "tenant.View": {
             "type": "object",

@@ -29,6 +29,8 @@ definitions:
     properties:
       code:
         type: string
+      description:
+        type: string
       expires_at:
         type: string
       home_path:
@@ -43,6 +45,19 @@ definitions:
         type: integer
       starts_at:
         type: string
+    type: object
+  application.DeleteTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
     type: object
   application.Grant:
     properties:
@@ -85,6 +100,32 @@ definitions:
     type: object
   application.GrantPage:
     type: object
+  application.GrantRevokeTarget:
+    properties:
+      application_code:
+        type: string
+      application_id:
+        type: string
+      application_name:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: string
+      tenant_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  application.NavigationTarget:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   application.Page:
     type: object
   application.Record:
@@ -118,6 +159,29 @@ definitions:
       updated_by:
         type: string
       updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  application.UpdateTarget:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      home_path:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      metadata:
+        type: object
+      name:
+        type: string
+      sort_order:
+        type: integer
+      status:
         type: string
       version:
         type: integer
@@ -161,6 +225,21 @@ definitions:
       page_size:
         type: integer
       total:
+        type: integer
+    type: object
+  authentication.SessionRevokeTarget:
+    properties:
+      client_ip:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      status:
+        $ref: '#/definitions/authentication.SessionStatus'
+      user_agent:
+        type: string
+      version:
         type: integer
     type: object
   authentication.SessionStatus:
@@ -276,6 +355,36 @@ definitions:
       revision:
         type: string
     type: object
+  authorization.MemberRoleAssignmentTarget:
+    properties:
+      display_name:
+        type: string
+      id:
+        type: string
+      roles:
+        items:
+          $ref: '#/definitions/authorization.MemberRoleAssignmentView'
+        type: array
+      status:
+        type: string
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.MemberRoleAssignmentView:
+    properties:
+      assignable:
+        type: boolean
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+    type: object
   authorization.MemberRoleView:
     properties:
       code:
@@ -283,6 +392,8 @@ definitions:
       id:
         type: string
       name:
+        type: string
+      status:
         type: string
     type: object
   authorization.PermissionView:
@@ -296,6 +407,8 @@ definitions:
       permission_key:
         type: string
       resource:
+        type: string
+      status:
         type: string
     type: object
   authorization.PlatformGrant:
@@ -314,6 +427,8 @@ definitions:
         type: string
       principal_id:
         type: string
+      principal_identifier:
+        type: string
       principal_name:
         type: string
       principal_type:
@@ -325,7 +440,173 @@ definitions:
       version:
         type: integer
     type: object
+  authorization.PlatformGrantDeleteTarget:
+    properties:
+      id:
+        type: string
+      permission_key:
+        type: string
+      permission_name:
+        type: string
+      principal_identifier:
+        type: string
+      principal_name:
+        type: string
+      principal_type:
+        type: string
+      version:
+        type: integer
+    type: object
   authorization.PlatformGrantPage:
+    type: object
+  authorization.PlatformGrantUpdateTarget:
+    properties:
+      id:
+        type: string
+      permission_id:
+        type: string
+      permission_key:
+        type: string
+      permission_name:
+        type: string
+      principal_id:
+        type: string
+      principal_identifier:
+        type: string
+      principal_name:
+        type: string
+      principal_type:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.PlatformGrantablePermission:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      permission_key:
+        type: string
+    type: object
+  authorization.PlatformGrantablePermissionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.PlatformGrantablePermission'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  authorization.RoleAssignmentCandidate:
+    properties:
+      assignable:
+        type: boolean
+      code:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.RoleAssignmentCandidatePage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.RoleAssignmentCandidate'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  authorization.RoleDeleteTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.RoleGrantPermission:
+    properties:
+      action:
+        type: string
+      assignable:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+      status:
+        type: string
+    type: object
+  authorization.RoleGrantTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      permissions:
+        items:
+          $ref: '#/definitions/authorization.RoleGrantPermission'
+        type: array
+      status:
+        type: string
+      version:
+        type: integer
+    type: object
+  authorization.RoleUpdateTarget:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
     type: object
   authorization.RowCapabilityDecision:
     properties:
@@ -348,6 +629,43 @@ definitions:
         type: string
       revision:
         type: string
+    type: object
+  authorization.TenantCeilingPermission:
+    properties:
+      action:
+        type: string
+      assignable:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+    type: object
+  authorization.TenantGrantablePermissionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.PermissionView'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  authorization.TenantPermissionTarget:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      version:
+        type: integer
     type: object
   authorization.TenantRole:
     properties:
@@ -469,10 +787,14 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_name:
+        type: string
       id:
         type: string
       name:
         type: string
+      published_version_number:
+        type: integer
       scope:
         $ref: '#/definitions/datapermission.PolicyScopeType'
       status:
@@ -480,6 +802,8 @@ definitions:
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer
@@ -538,24 +862,13 @@ definitions:
   datapermission.SubjectAttributes:
     additionalProperties: {}
     type: object
-  datapermission.VersionPage:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/datapermission.VersionRecord'
-        type: array
-      page:
-        type: integer
-      page_size:
-        type: integer
-      total:
-        type: integer
-    type: object
   datapermission.VersionRecord:
     properties:
       created_at:
         type: string
       created_by:
+        type: string
+      created_by_name:
         type: string
       document:
         type: string
@@ -563,11 +876,20 @@ definitions:
         type: string
       policy_id:
         type: string
+      published_at:
+        format: date-time
+        type: string
+      published_by:
+        type: string
+      published_by_name:
+        type: string
       status:
         type: string
       updated_at:
         type: string
       updated_by:
+        type: string
+      updated_by_name:
         type: string
       version:
         type: integer
@@ -607,6 +929,23 @@ definitions:
       version:
         type: integer
     type: object
+  dictionary.DeleteTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      source:
+        $ref: '#/definitions/dictionary.Source'
+      status:
+        type: string
+      type:
+        $ref: '#/definitions/dictionary.Kind'
+      version:
+        type: integer
+    type: object
   dictionary.Item:
     properties:
       children:
@@ -633,6 +972,8 @@ definitions:
         type: string
       parent_id:
         type: string
+      parent_name:
+        type: string
       sort_order:
         type: integer
       updated_at:
@@ -642,6 +983,19 @@ definitions:
       updated_by_name:
         type: string
       value:
+        type: string
+      version:
+        type: integer
+    type: object
+  dictionary.ItemDeleteTarget:
+    properties:
+      code:
+        type: string
+      dictionary_id:
+        type: string
+      id:
+        type: string
+      name:
         type: string
       version:
         type: integer
@@ -657,6 +1011,31 @@ definitions:
       page_size:
         type: integer
       total:
+        type: integer
+    type: object
+  dictionary.ItemUpdateTarget:
+    properties:
+      code:
+        type: string
+      dictionary_id:
+        type: string
+      disabled:
+        type: boolean
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: string
+      parent_name:
+        type: string
+      sort_order:
+        type: integer
+      value:
+        type: string
+      version:
         type: integer
     type: object
   dictionary.Kind:
@@ -705,6 +1084,10 @@ definitions:
       sort:
         items:
           $ref: '#/definitions/dictionary.Sort'
+        type: array
+      values:
+        items:
+          type: string
         type: array
     type: object
   dictionary.Result:
@@ -766,6 +1149,27 @@ definitions:
     x-enum-varnames:
     - SourceStatic
     - SourceProvider
+  dictionary.UpdateTarget:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      extension:
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      source:
+        $ref: '#/definitions/dictionary.Source'
+      status:
+        type: string
+      type:
+        $ref: '#/definitions/dictionary.Kind'
+      version:
+        type: integer
+    type: object
   files.Download:
     properties:
       expires_at:
@@ -883,9 +1287,6 @@ definitions:
           type: string
         maxItems: 2
         type: array
-    required:
-    - codes
-    - ids
     type: object
   httptransport.CapabilityEvaluateRequest:
     properties:
@@ -945,6 +1346,8 @@ definitions:
     type: object
   httptransport.CatalogPageRequest:
     properties:
+      active_resources_only:
+        type: boolean
       ids:
         items:
           type: string
@@ -959,6 +1362,16 @@ definitions:
         type: integer
       resource_id:
         type: string
+      resource_key:
+        maxLength: 128
+        type: string
+      scope:
+        allOf:
+        - $ref: '#/definitions/resourceaction.ResourceScope'
+        enum:
+        - platform
+        - tenant
+        - principal
       sources:
         items:
           type: string
@@ -1369,6 +1782,40 @@ definitions:
     - policy_id
     - version_number
     type: object
+  httptransport.DataPermissionPublishTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      scope:
+        $ref: '#/definitions/datapermission.PolicyScopeType'
+      status:
+        type: string
+      version:
+        type: integer
+      version_number:
+        type: integer
+      version_status:
+        type: string
+    type: object
+  httptransport.DataPermissionPublishTargetRequest:
+    properties:
+      id:
+        type: string
+      version_number:
+        type: integer
+    required:
+    - id
+    - version_number
+    type: object
+  httptransport.DataPermissionSimulationContext:
+    properties:
+      tenant_id:
+        type: string
+    type: object
   httptransport.DataPermissionSimulationRequest:
     properties:
       action:
@@ -1410,6 +1857,21 @@ definitions:
     - policy_id
     - status
     type: object
+  httptransport.DataPermissionStatusTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      scope:
+        $ref: '#/definitions/datapermission.PolicyScopeType'
+      status:
+        type: string
+      version:
+        type: integer
+    type: object
   httptransport.DataPermissionVersionCreateRequest:
     properties:
       expected_policy_version:
@@ -1422,6 +1884,21 @@ definitions:
     - expected_policy_version
     - policy
     - policy_id
+    type: object
+  httptransport.DataPermissionVersionCreateTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      scope:
+        $ref: '#/definitions/datapermission.PolicyScopeType'
+      tenant_id:
+        type: string
+      version:
+        type: integer
     type: object
   httptransport.DataPermissionVersionGetRequest:
     properties:
@@ -1448,6 +1925,50 @@ definitions:
         type: array
     required:
     - policy_id
+    type: object
+  httptransport.DataPermissionVersionSummary:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      id:
+        type: string
+      policy_id:
+        type: string
+      published_at:
+        type: string
+      published_by:
+        type: string
+      published_by_name:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      updated_by_name:
+        type: string
+      version:
+        type: integer
+      version_number:
+        type: integer
+    type: object
+  httptransport.DataPermissionVersionSummaryPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/httptransport.DataPermissionVersionSummary'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   httptransport.DeleteApplicationRequest:
     properties:
@@ -1555,6 +2076,15 @@ definitions:
     - id
     - version
     type: object
+  httptransport.DepartmentAssignmentTarget:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      version:
+        type: integer
+    type: object
   httptransport.DepartmentIDRequest:
     properties:
       id:
@@ -1575,12 +2105,29 @@ definitions:
     required:
     - id
     type: object
+  httptransport.DictionaryItemDefinitionTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      source:
+        $ref: '#/definitions/dictionary.Source'
+      status:
+        type: string
+      type:
+        $ref: '#/definitions/dictionary.Kind'
+    type: object
   httptransport.DictionaryItemPageRequest:
     properties:
       dictionary_id:
         type: string
       disabled:
         type: boolean
+      exclude_subtree_id:
+        type: string
       keyword:
         type: string
       page:
@@ -1625,6 +2172,15 @@ definitions:
     required:
     - id
     - version
+    type: object
+  httptransport.FileDeleteTarget:
+    properties:
+      id:
+        type: string
+      original_name:
+        type: string
+      version:
+        type: integer
     type: object
   httptransport.FileIDRequest:
     properties:
@@ -1874,6 +2430,11 @@ definitions:
         items:
           type: string
         type: array
+      trace_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
     type: object
   httptransport.PageServiceAccountsRequest:
     properties:
@@ -1909,6 +2470,11 @@ definitions:
     type: object
   httptransport.PageTenantRequest:
     properties:
+      codes:
+        items:
+          type: string
+        maxItems: 200
+        type: array
       created_at_from:
         type: string
       created_at_to:
@@ -1921,6 +2487,11 @@ definitions:
       keyword:
         maxLength: 256
         type: string
+      owner_user_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
       page:
         type: integer
       page_size:
@@ -2190,6 +2761,21 @@ definitions:
         - service_account
         type: string
     type: object
+  httptransport.PlatformGrantPermissionPageRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        maxLength: 256
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+    type: object
   httptransport.PublicPlatformConfigsRequest:
     properties:
       category:
@@ -2355,7 +2941,7 @@ definitions:
       statuses:
         items:
           type: string
-        maxItems: 3
+        maxItems: 5
         type: array
       trigger_sources:
         items:
@@ -2424,6 +3010,54 @@ definitions:
         items:
           type: string
         type: array
+      trace_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+    type: object
+  httptransport.ServiceAccountMutationTarget:
+    properties:
+      client_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/serviceaccount.Status'
+      version:
+        type: integer
+    type: object
+  httptransport.ServiceAccountPageResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/serviceaccount.Account'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  httptransport.ServiceAccountUpdateTarget:
+    properties:
+      client_id:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/serviceaccount.Status'
+      version:
+        type: integer
     type: object
   httptransport.SessionPageRequest:
     properties:
@@ -2454,6 +3088,14 @@ definitions:
           $ref: '#/definitions/authentication.SessionStatus'
         type: array
     type: object
+  httptransport.SessionRevokeTargetRequest:
+    properties:
+      session_id:
+        maxLength: 256
+        type: string
+    required:
+    - session_id
+    type: object
   httptransport.SetDepartmentMembersRequest:
     properties:
       department_id:
@@ -2463,8 +3105,11 @@ definitions:
           $ref: '#/definitions/tenant.DepartmentMemberAssignment'
         maxItems: 1000
         type: array
+      version:
+        type: integer
     required:
     - department_id
+    - version
     type: object
   httptransport.SetPasswordRequest:
     properties:
@@ -2538,8 +3183,18 @@ definitions:
         maxLength: 128
         type: string
     required:
-    - application_ids
     - tenant_id
+    type: object
+  httptransport.TenantDeleteTargetRequest:
+    type: object
+  httptransport.TenantGrantablePermissionPageRequest:
+    properties:
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
     type: object
   httptransport.TenantMemberIDRequest:
     properties:
@@ -2550,6 +3205,11 @@ definitions:
     type: object
   httptransport.TenantMemberPageRequest:
     properties:
+      emails:
+        items:
+          type: string
+        maxItems: 200
+        type: array
       ids:
         items:
           type: string
@@ -2566,6 +3226,11 @@ definitions:
         type: integer
       page_size:
         type: integer
+      phones:
+        items:
+          type: string
+        maxItems: 200
+        type: array
       statuses:
         items:
           $ref: '#/definitions/tenant.Status'
@@ -2581,6 +3246,19 @@ definitions:
           type: string
         maxItems: 200
         type: array
+    type: object
+  httptransport.TenantMemberPageResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/tenant.Member'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   httptransport.TenantRoleIDRequest:
     properties:
@@ -2610,6 +3288,8 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  httptransport.TenantUpdateTargetRequest:
     type: object
   httptransport.UpdateApplicationRequest:
     properties:
@@ -2974,6 +3654,19 @@ definitions:
     - password
     - username
     type: object
+  httptransport.UserPageResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/identity.User'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
   httptransport.administratorPageRequest:
     properties:
       joined_from:
@@ -3008,6 +3701,22 @@ definitions:
     - membership_ids
     - tenant_id
     - user_ids
+    type: object
+  httptransport.assignablePermissionPageRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+      keyword:
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+    required:
+    - ids
     type: object
   httptransport.createTenantRoleRequest:
     properties:
@@ -3054,9 +3763,12 @@ definitions:
       tenant_id:
         maxLength: 128
         type: string
+      version:
+        type: integer
     required:
     - membership_id
     - tenant_id
+    - version
     type: object
   httptransport.setMemberRolesRequest:
     properties:
@@ -3148,6 +3860,30 @@ definitions:
     required:
     - tenant_id
     type: object
+  identity.DeleteTarget:
+    properties:
+      display_name:
+        type: string
+      id:
+        type: string
+      status:
+        $ref: '#/definitions/identity.Status'
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
+  identity.SecurityTarget:
+    properties:
+      display_name:
+        type: string
+      id:
+        type: string
+      status:
+        $ref: '#/definitions/identity.Status'
+      username:
+        type: string
+    type: object
   identity.Status:
     enum:
     - active
@@ -3160,6 +3896,23 @@ definitions:
     - StatusDisabled
     - StatusLocked
     - StatusClosed
+  identity.UpdateTarget:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      phone:
+        type: string
+      status:
+        $ref: '#/definitions/identity.Status'
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
   identity.User:
     properties:
       created_at:
@@ -3185,6 +3938,23 @@ definitions:
       updated_by_name:
         type: string
       username:
+        type: string
+      version:
+        type: integer
+    type: object
+  navigation.DeleteTarget:
+    properties:
+      application_id:
+        type: string
+      application_name:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      navigation_key:
+        type: string
+      navigation_type:
         type: string
       version:
         type: integer
@@ -3220,6 +3990,8 @@ definitions:
       navigation_type:
         type: string
       parent_id:
+        type: string
+      parent_name:
         type: string
       resource:
         type: string
@@ -3268,6 +4040,8 @@ definitions:
         type: string
       parent_id:
         type: string
+      parent_name:
+        type: string
       resource:
         type: string
       route_path:
@@ -3281,6 +4055,45 @@ definitions:
       updated_by:
         type: string
       updated_by_name:
+        type: string
+      version:
+        type: integer
+      visible:
+        type: boolean
+    type: object
+  navigation.UpdateTarget:
+    properties:
+      action:
+        type: string
+      application_id:
+        type: string
+      application_name:
+        type: string
+      component:
+        type: string
+      icon:
+        type: string
+      id:
+        type: string
+      metadata:
+        type: object
+      name:
+        type: string
+      navigation_key:
+        type: string
+      navigation_type:
+        type: string
+      parent_id:
+        type: string
+      parent_name:
+        type: string
+      resource:
+        type: string
+      route_path:
+        type: string
+      sort_order:
+        type: integer
+      status:
         type: string
       version:
         type: integer
@@ -3320,6 +4133,8 @@ definitions:
       actor_type:
         type: string
       application_id:
+        type: string
+      application_name:
         type: string
       client_ip:
         type: string
@@ -3365,6 +4180,8 @@ definitions:
         type: boolean
       tenant_id:
         type: string
+      tenant_name:
+        type: string
       trace_id:
         type: string
       updated_at:
@@ -3385,6 +4202,25 @@ definitions:
       field:
         type: string
     type: object
+  permission.ActionEditTarget:
+    properties:
+      action:
+        type: string
+      actions:
+        items:
+          $ref: '#/definitions/permission.ActionReference'
+        type: array
+      id:
+        type: string
+      name:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+      version:
+        type: integer
+    type: object
   permission.ActionReference:
     properties:
       action_key:
@@ -3399,6 +4235,50 @@ definitions:
         type: string
       scope:
         type: string
+    type: object
+  permission.NodeDeleteTarget:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      node_type:
+        type: string
+      parent_name:
+        type: string
+      permission_key:
+        type: string
+      version:
+        type: integer
+    type: object
+  permission.NodeUpdateTarget:
+    properties:
+      action:
+        type: string
+      description:
+        type: string
+      has_children:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      node_type:
+        type: string
+      parent_id:
+        type: string
+      parent_name:
+        type: string
+      permission_key:
+        type: string
+      resource:
+        type: string
+      sort_order:
+        type: integer
+      status:
+        type: string
+      version:
+        type: integer
     type: object
   permission.Record:
     properties:
@@ -3421,6 +4301,8 @@ definitions:
       node_type:
         type: string
       parent_id:
+        type: string
+      parent_name:
         type: string
       permission_key:
         type: string
@@ -3465,6 +4347,8 @@ definitions:
         type: string
       parent_id:
         type: string
+      parent_name:
+        type: string
       permission_key:
         type: string
       resource:
@@ -3478,6 +4362,21 @@ definitions:
       updated_by:
         type: string
       updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  platformconfig.DeleteTarget:
+    properties:
+      id:
+        type: string
+      is_public:
+        type: boolean
+      key:
+        type: string
+      name:
+        type: string
+      status:
         type: string
       version:
         type: integer
@@ -3535,6 +4434,29 @@ definitions:
       updated_by:
         type: string
       updated_by_name:
+        type: string
+      value:
+        type: object
+      value_type:
+        type: string
+      version:
+        type: integer
+    type: object
+  platformconfig.UpdateTarget:
+    properties:
+      category:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_public:
+        type: boolean
+      key:
+        type: string
+      name:
+        type: string
+      status:
         type: string
       value:
         type: object
@@ -3625,6 +4547,8 @@ definitions:
         type: string
       resource_key:
         type: string
+      resource_name:
+        type: string
       source:
         type: string
       status:
@@ -3636,7 +4560,45 @@ definitions:
       version:
         type: integer
     type: object
+  resourcecatalog.ActionDeleteTarget:
+    properties:
+      action_key:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      resource_key:
+        type: string
+      resource_name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
+    type: object
   resourcecatalog.ActionPage:
+    type: object
+  resourcecatalog.ActionUpdateTarget:
+    properties:
+      action_key:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      resource_id:
+        type: string
+      resource_key:
+        type: string
+      resource_name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
     type: object
   resourcecatalog.Resource:
     properties:
@@ -3665,7 +4627,37 @@ definitions:
       version:
         type: integer
     type: object
+  resourcecatalog.ResourceDeleteTarget:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      resource_key:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
+    type: object
   resourcecatalog.ResourcePage:
+    type: object
+  resourcecatalog.ResourceUpdateTarget:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      resource_key:
+        type: string
+      scope:
+        $ref: '#/definitions/resourceaction.ResourceScope'
+      status:
+        type: string
+      version:
+        type: integer
     type: object
   scheduler.Definition:
     properties:
@@ -3707,6 +4699,19 @@ definitions:
         type: integer
     type: object
   scheduler.DefinitionPage:
+    type: object
+  scheduler.DeleteTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      version:
+        type: integer
     type: object
   scheduler.HandlerDefinition:
     properties:
@@ -3761,6 +4766,40 @@ definitions:
         type: integer
     type: object
   scheduler.RunPage:
+    type: object
+  scheduler.TriggerResult:
+    properties:
+      run_id:
+        type: string
+      status:
+        type: string
+    type: object
+  scheduler.UpdateTarget:
+    properties:
+      code:
+        type: string
+      cron_spec:
+        type: string
+      description:
+        type: string
+      handler:
+        type: string
+      id:
+        type: string
+      lock_ttl_seconds:
+        type: integer
+      name:
+        type: string
+      payload:
+        type: object
+      status:
+        type: string
+      timeout_seconds:
+        type: integer
+      timezone:
+        type: string
+      version:
+        type: integer
     type: object
   securitylog.EventType:
     enum:
@@ -3869,6 +4908,8 @@ definitions:
         type: boolean
       tenant_id:
         type: string
+      tenant_name:
+        type: string
       trace_id:
         type: string
       updated_at:
@@ -3958,6 +4999,19 @@ definitions:
       token_type:
         type: string
     type: object
+  tenant.DeleteTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/tenant.Status'
+      version:
+        type: integer
+    type: object
   tenant.Department:
     properties:
       code:
@@ -3974,6 +5028,8 @@ definitions:
         type: string
       parent_id:
         type: string
+      parent_name:
+        type: string
       sort_order:
         type: integer
       tenant_id:
@@ -3983,6 +5039,17 @@ definitions:
       updated_by:
         type: string
       updated_by_name:
+        type: string
+      version:
+        type: integer
+    type: object
+  tenant.DepartmentDeleteTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
         type: string
       version:
         type: integer
@@ -4033,6 +5100,8 @@ definitions:
         type: string
       parent_id:
         type: string
+      parent_name:
+        type: string
       sort_order:
         type: integer
       tenant_id:
@@ -4043,6 +5112,23 @@ definitions:
         type: string
       updated_by_name:
         type: string
+      version:
+        type: integer
+    type: object
+  tenant.DepartmentUpdateTarget:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: string
+      parent_name:
+        type: string
+      sort_order:
+        type: integer
       version:
         type: integer
     type: object
@@ -4077,6 +5163,21 @@ definitions:
       version:
         type: integer
     type: object
+  tenant.MemberActionTarget:
+    properties:
+      display_name:
+        type: string
+      id:
+        type: string
+      is_self:
+        type: boolean
+      status:
+        $ref: '#/definitions/tenant.Status'
+      username:
+        type: string
+      version:
+        type: integer
+    type: object
   tenant.Reference:
     properties:
       id:
@@ -4092,6 +5193,21 @@ definitions:
     x-enum-varnames:
     - StatusActive
     - StatusDisabled
+  tenant.UpdateTarget:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/tenant.Status'
+      version:
+        type: integer
+    type: object
   tenant.View:
     properties:
       code:
@@ -4193,6 +5309,46 @@ paths:
       summary: Delete an empty application
       tags:
       - applications
+  /api/v1/applications/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.DeleteTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get minimal application identity and version before deletion
+      tags:
+      - applications
   /api/v1/applications/get:
     post:
       parameters:
@@ -4265,6 +5421,46 @@ paths:
       summary: Update an application
       tags:
       - applications
+  /api/v1/applications/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.UpdateTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get editable application fields and version for update-only operators
+      tags:
+      - applications
   /api/v1/auth/login:
     post:
       consumes:
@@ -4325,8 +5521,6 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/httptransport.Response'
-      security:
-      - Bearer: []
       summary: Revoke a user session
       tags:
       - authentication
@@ -4490,6 +5684,34 @@ paths:
       summary: Revoke one of the current user's sessions
       tags:
       - sessions
+  /api/v1/auth/sessions/revoke-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Session ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SessionRevokeTargetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authentication.SessionRevokeTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a current-user session target for confirmed revocation
+      tags:
+      - sessions
   /api/v1/auth/user/login:
     post:
       consumes:
@@ -4565,6 +5787,34 @@ paths:
       security:
       - Bearer: []
       summary: Soft-delete a manually owned resource action
+      tags:
+      - authorization-catalog
+  /api/v1/authorization/actions/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Action ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CatalogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/resourcecatalog.ActionDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a manual authorization action deletion target
       tags:
       - authorization-catalog
   /api/v1/authorization/actions/get:
@@ -4651,6 +5901,34 @@ paths:
       summary: Update a manually owned resource action
       tags:
       - authorization-catalog
+  /api/v1/authorization/actions/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Action ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CatalogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/resourcecatalog.ActionUpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a manual authorization action editing target
+      tags:
+      - authorization-catalog
   /api/v1/authorization/capabilities/evaluate:
     post:
       consumes:
@@ -4728,6 +6006,34 @@ paths:
       security:
       - Bearer: []
       summary: Soft-delete a manually owned authorization resource
+      tags:
+      - authorization-catalog
+  /api/v1/authorization/resources/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Resource ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CatalogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/resourcecatalog.ResourceDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a manual authorization resource deletion target
       tags:
       - authorization-catalog
   /api/v1/authorization/resources/get:
@@ -4812,6 +6118,34 @@ paths:
       security:
       - Bearer: []
       summary: Update a manually owned authorization resource
+      tags:
+      - authorization-catalog
+  /api/v1/authorization/resources/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Resource ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.CatalogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/resourcecatalog.ResourceUpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a manual authorization resource editing target
       tags:
       - authorization-catalog
   /api/v1/authorization/rows/evaluate:
@@ -4954,6 +6288,34 @@ paths:
       summary: Atomically publish a data-permission policy draft
       tags:
       - data-permission
+  /api/v1/data-permissions/global-policies/publish/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy and draft version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPublishTargetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionPublishTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a narrow policy and draft target for publishing
+      tags:
+      - data-permission
   /api/v1/data-permissions/global-policies/simulate:
     post:
       consumes:
@@ -5010,6 +6372,34 @@ paths:
       summary: Enable or disable a data-permission policy
       tags:
       - data-permission
+  /api/v1/data-permissions/global-policies/status/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionStatusTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a narrow policy target for a versioned status change
+      tags:
+      - data-permission
   /api/v1/data-permissions/global-policies/versions/create:
     post:
       consumes:
@@ -5036,6 +6426,34 @@ paths:
       security:
       - Bearer: []
       summary: Append an immutable data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/global-policies/versions/create-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionVersionCreateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a narrow policy target for appending a draft version
       tags:
       - data-permission
   /api/v1/data-permissions/global-policies/versions/get:
@@ -5087,7 +6505,7 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/datapermission.VersionPage'
+                  $ref: '#/definitions/httptransport.DataPermissionVersionSummaryPage'
               type: object
       security:
       - Bearer: []
@@ -5120,6 +6538,27 @@ paths:
       security:
       - Bearer: []
       summary: Create a global or tenant data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/create/context:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionSimulationContext'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the active tenant ID for tenant policy creation
       tags:
       - data-permission
   /api/v1/data-permissions/tenant-policies/get:
@@ -5206,6 +6645,34 @@ paths:
       summary: Atomically publish a data-permission policy draft
       tags:
       - data-permission
+  /api/v1/data-permissions/tenant-policies/publish/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy and draft version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPublishTargetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionPublishTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a narrow policy and draft target for publishing
+      tags:
+      - data-permission
   /api/v1/data-permissions/tenant-policies/simulate:
     post:
       consumes:
@@ -5232,6 +6699,27 @@ paths:
       security:
       - Bearer: []
       summary: Validate and simulate one unpersisted data-permission policy
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/simulate/context:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionSimulationContext'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get the active tenant ID for a tenant policy simulation
       tags:
       - data-permission
   /api/v1/data-permissions/tenant-policies/status/set:
@@ -5262,6 +6750,34 @@ paths:
       summary: Enable or disable a data-permission policy
       tags:
       - data-permission
+  /api/v1/data-permissions/tenant-policies/status/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionStatusTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a narrow policy target for a versioned status change
+      tags:
+      - data-permission
   /api/v1/data-permissions/tenant-policies/versions/create:
     post:
       consumes:
@@ -5288,6 +6804,34 @@ paths:
       security:
       - Bearer: []
       summary: Append an immutable data-permission policy draft
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/versions/create-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionPolicyGetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DataPermissionVersionCreateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a narrow policy target for appending a draft version
       tags:
       - data-permission
   /api/v1/data-permissions/tenant-policies/versions/get:
@@ -5339,7 +6883,7 @@ paths:
             - $ref: '#/definitions/httptransport.Response'
             - properties:
                 body:
-                  $ref: '#/definitions/datapermission.VersionPage'
+                  $ref: '#/definitions/httptransport.DataPermissionVersionSummaryPage'
               type: object
       security:
       - Bearer: []
@@ -5395,6 +6939,34 @@ paths:
       security:
       - Bearer: []
       summary: Delete an empty data dictionary
+      tags:
+      - data-dictionaries
+  /api/v1/dictionaries/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped dictionary definition delete target
       tags:
       - data-dictionaries
   /api/v1/dictionaries/get:
@@ -5481,6 +7053,34 @@ paths:
       summary: Update a data dictionary
       tags:
       - data-dictionaries
+  /api/v1/dictionaries/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped dictionary definition update target
+      tags:
+      - data-dictionaries
   /api/v1/dictionary-items/create:
     post:
       consumes:
@@ -5509,6 +7109,186 @@ paths:
       summary: Create a static dictionary item
       tags:
       - data-dictionaries
+  /api/v1/dictionary-items/definition-target/create:
+    post:
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DictionaryItemDefinitionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a dictionary definition target for item creators
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/definition-target/delete:
+    post:
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DictionaryItemDefinitionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a dictionary definition target for item deleters
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/definition-target/list:
+    post:
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DictionaryItemDefinitionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a dictionary definition target for item list operators
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/definition-target/read:
+    post:
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DictionaryItemDefinitionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a dictionary definition target for item readers
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/definition-target/update:
+    post:
+      parameters:
+      - description: Dictionary
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DictionaryItemDefinitionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a dictionary definition target for item editors
+      tags:
+      - data-dictionaries
   /api/v1/dictionary-items/delete:
     post:
       consumes:
@@ -5530,6 +7310,34 @@ paths:
       security:
       - Bearer: []
       summary: Delete a leaf dictionary item
+      tags:
+      - data-dictionaries
+  /api/v1/dictionary-items/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Item
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.ItemDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped dictionary item delete target
       tags:
       - data-dictionaries
   /api/v1/dictionary-items/get:
@@ -5616,6 +7424,34 @@ paths:
       summary: Update a static dictionary item
       tags:
       - data-dictionaries
+  /api/v1/dictionary-items/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Item
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DictionaryIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/dictionary.ItemUpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped dictionary item update target
+      tags:
+      - data-dictionaries
   /api/v1/example/ping:
     post:
       consumes:
@@ -5667,6 +7503,34 @@ paths:
       security:
       - Bearer: []
       summary: Logically delete a file using optimistic locking
+      tags:
+      - files
+  /api/v1/files/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: File ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.FileIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.FileDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a versioned file target for confirmed deletion
       tags:
       - files
   /api/v1/files/download:
@@ -5944,6 +7808,114 @@ paths:
       summary: Get the current principal's visible application navigation
       tags:
       - navigations
+  /api/v1/navigations/application-target/create:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.NavigationTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the application name for navigation creators
+      tags:
+      - navigations
+  /api/v1/navigations/application-target/list:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.NavigationTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the application name for navigation list operators
+      tags:
+      - navigations
+  /api/v1/navigations/application-target/read:
+    post:
+      parameters:
+      - description: Application
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ApplicationIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.NavigationTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the application name for navigation readers
+      tags:
+      - navigations
   /api/v1/navigations/create:
     post:
       parameters:
@@ -5985,6 +7957,34 @@ paths:
       security:
       - Bearer: []
       summary: Delete a leaf application navigation
+      tags:
+      - navigations
+  /api/v1/navigations/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Navigation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.NavigationIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/navigation.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped navigation delete target
       tags:
       - navigations
   /api/v1/navigations/get:
@@ -6059,6 +8059,34 @@ paths:
       security:
       - Bearer: []
       summary: Update or move an application navigation
+      tags:
+      - navigations
+  /api/v1/navigations/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Navigation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.NavigationIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/navigation.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped navigation update target
       tags:
       - navigations
   /api/v1/operation-logs/frontend/record:
@@ -6218,6 +8246,35 @@ paths:
       summary: Replace Resource/Action links using the permission version
       tags:
       - permissions
+  /api/v1/permissions/actions/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/permission.ActionEditTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an editable permission and its Resource/Action links under update
+        authorization
+      tags:
+      - permissions
   /api/v1/permissions/create:
     post:
       consumes:
@@ -6267,6 +8324,34 @@ paths:
       security:
       - Bearer: []
       summary: Delete a leaf permission using optimistic locking
+      tags:
+      - permissions
+  /api/v1/permissions/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/permission.NodeDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped permission node delete target
       tags:
       - permissions
   /api/v1/permissions/get:
@@ -6355,6 +8440,34 @@ paths:
       summary: Update a permission using optimistic locking
       tags:
       - permissions
+  /api/v1/permissions/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PermissionIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/permission.NodeUpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped permission node update target
+      tags:
+      - permissions
   /api/v1/platform-configs/create:
     post:
       consumes:
@@ -6404,6 +8517,34 @@ paths:
       security:
       - Bearer: []
       summary: Delete a platform configuration
+      tags:
+      - platform-configs
+  /api/v1/platform-configs/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformConfigIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped platform configuration delete target
       tags:
       - platform-configs
   /api/v1/platform-configs/get:
@@ -6490,6 +8631,110 @@ paths:
       summary: Update a platform configuration
       tags:
       - platform-configs
+  /api/v1/platform-configs/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformConfigIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/platformconfig.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped platform configuration update target
+      tags:
+      - platform-configs
+  /api/v1/platform/operation-logs/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: System operation log
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.OperationLogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/operationlog.Record'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a platform system operation log
+      tags:
+      - operation-logs
+  /api/v1/platform/operation-logs/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: System log filters; time range required, maximum 31 days
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.OperationLogPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/operationlog.Page'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page platform system operation logs in a bounded time window
+      tags:
+      - operation-logs
   /api/v1/platform/permission-grants/create:
     post:
       consumes:
@@ -6536,9 +8781,49 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/httptransport.Response'
+        "409":
+          description: 'Code 30011: stale version'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: Revoke a platform principal permission grant
+      tags:
+      - platform-grants
+  /api/v1/platform/permission-grants/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Grant ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformGrantIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.PlatformGrantDeleteTarget'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Grant not found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the current platform grant revocation target
       tags:
       - platform-grants
   /api/v1/platform/permission-grants/get:
@@ -6597,6 +8882,38 @@ paths:
       summary: Page platform principal permission grants
       tags:
       - platform-grants
+  /api/v1/platform/permission-grants/permissions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Page request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformGrantPermissionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.PlatformGrantablePermissionPage'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page active permissions linked to a platform-scoped action
+      tags:
+      - platform-grants
   /api/v1/platform/permission-grants/update:
     post:
       consumes:
@@ -6620,9 +8937,49 @@ paths:
                 body:
                   $ref: '#/definitions/authorization.PlatformGrant'
               type: object
+        "409":
+          description: 'Code 30011: stale version; Code 30009: duplicate grant'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: Update a platform principal permission grant
+      tags:
+      - platform-grants
+  /api/v1/platform/permission-grants/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Grant ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.PlatformGrantIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.PlatformGrantUpdateTarget'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Grant not found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the current platform grant edit target
       tags:
       - platform-grants
   /api/v1/platform/runtime/status:
@@ -6655,6 +9012,90 @@ paths:
         console
       tags:
       - operations
+  /api/v1/platform/security-logs/get:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: System security log
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SecurityLogIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/securitylog.Record'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a platform system security log
+      tags:
+      - security-logs
+  /api/v1/platform/security-logs/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: System log filters; time range required, maximum 31 days
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.SecurityLogPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/securitylog.Page'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page platform system security logs in a bounded time window
+      tags:
+      - security-logs
   /api/v1/platform/tenant-applications/get:
     post:
       parameters:
@@ -6746,6 +9187,170 @@ paths:
       summary: Revoke a tenant application grant
       tags:
       - tenant-applications
+  /api/v1/platform/tenant-applications/revoke-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant application grant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantApplicationIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/application.GrantRevokeTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get minimal active grant identity and version before revocation
+      tags:
+      - tenant-applications
+  /api/v1/platform/tenant-applications/target/grant:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantPermissionCeilingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantPermissionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the tenant name for application-grant operators
+      tags:
+      - tenant-applications
+  /api/v1/platform/tenant-applications/target/list:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantPermissionCeilingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantPermissionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the tenant name for application-grant list operators
+      tags:
+      - tenant-applications
+  /api/v1/platform/tenant-applications/target/read:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantPermissionCeilingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantPermissionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the tenant name for application-grant readers
+      tags:
+      - tenant-applications
   /api/v1/platform/tenant-authorization/administrators/page:
     post:
       consumes:
@@ -6797,6 +9402,46 @@ paths:
       summary: Add or remove a tenant administrator
       tags:
       - tenant-authorization
+  /api/v1/platform/tenant-authorization/administrators/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantPermissionCeilingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantPermissionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the tenant name for platform administrator assignment
+      tags:
+      - tenant-authorization
   /api/v1/platform/tenant-authorization/permissions/get:
     post:
       consumes:
@@ -6819,12 +9464,44 @@ paths:
             - properties:
                 body:
                   items:
-                    $ref: '#/definitions/authorization.PermissionView'
+                    $ref: '#/definitions/authorization.TenantCeilingPermission'
                   type: array
               type: object
       security:
       - Bearer: []
       summary: Get a tenant's permission ceiling
+      tags:
+      - tenant-authorization
+  /api/v1/platform/tenant-authorization/permissions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Page request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantGrantablePermissionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantGrantablePermissionPage'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page active permissions eligible for tenant ceilings
       tags:
       - tenant-authorization
   /api/v1/platform/tenant-authorization/permissions/set:
@@ -6848,6 +9525,46 @@ paths:
       security:
       - Bearer: []
       summary: Replace a tenant's permission ceiling
+      tags:
+      - tenant-authorization
+  /api/v1/platform/tenant-authorization/permissions/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.tenantPermissionCeilingRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantPermissionTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get the tenant name and expected version for permission-ceiling management
       tags:
       - tenant-authorization
   /api/v1/platform/tenants/create:
@@ -6900,6 +9617,34 @@ paths:
       - Bearer: []
       summary: Logically delete any tenant from platform context using optimistic
         locking
+      tags:
+      - platform-tenants
+  /api/v1/platform/tenants/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get fresh confirmation fields for deleting a platform-managed tenant
       tags:
       - platform-tenants
   /api/v1/platform/tenants/get:
@@ -6986,6 +9731,34 @@ paths:
       summary: Update any tenant from platform context using optimistic locking
       tags:
       - platform-tenants
+  /api/v1/platform/tenants/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tenant ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get fresh editable fields for a platform-managed tenant
+      tags:
+      - platform-tenants
   /api/v1/profile/get:
     post:
       consumes:
@@ -7047,7 +9820,9 @@ paths:
       consumes:
       - application/json
       description: Public endpoint. Enum results are paged; tree results are returned
-        as a bounded complete tree.
+        as a bounded complete tree. Optional values filter matches the selectable
+        value (item value, or item ID when value is empty) exactly and combines with
+        IDs, codes, and keyword using AND; trees retain matching ancestors.
       parameters:
       - description: Dictionary query
         in: body
@@ -7215,6 +9990,30 @@ paths:
       summary: Delete a scheduled job definition
       tags:
       - scheduled-jobs
+  /api/v1/scheduled-jobs/delete-target:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped scheduled job delete target
+      tags:
+      - scheduled-jobs
   /api/v1/scheduled-jobs/get:
     post:
       parameters:
@@ -7302,7 +10101,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/httptransport.Response'
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.TriggerResult'
+              type: object
       security:
       - Bearer: []
       summary: Trigger one scheduled job immediately
@@ -7330,6 +10134,30 @@ paths:
       security:
       - Bearer: []
       summary: Update a scheduled job definition
+      tags:
+      - scheduled-jobs
+  /api/v1/scheduled-jobs/update-target:
+    post:
+      parameters:
+      - description: Scheduled job
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.ScheduledJobIDRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/scheduler.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get an action-scoped scheduled job update target
       tags:
       - scheduled-jobs
   /api/v1/security-logs/get:
@@ -7459,6 +10287,34 @@ paths:
       summary: Disable and logically delete a service account
       tags:
       - service-accounts
+  /api/v1/service-accounts/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.ServiceAccountMutationTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a service-account target for confirmed deletion
+      tags:
+      - service-accounts
   /api/v1/service-accounts/get:
     post:
       consumes:
@@ -7504,7 +10360,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/httptransport.Response'
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.ServiceAccountPageResponse'
+              type: object
       security:
       - Bearer: []
       summary: Search service accounts by identity, status, and time ranges
@@ -7538,6 +10399,34 @@ paths:
       summary: Rotate a service account secret and return it once
       tags:
       - service-accounts
+  /api/v1/service-accounts/secret/rotate-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.ServiceAccountMutationTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a service-account target for confirmed secret rotation
+      tags:
+      - service-accounts
   /api/v1/service-accounts/update:
     post:
       consumes:
@@ -7564,6 +10453,46 @@ paths:
       security:
       - Bearer: []
       summary: Update a service account using optimistic locking
+      tags:
+      - service-accounts
+  /api/v1/service-accounts/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Service account ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.ServiceAccountUpdateTarget'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get editable service-account fields and version for update-only operators
       tags:
       - service-accounts
   /api/v1/tenant-authorization/administrators/page:
@@ -7653,6 +10582,38 @@ paths:
       security:
       - Bearer: []
       summary: List permissions the current tenant principal may delegate
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-authorization/assignable-permissions/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Page and optional IDs
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.assignablePermissionPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.TenantGrantablePermissionPage'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page permissions the current tenant principal may delegate
       tags:
       - tenant-authorization
   /api/v1/tenant-authorization/effective-permissions:
@@ -7796,6 +10757,34 @@ paths:
       summary: Delete an empty tenant department
       tags:
       - tenant-departments
+  /api/v1/tenant-departments/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DepartmentIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.DepartmentDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get department identity and version under delete permission
+      tags:
+      - tenant-departments
   /api/v1/tenant-departments/get:
     post:
       consumes:
@@ -7877,6 +10866,34 @@ paths:
       summary: Replace department members and primary-department flags
       tags:
       - tenant-departments
+  /api/v1/tenant-departments/members/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DepartmentIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.DepartmentAssignmentTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a versioned department target for member assignment
+      tags:
+      - tenant-departments
   /api/v1/tenant-departments/tree:
     post:
       consumes:
@@ -7933,6 +10950,34 @@ paths:
       security:
       - Bearer: []
       summary: Update or move a tenant department
+      tags:
+      - tenant-departments
+  /api/v1/tenant-departments/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Department
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DepartmentIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.DepartmentUpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get editable department fields and version under update permission
       tags:
       - tenant-departments
   /api/v1/tenant-members/add:
@@ -8000,7 +11045,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/httptransport.Response'
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.TenantMemberPageResponse'
+              type: object
       security:
       - Bearer: []
       summary: Page current tenant members
@@ -8023,6 +11073,34 @@ paths:
       security:
       - Bearer: []
       summary: Remove a tenant member
+      tags:
+      - tenant-members
+  /api/v1/tenant-members/remove-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantMemberIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.MemberActionTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant member's identity and version for removal confirmation
       tags:
       - tenant-members
   /api/v1/tenant-members/roles/get:
@@ -8078,6 +11156,74 @@ paths:
       summary: Replace a tenant member's roles
       tags:
       - tenant-authorization
+  /api/v1/tenant-members/roles/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.memberRolesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.MemberRoleAssignmentTarget'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Permission denied or data scope unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Member not found in the current tenant and data scope
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a tenant member and linked roles for assign-role editing
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-members/status/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Member
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantMemberIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.MemberActionTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get a tenant member's current status and version for a status change
+      tags:
+      - tenant-members
   /api/v1/tenant-members/status/update:
     post:
       parameters:
@@ -8102,6 +11248,34 @@ paths:
       summary: Enable or disable a tenant member
       tags:
       - tenant-members
+  /api/v1/tenant-roles/assignment-candidates/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRolePageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.RoleAssignmentCandidatePage'
+              type: object
+      security:
+      - Bearer: []
+      summary: Page tenant roles eligible for assignment by the current member
+      tags:
+      - tenant-authorization
   /api/v1/tenant-roles/create:
     post:
       consumes:
@@ -8151,6 +11325,34 @@ paths:
       security:
       - Bearer: []
       summary: Delete a tenant role and its assignments
+      tags:
+      - tenant-authorization
+  /api/v1/tenant-roles/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRoleIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.RoleDeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get tenant role identity and current version under delete permission
       tags:
       - tenant-authorization
   /api/v1/tenant-roles/get:
@@ -8262,6 +11464,46 @@ paths:
       summary: Replace role permissions with optimistic locking
       tags:
       - tenant-authorization
+  /api/v1/tenant-roles/permissions/target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRoleIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.RoleGrantTarget'
+              type: object
+        "400":
+          description: 'Code 10001: invalid request'
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "403":
+          description: Permission denied or data scope unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "404":
+          description: Role not found in the current tenant and data scope
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Get a tenant role and its linked permissions for grant editing
+      tags:
+      - tenant-authorization
   /api/v1/tenant-roles/update:
     post:
       consumes:
@@ -8290,6 +11532,34 @@ paths:
       summary: Update a tenant role
       tags:
       - tenant-authorization
+  /api/v1/tenant-roles/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantRoleIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/authorization.RoleUpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get editable tenant role fields and current version under update permission
+      tags:
+      - tenant-authorization
   /api/v1/tenants/delete:
     post:
       consumes:
@@ -8311,6 +11581,34 @@ paths:
       security:
       - Bearer: []
       summary: Logically delete a tenant using optimistic locking
+      tags:
+      - tenants
+  /api/v1/tenants/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantDeleteTargetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get fresh confirmation fields for deleting the current tenant
       tags:
       - tenants
   /api/v1/tenants/get:
@@ -8397,6 +11695,34 @@ paths:
       summary: Update a tenant using optimistic locking
       tags:
       - tenants
+  /api/v1/tenants/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Empty JSON object
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.TenantUpdateTargetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/tenant.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Get fresh editable fields for the current tenant
+      tags:
+      - tenants
   /api/v1/users/create:
     post:
       consumes:
@@ -8448,6 +11774,34 @@ paths:
       summary: Logically close and delete a user
       tags:
       - users
+  /api/v1/users/delete-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.DeleteTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Resolve a minimal user identity and version before deletion
+      tags:
+      - users
   /api/v1/users/get:
     post:
       consumes:
@@ -8493,10 +11847,71 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/httptransport.Response'
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.UserPageResponse'
+              type: object
       security:
       - Bearer: []
       summary: Search users by username, email, phone, status, and time range
+      tags:
+      - users
+  /api/v1/users/security-target/force-logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.SecurityTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Resolve a minimal user identity before forced logout
+      tags:
+      - users
+  /api/v1/users/security-target/reset-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.SecurityTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Resolve a minimal user identity before password reset
       tags:
       - users
   /api/v1/users/update:
@@ -8525,6 +11940,34 @@ paths:
       security:
       - Bearer: []
       summary: Update a user using optimistic locking
+      tags:
+      - users
+  /api/v1/users/update-target:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.GetUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/identity.UpdateTarget'
+              type: object
+      security:
+      - Bearer: []
+      summary: Resolve fresh editable fields and version for a user
       tags:
       - users
   /api/v1/version:

@@ -37,8 +37,8 @@ type ApplicationIDRequest struct {
 }
 type ApplicationPageRequest struct {
 	pagination.Request
-	IDs           []string          `json:"ids" binding:"max=200,dive,required,max=128"`
-	Codes         []string          `json:"codes" binding:"max=200,dive,required,max=64"`
+	IDs           []string          `json:"ids" binding:"max=200,dive,min=1,max=128"`
+	Codes         []string          `json:"codes" binding:"max=200,dive,min=1,max=64"`
 	Statuses      []string          `json:"statuses" binding:"max=2,dive,oneof=active disabled"`
 	CreatedAtFrom *time.Time        `json:"created_at_from"`
 	CreatedAtTo   *time.Time        `json:"created_at_to"`
@@ -78,7 +78,7 @@ type TenantApplicationIDRequest struct {
 type TenantApplicationPageRequest struct {
 	pagination.Request
 	TenantID       string            `json:"tenant_id" binding:"required,max=128"`
-	ApplicationIDs []string          `json:"application_ids" binding:"max=200,dive,required,max=128"`
+	ApplicationIDs []string          `json:"application_ids" binding:"max=200,dive,min=1,max=128"`
 	Statuses       []string          `json:"statuses" binding:"max=2,dive,oneof=active revoked"`
 	CreatedAtFrom  *time.Time        `json:"created_at_from"`
 	CreatedAtTo    *time.Time        `json:"created_at_to"`
@@ -120,6 +120,93 @@ func (h *ApplicationHandler) Get(c *gin.Context) {
 	v, e := h.service.Get(c.Request.Context(), r.ID)
 	h.respond(c, v, e)
 }
+
+// DeleteApplicationTarget godoc
+// @Summary Get minimal application identity and version before deletion
+// @Tags applications
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body ApplicationIDRequest true "Application ID"
+// @Success 200 {object} Response{body=application.DeleteTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/applications/delete-target [post]
+func (h *ApplicationHandler) DeleteTarget(c *gin.Context) {
+	var request ApplicationIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	h.respond(c, result, err)
+}
+
+// UpdateApplicationTarget godoc
+// @Summary Get editable application fields and version for update-only operators
+// @Tags applications
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body ApplicationIDRequest true "Application ID"
+// @Success 200 {object} Response{body=application.UpdateTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/applications/update-target [post]
+func (h *ApplicationHandler) UpdateTarget(c *gin.Context) {
+	var request ApplicationIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	h.respond(c, result, err)
+}
+
+func (h *ApplicationHandler) navigationTarget(c *gin.Context) {
+	var request ApplicationIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.NavigationTarget(c.Request.Context(), request.ID)
+	h.respond(c, result, err)
+}
+
+// NavigationApplicationTargetRead godoc
+// @Summary Get the application name for navigation readers
+// @Tags navigations
+// @Security Bearer
+// @Param request body ApplicationIDRequest true "Application"
+// @Success 200 {object} Response{body=application.NavigationTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/navigations/application-target/read [post]
+func (h *ApplicationHandler) NavigationApplicationTargetRead(c *gin.Context) { h.navigationTarget(c) }
+
+// NavigationApplicationTargetList godoc
+// @Summary Get the application name for navigation list operators
+// @Tags navigations
+// @Security Bearer
+// @Param request body ApplicationIDRequest true "Application"
+// @Success 200 {object} Response{body=application.NavigationTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/navigations/application-target/list [post]
+func (h *ApplicationHandler) NavigationApplicationTargetList(c *gin.Context) { h.navigationTarget(c) }
+
+// NavigationApplicationTargetCreate godoc
+// @Summary Get the application name for navigation creators
+// @Tags navigations
+// @Security Bearer
+// @Param request body ApplicationIDRequest true "Application"
+// @Success 200 {object} Response{body=application.NavigationTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/navigations/application-target/create [post]
+func (h *ApplicationHandler) NavigationApplicationTargetCreate(c *gin.Context) { h.navigationTarget(c) }
 
 // PageApplications godoc
 // @Summary Page applications
@@ -198,6 +285,28 @@ func (h *ApplicationHandler) RevokeTenantApplication(c *gin.Context) {
 		return
 	}
 	h.respond(c, gin.H{}, h.access.Revoke(c.Request.Context(), request.TenantID, request.ID, request.Version))
+}
+
+// RevokeTenantApplicationTarget godoc
+// @Summary Get minimal active grant identity and version before revocation
+// @Tags tenant-applications
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantApplicationIDRequest true "Tenant application grant"
+// @Success 200 {object} Response{body=application.GrantRevokeTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Failure 409 {object} Response
+// @Router /api/v1/platform/tenant-applications/revoke-target [post]
+func (h *ApplicationHandler) RevokeTenantApplicationTarget(c *gin.Context) {
+	var request TenantApplicationIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.access.RevokeTarget(c.Request.Context(), request.TenantID, request.ID)
+	h.respond(c, result, err)
 }
 
 // GetTenantApplication godoc
@@ -294,6 +403,8 @@ func (h *ApplicationHandler) respond(c *gin.Context, v any, e error) {
 		Fail(c, h.logger, apperror.Invalid("invalid application", e))
 	case errors.Is(e, application.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("application not found"))
+	case errors.Is(e, application.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, application.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("application conflict", e))
 	case errors.Is(e, application.ErrGrantInvalid):

@@ -37,6 +37,29 @@ func TestDictionaryProviderQueriesBoundedPublicMetadata(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDictionaryProviderFiltersByExactValue(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	applicationID := "319595d8-2486-54cb-a522-82b9d6b2d36a"
+	mock.ExpectQuery(`SELECT count\(\*\) FROM applications WHERE .*id IN \(\?\)`).
+		WithArgs(applicationID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id,code,name,icon,home_path,status,sort_order FROM applications WHERE .*id IN \(\?\).*LIMIT \? OFFSET \?`).
+		WithArgs(applicationID, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "icon", "home_path", "status", "sort_order"}).
+			AddRow(applicationID, "console", "Console", "console", "/", "active", 1))
+	mock.ExpectClose()
+
+	result, err := NewDictionaryProvider(sqlx.NewDb(raw, "sqlmock")).Query(context.Background(), dictionary.Query{Values: []string{applicationID}})
+	require.NoError(t, err)
+	require.Equal(t, applicationID, result.Items[0].Value)
+}
+
 func TestRegisterDictionaryProvider(t *testing.T) {
 	t.Parallel()
 	registry := dictionary.NewProviderRegistry()

@@ -28,17 +28,20 @@ type CatalogDeleteRequest struct {
 	Version int64  `json:"version" binding:"required,gt=0"`
 }
 type CatalogPageRequest struct {
-	Page       int      `json:"page"`
-	PageSize   int      `json:"page_size"`
-	Keyword    string   `json:"keyword" binding:"max=256"`
-	IDs        []string `json:"ids" binding:"max=200,dive,uuid"`
-	Statuses   []string `json:"statuses" binding:"max=2,dive,oneof=active disabled"`
-	Sources    []string `json:"sources" binding:"max=2,dive,oneof=code manual"`
-	ResourceID string   `json:"resource_id" binding:"omitempty,uuid"`
+	Page                int                          `json:"page"`
+	PageSize            int                          `json:"page_size"`
+	Keyword             string                       `json:"keyword" binding:"max=256"`
+	IDs                 []string                     `json:"ids" binding:"max=200,dive,uuid"`
+	Statuses            []string                     `json:"statuses" binding:"max=2,dive,oneof=active disabled"`
+	Sources             []string                     `json:"sources" binding:"max=2,dive,oneof=code manual"`
+	ResourceID          string                       `json:"resource_id" binding:"omitempty,uuid"`
+	ResourceKey         string                       `json:"resource_key" binding:"omitempty,max=128"`
+	Scope               resourceaction.ResourceScope `json:"scope" binding:"omitempty,oneof=platform tenant principal"`
+	ActiveResourcesOnly bool                         `json:"active_resources_only"`
 }
 
 func (r CatalogPageRequest) input() resourcecatalog.PageInput {
-	return resourcecatalog.PageInput{Request: pagination.Request{Page: r.Page, PageSize: r.PageSize, Keyword: r.Keyword}, IDs: r.IDs, Statuses: r.Statuses, Sources: r.Sources, ResourceID: r.ResourceID}
+	return resourcecatalog.PageInput{Request: pagination.Request{Page: r.Page, PageSize: r.PageSize, Keyword: r.Keyword}, IDs: r.IDs, Statuses: r.Statuses, Sources: r.Sources, ResourceID: r.ResourceID, ResourceKey: r.ResourceKey, Scope: r.Scope, ActiveResourcesOnly: r.ActiveResourcesOnly}
 }
 
 type CatalogResourceRequest struct {
@@ -88,6 +91,8 @@ func (h *ResourceCatalogHandler) respond(c *gin.Context, result any, err error) 
 		Fail(c, h.logger, apperror.NotFound("catalog entry not found"))
 	case errors.Is(err, resourcecatalog.ErrConflict), errors.Is(err, resourcecatalog.ErrCodeOwned), errors.Is(err, resourcecatalog.ErrInUse):
 		Fail(c, h.logger, apperror.Conflict("catalog entry conflict", err))
+	case errors.Is(err, resourcecatalog.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	default:
 		Fail(c, h.logger, apperror.Internal(err))
 	}
@@ -127,6 +132,42 @@ func (h *ResourceCatalogHandler) GetResource(c *gin.Context) {
 	}
 	v, e := h.service.GetResource(c.Request.Context(), r.ID)
 	h.respond(c, v, e)
+}
+
+// GetCatalogResourceUpdateTarget godoc
+// @Summary Get a manual authorization resource editing target
+// @Tags authorization-catalog
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body CatalogIDRequest true "Resource ID"
+// @Success 200 {object} Response{body=resourcecatalog.ResourceUpdateTarget}
+// @Router /api/v1/authorization/resources/update-target [post]
+func (h *ResourceCatalogHandler) ResourceUpdateTarget(c *gin.Context) {
+	var r CatalogIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	v, err := h.service.ResourceUpdateTarget(c.Request.Context(), r.ID)
+	h.respond(c, v, err)
+}
+
+// GetCatalogResourceDeleteTarget godoc
+// @Summary Get a manual authorization resource deletion target
+// @Tags authorization-catalog
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body CatalogIDRequest true "Resource ID"
+// @Success 200 {object} Response{body=resourcecatalog.ResourceDeleteTarget}
+// @Router /api/v1/authorization/resources/delete-target [post]
+func (h *ResourceCatalogHandler) ResourceDeleteTarget(c *gin.Context) {
+	var r CatalogIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	v, err := h.service.ResourceDeleteTarget(c.Request.Context(), r.ID)
+	h.respond(c, v, err)
 }
 
 // PageCatalogResources godoc
@@ -216,6 +257,42 @@ func (h *ResourceCatalogHandler) GetAction(c *gin.Context) {
 	}
 	v, e := h.service.GetAction(c.Request.Context(), r.ID)
 	h.respond(c, v, e)
+}
+
+// GetCatalogActionUpdateTarget godoc
+// @Summary Get a manual authorization action editing target
+// @Tags authorization-catalog
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body CatalogIDRequest true "Action ID"
+// @Success 200 {object} Response{body=resourcecatalog.ActionUpdateTarget}
+// @Router /api/v1/authorization/actions/update-target [post]
+func (h *ResourceCatalogHandler) ActionUpdateTarget(c *gin.Context) {
+	var r CatalogIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	v, err := h.service.ActionUpdateTarget(c.Request.Context(), r.ID)
+	h.respond(c, v, err)
+}
+
+// GetCatalogActionDeleteTarget godoc
+// @Summary Get a manual authorization action deletion target
+// @Tags authorization-catalog
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body CatalogIDRequest true "Action ID"
+// @Success 200 {object} Response{body=resourcecatalog.ActionDeleteTarget}
+// @Router /api/v1/authorization/actions/delete-target [post]
+func (h *ResourceCatalogHandler) ActionDeleteTarget(c *gin.Context) {
+	var r CatalogIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	v, err := h.service.ActionDeleteTarget(c.Request.Context(), r.ID)
+	h.respond(c, v, err)
 }
 
 // PageCatalogActions godoc

@@ -10,11 +10,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformeventbus "github.com/lihongjie0209/microservice-platform-go/eventbus"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/robfig/cron/v3"
 	"go.opentelemetry.io/otel"
@@ -33,6 +37,7 @@ type Manager struct {
 	metrics        *observability.Metrics
 	logger         *slog.Logger
 	handlers       *HandlerRegistry
+	operations     operationlog.TransactionalRecorder
 	runner         *cron.Cron
 	mu             sync.Mutex
 	dynamicEntries map[string]cron.EntryID
@@ -40,16 +45,21 @@ type Manager struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	done           chan struct{}
+	manualWake     chan struct{}
+	manualWorkers  []*background.Worker
 }
 
-func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Transactor, locker cache.Locker, metrics *observability.Metrics, logger *slog.Logger, handlers *HandlerRegistry) (*Manager, error) {
+func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Transactor, locker cache.Locker, metrics *observability.Metrics, logger *slog.Logger, handlers *HandlerRegistry, operations operationlog.TransactionalRecorder) (*Manager, error) {
 	location, err := time.LoadLocation(cfg.Cron.Timezone)
 	if err != nil {
 		return nil, err
 	}
 	runner := cron.New(cron.WithLocation(location), cron.WithSeconds(), cron.WithChain(cron.Recover(cron.PrintfLogger(slogWriter{logger})), cron.SkipIfStillRunning(cron.PrintfLogger(slogWriter{logger}))))
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
-	manager := &Manager{cfg: cfg, db: db, tx: tx, locker: locker, metrics: metrics, logger: logger, handlers: handlers, runner: runner, dynamicEntries: map[string]cron.EntryID{}, refresh: make(chan struct{}, 1), ctx: schedulerCtx, cancel: cancelScheduler, done: make(chan struct{})}
+	manager := &Manager{cfg: cfg, db: db, tx: tx, locker: locker, metrics: metrics, logger: logger, handlers: handlers, operations: operations, runner: runner, dynamicEntries: map[string]cron.EntryID{}, refresh: make(chan struct{}, 1), ctx: schedulerCtx, cancel: cancelScheduler, done: make(chan struct{}), manualWake: make(chan struct{}, 1)}
+	for range 4 {
+		manager.manualWorkers = append(manager.manualWorkers, background.New(manager.manualLoop))
+	}
 	if cfg.Cron.SampleSpec != "" {
 		if _, err := runner.AddFunc(cfg.Cron.SampleSpec, func() {
 			started := time.Now()
@@ -79,9 +89,19 @@ func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Tr
 		} else {
 			close(manager.done)
 		}
+		if cfg.Database.Enabled {
+			for _, worker := range manager.manualWorkers {
+				worker.Start()
+			}
+		}
 		return nil
 	}, OnStop: func(ctx context.Context) error {
 		cancelScheduler()
+		for _, worker := range manager.manualWorkers {
+			if err := worker.Stop(ctx); err != nil {
+				return err
+			}
+		}
 		if cfg.Cron.Enabled {
 			<-manager.done
 		}
@@ -157,6 +177,8 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// Trigger executes a registered definition synchronously for trusted in-process
+// callers. HTTP requests use DefinitionService.Trigger, which queues work.
 func (m *Manager) Trigger(ctx context.Context, definition Definition) error {
 	return m.execute(ctx, definition, "manual")
 }
@@ -172,7 +194,9 @@ func (m *Manager) execute(parent context.Context, definition Definition, source 
 			span.SetStatus(codes.Error, "job failed")
 		}
 		finished := time.Now()
-		m.recordRun(ctx, definition, source, statusForRun(err), started, finished)
+		if recordErr := m.recordRun(ctx, definition, source, statusForRun(err), started, finished); recordErr != nil {
+			err = errors.Join(err, recordErr)
+		}
 		span.End()
 		cancel()
 	}
@@ -198,9 +222,9 @@ func statusForRun(err error) string {
 	return "error"
 }
 
-func (m *Manager) recordRun(executionCtx context.Context, definition Definition, source, status string, started, finished time.Time) {
+func (m *Manager) recordRun(executionCtx context.Context, definition Definition, source, status string, started, finished time.Time) error {
 	if m.tx == nil {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(executionCtx), 5*time.Second)
 	defer cancel()
@@ -214,14 +238,43 @@ func (m *Manager) recordRun(executionCtx context.Context, definition Definition,
 	if duration < 0 {
 		duration = 0
 	}
+	runID := uuid.NewString()
 	err := m.tx.Within(ctx, &sql.TxOptions{}, func(tx *sqlx.Tx) error {
 		now := time.Now()
-		_, execErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), definition.ID, definition.Code, definition.Name, definition.Handler, source, status, requestID, traceID, started, finished, duration, errorMessage, now, m.cfg.App.Name+":scheduler:"+definition.Code, now, m.cfg.App.Name+":scheduler:"+definition.Code)
-		return execErr
+		_, execErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), runID, definition.ID, definition.Code, definition.Name, definition.Handler, source, status, requestID, traceID, started, finished, duration, errorMessage, now, m.cfg.App.Name+":scheduler:"+definition.Code, now, m.cfg.App.Name+":scheduler:"+definition.Code)
+		if execErr != nil {
+			return execErr
+		}
+		if m.operations != nil {
+			return m.operations.RecordTx(ctx, tx, runCompletionEntry(runID, definition.ID, definition.Code, definition.Name, definition.Handler, source, status, started, finished))
+		}
+		return nil
 	})
 	if err != nil {
 		m.logger.ErrorContext(executionCtx, "record scheduled job run failed", "handler", definition.Handler, "error", err)
 	}
+	return err
+}
+
+func runCompletionEntry(runID, jobID, code, name, handler, source, status string, started, finished time.Time) operationlog.Entry {
+	duration := finished.Sub(started)
+	if duration < 0 {
+		duration = 0
+	}
+	if duration > 24*time.Hour {
+		duration = 24 * time.Hour
+	}
+	entry := operationlog.Entry{
+		Operation: "platform.scheduled-job.run.completed", ResourceType: "scheduled_job_run",
+		ResourceID: runID, ResourceName: name, Source: "backend", Protocol: "service",
+		Request:  map[string]any{"job_id": jobID, "job_code": code, "handler": handler, "trigger_source": source, "status": status},
+		Duration: duration, Succeeded: status == "success",
+	}
+	if status != "success" {
+		entry.ErrorCode = "job_" + status
+		entry.ErrorMessage = "scheduled job did not complete successfully"
+	}
+	return entry
 }
 
 func runSample(parent context.Context, serviceName string, timeout, lockTTL time.Duration, locker cache.Locker, logger *slog.Logger) error {
@@ -269,4 +322,13 @@ func (w slogWriter) Printf(format string, args ...any) {
 	w.logger.Error("scheduler event", "detail", format, "args", args)
 }
 
-var Module = fx.Module("scheduler", fx.Provide(NewManager), fx.Invoke(func(*Manager) {}))
+func startManualConsumer(lc fx.Lifecycle, cfg config.Config, manager *Manager, bus *eventbus.Bus, logger *slog.Logger) {
+	if bus == nil || !cfg.Database.Enabled {
+		return
+	}
+	eventbus.RegisterConsumer(lc, "scheduled-job-manual", logger, func(ctx context.Context) error {
+		return bus.ConsumeWithOptions(ctx, platformeventbus.ConsumerOptions{Durable: "scheduled-job-manual", FilterSubject: manualDispatchEventType, Handler: manager.consumeManual, OnError: func(err error) { logger.Error("manual scheduled job consumer failed", "error", err) }})
+	})
+}
+
+var Module = fx.Module("scheduler", fx.Provide(NewManager), fx.Invoke(func(*Manager) {}, startManualConsumer))

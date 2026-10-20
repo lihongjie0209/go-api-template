@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,4 +60,29 @@ func TestS3PutSupportsNonSeekableBodyOnCompatibleHTTPEndpoint(t *testing.T) {
 	require.Equal(t, "/bucket/path/object.txt", request.path)
 	require.Equal(t, content, request.body)
 	require.Equal(t, "UNSIGNED-PAYLOAD", request.payloadHash)
+}
+
+func TestS3PresignDownloadUsesAttachmentDisposition(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	store, err := newS3(t.Context(), config.ObjectStorage{
+		Endpoint: server.URL, Region: "us-east-1", Bucket: "bucket",
+		AccessKeyID: "access", AccessKeySecret: "secret",
+		UsePathStyle: true, PresignTTL: time.Minute,
+	})
+	require.NoError(t, err)
+
+	signed, err := store.Presign(t.Context(), PresignInput{
+		Key: "files/report.csv", Operation: OperationGet,
+		DownloadName: "报表.csv",
+	})
+	require.NoError(t, err)
+	parsed, err := url.Parse(signed.URL)
+	require.NoError(t, err)
+	require.Equal(t, http.MethodGet, signed.Method)
+	require.True(t, strings.HasPrefix(parsed.Query().Get("response-content-disposition"), "attachment;"))
+	require.Contains(t, parsed.Query().Get("response-content-disposition"), "filename")
 }

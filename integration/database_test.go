@@ -256,13 +256,40 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil {
 		t.Fatalf("create dictionary: %v", err)
 	}
+	updateTarget, err := service.UpdateTarget(actorCtx, definition.ID)
+	if err != nil || updateTarget.ID != definition.ID || updateTarget.Code != definition.Code || updateTarget.Version != definition.Version {
+		t.Fatalf("dictionary update target=%+v err=%v", updateTarget, err)
+	}
+	deleteTarget, err := service.DeleteTarget(actorCtx, definition.ID)
+	if err != nil || deleteTarget.ID != definition.ID || deleteTarget.Code != definition.Code || deleteTarget.Version != definition.Version {
+		t.Fatalf("dictionary delete target=%+v err=%v", deleteTarget, err)
+	}
 	root, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "cn", Name: "China", SortOrder: 1})
 	if err != nil {
 		t.Fatalf("create root dictionary item: %v", err)
 	}
-	child, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, ParentID: &root.ID, Code: "gd", Name: "Guangdong", SortOrder: 1})
+	child, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, ParentID: &root.ID, Code: "gd", Name: "Guangdong", Value: "guangdong-value", SortOrder: 1})
 	if err != nil {
 		t.Fatalf("create child dictionary item: %v", err)
+	}
+	if child.ParentName != root.Name {
+		t.Fatalf("created child missing parent display name: %#v", child)
+	}
+	itemUpdateTarget, err := service.ItemUpdateTarget(actorCtx, child.ID)
+	if err != nil || itemUpdateTarget.ID != child.ID || itemUpdateTarget.DictionaryID != definition.ID || itemUpdateTarget.ParentName != root.Name || itemUpdateTarget.Version != child.Version {
+		t.Fatalf("dictionary item update target=%+v err=%v", itemUpdateTarget, err)
+	}
+	itemDeleteTarget, err := service.ItemDeleteTarget(actorCtx, child.ID)
+	if err != nil || itemDeleteTarget.ID != child.ID || itemDeleteTarget.DictionaryID != definition.ID || itemDeleteTarget.Version != child.Version {
+		t.Fatalf("dictionary item delete target=%+v err=%v", itemDeleteTarget, err)
+	}
+	childPage, err := service.PageItems(actorCtx, dictionary.ItemPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, DictionaryID: definition.ID, ParentID: &root.ID})
+	if err != nil || childPage.Total != 1 || len(childPage.Items) != 1 || childPage.Items[0].ParentName != root.Name {
+		t.Fatalf("dictionary page missing parent display name: %#v err=%v", childPage, err)
+	}
+	storedChild, err := service.GetItem(actorCtx, child.ID)
+	if err != nil || storedChild.ParentName != root.Name {
+		t.Fatalf("dictionary detail missing parent display name: %#v err=%v", storedChild, err)
 	}
 	result, err := service.Query(ctx, dictionary.Query{Code: "test.region"})
 	if err != nil {
@@ -275,25 +302,88 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || len(filtered.Items) != 1 || len(filtered.Items[0].Children) != 1 {
 		t.Fatalf("tree search must retain ancestors: %#v err=%v", filtered.Items, err)
 	}
-	if _, err := service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: child.ID, ParentID: &root.ID, Name: "Guangdong", Value: "", SortOrder: 1, Version: child.Version + 1}); !errors.Is(err, dictionary.ErrConflict) {
+	valueFiltered, err := service.Query(ctx, dictionary.Query{Code: "test.region", Values: []string{"guangdong-value"}})
+	if err != nil || len(valueFiltered.Items) != 1 || len(valueFiltered.Items[0].Children) != 1 || valueFiltered.Items[0].Children[0].ID != child.ID {
+		t.Fatalf("tree value lookup must retain ancestors: %#v err=%v", valueFiltered.Items, err)
+	}
+	rootBySelectableValue, err := service.Query(ctx, dictionary.Query{Code: "test.region", Values: []string{root.ID}})
+	if err != nil || len(rootBySelectableValue.Items) != 1 || rootBySelectableValue.Items[0].ID != root.ID || len(rootBySelectableValue.Items[0].Children) != 0 {
+		t.Fatalf("empty value must be selectable by item ID: %#v err=%v", rootBySelectableValue.Items, err)
+	}
+	if _, err := service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: child.ID, ParentID: &root.ID, Name: "Guangdong", Value: "", SortOrder: 1, Version: child.Version + 1}); !errors.Is(err, dictionary.ErrStaleVersion) {
 		t.Fatalf("stale dictionary item update error=%v", err)
 	}
 	stored, err := service.GetItem(actorCtx, root.ID)
 	if err != nil || stored.CreatedBy != "dictionary-test" || stored.Version != 1 {
 		t.Fatalf("dictionary audit fields not maintained: %#v err=%v", stored, err)
 	}
+	otherRoot, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "us", Name: "United States", SortOrder: 2})
+	if err != nil {
+		t.Fatalf("create sibling dictionary root: %v", err)
+	}
+	parentCandidates, err := service.PageItems(actorCtx, dictionary.ItemPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, DictionaryID: definition.ID, ExcludeSubtreeID: root.ID})
+	if err != nil || parentCandidates.Total != 1 || len(parentCandidates.Items) != 1 || parentCandidates.Items[0].ID != otherRoot.ID {
+		t.Fatalf("root and descendants must not be parent candidates: %#v err=%v", parentCandidates, err)
+	}
+	childParentCandidates, err := service.PageItems(actorCtx, dictionary.ItemPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, DictionaryID: definition.ID, ExcludeSubtreeID: child.ID})
+	if err != nil || childParentCandidates.Total != 2 || len(childParentCandidates.Items) != 2 {
+		t.Fatalf("child exclusion must retain other parents: %#v err=%v", childParentCandidates, err)
+	}
 	enumDefinition, err := service.CreateDefinition(actorCtx, dictionary.DefinitionInput{Code: "test.gender", Name: "Gender", Kind: dictionary.KindEnum, Source: dictionary.SourceStatic, Status: "active"})
 	if err != nil {
 		t.Fatalf("create enum dictionary: %v", err)
 	}
 	for index, code := range []string{"m", "f", "u"} {
-		if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: enumDefinition.ID, Code: code, Name: strings.ToUpper(code), SortOrder: int64(index)}); err != nil {
+		if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: enumDefinition.ID, Code: code, Name: strings.ToUpper(code), Value: "label-" + code, SortOrder: int64(index)}); err != nil {
 			t.Fatalf("create enum item: %v", err)
 		}
 	}
 	enumPage, err := service.Query(ctx, dictionary.Query{Code: "test.gender", Page: 2, PageSize: 2})
 	if err != nil || enumPage.Total != 3 || len(enumPage.Items) != 1 || enumPage.Page != 2 {
 		t.Fatalf("unexpected enum page: %#v err=%v", enumPage, err)
+	}
+	selectedEnum, err := service.Query(ctx, dictionary.Query{Code: "test.gender", Values: []string{"label-f"}})
+	if err != nil || selectedEnum.Total != 1 || len(selectedEnum.Items) != 1 || selectedEnum.Items[0].Code != "f" {
+		t.Fatalf("enum value lookup must be exact and independent of code: %#v err=%v", selectedEnum, err)
+	}
+	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "duplicate-value", Name: "Duplicate", Value: "guangdong-value"}); !errors.Is(err, dictionary.ErrConflict) {
+		t.Fatalf("duplicate selectable value create error=%v", err)
+	}
+	if _, err := service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: otherRoot.ID, Name: otherRoot.Name, Value: root.ID, Version: otherRoot.Version}); !errors.Is(err, dictionary.ErrConflict) {
+		t.Fatalf("item ID fallback collision update error=%v", err)
+	}
+	if err := service.DeleteItem(actorCtx, child.ID, child.Version+1); !errors.Is(err, dictionary.ErrStaleVersion) {
+		t.Fatalf("stale dictionary item delete error=%v", err)
+	}
+	if err := service.DeleteItem(actorCtx, child.ID, child.Version); err != nil {
+		t.Fatalf("delete dictionary leaf: %v", err)
+	}
+	if _, err := service.ItemDeleteTarget(actorCtx, child.ID); !errors.Is(err, dictionary.ErrNotFound) {
+		t.Fatalf("deleted dictionary item target error=%v", err)
+	}
+	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "reused-value", Name: "Reused", Value: "guangdong-value"}); err != nil {
+		t.Fatalf("soft-deleted selectable value should be reusable: %v", err)
+	}
+	results := make(chan error, 2)
+	for _, code := range []string{"concurrent-a", "concurrent-b"} {
+		go func(code string) {
+			_, createErr := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: enumDefinition.ID, Code: code, Name: code, Value: "concurrent-value"})
+			results <- createErr
+		}(code)
+	}
+	successes, conflicts := 0, 0
+	for range 2 {
+		switch createErr := <-results; {
+		case createErr == nil:
+			successes++
+		case errors.Is(createErr, dictionary.ErrConflict):
+			conflicts++
+		default:
+			t.Fatalf("concurrent dictionary create error=%v", createErr)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent duplicate values successes=%d conflicts=%d", successes, conflicts)
 	}
 }
 
@@ -318,7 +408,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 		t.Fatalf("create data permission engine: %v", err)
 	}
 	repository := datapermission.NewRepository(db)
-	service := datapermission.NewLifecycleService(repository, appdb.NewTransactor(db), schemas, resources, datapermission.NewRuntimeLoader(repository, engine), nil, nil)
+	service := datapermission.NewLifecycleService(repository, appdb.NewTransactor(db), schemas, resources, datapermission.NewRuntimeLoader(repository, engine), nil, nil, nil)
 	authenticated := true
 	document := datapermission.Policy{
 		APIVersion: datapermission.PolicyAPIVersion,
@@ -534,7 +624,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	const (
 		tenantID       = "authorization-tenant"
 		adminMemberID  = "authorization-admin-member"
-		targetMemberID = "authorization-target-member"
+		targetMemberID = "15be7aa9-0b1a-42a6-9530-6b18a6dd4878"
 	)
 	actorCtx := platformprincipal.SystemContext(ctx, "authorization-integration")
 	now := time.Now()
@@ -582,17 +672,20 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if registryErr != nil {
 		t.Fatal(registryErr)
 	}
-	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, cfg, nil, registry)
+	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, cfg, nil)
 	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); err != nil {
 		t.Fatalf("set tenant permission ceiling: %v", err)
 	}
-	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+	if err := service.SetTenantPermissions(actorCtx, tenantID, 1, []string{permissionID}); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale tenant permission ceiling error=%v", err)
 	}
-	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true); err != nil {
+	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true, 1); err != nil {
 		t.Fatalf("set tenant administrator: %v", err)
 	}
-	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false, 1); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
+		t.Fatalf("stale tenant administrator version error=%v", err)
+	}
+	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false, 2); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
 		t.Fatalf("remove final tenant administrator error=%v", err)
 	}
 	// Direct service integration uses an explicit system principal; transport
@@ -609,14 +702,31 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); err != nil {
 		t.Fatalf("set member roles: %v", err)
 	}
-	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale member roles error=%v", err)
 	}
 	memberRoles, err := service.MemberRoles(adminCtx, targetMemberID)
 	if err != nil || len(memberRoles) != 1 || memberRoles[0].Name != "审计员" {
 		t.Fatalf("member roles=%+v err=%v", memberRoles, err)
 	}
+	assignmentTarget, err := service.MemberRoleAssignmentTarget(adminCtx, targetMemberID)
+	if err != nil || assignmentTarget.ID != targetMemberID || assignmentTarget.Version != 2 || assignmentTarget.Username != "authorization.target" || len(assignmentTarget.Roles) != 1 || assignmentTarget.Roles[0].ID != role.ID {
+		t.Fatalf("member role assignment target=%+v err=%v", assignmentTarget, err)
+	}
 	targetCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "authorization-target", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: targetMemberID})
+	for _, principalCtx := range []context.Context{adminCtx, targetCtx} {
+		page, pageErr := service.PageAssignablePermissions(principalCtx, authorization.AssignablePermissionPageInput{
+			Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "integration.permissions.read"},
+			IDs:     []string{permissionID},
+		})
+		if pageErr != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != permissionID {
+			t.Fatalf("assignable permission page=%+v err=%v", page, pageErr)
+		}
+	}
+	missingPage, err := service.PageAssignablePermissions(targetCtx, authorization.AssignablePermissionPageInput{IDs: []string{"missing-permission"}})
+	if err != nil || missingPage.Total != 0 || len(missingPage.Items) != 0 {
+		t.Fatalf("missing permission leaked into page=%+v err=%v", missingPage, err)
+	}
 	effective, err := service.EffectivePermissions(targetCtx, "")
 	if err != nil || len(effective) != 1 || effective[0].ID != permissionID || effective[0].Name == "" {
 		t.Fatalf("effective permissions=%v err=%v", effective, err)
@@ -626,28 +736,90 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 		t.Fatalf("tenant role page=%+v err=%v", page, err)
 	}
 	otherTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeSystem, TenantID: "other-tenant", MembershipID: "other-member"})
+	if _, err := service.MemberRoleAssignmentTarget(otherTenantCtx, targetMemberID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("cross-tenant member role assignment target error=%v", err)
+	}
 	if _, err := service.GetRole(otherTenantCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("cross-tenant role lookup error=%v", err)
+	}
+	if _, err := service.RoleUpdateTarget(otherTenantCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("cross-tenant role update target error=%v", err)
+	}
+	if _, err := service.RoleDeleteTarget(otherTenantCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("cross-tenant role delete target error=%v", err)
+	}
+	editTarget, err := service.RoleUpdateTarget(adminCtx, role.ID)
+	if err != nil || editTarget.ID != role.ID || editTarget.Description != role.Description || editTarget.Version != role.Version {
+		t.Fatalf("role update target=%+v err=%v", editTarget, err)
+	}
+	deleteTarget, err := service.RoleDeleteTarget(adminCtx, role.ID)
+	if err != nil || deleteTarget.ID != role.ID || deleteTarget.Version != role.Version {
+		t.Fatalf("role delete target=%+v err=%v", deleteTarget, err)
 	}
 	testRoleDataPermissionEnforcement(t, ctx, db, registry, tenantID, adminMemberID, &role)
 	updated, err := service.UpdateRole(adminCtx, role.ID, "高级审计员", role.Description, "active", role.Version)
 	if err != nil || updated.Version != role.Version+1 {
 		t.Fatalf("updated tenant role=%+v err=%v", updated, err)
 	}
-	if _, err := service.UpdateRole(adminCtx, role.ID, "旧版本", role.Description, "active", role.Version); !errors.Is(err, authorization.ErrTenantAuthorizationConflict) {
+	if _, err := service.UpdateRole(adminCtx, role.ID, "旧版本", role.Description, "active", role.Version); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale tenant role update error=%v", err)
 	}
 	if err := service.DeleteRole(adminCtx, role.ID, updated.Version); err != nil {
 		t.Fatalf("delete tenant role: %v", err)
 	}
+	if _, err := service.RoleDeleteTarget(adminCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("deleted role action target error=%v", err)
+	}
 	if _, err := service.GetRole(adminCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("deleted tenant role lookup error=%v", err)
+	}
+	manualPermissions := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, nil, registry, slog.Default())
+	manual, err := manualPermissions.Create(actorCtx, permission.Input{
+		Key: "integration.manual.view", Name: "查看手工功能", NodeType: "permission",
+		Resource: "manual.feature", Action: "view", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create manual resource permission: %v", err)
+	}
+	if err := service.SetTenantPermissions(actorCtx, tenantID, 2, []string{permissionID, manual.ID}); err != nil {
+		t.Fatalf("grant manual resource permission to tenant: %v", err)
+	}
+	manualPage, err := service.PageAssignablePermissions(adminCtx, authorization.AssignablePermissionPageInput{
+		Request: pagination.Request{Page: 1, PageSize: 20}, IDs: []string{manual.ID},
+	})
+	if err != nil || manualPage.Total != 1 || len(manualPage.Items) != 1 || manualPage.Items[0].ID != manual.ID {
+		t.Fatalf("manual resource assignable page=%+v err=%v", manualPage, err)
+	}
+	manualRole, err := service.CreateRole(adminCtx, "manual_viewer", "手工功能查看者", "", []string{manual.ID})
+	if err != nil {
+		t.Fatalf("create role with manual resource permission: %v", err)
+	}
+	manualTarget, err := service.RoleGrantTarget(adminCtx, manualRole.ID)
+	if err != nil || len(manualTarget.Permissions) != 1 || !manualTarget.Permissions[0].Assignable {
+		t.Fatalf("manual resource role grant target=%+v err=%v", manualTarget, err)
+	}
+	err = appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, updateErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE authorization_resource_actions SET status='disabled' WHERE id=?`), "manual-action")
+		return updateErr
+	})
+	if err != nil {
+		t.Fatalf("disable manual resource action: %v", err)
+	}
+	manualPage, err = service.PageAssignablePermissions(adminCtx, authorization.AssignablePermissionPageInput{
+		Request: pagination.Request{Page: 1, PageSize: 20}, IDs: []string{manual.ID},
+	})
+	if err != nil || manualPage.Total != 0 || len(manualPage.Items) != 0 {
+		t.Fatalf("disabled manual resource leaked into assignable page=%+v err=%v", manualPage, err)
+	}
+	manualTarget, err = service.RoleGrantTarget(adminCtx, manualRole.ID)
+	if err != nil || len(manualTarget.Permissions) != 1 || manualTarget.Permissions[0].Assignable {
+		t.Fatalf("disabled manual resource role grant target=%+v err=%v", manualTarget, err)
 	}
 }
 
 func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, resources *resourceaction.Registry, tenantID, membershipID string, visible *authorization.TenantRole) {
 	t.Helper()
-	const hiddenID = "integration-hidden-role"
+	const hiddenID = "5a53dafa-52df-4c51-91bc-475f30712e69"
 	now := time.Now()
 	actorCtx := platformprincipal.SystemContext(ctx, "other-actor")
 	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
@@ -670,7 +842,7 @@ func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sq
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, config.Config{}, datapermission.NewService(db, engine), resources)
+	service := authorization.NewTenantAuthorizationService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, discardSecurityRecorder{}, nil, config.Config{}, datapermission.NewService(db, engine))
 	principal := platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: membershipID}
 	endpointContext := func(action string) context.Context {
 		requestCtx := platformprincipal.WithContext(ctx, principal)
@@ -678,6 +850,15 @@ func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sq
 	}
 	if _, err := service.GetRole(endpointContext("read"), hiddenID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("hidden role get error=%v", err)
+	}
+	if _, err := service.RoleUpdateTarget(endpointContext("update"), hiddenID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("hidden role update target error=%v", err)
+	}
+	if _, err := service.RoleDeleteTarget(endpointContext("delete"), hiddenID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("hidden role delete target error=%v", err)
+	}
+	if target, err := service.RoleUpdateTarget(endpointContext("update"), visible.ID); err != nil || target.ID != visible.ID || target.Version != visible.Version {
+		t.Fatalf("visible role update target=%+v err=%v", target, err)
 	}
 	page, err := service.PageRoles(endpointContext("list"), authorization.RolePageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != visible.ID {
@@ -715,7 +896,7 @@ func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || updated.Version != 3 {
 		t.Fatalf("updated service account=%+v err=%v", updated, err)
 	}
-	if _, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: current.ID, Name: "Stale", Status: serviceaccount.StatusActive, Version: current.Version}); !errors.Is(err, serviceaccount.ErrConflict) {
+	if _, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: current.ID, Name: "Stale", Status: serviceaccount.StatusActive, Version: current.Version}); !errors.Is(err, serviceaccount.ErrStaleVersion) {
 		t.Fatalf("stale service account update error=%v", err)
 	}
 	rotated, err := service.RotateSecret(actorCtx, updated.ID, updated.Version)
@@ -774,6 +955,18 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if created.Username != "alice.smith" || created.Version != 1 {
 		t.Fatalf("created user=%+v", created)
 	}
+	securityTarget, err := service.SecurityTarget(actorCtx, created.ID)
+	if err != nil || securityTarget.ID != created.ID || securityTarget.Username != created.Username || securityTarget.DisplayName != created.DisplayName || securityTarget.Status != identity.StatusActive {
+		t.Fatalf("user security target=%+v err=%v", securityTarget, err)
+	}
+	deleteTarget, err := service.DeleteTarget(actorCtx, created.ID)
+	if err != nil || deleteTarget.ID != created.ID || deleteTarget.Version != created.Version {
+		t.Fatalf("user delete target=%+v err=%v", deleteTarget, err)
+	}
+	updateTarget, err := service.UpdateTarget(actorCtx, created.ID)
+	if err != nil || updateTarget.ID != created.ID || updateTarget.Email != created.Email || updateTarget.Version != created.Version {
+		t.Fatalf("user update target=%+v err=%v", updateTarget, err)
+	}
 	creatorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: created.ID, Type: platformprincipal.TypeUser})
 	presented, err := service.Create(creatorCtx, identity.CreateInput{Username: "bob.smith", DisplayName: "Bob"})
 	if err != nil || presented.CreatedByName != "Alice" || presented.UpdatedByName != "Alice" {
@@ -788,6 +981,14 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	updated, err := service.Update(actorCtx, identity.UpdateInput{ID: created.ID, DisplayName: "Alice Updated", Email: created.Email, Phone: created.Phone, Status: identity.StatusActive, Version: created.Version})
 	if err != nil || updated.Version != 2 {
 		t.Fatalf("updated=%+v err=%v", updated, err)
+	}
+	deleteTarget, err = service.DeleteTarget(actorCtx, created.ID)
+	if err != nil || deleteTarget.Version != updated.Version {
+		t.Fatalf("updated user delete target=%+v err=%v", deleteTarget, err)
+	}
+	updateTarget, err = service.UpdateTarget(actorCtx, created.ID)
+	if err != nil || updateTarget.Version != updated.Version || updateTarget.DisplayName != updated.DisplayName {
+		t.Fatalf("updated user target=%+v err=%v", updateTarget, err)
 	}
 	jwtConfig, keyErr := testutil.JWTConfig()
 	if keyErr != nil {
@@ -820,11 +1021,44 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || unrestricted.MustChangePassword {
 		t.Fatalf("unrestricted login tokens=%+v err=%v", unrestricted, err)
 	}
+	revokeTokens, err := authenticationService.Login(ctx, "alice.smith", "a different correct horse battery staple", "203.0.113.1", "integration-revoke-target")
+	if err != nil {
+		t.Fatalf("create revoke-target session: %v", err)
+	}
+	target, err := authenticationService.SessionRevokeTarget(creatorCtx, revokeTokens.SessionID)
+	if err != nil || target.Status != userauthentication.SessionStatusActive || target.Version < 1 || target.ClientIP != "203.0.113.1" {
+		t.Fatalf("own revoke target=%+v err=%v", target, err)
+	}
+	if _, err := authenticationService.SessionRevokeTarget(actorCtx, revokeTokens.SessionID); !errors.Is(err, userauthentication.ErrSessionNotFound) {
+		t.Fatalf("another user's session must be hidden: %v", err)
+	}
+	if err := authenticationService.RevokeSession(creatorCtx, revokeTokens.SessionID, target.Version+1); !errors.Is(err, userauthentication.ErrSessionVersionConflict) {
+		t.Fatalf("stale revoke version must conflict: %v", err)
+	}
+	if err := authenticationService.RevokeSession(creatorCtx, revokeTokens.SessionID, target.Version); err != nil {
+		t.Fatalf("revoke own session: %v", err)
+	}
+	revokedTarget, err := authenticationService.SessionRevokeTarget(creatorCtx, revokeTokens.SessionID)
+	if err != nil || revokedTarget.Status != userauthentication.SessionStatusRevoked || revokedTarget.Version <= target.Version {
+		t.Fatalf("revoked target=%+v err=%v", revokedTarget, err)
+	}
 	if err := authenticationService.Logout(ctx, unrestricted.RefreshToken); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := service.SecurityTarget(actorCtx, created.ID); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("deleted user must not be an actionable security target: %v", err)
+	}
+	if _, err := service.DeleteTarget(actorCtx, created.ID); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("deleted user must not be a delete target: %v", err)
+	}
+	if _, err := service.UpdateTarget(actorCtx, created.ID); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("deleted user must not be an update target: %v", err)
+	}
+	if err := authenticationService.ForceLogoutAll(actorCtx, created.ID); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("deleted user must not be forcibly logged out as a successful action: %v", err)
 	}
 	if _, err := service.Create(actorCtx, identity.CreateInput{Username: "alice.smith", DisplayName: "Reused Identity"}); !errors.Is(err, identity.ErrConflict) {
 		t.Fatalf("deleted username reuse error=%v", err)
@@ -869,9 +1103,42 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	if err != nil {
 		t.Fatal(err)
 	}
+	if leaf.ParentName != group.Name || group.ParentName != "" {
+		t.Fatalf("permission parent presentation: group=%+v leaf=%+v", group, leaf)
+	}
+	groupTarget, err := service.NodeUpdateTarget(actorCtx, group.ID)
+	if err != nil || groupTarget.ID != group.ID || !groupTarget.HasChildren || groupTarget.Version != group.Version {
+		t.Fatalf("permission group update target=%+v err=%v", groupTarget, err)
+	}
+	leafTarget, err := service.NodeDeleteTarget(actorCtx, leaf.ID)
+	if err != nil || leafTarget.ID != leaf.ID || leafTarget.ParentName != group.Name || leafTarget.Version != leaf.Version {
+		t.Fatalf("permission leaf delete target=%+v err=%v", leafTarget, err)
+	}
+	if _, err := service.Update(actorCtx, group.ID, group.Version+1, permission.Input{Key: group.Key, Name: group.Name, NodeType: "group", Status: "active"}); !errors.Is(err, permission.ErrStaleVersion) {
+		t.Fatalf("permission stale update error=%v", err)
+	}
+	if err := service.Delete(actorCtx, leaf.ID, leaf.Version+1); !errors.Is(err, permission.ErrStaleVersion) {
+		t.Fatalf("permission stale delete error=%v", err)
+	}
 	tree, err := service.Tree(actorCtx, permission.TreeInput{Keyword: "查询集成权限", NodeTypes: []string{"permission"}, Statuses: []string{"active"}})
-	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
+	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 || tree[0].Children[0].ParentName != group.Name {
 		t.Fatalf("filtered permission tree=%+v err=%v", tree, err)
+	}
+	convert := permission.Input{Key: group.Key, Name: group.Name, NodeType: "permission", Resource: "integration.permissions", Action: "read", Status: "active"}
+	if _, err := service.Update(actorCtx, group.ID, group.Version, convert); !errors.Is(err, permission.ErrInvalid) {
+		t.Fatalf("convert group with child to permission error=%v", err)
+	}
+	unchanged, err := service.Get(actorCtx, group.ID)
+	if err != nil || unchanged.NodeType != "group" || unchanged.Version != group.Version {
+		t.Fatalf("group changed after rejected conversion=%+v err=%v", unchanged, err)
+	}
+	leafGroup, err := service.Create(actorCtx, permission.Input{ParentID: &group.ID, Key: "integration.permissions.leaf_group", Name: "空分组", NodeType: "group", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	converted, err := service.Update(actorCtx, leafGroup.ID, leafGroup.Version, permission.Input{ParentID: &group.ID, Key: leafGroup.Key, Name: leafGroup.Name, NodeType: "permission", Resource: "integration.permissions", Action: "read", Status: "active"})
+	if err != nil || converted.NodeType != "permission" || converted.Version != leafGroup.Version+1 {
+		t.Fatalf("convert leaf group to permission=%+v err=%v", converted, err)
 	}
 
 	return leaf.ID
@@ -882,7 +1149,7 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	actorCtx := platformprincipal.SystemContext(ctx, "authorization-integration")
 	transactor := appdb.NewTransactor(db)
 	catalog := resourcecatalog.NewService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
-	resource, err := catalog.CreateResource(actorCtx, resourcecatalog.ResourceInput{Key: "integration.manual", Name: "Manual", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
+	resource, err := catalog.CreateResource(actorCtx, resourcecatalog.ResourceInput{Key: "integration.manual", Name: "Catalog Display", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -890,13 +1157,34 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil {
 		t.Fatal(err)
 	}
+	if action.ResourceName != resource.Name {
+		t.Fatalf("created action resource name=%q, want %q", action.ResourceName, resource.Name)
+	}
 	page, err := catalog.PageResources(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "manual"}, Statuses: []string{"active"}})
 	if err != nil || page.Total != 1 || page.Items[0].ID != resource.ID {
 		t.Fatalf("resource page=%+v err=%v", page, err)
 	}
 	actionPage, err := catalog.PageActions(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ResourceID: resource.ID})
-	if err != nil || actionPage.Total != 1 || actionPage.Items[0].ResourceKey != "integration.manual" {
+	if err != nil || actionPage.Total != 1 || actionPage.Items[0].ResourceKey != "integration.manual" || actionPage.Items[0].ResourceName != resource.Name {
 		t.Fatalf("action page=%+v err=%v", actionPage, err)
+	}
+	for _, keyword := range []string{"integration.manual", "Catalog Display"} {
+		searched, searchErr := catalog.PageActions(actorCtx, resourcecatalog.PageInput{
+			Request:    pagination.Request{Page: 1, PageSize: 20, Keyword: keyword},
+			ResourceID: resource.ID,
+			Statuses:   []string{"active"},
+		})
+		if searchErr != nil || searched.Total != 1 || len(searched.Items) != 1 || searched.Items[0].ID != action.ID {
+			t.Fatalf("action search keyword=%q page=%+v err=%v", keyword, searched, searchErr)
+		}
+	}
+	filteredActions, err := catalog.PageActions(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ResourceKey: "integration.manual", Scope: resourceaction.ResourceScopePlatform, Statuses: []string{"active"}, ActiveResourcesOnly: true})
+	if err != nil || filteredActions.Total != 1 || filteredActions.Items[0].ID != action.ID {
+		t.Fatalf("scope-filtered action page=%+v err=%v", filteredActions, err)
+	}
+	otherScope, err := catalog.PageActions(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ResourceKey: "integration.manual", Scope: resourceaction.ResourceScopeTenant, ActiveResourcesOnly: true})
+	if err != nil || otherScope.Total != 0 {
+		t.Fatalf("other-scope action page=%+v err=%v", otherScope, err)
 	}
 	action, err = catalog.UpdateAction(actorCtx, action.ID, action.Version, resourcecatalog.ActionInput{ResourceID: resource.ID, Key: "read", Name: "View", Status: "active"})
 	if err != nil || action.Version != 2 {
@@ -944,8 +1232,25 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 		t.Fatal(err)
 	}
 	grants := authorization.NewPlatformGrantService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
+	platformOptions, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.platform.catalog.read"}})
+	if err != nil || platformOptions.Total != 1 || len(platformOptions.Items) != 1 || platformOptions.Items[0].ID != grantPermission.ID {
+		t.Fatalf("platform permission options=%+v err=%v", platformOptions, err)
+	}
+	tenantOptions, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.permissions.read"}})
+	if err != nil || tenantOptions.Total != 0 || len(tenantOptions.Items) != 0 {
+		t.Fatalf("tenant permission leaked into platform options=%+v err=%v", tenantOptions, err)
+	}
+	tenantCeilingService := authorization.NewTenantAuthorizationService(db, transactor, nil, nil, nil, nil, config.Config{}, nil)
+	tenantCeilingOptions, err := tenantCeilingService.PageTenantGrantablePermissions(actorCtx, pagination.Request{Keyword: "integration.permissions.read"})
+	if err != nil || tenantCeilingOptions.Total != 1 || len(tenantCeilingOptions.Items) != 1 || tenantCeilingOptions.Items[0].ID != leaf.ID {
+		t.Fatalf("tenant ceiling options=%+v err=%v", tenantCeilingOptions, err)
+	}
+	platformCeilingOptions, err := tenantCeilingService.PageTenantGrantablePermissions(actorCtx, pagination.Request{Keyword: "integration.platform.catalog.read"})
+	if err != nil || platformCeilingOptions.Total != 0 || len(platformCeilingOptions.Items) != 0 {
+		t.Fatalf("platform permission leaked into tenant ceiling options=%+v err=%v", platformCeilingOptions, err)
+	}
 	grant, err := grants.Create(actorCtx, authorization.PlatformGrantInput{PrincipalType: "user", PrincipalID: user.ID, PermissionID: grantPermission.ID})
-	if err != nil || grant.PrincipalName != "Grant Test" {
+	if err != nil || grant.PrincipalName != "Grant Test" || grant.PrincipalIdentifier != "grant.integration" {
 		t.Fatalf("platform grant=%+v err=%v", grant, err)
 	}
 	principal := platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser}
@@ -954,8 +1259,16 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 		t.Fatalf("platform grant denied: %v", err)
 	}
 	grantPage, err := grants.Page(actorCtx, authorization.PlatformGrantPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, PrincipalID: user.ID})
-	if err != nil || grantPage.Total != 1 {
+	if err != nil || grantPage.Total != 1 || len(grantPage.Items) != 1 || grantPage.Items[0].PrincipalIdentifier != "grant.integration" {
 		t.Fatalf("platform grant page=%+v err=%v", grantPage, err)
+	}
+	updateTarget, err := grants.UpdateTarget(actorCtx, grant.ID)
+	if err != nil || updateTarget.ID != grant.ID || updateTarget.PrincipalID != user.ID || updateTarget.PermissionID != grantPermission.ID || updateTarget.Version != grant.Version {
+		t.Fatalf("platform grant update target=%+v err=%v", updateTarget, err)
+	}
+	deleteTarget, err := grants.DeleteTarget(actorCtx, grant.ID)
+	if err != nil || deleteTarget.ID != grant.ID || deleteTarget.PrincipalIdentifier != "grant.integration" || deleteTarget.PermissionName != grant.PermissionName || deleteTarget.Version != grant.Version {
+		t.Fatalf("platform grant delete target=%+v err=%v", deleteTarget, err)
 	}
 	grant, err = grants.Update(actorCtx, grant.ID, grant.Version, authorization.PlatformGrantInput{PrincipalType: "user", PrincipalID: user.ID, PermissionID: grantPermission.ID})
 	if err != nil || grant.Version != 2 {
@@ -963,6 +1276,12 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	}
 	if err := grants.Delete(actorCtx, grant.ID, grant.Version); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := grants.UpdateTarget(actorCtx, grant.ID); !errors.Is(err, authorization.ErrPlatformGrantNotFound) {
+		t.Fatalf("deleted platform grant update target err=%v", err)
+	}
+	if _, err := grants.DeleteTarget(actorCtx, grant.ID); !errors.Is(err, authorization.ErrPlatformGrantNotFound) {
+		t.Fatalf("deleted platform grant delete target err=%v", err)
 	}
 	if err := authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "authorization.resource", Action: "read", Scope: platformauthz.ScopePlatform}); !errors.Is(err, platformauthz.ErrDenied) {
 		t.Fatalf("revoked platform grant authorized: %v", err)
@@ -991,6 +1310,26 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	app, err := applications.Create(actorCtx, application.Input{Code: "integration", Name: "集成应用", HomePath: "/integration", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	deleteTarget, err := applications.DeleteTarget(actorCtx, app.ID)
+	if err != nil || deleteTarget.ID != app.ID || deleteTarget.Code != app.Code || deleteTarget.Version != app.Version {
+		t.Fatalf("application delete target=%+v err=%v", deleteTarget, err)
+	}
+	updateTarget, err := applications.UpdateTarget(actorCtx, app.ID)
+	if err != nil || updateTarget.ID != app.ID || updateTarget.Name != app.Name || updateTarget.Version != app.Version {
+		t.Fatalf("application update target=%+v err=%v", updateTarget, err)
+	}
+	updatedApplication, err := applications.Update(actorCtx, application.UpdateInput{ID: app.ID, Name: "集成应用更新", HomePath: app.HomePath, Status: app.Status, Version: app.Version})
+	if err != nil || updatedApplication.Version != app.Version+1 {
+		t.Fatalf("updated application=%+v err=%v", updatedApplication, err)
+	}
+	deleteTarget, err = applications.DeleteTarget(actorCtx, app.ID)
+	if err != nil || deleteTarget.Version != updatedApplication.Version || deleteTarget.Name != updatedApplication.Name {
+		t.Fatalf("updated application delete target=%+v err=%v", deleteTarget, err)
+	}
+	updateTarget, err = applications.UpdateTarget(actorCtx, app.ID)
+	if err != nil || updateTarget.Version != updatedApplication.Version || updateTarget.Name != updatedApplication.Name {
+		t.Fatalf("updated application update target=%+v err=%v", updateTarget, err)
 	}
 	access := application.NewTenantAccessService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{}, nil)
 	grant, err := access.Grant(actorCtx, application.GrantInput{TenantID: "authorization-tenant", ApplicationID: app.ID})
@@ -1021,30 +1360,48 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if err != nil {
 		t.Fatal(err)
 	}
+	if root.ParentName != "" {
+		t.Fatalf("root navigation parent name=%q, want empty", root.ParentName)
+	}
 	page, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, ParentID: &root.ID, Key: "permissions", Name: "权限", Type: "menu", RoutePath: "/permissions", Component: "system/permissions", Resource: "integration.permissions", Action: "read", Visible: true, Status: "active"})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || page.ParentName != "系统" {
+		t.Fatalf("created navigation parent name=%q err=%v", page.ParentName, err)
+	}
+	navigationUpdateTarget, err := navigations.UpdateTarget(actorCtx, page.ID)
+	if err != nil || navigationUpdateTarget.ID != page.ID || navigationUpdateTarget.ApplicationName != updatedApplication.Name || navigationUpdateTarget.ParentName != root.Name || navigationUpdateTarget.Version != page.Version {
+		t.Fatalf("navigation update target=%+v err=%v", navigationUpdateTarget, err)
+	}
+	navigationDeleteTarget, err := navigations.DeleteTarget(actorCtx, page.ID)
+	if err != nil || navigationDeleteTarget.ID != page.ID || navigationDeleteTarget.ApplicationName != updatedApplication.Name || navigationDeleteTarget.Version != page.Version {
+		t.Fatalf("navigation delete target=%+v err=%v", navigationDeleteTarget, err)
 	}
 	currentTree, err := navigations.CurrentTree(currentCtx, app.ID)
-	if err != nil || len(currentTree) != 1 || len(currentTree[0].Children) != 1 {
+	if err != nil || len(currentTree) != 1 || len(currentTree[0].Children) != 1 || currentTree[0].Children[0].ParentName != "系统" {
 		t.Fatalf("current navigation tree=%+v err=%v", currentTree, err)
 	}
 	tree, err := navigations.Tree(actorCtx, navigation.TreeInput{ApplicationID: app.ID, Keyword: "权限", Types: []string{"menu"}})
-	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
+	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 || tree[0].Children[0].ParentName != "系统" {
 		t.Fatalf("filtered navigation tree=%+v err=%v", tree, err)
 	}
 	updated, err := navigations.Update(actorCtx, navigation.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "权限管理", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Resource: page.Resource, Action: page.Action, Visible: page.Visible, Status: page.Status, Version: page.Version})
-	if err != nil || updated.Version != page.Version+1 {
+	if err != nil || updated.Version != page.Version+1 || updated.ParentName != "系统" {
 		t.Fatalf("updated navigation=%+v err=%v", updated, err)
 	}
-	if _, err := navigations.Update(actorCtx, navigation.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "旧版本", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Resource: page.Resource, Action: page.Action, Visible: page.Visible, Status: page.Status, Version: page.Version}); !errors.Is(err, navigation.ErrConflict) {
+	if _, err := navigations.Update(actorCtx, navigation.UpdateInput{ID: page.ID, ParentID: page.ParentID, Name: "旧版本", Type: page.Type, RoutePath: page.RoutePath, Component: page.Component, Resource: page.Resource, Action: page.Action, Visible: page.Visible, Status: page.Status, Version: page.Version}); !errors.Is(err, navigation.ErrStaleVersion) {
 		t.Fatalf("stale navigation update error=%v", err)
+	}
+	navigationDeleteTarget, err = navigations.DeleteTarget(actorCtx, page.ID)
+	if err != nil || navigationDeleteTarget.Version != updated.Version || navigationDeleteTarget.Name != updated.Name {
+		t.Fatalf("updated navigation delete target=%+v err=%v", navigationDeleteTarget, err)
 	}
 	if err := navigations.Delete(actorCtx, root.ID, root.Version); !errors.Is(err, navigation.ErrConflict) {
 		t.Fatalf("delete navigation with child error=%v", err)
 	}
 	if err := navigations.Delete(actorCtx, page.ID, updated.Version); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := navigations.DeleteTarget(actorCtx, page.ID); !errors.Is(err, navigation.ErrNotFound) {
+		t.Fatalf("deleted navigation target error=%v", err)
 	}
 	if err := navigations.Delete(actorCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
@@ -1059,8 +1416,11 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if _, err := access.CurrentContext(currentCtx); !errors.Is(err, application.ErrContextNotFound) {
 		t.Fatalf("current context after revoke error=%v", err)
 	}
-	if err := applications.Delete(actorCtx, app.ID, app.Version); err != nil {
+	if err := applications.Delete(actorCtx, app.ID, updatedApplication.Version); err != nil {
 		t.Fatalf("delete application after revoke error=%v", err)
+	}
+	if _, err := applications.DeleteTarget(actorCtx, app.ID); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("deleted application must not be an action target: %v", err)
 	}
 }
 
@@ -1075,6 +1435,10 @@ func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if created.Version != 1 || created.ValueType != "object" {
 		t.Fatalf("created platform config=%+v", created)
 	}
+	updateTarget, err := service.UpdateTarget(actorCtx, created.ID)
+	if err != nil || updateTarget.ID != created.ID || updateTarget.Key != created.Key || updateTarget.Version != created.Version {
+		t.Fatalf("platform config update target=%+v err=%v", updateTarget, err)
+	}
 	public, err := service.GetPublic(ctx, "INTEGRATION.FEATURE")
 	if err != nil || public.ValueType != "object" {
 		t.Fatalf("public config=%+v err=%v", public, err)
@@ -1087,14 +1451,21 @@ func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || updated.Version != 2 || updated.ValueType != "boolean" {
 		t.Fatalf("updated platform config=%+v err=%v", updated, err)
 	}
-	if _, err := service.Update(actorCtx, platformconfig.UpdateInput{ID: created.ID, Name: created.Name, Category: created.Category, Value: []byte(`true`), Status: created.Status, Version: created.Version}); !errors.Is(err, platformconfig.ErrConflict) {
+	if _, err := service.Update(actorCtx, platformconfig.UpdateInput{ID: created.ID, Name: created.Name, Category: created.Category, Value: []byte(`true`), Status: created.Status, Version: created.Version}); !errors.Is(err, platformconfig.ErrStaleVersion) {
 		t.Fatalf("stale platform config update error=%v", err)
+	}
+	deleteTarget, err := service.DeleteTarget(actorCtx, updated.ID)
+	if err != nil || deleteTarget.ID != updated.ID || deleteTarget.Key != updated.Key || deleteTarget.IsPublic || deleteTarget.Version != updated.Version {
+		t.Fatalf("platform config delete target=%+v err=%v", deleteTarget, err)
 	}
 	if _, err := service.GetPublic(ctx, created.Key); !errors.Is(err, platformconfig.ErrNotFound) {
 		t.Fatalf("private config public lookup error=%v", err)
 	}
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := service.DeleteTarget(actorCtx, created.ID); !errors.Is(err, platformconfig.ErrNotFound) {
+		t.Fatalf("deleted platform config action target error=%v", err)
 	}
 	restored, err := service.Create(actorCtx, platformconfig.Input{Key: created.Key, Name: "恢复配置", Category: created.Category, Value: []byte(`true`), IsPublic: true, Status: "active"})
 	if err != nil || restored.ID != created.ID || restored.Version <= updated.Version {
@@ -1127,7 +1498,7 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil {
 		t.Fatalf("create scheduler runtime: %v", err)
 	}
-	service := scheduler.NewDefinitionService(db, transactor, discardOperationRecorder{}, nil, handlers, runtime)
+	service := scheduler.NewDefinitionService(db, transactor, discardOperationRecorder{}, nil, handlers, runtime, nil)
 	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "scheduler-admin", Type: platformprincipal.TypeUser})
 
 	created, err := service.Create(actorCtx, scheduler.DefinitionInput{
@@ -1145,6 +1516,10 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if created.Version != 1 || created.CreatedBy != "scheduler-admin" || created.UpdatedBy != "scheduler-admin" {
 		t.Fatalf("created scheduled job audit = %+v", created)
+	}
+	updateTarget, err := service.UpdateTarget(actorCtx, created.ID)
+	if err != nil || updateTarget.ID != created.ID || updateTarget.Code != created.Code || updateTarget.Version != created.Version {
+		t.Fatalf("scheduled job update target = %+v err=%v", updateTarget, err)
 	}
 
 	page, err := service.Page(actorCtx, scheduler.DefinitionPageInput{
@@ -1174,8 +1549,35 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if updated.Version != 2 || updated.Name != update.Name {
 		t.Fatalf("updated scheduled job = %+v", updated)
 	}
-	if _, err := service.Update(actorCtx, update); !errors.Is(err, scheduler.ErrDefinitionConflict) {
+	if _, err := service.Update(actorCtx, update); !errors.Is(err, scheduler.ErrDefinitionStaleVersion) {
 		t.Fatalf("stale scheduled job update error = %v", err)
+	}
+	deleteTarget, err := service.DeleteTarget(actorCtx, updated.ID)
+	if err != nil || deleteTarget.ID != updated.ID || deleteTarget.Name != updated.Name || deleteTarget.Version != updated.Version {
+		t.Fatalf("scheduled job delete target = %+v err=%v", deleteTarget, err)
+	}
+	queuedID := "integration-queued-run"
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), queuedID, updated.ID, updated.Code, updated.Name, updated.Handler, "manual", "queued", "integration-request", "", string(updated.Payload), updated.TimeoutSeconds, updated.LockTTLSeconds, now, "scheduler-admin", now, "scheduler-admin")
+		return err
+	}); err != nil {
+		t.Fatalf("insert queued scheduled job run: %v", err)
+	}
+	queuedRun, err := service.GetRun(actorCtx, queuedID)
+	if err != nil || queuedRun.Status != "queued" || queuedRun.StartedAt != nil || queuedRun.FinishedAt != nil || queuedRun.Version != 1 {
+		t.Fatalf("queued scheduled job run = %+v err=%v", queuedRun, err)
+	}
+	queuedPage, err := service.PageRuns(actorCtx, scheduler.RunPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ScheduledJobID: updated.ID, Statuses: []string{"queued"}})
+	if err != nil || queuedPage.Total != 1 || len(queuedPage.Items) != 1 || queuedPage.Items[0].ID != queuedID {
+		t.Fatalf("queued scheduled job page = %+v err=%v", queuedPage, err)
+	}
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET status='error',started_at=?,finished_at=?,error_message='integration cleanup',updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), now, now, now, "scheduler-admin", queuedID, queuedRun.Version)
+		return err
+	}); err != nil {
+		t.Fatalf("complete queued scheduled job fixture: %v", err)
 	}
 
 	if err := runtime.Trigger(actorCtx, updated); err != nil {
@@ -1200,6 +1602,9 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if _, err := service.Get(actorCtx, updated.ID); !errors.Is(err, scheduler.ErrDefinitionNotFound) {
 		t.Fatalf("get deleted scheduled job error = %v", err)
+	}
+	if _, err := service.UpdateTarget(actorCtx, updated.ID); !errors.Is(err, scheduler.ErrDefinitionNotFound) {
+		t.Fatalf("get deleted scheduled job update target error = %v", err)
 	}
 }
 
@@ -1291,11 +1696,34 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || adminView.ID != created.ID {
 		t.Fatalf("admin tenant get=%+v err=%v", adminView, err)
 	}
+	adminDeleteTarget, err := service.AdminDeleteTarget(createCtx, created.ID)
+	if err != nil || adminDeleteTarget.ID != created.ID || adminDeleteTarget.Version != created.Version {
+		t.Fatalf("platform tenant delete target=%+v err=%v", adminDeleteTarget, err)
+	}
+	adminUpdateTarget, err := service.AdminUpdateTarget(createCtx, created.ID)
+	if err != nil || adminUpdateTarget.ID != created.ID || adminUpdateTarget.Version != created.Version || adminUpdateTarget.Name != created.Name {
+		t.Fatalf("platform tenant update target=%+v err=%v", adminUpdateTarget, err)
+	}
 	adminPage, err := service.AdminPage(createCtx, tenant.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, IDs: []string{created.ID}, Statuses: []tenant.Status{tenant.StatusActive}})
 	if err != nil || adminPage.Total != 1 || len(adminPage.Items) != 1 {
 		t.Fatalf("admin tenant page=%+v err=%v", adminPage, err)
 	}
 	tenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID})
+	deleteTarget, err := service.DeleteTarget(tenantCtx)
+	if err != nil || deleteTarget.ID != created.ID || deleteTarget.Version != created.Version || deleteTarget.Name != created.Name {
+		t.Fatalf("current tenant delete target=%+v err=%v", deleteTarget, err)
+	}
+	updateTarget, err := service.UpdateTarget(tenantCtx)
+	if err != nil || updateTarget.ID != created.ID || updateTarget.Version != created.Version || updateTarget.Name != created.Name {
+		t.Fatalf("current tenant update target=%+v err=%v", updateTarget, err)
+	}
+	otherTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeUser, TenantID: "another-tenant"})
+	if _, err := service.DeleteTarget(otherTenantCtx); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("other tenant delete target error=%v", err)
+	}
+	if _, err := service.UpdateTarget(otherTenantCtx); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("other tenant update target error=%v", err)
+	}
 	adminUpdated, err := service.AdminUpdate(createCtx, tenant.UpdateInput{ID: created.ID, Name: "Platform Updated", Status: tenant.StatusActive, Version: created.Version})
 	if err != nil || adminUpdated.Version != 2 {
 		t.Fatalf("admin updated tenant=%+v err=%v", adminUpdated, err)
@@ -1307,6 +1735,18 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if updated.Version != 3 {
 		t.Fatalf("updated version = %d", updated.Version)
 	}
+	updateTarget, err = service.UpdateTarget(tenantCtx)
+	if err != nil || updateTarget.Version != updated.Version || updateTarget.Name != updated.Name {
+		t.Fatalf("updated tenant update target=%+v err=%v", updateTarget, err)
+	}
+	adminDeleteTarget, err = service.AdminDeleteTarget(createCtx, created.ID)
+	if err != nil || adminDeleteTarget.Version != updated.Version || adminDeleteTarget.Name != updated.Name {
+		t.Fatalf("updated platform delete target=%+v err=%v", adminDeleteTarget, err)
+	}
+	adminUpdateTarget, err = service.AdminUpdateTarget(createCtx, created.ID)
+	if err != nil || adminUpdateTarget.Version != updated.Version || adminUpdateTarget.Name != updated.Name {
+		t.Fatalf("updated platform tenant target=%+v err=%v", adminUpdateTarget, err)
+	}
 	if _, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Stale", Status: tenant.StatusActive, Version: adminUpdated.Version}); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("stale update error = %v", err)
 	}
@@ -1317,7 +1757,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	// This integration test exercises repository lifecycle behavior directly.
 	// System callers are the only callers allowed to bypass endpoint data scopes.
 	departmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeSystem, TenantID: created.ID, MembershipID: membershipID})
-	members := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{}, nil)
+	members := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, nil, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{}, nil)
 	addedMember, err := members.Add(departmentCtx, "member.two")
 	if err != nil || addedMember.UserID != "member-2" || addedMember.Version != 1 {
 		t.Fatalf("added tenant member=%+v err=%v", addedMember, err)
@@ -1339,10 +1779,20 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatalf("remove final tenant administrator error=%v", err)
 	}
 	testMemberDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, addedMember)
-	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{}, nil)
+	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, nil, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{}, nil)
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if target, err := departments.UpdateTarget(departmentCtx, root.ID); err != nil || target.ID != root.ID || target.Version != root.Version || target.ParentID != nil {
+		t.Fatalf("department update target=%+v err=%v", target, err)
+	}
+	if target, err := departments.DeleteTarget(departmentCtx, root.ID); err != nil || target.ID != root.ID || target.Version != root.Version {
+		t.Fatalf("department delete target=%+v err=%v", target, err)
+	}
+	otherDepartmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeSystem, TenantID: "another-tenant"})
+	if _, err := departments.UpdateTarget(otherDepartmentCtx, root.ID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("cross-tenant department update target error=%v", err)
 	}
 	testDepartmentDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, &root)
 	child, err := departments.Create(departmentCtx, tenant.DepartmentInput{ParentID: &root.ID, Code: "backend", Name: "后端平台"})
@@ -1353,17 +1803,26 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || len(tree) != 1 || len(tree[0].Children) != 1 {
 		t.Fatalf("department tree=%+v err=%v", tree, err)
 	}
-	if err := departments.SetMembers(departmentCtx, child.ID, []tenant.DepartmentMemberAssignment{{MembershipID: membershipID, IsPrimary: true}}); err != nil {
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version, []tenant.DepartmentMemberAssignment{{MembershipID: membershipID, IsPrimary: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := departments.Delete(departmentCtx, child.ID, child.Version); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("delete assigned department error=%v", err)
 	}
-	if err := departments.SetMembers(departmentCtx, child.ID, nil); err != nil {
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := departments.Delete(departmentCtx, child.ID, child.Version); err != nil {
+	if err := departments.Delete(departmentCtx, child.ID, child.Version); !errors.Is(err, tenant.ErrStaleVersion) {
+		t.Fatalf("stale department delete error=%v", err)
+	}
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+1, nil); !errors.Is(err, tenant.ErrStaleVersion) {
+		t.Fatalf("stale department assignment error=%v", err)
+	}
+	if err := departments.Delete(departmentCtx, child.ID, child.Version+2); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := departments.DeleteTarget(departmentCtx, child.ID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("deleted department target error=%v", err)
 	}
 	if err := departments.Delete(departmentCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
@@ -1374,11 +1833,20 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if _, err := service.Get(tenantCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("get deleted tenant error = %v", err)
 	}
+	if _, err := service.DeleteTarget(tenantCtx); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("deleted tenant confirmation error=%v", err)
+	}
+	if _, err := service.AdminDeleteTarget(createCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("deleted platform tenant confirmation error=%v", err)
+	}
+	if _, err := service.AdminUpdateTarget(createCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("deleted platform tenant update target error=%v", err)
+	}
 }
 
 func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, tenantID, membershipID string, visible *tenant.Department) {
 	t.Helper()
-	const hiddenID = "integration-hidden-department"
+	const hiddenID = "22ae8148-6223-435c-810d-aac2a7c34a30"
 	now := time.Now()
 	actorCtx := platformprincipal.SystemContext(ctx, "other-actor")
 	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
@@ -1400,12 +1868,12 @@ func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, 
 		APIVersion: datapermission.PolicyAPIVersion, Kind: datapermission.PolicyKind,
 		Metadata: datapermission.PolicyMetadata{Code: "integration-department-owner", Name: "Integration department owner scope"},
 		Scope:    datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
-		Spec:     datapermission.PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"read", "list", "update", "delete"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
+		Spec:     datapermission.PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.department", Actions: []string{"read", "list", "update", "delete", "assign-member"}, Condition: "resource.created_by == subject.id", Effect: datapermission.EffectAllow},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, staticUserResolver{id: "owner-1", username: "owner", name: "Owner"}, config.Config{}, datapermission.NewService(db, engine))
+	service := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, nil, staticUserResolver{id: "owner-1", username: "owner", name: "Owner"}, config.Config{}, datapermission.NewService(db, engine))
 	principal := platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: membershipID}
 	endpointContext := func(action string) context.Context {
 		requestCtx := platformprincipal.WithContext(ctx, principal)
@@ -1413,6 +1881,21 @@ func testDepartmentDataPermissionEnforcement(t *testing.T, ctx context.Context, 
 	}
 	if _, err := service.Get(endpointContext("read"), hiddenID); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("hidden department get error=%v", err)
+	}
+	if _, err := service.UpdateTarget(endpointContext("update"), hiddenID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden department update target error=%v", err)
+	}
+	if _, err := service.DeleteTarget(endpointContext("delete"), hiddenID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden department delete target error=%v", err)
+	}
+	if target, err := service.UpdateTarget(endpointContext("update"), visible.ID); err != nil || target.ID != visible.ID || target.Version != visible.Version {
+		t.Fatalf("visible department update target=%+v err=%v", target, err)
+	}
+	if _, err := service.Get(endpointContext("assign-member"), hiddenID); !errors.Is(err, tenant.ErrNotFound) {
+		t.Fatalf("hidden department assignment target error=%v", err)
+	}
+	if target, err := service.Get(endpointContext("assign-member"), visible.ID); err != nil || target.ID != visible.ID || target.Version != visible.Version {
+		t.Fatalf("visible department assignment target=%+v err=%v", target, err)
 	}
 	tree, err := service.Tree(endpointContext("list"), "")
 	if err != nil || len(tree) != 1 || tree[0].ID != visible.ID {
@@ -1468,7 +1951,7 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 		t.Fatal(err)
 	}
 	scopes := datapermission.NewService(db, engine)
-	service := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: member.UserID, username: member.Username, name: member.DisplayName}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{}, scopes)
+	service := tenant.NewMembershipService(tenant.NewRepository(db), appdb.NewTransactor(db), staticUserResolver{id: member.UserID, username: member.Username, name: member.DisplayName}, staticMemberContactSearcher{ids: []string{member.UserID}}, nil, config.Config{}, discardOperationRecorder{}, discardSecurityRecorder{}, scopes)
 	principal := platformprincipal.Principal{ID: member.UserID, Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: member.ID}
 	endpointContext := func(action string, mode accesscontrol.DataPermissionMode) context.Context {
 		requestCtx := platformprincipal.WithContext(ctx, principal)
@@ -1485,6 +1968,10 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 	page, err := service.Page(endpointContext("list", accesscontrol.DataPermissionRequired), tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != member.ID {
 		t.Fatalf("data-scoped member page=%+v err=%v", page, err)
+	}
+	contactPage, err := service.Page(endpointContext("list", accesscontrol.DataPermissionRequired), tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, Emails: []string{"member@example.com"}})
+	if err != nil || contactPage.Total != 1 || len(contactPage.Items) != 1 || contactPage.Items[0].ID != member.ID {
+		t.Fatalf("contact-filtered member page=%+v err=%v", contactPage, err)
 	}
 	rowProviders, err := authorization.NewRowCapabilityRegistry([]authorization.RowCapabilityProvider{tenant.NewMemberCapabilityProvider(db)}, resources, schemas)
 	if err != nil {
@@ -1522,6 +2009,12 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 }
 
 type staticUserResolver struct{ id, username, name string }
+
+type staticMemberContactSearcher struct{ ids []string }
+
+func (s staticMemberContactSearcher) SearchContactUserIDs(context.Context, []string, []string) ([]string, error) {
+	return s.ids, nil
+}
 
 type staticActorResolver map[string]string
 

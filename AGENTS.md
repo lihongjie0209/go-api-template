@@ -253,6 +253,12 @@ available. A feature must not introduce a second transport for the same event.
 - A durable cross-service notification must use a transactional outbox written
   in the same database transaction as the business change and then be published
   to the message queue. Do not dual-write the database and queue directly.
+- A request must not synchronously execute work whose configured maximum can
+  exceed the HTTP/gRPC deadline or server write timeout. Persist the job request
+  and outbox event atomically, return a durable run ID, and expose queued,
+  running, and terminal states. A consumer's acknowledgement window must not
+  contain a longer-running handler; use a bounded, recoverable worker with an
+  ownership lease and a stable business idempotency key.
 - Do not use Redis lists/streams as an ad-hoc business queue unless an explicit
   architecture decision accepts its operational and delivery tradeoffs. Do not
   use the durable message queue for request-path cache reads, locks, rate limits,
@@ -473,6 +479,9 @@ deleted_by text
 - Local development runs ordinary unit tests. GitHub CI runs Testcontainers
   integration tests. Do not block unrelated development waiting for CI; check
   results later and fix failures promptly.
+- Do not push incremental changes merely to trigger CI. Run the full CI suite
+  after a substantial feature is complete; during normal local work, run only
+  relevant unit tests.
 - Every defect first found by integration or manual testing must receive the
   smallest practical unit regression test before or together with the fix.
 - Generated Swagger/protobuf drift, migration audit contracts, race tests,

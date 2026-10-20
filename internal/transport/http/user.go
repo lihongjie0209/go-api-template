@@ -41,6 +41,16 @@ type PageUsersRequest struct {
 	CreatedAtFrom *time.Time        `json:"created_at_from"`
 	CreatedAtTo   *time.Time        `json:"created_at_to"`
 }
+
+// UserPageResponse documents pagination.Result[identity.User] for swag v1,
+// which cannot resolve that generic type in an @Success annotation.
+type UserPageResponse struct {
+	Items    []identity.User `json:"items"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
+	Total    int64           `json:"total"`
+}
+
 type UpdateUserRequest struct {
 	ID          string          `json:"id" binding:"required"`
 	DisplayName string          `json:"display_name" binding:"required"`
@@ -151,6 +161,85 @@ func (h *UserHandler) Get(c *gin.Context) {
 	OK(c, v)
 }
 
+// ResetPasswordTarget godoc
+// @Summary Resolve a minimal user identity before password reset
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetUserRequest true "User ID"
+// @Success 200 {object} Response{body=identity.SecurityTarget}
+// @Router /api/v1/users/security-target/reset-password [post]
+func (h *UserHandler) ResetPasswordTarget(c *gin.Context) { h.securityTarget(c) }
+
+// ForceLogoutTarget godoc
+// @Summary Resolve a minimal user identity before forced logout
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetUserRequest true "User ID"
+// @Success 200 {object} Response{body=identity.SecurityTarget}
+// @Router /api/v1/users/security-target/force-logout [post]
+func (h *UserHandler) ForceLogoutTarget(c *gin.Context) { h.securityTarget(c) }
+
+func (h *UserHandler) securityTarget(c *gin.Context) {
+	var request GetUserRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.SecurityTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// DeleteTarget godoc
+// @Summary Resolve a minimal user identity and version before deletion
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetUserRequest true "User ID"
+// @Success 200 {object} Response{body=identity.DeleteTarget}
+// @Router /api/v1/users/delete-target [post]
+func (h *UserHandler) DeleteTarget(c *gin.Context) {
+	var request GetUserRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// UpdateTarget godoc
+// @Summary Resolve fresh editable fields and version for a user
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetUserRequest true "User ID"
+// @Success 200 {object} Response{body=identity.UpdateTarget}
+// @Router /api/v1/users/update-target [post]
+func (h *UserHandler) UpdateTarget(c *gin.Context) {
+	var request GetUserRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // PageUsers godoc
 // @Summary Search users by username, email, phone, status, and time range
 // @Tags users
@@ -158,7 +247,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Produce json
 // @Security Bearer
 // @Param request body PageUsersRequest true "User filters"
-// @Success 200 {object} Response
+// @Success 200 {object} Response{body=UserPageResponse}
 // @Router /api/v1/users/page [post]
 func (h *UserHandler) Page(c *gin.Context) {
 	var r PageUsersRequest
@@ -228,8 +317,10 @@ func (h *UserHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Invalid("invalid user", e))
 	case errors.Is(e, identity.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("user not found"))
+	case errors.Is(e, identity.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, identity.ErrConflict), errors.Is(e, identity.ErrInUse):
-		Fail(c, h.logger, apperror.Conflict("username or user version conflict", e))
+		Fail(c, h.logger, apperror.Conflict("username or user reference conflict", e))
 	case errors.Is(e, identity.ErrForbidden):
 		Fail(c, h.logger, apperror.Forbidden("user operation forbidden"))
 	default:

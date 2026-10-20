@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,9 +73,13 @@ func TestOSSAdapterHTTPContract(t *testing.T) {
 	if readErr != nil || closeErr != nil || string(data) != content {
 		t.Fatalf("Get() body=%q read=%v close=%v", data, readErr, closeErr)
 	}
-	signed, err := store.Presign(t.Context(), key, OperationGet, time.Minute)
+	signed, err := store.Presign(t.Context(), PresignInput{Key: key, Operation: OperationGet, TTL: time.Minute, DownloadName: "报表.txt"})
 	if err != nil || signed.Method != http.MethodGet || !strings.Contains(signed.URL, key) {
 		t.Fatalf("Presign() = %+v, %v", signed, err)
+	}
+	signedURL, err := url.Parse(signed.URL)
+	if err != nil || !strings.HasPrefix(signedURL.Query().Get("response-content-disposition"), "attachment;") {
+		t.Fatalf("Presign() attachment disposition = %q, parse error = %v", signedURL.Query().Get("response-content-disposition"), err)
 	}
 	if err := store.Delete(t.Context(), key); err != nil {
 		t.Fatal(err)

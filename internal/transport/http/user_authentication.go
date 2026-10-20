@@ -53,6 +53,9 @@ type RevokeSessionRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
 	Version   int64  `json:"version" binding:"required,gt=0"`
 }
+type SessionRevokeTargetRequest struct {
+	SessionID string `json:"session_id" binding:"required,max=256"`
+}
 type ForceLogoutAllRequest struct {
 	UserID string `json:"user_id" binding:"required"`
 }
@@ -121,7 +124,6 @@ func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 // @Tags authentication
 // @Accept json
 // @Produce json
-// @Security Bearer
 // @Param request body RefreshRequest true "Refresh token"
 // @Success 200 {object} Response
 // @Router /api/v1/auth/logout [post]
@@ -212,6 +214,29 @@ func (h *UserAuthenticationHandler) Sessions(c *gin.Context) {
 		return
 	}
 	OK(c, page)
+}
+
+// SessionRevokeTarget godoc
+// @Summary Get a current-user session target for confirmed revocation
+// @Tags sessions
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body SessionRevokeTargetRequest true "Session ID"
+// @Success 200 {object} Response{body=authentication.SessionRevokeTarget}
+// @Router /api/v1/auth/sessions/revoke-target [post]
+func (h *UserAuthenticationHandler) SessionRevokeTarget(c *gin.Context) {
+	var request SessionRevokeTargetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Fail(c, h.logger, apperror.Invalid("invalid session request", err))
+		return
+	}
+	target, err := h.service.SessionRevokeTarget(c.Request.Context(), request.SessionID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
 }
 
 // RevokeSession godoc
@@ -308,6 +333,8 @@ func authenticationFailureCode(err error) string {
 		return "invalid_request"
 	case errors.Is(err, authentication.ErrSessionNotFound):
 		return "session_not_found"
+	case errors.Is(err, authentication.ErrSessionVersionConflict):
+		return "stale_version"
 	default:
 		return "internal_error"
 	}
@@ -328,6 +355,8 @@ func (h *UserAuthenticationHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Invalid("invalid authentication request", e))
 	case errors.Is(e, authentication.ErrSessionNotFound):
 		Fail(c, h.logger, apperror.NotFound("session not found"))
+	case errors.Is(e, authentication.ErrSessionVersionConflict):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, authentication.ErrSecurityUnavailable):
 		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", e))
 	case errors.Is(e, identity.ErrNotFound):

@@ -68,7 +68,7 @@ type ScheduledJobPageRequest struct {
 type ScheduledJobRunPageRequest struct {
 	pagination.Request
 	ScheduledJobID string            `json:"scheduled_job_id" binding:"required,max=128"`
-	Statuses       []string          `json:"statuses" binding:"max=3,dive,oneof=success error skipped"`
+	Statuses       []string          `json:"statuses" binding:"max=5,dive,oneof=queued running success error skipped"`
 	TriggerSources []string          `json:"trigger_sources" binding:"max=2,dive,oneof=cron manual"`
 	StartedAtFrom  *time.Time        `json:"started_at_from"`
 	StartedAtTo    *time.Time        `json:"started_at_to"`
@@ -139,6 +139,22 @@ func (h *ScheduledJobHandler) Update(c *gin.Context) {
 	h.respond(c, result, err)
 }
 
+// UpdateScheduledJobTarget godoc
+// @Summary Get an action-scoped scheduled job update target
+// @Tags scheduled-jobs
+// @Security Bearer
+// @Param request body ScheduledJobIDRequest true "Scheduled job"
+// @Success 200 {object} Response{body=scheduler.UpdateTarget}
+// @Router /api/v1/scheduled-jobs/update-target [post]
+func (h *ScheduledJobHandler) UpdateTarget(c *gin.Context) {
+	var request ScheduledJobIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	h.respond(c, result, err)
+}
+
 // DeleteScheduledJob godoc
 // @Summary Delete a scheduled job definition
 // @Tags scheduled-jobs
@@ -152,6 +168,22 @@ func (h *ScheduledJobHandler) Delete(c *gin.Context) {
 		return
 	}
 	h.respond(c, gin.H{}, h.service.Delete(c.Request.Context(), request.ID, request.Version))
+}
+
+// DeleteScheduledJobTarget godoc
+// @Summary Get an action-scoped scheduled job delete target
+// @Tags scheduled-jobs
+// @Security Bearer
+// @Param request body ScheduledJobIDRequest true "Scheduled job"
+// @Success 200 {object} Response{body=scheduler.DeleteTarget}
+// @Router /api/v1/scheduled-jobs/delete-target [post]
+func (h *ScheduledJobHandler) DeleteTarget(c *gin.Context) {
+	var request ScheduledJobIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	result, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	h.respond(c, result, err)
 }
 
 // ListScheduledJobHandlers godoc
@@ -174,14 +206,15 @@ func (h *ScheduledJobHandler) ListHandlers(c *gin.Context) {
 // @Tags scheduled-jobs
 // @Security Bearer
 // @Param request body ScheduledJobIDRequest true "Scheduled job"
-// @Success 200 {object} Response
+// @Success 200 {object} Response{body=scheduler.TriggerResult}
 // @Router /api/v1/scheduled-jobs/trigger [post]
 func (h *ScheduledJobHandler) Trigger(c *gin.Context) {
 	var request ScheduledJobIDRequest
 	if !h.bind(c, &request) {
 		return
 	}
-	h.respond(c, gin.H{}, h.service.Trigger(c.Request.Context(), request.ID))
+	result, err := h.service.Trigger(c.Request.Context(), request.ID)
+	h.respond(c, result, err)
 }
 
 // GetScheduledJobRun godoc
@@ -231,6 +264,8 @@ func (h *ScheduledJobHandler) respond(c *gin.Context, body any, err error) {
 		Fail(c, h.logger, apperror.Invalid("invalid scheduled job definition", err))
 	case errors.Is(err, scheduler.ErrDefinitionNotFound):
 		Fail(c, h.logger, apperror.NotFound("scheduled job definition not found"))
+	case errors.Is(err, scheduler.ErrDefinitionStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, scheduler.ErrDefinitionConflict):
 		Fail(c, h.logger, apperror.Conflict("scheduled job definition conflict", err))
 	case errors.Is(err, scheduler.ErrSkipped):

@@ -29,6 +29,22 @@ type CreateServiceAccountRequest struct {
 type GetServiceAccountRequest struct {
 	ID string `json:"id" binding:"required"`
 }
+type ServiceAccountMutationTarget struct {
+	ID       string                `json:"id"`
+	ClientID string                `json:"client_id"`
+	Name     string                `json:"name"`
+	Status   serviceaccount.Status `json:"status"`
+	Version  int64                 `json:"version"`
+}
+type ServiceAccountUpdateTarget struct {
+	ID          string                `json:"id"`
+	ClientID    string                `json:"client_id"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Status      serviceaccount.Status `json:"status"`
+	ExpiresAt   *time.Time            `json:"expires_at"`
+	Version     int64                 `json:"version"`
+}
 type PageServiceAccountsRequest struct {
 	Page          int                     `json:"page"`
 	PageSize      int                     `json:"page_size"`
@@ -41,6 +57,16 @@ type PageServiceAccountsRequest struct {
 	ExpiresAtFrom *time.Time              `json:"expires_at_from"`
 	ExpiresAtTo   *time.Time              `json:"expires_at_to"`
 }
+
+// ServiceAccountPageResponse documents pagination.Result[serviceaccount.Account]
+// for swag v1, which cannot resolve that generic type in an @Success annotation.
+type ServiceAccountPageResponse struct {
+	Items    []serviceaccount.Account `json:"items"`
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+	Total    int64                    `json:"total"`
+}
+
 type UpdateServiceAccountRequest struct {
 	ID          string                `json:"id" binding:"required"`
 	Name        string                `json:"name" binding:"required"`
@@ -98,6 +124,77 @@ func (h *ServiceAccountHandler) Get(c *gin.Context) {
 	OK(c, result)
 }
 
+// RotateTarget godoc
+// @Summary Get a service-account target for confirmed secret rotation
+// @Tags service-accounts
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetServiceAccountRequest true "Service account ID"
+// @Success 200 {object} Response{body=ServiceAccountMutationTarget}
+// @Router /api/v1/service-accounts/secret/rotate-target [post]
+func (h *ServiceAccountHandler) RotateTarget(c *gin.Context) {
+	h.mutationTarget(c)
+}
+
+// DeleteTarget godoc
+// @Summary Get a service-account target for confirmed deletion
+// @Tags service-accounts
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetServiceAccountRequest true "Service account ID"
+// @Success 200 {object} Response{body=ServiceAccountMutationTarget}
+// @Router /api/v1/service-accounts/delete-target [post]
+func (h *ServiceAccountHandler) DeleteTarget(c *gin.Context) {
+	h.mutationTarget(c)
+}
+
+// UpdateServiceAccountTarget godoc
+// @Summary Get editable service-account fields and version for update-only operators
+// @Tags service-accounts
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body GetServiceAccountRequest true "Service account ID"
+// @Success 200 {object} Response{body=ServiceAccountUpdateTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/service-accounts/update-target [post]
+func (h *ServiceAccountHandler) UpdateTarget(c *gin.Context) {
+	var request GetServiceAccountRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	account, err := h.service.Get(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, ServiceAccountUpdateTarget{
+		ID: account.ID, ClientID: account.ClientID, Name: account.Name,
+		Description: account.Description, Status: account.Status,
+		ExpiresAt: account.ExpiresAt, Version: account.Version,
+	})
+}
+
+func (h *ServiceAccountHandler) mutationTarget(c *gin.Context) {
+	var request GetServiceAccountRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	account, err := h.service.Get(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, ServiceAccountMutationTarget{
+		ID: account.ID, ClientID: account.ClientID, Name: account.Name,
+		Status: account.Status, Version: account.Version,
+	})
+}
+
 // PageServiceAccounts godoc
 // @Summary Search service accounts by identity, status, and time ranges
 // @Tags service-accounts
@@ -105,7 +202,7 @@ func (h *ServiceAccountHandler) Get(c *gin.Context) {
 // @Produce json
 // @Security Bearer
 // @Param request body PageServiceAccountsRequest true "Service account filters"
-// @Success 200 {object} Response
+// @Success 200 {object} Response{body=ServiceAccountPageResponse}
 // @Router /api/v1/service-accounts/page [post]
 func (h *ServiceAccountHandler) Page(c *gin.Context) {
 	var request PageServiceAccountsRequest
@@ -198,8 +295,10 @@ func (h *ServiceAccountHandler) fail(c *gin.Context, err error) {
 		Fail(c, h.logger, apperror.Invalid("invalid service account", err))
 	case errors.Is(err, serviceaccount.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("service account not found"))
+	case errors.Is(err, serviceaccount.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, serviceaccount.ErrConflict):
-		Fail(c, h.logger, apperror.Conflict("service account identity or version conflict", err))
+		Fail(c, h.logger, apperror.Conflict("service account identity conflict", err))
 	default:
 		Fail(c, h.logger, apperror.Internal(err))
 	}

@@ -92,6 +92,50 @@ func (h *PermissionHandler) Get(c *gin.Context) {
 	OK(c, v)
 }
 
+// GetPermissionUpdateTarget godoc
+// @Summary Get an action-scoped permission node update target
+// @Tags permissions
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PermissionIDRequest true "Permission ID"
+// @Success 200 {object} Response{body=permission.NodeUpdateTarget}
+// @Router /api/v1/permissions/update-target [post]
+func (h *PermissionHandler) UpdateTarget(c *gin.Context) {
+	var request PermissionIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.NodeUpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// GetPermissionDeleteTarget godoc
+// @Summary Get an action-scoped permission node delete target
+// @Tags permissions
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PermissionIDRequest true "Permission ID"
+// @Success 200 {object} Response{body=permission.NodeDeleteTarget}
+// @Router /api/v1/permissions/delete-target [post]
+func (h *PermissionHandler) DeleteTarget(c *gin.Context) {
+	var request PermissionIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.NodeDeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // UpdatePermission godoc
 // @Summary Update a permission using optimistic locking
 // @Tags permissions
@@ -147,6 +191,8 @@ func (h *PermissionHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Invalid("invalid permission", e))
 	case errors.Is(e, permission.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("permission not found"))
+	case errors.Is(e, permission.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, permission.ErrConflict), errors.Is(e, permission.ErrHasChildren), errors.Is(e, permission.ErrInUse):
 		Fail(c, h.logger, apperror.Conflict("permission conflict", e))
 	default:
@@ -200,6 +246,28 @@ func (h *PermissionHandler) GetActions(c *gin.Context) {
 		return
 	}
 	OK(c, v)
+}
+
+// ActionEditTarget godoc
+// @Summary Get an editable permission and its Resource/Action links under update authorization
+// @Tags permissions
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body PermissionIDRequest true "Permission ID"
+// @Success 200 {object} Response{body=permission.ActionEditTarget}
+// @Router /api/v1/permissions/actions/target [post]
+func (h *PermissionHandler) ActionEditTarget(c *gin.Context) {
+	var request PermissionIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.ActionEditTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
 }
 
 // SetPermissionActions godoc

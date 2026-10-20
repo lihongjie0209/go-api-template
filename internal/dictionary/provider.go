@@ -32,6 +32,16 @@ func (r *ProviderRegistry) Register(code string, provider Provider) error {
 	r.providers[code] = provider
 	return nil
 }
+
+func (r *ProviderRegistry) Has(code string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.providers[code] != nil
+}
+
 func (r *ProviderRegistry) Query(ctx context.Context, query Query) (Result, error) {
 	r.mu.RLock()
 	provider := r.providers[query.Code]

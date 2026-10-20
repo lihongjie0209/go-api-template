@@ -31,8 +31,14 @@ func TestCatalogInputValidation(t *testing.T) {
 	require.ErrorIs(t, validateAction(action), ErrInvalid)
 	require.False(t, validPage(PageInput{IDs: []string{"not-uuid"}}))
 	require.False(t, validPage(PageInput{Statuses: []string{"unknown"}}))
+	require.False(t, validPage(PageInput{Scope: "unknown"}))
+	require.False(t, validPage(PageInput{ResourceKey: "Tenant.Member"}))
 	service := &Service{}
 	_, err := service.PageResources(t.Context(), PageInput{ResourceID: "082c606d-f4d9-4339-8d0b-c77e5d839451"})
+	require.ErrorIs(t, err, ErrInvalid)
+	_, err = service.PageResources(t.Context(), PageInput{ActiveResourcesOnly: true})
+	require.ErrorIs(t, err, ErrInvalid)
+	_, err = service.PageActions(t.Context(), PageInput{Scope: "unknown"})
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
@@ -59,6 +65,81 @@ func TestCatalogPageConditionsUseBoundParameters(t *testing.T) {
 	require.Contains(t, where, "a.id IN (?)")
 	require.NotContains(t, where, "alice")
 	require.Equal(t, []any{"%alice%", "%alice%", "082c606d-f4d9-4339-8d0b-c77e5d839451", "active"}, args)
+}
+
+func TestPageActionsFiltersActiveResourcesByScope(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	service := NewService(sqlxDB, nil, nil, nil)
+	input := PageInput{
+		Request:             pagination.Request{Page: 1, PageSize: 20},
+		Statuses:            []string{"active"},
+		ResourceKey:         "tenant.member",
+		Scope:               resourceaction.ResourceScopeTenant,
+		ActiveResourcesOnly: true,
+	}
+	where := "a.deleted_at IS NULL AND a.status IN (?) AND r.deleted_at IS NULL AND r.resource_key=? AND r.scope=? AND r.status='active'"
+	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind("SELECT count(*) FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE "+where))).WithArgs("active", "tenant.member", resourceaction.ResourceScopeTenant).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	actionID := "2f3c4f4d-f243-4204-a75a-20cf4b39b541"
+	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(actionSelect+" WHERE "+where+" ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?"))).WithArgs("active", "tenant.member", resourceaction.ResourceScopeTenant, 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow(actionID, resourceID, "tenant.member", "租户成员", "read", "读取", "", "code", "active", now, "system", now, "system", 1))
+
+	page, err := service.PageActions(t.Context(), input)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, int64(1), page.Total)
+	require.Equal(t, resourceID, page.Items[0].ResourceID)
+	require.Equal(t, "租户成员", page.Items[0].ResourceName)
+	mock.ExpectClose()
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPageActionsKeywordMatchesParentResource(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	service := NewService(sqlxDB, nil, nil, nil)
+	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	input := PageInput{
+		Request:    pagination.Request{Page: 1, PageSize: 20, Keyword: "成员"},
+		ResourceID: resourceID,
+		Statuses:   []string{"active"},
+	}
+	where := `a.deleted_at IS NULL AND (LOWER(a.action_key) LIKE LOWER(?) OR LOWER(a.name) LIKE LOWER(?) OR LOWER(r.resource_key) LIKE LOWER(?) OR LOWER(r.name) LIKE LOWER(?)) AND a.status IN (?) AND r.deleted_at IS NULL AND a.resource_id=?`
+	countSQL := `SELECT count(*) FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE ` + where
+	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(countSQL))).WithArgs("%成员%", "%成员%", "%成员%", "%成员%", "active", resourceID).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(actionSelect+` WHERE `+where+` ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?`))).WithArgs("%成员%", "%成员%", "%成员%", "%成员%", "active", resourceID, 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+
+	page, err := service.PageActions(t.Context(), input)
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.Zero(t, page.Total)
+	mock.ExpectClose()
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetActionIncludesResourceDisplayName(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	service := NewService(sqlxDB, nil, nil, nil)
+	actionID := "2f3c4f4d-f243-4204-a75a-20cf4b39b541"
+	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT .*r\.name AS resource_name.*WHERE a\.id=\$1 AND a\.deleted_at IS NULL AND r\.deleted_at IS NULL`).WithArgs(actionID).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow(actionID, resourceID, "tenant.member", "租户成员", "read", "读取", "", "code", "active", now, "system", now, "system", 1))
+
+	action, err := service.GetAction(t.Context(), actionID)
+	require.NoError(t, err)
+	require.Equal(t, resourceID, action.ResourceID)
+	require.Equal(t, "tenant.member", action.ResourceKey)
+	require.Equal(t, "租户成员", action.ResourceName)
+	mock.ExpectClose()
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func paginationRequest(keyword string) pagination.Request {

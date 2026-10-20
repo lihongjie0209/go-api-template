@@ -3,8 +3,11 @@ package datapermission
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +15,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -38,28 +42,69 @@ type PolicyRecord struct {
 	Name                   string          `db:"name" json:"name"`
 	Scope                  PolicyScopeType `db:"scope" json:"scope"`
 	TenantID               sql.NullString  `db:"tenant_id" json:"-"`
-	PublishedVersionNumber sql.NullInt64   `db:"published_version_number" json:"-"`
+	PublishedVersionNumber sql.NullInt64   `db:"published_version_number" json:"published_version_number" swaggertype:"integer"`
 	Status                 string          `db:"status" json:"status"`
 	CreatedAt              time.Time       `db:"created_at" json:"created_at"`
 	CreatedBy              string          `db:"created_by" json:"created_by"`
+	CreatedByName          string          `db:"-" json:"created_by_name"`
 	UpdatedAt              time.Time       `db:"updated_at" json:"updated_at"`
 	UpdatedBy              string          `db:"updated_by" json:"updated_by"`
+	UpdatedByName          string          `db:"-" json:"updated_by_name"`
 	Version                int64           `db:"version" json:"version"`
 }
 
+func (record PolicyRecord) MarshalJSON() ([]byte, error) {
+	type recordJSON PolicyRecord
+	var publishedVersionNumber *int64
+	if record.PublishedVersionNumber.Valid {
+		publishedVersionNumber = &record.PublishedVersionNumber.Int64
+	}
+	return json.Marshal(struct {
+		recordJSON
+		PublishedVersionNumber *int64 `json:"published_version_number"`
+	}{
+		recordJSON:             recordJSON(record),
+		PublishedVersionNumber: publishedVersionNumber,
+	})
+}
+
 type VersionRecord struct {
-	ID            string         `db:"id" json:"id"`
-	PolicyID      string         `db:"policy_id" json:"policy_id"`
-	VersionNumber int64          `db:"version_number" json:"version_number"`
-	Document      string         `db:"document" json:"document"`
-	Status        string         `db:"status" json:"status"`
-	PublishedAt   sql.NullTime   `db:"published_at" json:"-"`
-	PublishedBy   sql.NullString `db:"published_by" json:"-"`
-	CreatedAt     time.Time      `db:"created_at" json:"created_at"`
-	CreatedBy     string         `db:"created_by" json:"created_by"`
-	UpdatedAt     time.Time      `db:"updated_at" json:"updated_at"`
-	UpdatedBy     string         `db:"updated_by" json:"updated_by"`
-	Version       int64          `db:"version" json:"version"`
+	ID              string         `db:"id" json:"id"`
+	PolicyID        string         `db:"policy_id" json:"policy_id"`
+	VersionNumber   int64          `db:"version_number" json:"version_number"`
+	Document        string         `db:"document" json:"document"`
+	Status          string         `db:"status" json:"status"`
+	PublishedAt     sql.NullTime   `db:"published_at" json:"published_at" swaggertype:"string" format:"date-time"`
+	PublishedBy     sql.NullString `db:"published_by" json:"published_by" swaggertype:"string"`
+	PublishedByName string         `db:"-" json:"published_by_name"`
+	CreatedAt       time.Time      `db:"created_at" json:"created_at"`
+	CreatedBy       string         `db:"created_by" json:"created_by"`
+	CreatedByName   string         `db:"-" json:"created_by_name"`
+	UpdatedAt       time.Time      `db:"updated_at" json:"updated_at"`
+	UpdatedBy       string         `db:"updated_by" json:"updated_by"`
+	UpdatedByName   string         `db:"-" json:"updated_by_name"`
+	Version         int64          `db:"version" json:"version"`
+}
+
+func (record VersionRecord) MarshalJSON() ([]byte, error) {
+	type recordJSON VersionRecord
+	var publishedAt *time.Time
+	if record.PublishedAt.Valid {
+		publishedAt = &record.PublishedAt.Time
+	}
+	var publishedBy *string
+	if record.PublishedBy.Valid {
+		publishedBy = &record.PublishedBy.String
+	}
+	return json.Marshal(struct {
+		recordJSON
+		PublishedAt *time.Time `json:"published_at"`
+		PublishedBy *string    `json:"published_by"`
+	}{
+		recordJSON:  recordJSON(record),
+		PublishedAt: publishedAt,
+		PublishedBy: publishedBy,
+	})
 }
 
 type Publication struct {
@@ -190,10 +235,11 @@ type LifecycleService struct {
 	runtime    *RuntimeLoader
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
+	actors     presentation.ActorResolver
 }
 
-func NewLifecycleService(repository *Repository, transactor *database.Transactor, schemas *SchemaRegistry, resources *resourceaction.Registry, runtime *RuntimeLoader, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder) *LifecycleService {
-	return &LifecycleService{repository: repository, transactor: transactor, schemas: schemas, resources: resources, runtime: runtime, operations: operations, security: security}
+func NewLifecycleService(repository *Repository, transactor *database.Transactor, schemas *SchemaRegistry, resources *resourceaction.Registry, runtime *RuntimeLoader, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver) *LifecycleService {
+	return &LifecycleService{repository: repository, transactor: transactor, schemas: schemas, resources: resources, runtime: runtime, operations: operations, security: security, actors: actors}
 }
 
 func (s *LifecycleService) Get(ctx context.Context, id string) (PolicyRecord, error) {
@@ -204,7 +250,13 @@ func (s *LifecycleService) Get(ctx context.Context, id string) (PolicyRecord, er
 	if id == "" {
 		return PolicyRecord{}, ErrInvalidPolicy
 	}
-	return s.repository.Get(ctx, id, actor.TenantID)
+	record, err := s.repository.Get(ctx, id, actor.TenantID)
+	if err != nil {
+		return record, err
+	}
+	items := []PolicyRecord{record}
+	s.presentPolicies(ctx, items)
+	return items[0], nil
 }
 
 func (s *LifecycleService) GetVersion(ctx context.Context, policyID string, number int64) (VersionRecord, error) {
@@ -215,7 +267,13 @@ func (s *LifecycleService) GetVersion(ctx context.Context, policyID string, numb
 	if policyID == "" || number <= 0 {
 		return VersionRecord{}, ErrInvalidPolicy
 	}
-	return s.repository.GetVersion(ctx, policyID, number, actor.TenantID)
+	record, err := s.repository.GetVersion(ctx, policyID, number, actor.TenantID)
+	if err != nil {
+		return record, err
+	}
+	items := []VersionRecord{record}
+	s.presentVersions(ctx, items)
+	return items[0], nil
 }
 
 func (s *LifecycleService) Page(ctx context.Context, input PolicyPageInput) (PolicyPage, error) {
@@ -223,7 +281,11 @@ func (s *LifecycleService) Page(ctx context.Context, input PolicyPageInput) (Pol
 	if err != nil {
 		return PolicyPage{}, err
 	}
-	return s.repository.Page(ctx, actor.TenantID, input)
+	page, err := s.repository.Page(ctx, actor.TenantID, input)
+	if err == nil {
+		s.presentPolicies(ctx, page.Items)
+	}
+	return page, err
 }
 
 func (s *LifecycleService) PageVersions(ctx context.Context, input VersionPageInput) (VersionPage, error) {
@@ -231,7 +293,11 @@ func (s *LifecycleService) PageVersions(ctx context.Context, input VersionPageIn
 	if err != nil {
 		return VersionPage{}, err
 	}
-	return s.repository.PageVersions(ctx, actor.TenantID, input)
+	page, err := s.repository.PageVersions(ctx, actor.TenantID, input)
+	if err == nil {
+		s.presentVersions(ctx, page.Items)
+	}
+	return page, err
 }
 
 func (s *LifecycleService) Create(ctx context.Context, policy Policy) (PolicyRecord, VersionRecord, error) {
@@ -328,7 +394,7 @@ func (s *LifecycleService) CreateVersion(ctx context.Context, policyID string, e
 		s.recordFailure(ctx, "data-permission.policy.version.create", policyID, policy)
 		return VersionRecord{}, err
 	}
-	return s.repository.GetVersion(ctx, policyID, number, actor.TenantID)
+	return s.GetVersion(ctx, policyID, number)
 }
 
 func (s *LifecycleService) Publish(ctx context.Context, policyID string, number, expectedVersion int64) (PolicyRecord, error) {
@@ -443,7 +509,7 @@ func (s *LifecycleService) SetStatus(ctx context.Context, input SetPolicyStatusI
 			return PolicyRecord{}, fmt.Errorf("refresh published data permission policies: %w", err)
 		}
 	}
-	return s.repository.Get(ctx, input.PolicyID, actor.TenantID)
+	return s.Get(ctx, input.PolicyID)
 }
 
 func (s *LifecycleService) get(ctx context.Context, id string, number int64, tenantID string) (PolicyRecord, VersionRecord, error) {
@@ -452,7 +518,66 @@ func (s *LifecycleService) get(ctx context.Context, id string, number int64, ten
 		return PolicyRecord{}, VersionRecord{}, err
 	}
 	version, err := s.repository.GetVersion(ctx, id, number, tenantID)
-	return policy, version, err
+	if err != nil {
+		return policy, version, err
+	}
+	policies := []PolicyRecord{policy}
+	versions := []VersionRecord{version}
+	s.presentPolicies(ctx, policies)
+	s.presentVersions(ctx, versions)
+	return policies[0], versions[0], nil
+}
+
+func (s *LifecycleService) presentPolicies(ctx context.Context, records []PolicyRecord) {
+	ids := make([]string, 0, len(records)*2)
+	for _, record := range records {
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
+	}
+	names := s.actorNames(ctx, ids)
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+	}
+}
+
+func (s *LifecycleService) presentVersions(ctx context.Context, records []VersionRecord) {
+	ids := make([]string, 0, len(records)*3)
+	for _, record := range records {
+		ids = append(ids, record.CreatedBy, record.UpdatedBy)
+		if record.PublishedBy.Valid {
+			ids = append(ids, record.PublishedBy.String)
+		}
+	}
+	names := s.actorNames(ctx, ids)
+	for index := range records {
+		records[index].CreatedByName = names[records[index].CreatedBy]
+		records[index].UpdatedByName = names[records[index].UpdatedBy]
+		if records[index].PublishedBy.Valid {
+			records[index].PublishedByName = names[records[index].PublishedBy.String]
+		}
+		records[index].CreatedAt = presentation.Time(records[index].CreatedAt)
+		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
+		if records[index].PublishedAt.Valid {
+			records[index].PublishedAt.Time = presentation.Time(records[index].PublishedAt.Time)
+		}
+	}
+}
+
+func (s *LifecycleService) actorNames(ctx context.Context, ids []string) map[string]string {
+	names, err := presentation.ActorNames(ctx, s.actors, ids...)
+	if err == nil {
+		return names
+	}
+	slog.WarnContext(ctx, "resolve data permission actor names", "error", err)
+	names = make(map[string]string, len(ids))
+	for _, id := range ids {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			names[id] = trimmed
+		}
+	}
+	return names
 }
 
 func lockPolicy(ctx context.Context, tx *sqlx.Tx, id, tenantID string) (PolicyRecord, error) {

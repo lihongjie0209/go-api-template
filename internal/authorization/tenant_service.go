@@ -18,18 +18,18 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
-	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
 var (
-	ErrTenantAuthorizationInvalid   = errors.New("invalid tenant authorization request")
-	ErrTenantAuthorizationForbidden = errors.New("tenant authorization denied")
-	ErrTenantAuthorizationNotFound  = errors.New("tenant authorization resource not found")
-	ErrTenantAuthorizationConflict  = errors.New("tenant authorization conflict")
-	roleCodePattern                 = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
+	ErrTenantAuthorizationInvalid      = errors.New("invalid tenant authorization request")
+	ErrTenantAuthorizationForbidden    = errors.New("tenant authorization denied")
+	ErrTenantAuthorizationNotFound     = errors.New("tenant authorization resource not found")
+	ErrTenantAuthorizationConflict     = errors.New("tenant authorization conflict")
+	ErrTenantAuthorizationStaleVersion = errors.New("tenant authorization stale version")
+	roleCodePattern                    = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 )
 
 const (
@@ -71,13 +71,90 @@ type TenantRolePage struct {
 	Total    int64        `json:"total"`
 }
 
+type RoleAssignmentCandidate struct {
+	TenantRole
+	Assignable bool `json:"assignable"`
+}
+
+type RoleAssignmentCandidatePage struct {
+	Items    []RoleAssignmentCandidate `json:"items"`
+	Page     int                       `json:"page"`
+	PageSize int                       `json:"page_size"`
+	Total    int64                     `json:"total"`
+}
+
 type PermissionView struct {
 	ID            string `db:"id" json:"id"`
 	PermissionKey string `db:"permission_key" json:"permission_key"`
 	Name          string `db:"name" json:"name"`
 	Resource      string `db:"resource" json:"resource"`
 	Action        string `db:"action" json:"action"`
+	Status        string `db:"status" json:"status,omitempty"`
 }
+
+type RoleGrantTarget struct {
+	ID          string                `json:"id"`
+	Code        string                `json:"code"`
+	Name        string                `json:"name"`
+	Status      string                `json:"status"`
+	Version     int64                 `json:"version"`
+	Permissions []RoleGrantPermission `json:"permissions"`
+}
+
+type RoleGrantPermission struct {
+	PermissionView
+	Assignable bool `json:"assignable"`
+}
+
+type RoleUpdateTarget struct {
+	ID          string `json:"id"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Version     int64  `json:"version"`
+}
+
+type RoleDeleteTarget struct {
+	ID      string `json:"id"`
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Version int64  `json:"version"`
+}
+
+type TenantCeilingPermission struct {
+	ID            string `db:"id" json:"id"`
+	PermissionKey string `db:"permission_key" json:"permission_key"`
+	Name          string `db:"name" json:"name"`
+	Resource      string `db:"resource" json:"resource"`
+	Action        string `db:"action" json:"action"`
+	Assignable    bool   `db:"assignable" json:"assignable"`
+}
+
+type TenantPermissionTarget struct {
+	ID      string `db:"id" json:"id"`
+	Name    string `db:"name" json:"name"`
+	Version int64  `db:"version" json:"version"`
+}
+
+type TenantGrantablePermissionPage struct {
+	Items    []PermissionView `json:"items"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"page_size"`
+	Total    int64            `json:"total"`
+}
+
+type AssignablePermissionPageInput struct {
+	pagination.Request
+	IDs []string
+}
+
+const tenantGrantablePermissionWhere = `p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL AND EXISTS (
+	SELECT 1 FROM authorization_resources r
+	JOIN authorization_resource_actions a ON a.resource_id=r.id AND a.action_key=p.action AND a.status='active' AND a.deleted_at IS NULL
+	WHERE r.resource_key=p.resource AND r.scope='tenant' AND r.status='active' AND r.deleted_at IS NULL
+)`
 
 type AdministratorCandidate struct {
 	MembershipID    string    `db:"membership_id" json:"membership_id"`
@@ -110,9 +187,24 @@ type AdministratorCandidatePage struct {
 const administratorCountQuery = `SELECT count(*) FROM tenant_administrators a JOIN tenant_memberships m ON m.tenant_id=a.tenant_id AND m.id=a.membership_id AND m.status='active' AND m.deleted_at IS NULL JOIN tenants t ON t.id=a.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE a.tenant_id=? AND a.membership_id=? AND a.deleted_at IS NULL`
 
 type MemberRoleView struct {
-	ID   string `db:"id" json:"id"`
-	Code string `db:"code" json:"code"`
-	Name string `db:"name" json:"name"`
+	ID     string `db:"id" json:"id"`
+	Code   string `db:"code" json:"code"`
+	Name   string `db:"name" json:"name"`
+	Status string `db:"status" json:"status"`
+}
+
+type MemberRoleAssignmentTarget struct {
+	ID          string                     `db:"id" json:"id"`
+	Username    string                     `db:"username" json:"username"`
+	DisplayName string                     `db:"display_name" json:"display_name"`
+	Status      string                     `db:"status" json:"status"`
+	Version     int64                      `db:"version" json:"version"`
+	Roles       []MemberRoleAssignmentView `db:"-" json:"roles"`
+}
+
+type MemberRoleAssignmentView struct {
+	MemberRoleView
+	Assignable bool `json:"assignable"`
 }
 
 type TenantAuthorizationService struct {
@@ -124,11 +216,10 @@ type TenantAuthorizationService struct {
 	actors     presentation.ActorResolver
 	cfg        config.Config
 	dataScopes *datapermission.Service
-	registry   *resourceaction.Registry
 }
 
-func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config, dataScopes *datapermission.Service, registry *resourceaction.Registry) *TenantAuthorizationService {
-	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, actors: actors, cfg: cfg, dataScopes: dataScopes, registry: registry}
+func NewTenantAuthorizationService(db *sqlx.DB, transactor *database.Transactor, locker cache.Locker, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver, cfg config.Config, dataScopes *datapermission.Service) *TenantAuthorizationService {
+	return &TenantAuthorizationService{db: db, transactor: transactor, locker: locker, operations: operations, security: security, actors: actors, cfg: cfg, dataScopes: dataScopes}
 }
 
 func NewTenantRoleDataPermissionSchema() *datapermission.Schema {
@@ -181,7 +272,7 @@ func (s *TenantAuthorizationService) SetTenantPermissions(ctx context.Context, t
 				return fmt.Errorf("set tenant permissions affected rows: %w", err)
 			}
 			if rows != 1 {
-				return ErrTenantAuthorizationConflict
+				return ErrTenantAuthorizationStaleVersion
 			}
 			if err := replaceLinks(ctx, tx, "tenant_permission_grants", tenantID, "", "permission_id", permissionIDs, actor.ID); err != nil {
 				return err
@@ -192,7 +283,7 @@ func (s *TenantAuthorizationService) SetTenantPermissions(ctx context.Context, t
 }
 
 // TenantPermissionCeiling returns the platform-owned permission ceiling for a tenant.
-func (s *TenantAuthorizationService) TenantPermissionCeiling(ctx context.Context, tenantID string) ([]PermissionView, error) {
+func (s *TenantAuthorizationService) TenantPermissionCeiling(ctx context.Context, tenantID string) ([]TenantCeilingPermission, error) {
 	actor, err := platformprincipal.Require(ctx)
 	tenantID = strings.TrimSpace(tenantID)
 	if err != nil || actor.TenantID != "" {
@@ -204,12 +295,65 @@ func (s *TenantAuthorizationService) TenantPermissionCeiling(ctx context.Context
 	if _, err := s.tenantName(ctx, tenantID); err != nil {
 		return nil, err
 	}
-	permissions := []PermissionView{}
-	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM tenant_permission_grants g JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE g.tenant_id=? AND g.deleted_at IS NULL ORDER BY p.permission_key,p.id`
+	permissions := []TenantCeilingPermission{}
+	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action,(` + tenantGrantablePermissionWhere + `) AS assignable FROM tenant_permission_grants g JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE g.tenant_id=? AND g.deleted_at IS NULL ORDER BY p.permission_key,p.id`
 	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), tenantID); err != nil {
 		return nil, fmt.Errorf("list tenant permission ceiling: %w", err)
 	}
 	return permissions, nil
+}
+
+// TenantPermissionTarget returns the current version and display name needed
+// to manage a known tenant's permission ceiling without tenant-list access.
+func (s *TenantAuthorizationService) TenantPermissionTarget(ctx context.Context, tenantID string) (TenantPermissionTarget, error) {
+	actor, err := platformprincipal.Require(ctx)
+	tenantID = strings.TrimSpace(tenantID)
+	if err != nil || actor.TenantID != "" {
+		return TenantPermissionTarget{}, ErrTenantAuthorizationForbidden
+	}
+	if tenantID == "" || len(tenantID) > maxAuthorizationIDLength {
+		return TenantPermissionTarget{}, ErrTenantAuthorizationInvalid
+	}
+	var target TenantPermissionTarget
+	err = s.db.GetContext(ctx, &target, s.db.Rebind(`SELECT id,name,version FROM tenants WHERE id=? AND deleted_at IS NULL`), tenantID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TenantPermissionTarget{}, ErrTenantAuthorizationNotFound
+	}
+	if err != nil {
+		return TenantPermissionTarget{}, fmt.Errorf("load tenant permission target: %w", err)
+	}
+	return target, nil
+}
+
+// PageTenantGrantablePermissions lists only active tenant-scoped permissions
+// that the platform may place in a tenant's permission ceiling.
+func (s *TenantAuthorizationService) PageTenantGrantablePermissions(ctx context.Context, input pagination.Request) (TenantGrantablePermissionPage, error) {
+	actor, err := platformprincipal.Require(ctx)
+	if err != nil || actor.TenantID != "" {
+		return TenantGrantablePermissionPage{}, ErrTenantAuthorizationForbidden
+	}
+	request, err := pagination.Normalize(input)
+	if err != nil || len(input.Keyword) > 256 {
+		return TenantGrantablePermissionPage{}, ErrTenantAuthorizationInvalid
+	}
+	where := tenantGrantablePermissionWhere
+	args := []any{}
+	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
+		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) OR LOWER(p.name) LIKE LOWER(?))`
+		like := "%" + keyword + "%"
+		args = append(args, like, like)
+	}
+	var total int64
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM permissions p WHERE `+where), args...); err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("count tenant-grantable permissions: %w", err)
+	}
+	items := []PermissionView{}
+	pageArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
+	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE ` + where + ` ORDER BY p.permission_key,p.id LIMIT ? OFFSET ?`
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), pageArgs...); err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("list tenant-grantable permissions: %w", err)
+	}
+	return TenantGrantablePermissionPage{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
 func (s *TenantAuthorizationService) PagePlatformAdministratorCandidates(ctx context.Context, tenantID string, input AdministratorPageInput) (pagination.Result[AdministratorCandidate], error) {
@@ -319,10 +463,10 @@ func (s *TenantAuthorizationService) pageAdministratorCandidates(ctx context.Con
 	return items, total, nil
 }
 
-func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenantID, membershipID string, enabled bool) error {
+func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenantID, membershipID string, enabled bool, version int64) error {
 	actor, err := platformprincipal.Require(ctx)
 	tenantID, membershipID = strings.TrimSpace(tenantID), strings.TrimSpace(membershipID)
-	if err != nil || tenantID == "" || membershipID == "" || len(tenantID) > maxAuthorizationIDLength || len(membershipID) > maxAuthorizationIDLength {
+	if err != nil || tenantID == "" || membershipID == "" || len(tenantID) > maxAuthorizationIDLength || len(membershipID) > maxAuthorizationIDLength || version <= 0 {
 		return ErrTenantAuthorizationInvalid
 	}
 	if actor.TenantID != "" && (actor.TenantID != tenantID || !s.isAdministrator(ctx, tenantID, actor.MembershipID)) {
@@ -342,6 +486,9 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 			if err := ensureMembership(ctx, tx, tenantID, membershipID); err != nil {
 				return err
 			}
+			if err := advanceAdministratorMembershipVersion(ctx, tx, tenantID, membershipID, actor.ID, version); err != nil {
+				return err
+			}
 			if enabled {
 				return upsertLink(ctx, tx, "tenant_administrators", tenantID, "", "membership_id", membershipID, actor.ID)
 			}
@@ -359,6 +506,21 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 			return softDeleteLink(ctx, tx, "tenant_administrators", tenantID, "", "membership_id", membershipID, actor.ID)
 		})
 	})
+}
+
+func advanceAdministratorMembershipVersion(ctx context.Context, tx *sqlx.Tx, tenantID, membershipID, actorID string, version int64) error {
+	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND status='active' AND deleted_at IS NULL`), time.Now(), actorID, tenantID, membershipID, version)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set administrator affected rows: %w", err)
+	}
+	if rows != 1 {
+		return ErrTenantAuthorizationStaleVersion
+	}
+	return nil
 }
 
 func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name, description string, permissionIDs []string) (TenantRole, error) {
@@ -427,9 +589,8 @@ func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, rol
 	roleName := current.Name
 	return s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.permissions.set", roleID, map[string]any{"name": roleName, "permission_ids": permissionIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-			if err := s.ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
-				return err
-			}
+			// Only the replacement set needs to be assignable. Existing grants
+			// outside the actor's ceiling may be removed, but not retained.
 			if err := s.ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
 				return err
 			}
@@ -443,7 +604,7 @@ func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, rol
 				return fmt.Errorf("set role permissions affected rows: %w", rowsErr)
 			}
 			if n != 1 {
-				return ErrTenantAuthorizationConflict
+				return ErrTenantAuthorizationStaleVersion
 			}
 			return replaceLinks(ctx, tx, "tenant_role_permissions", actor.TenantID, roleID, "permission_id", permissionIDs, actor.ID)
 		})
@@ -486,7 +647,7 @@ func (s *TenantAuthorizationService) SetMemberRoles(ctx context.Context, members
 				return fmt.Errorf("set member roles affected rows: %w", err)
 			}
 			if rows != 1 {
-				return ErrTenantAuthorizationConflict
+				return ErrTenantAuthorizationStaleVersion
 			}
 			return replaceLinks(ctx, tx, "tenant_member_roles", actor.TenantID, membershipID, "role_id", roleIDs, actor.ID)
 		})
@@ -533,11 +694,68 @@ func (s *TenantAuthorizationService) AssignablePermissions(ctx context.Context) 
 	return s.permissionViews(ctx, ids)
 }
 
+// PageAssignablePermissions applies the same tenant ceiling and active-role
+// rules as effectivePermissionIDs without materializing the full permission set.
+func (s *TenantAuthorizationService) PageAssignablePermissions(ctx context.Context, input AssignablePermissionPageInput) (TenantGrantablePermissionPage, error) {
+	actor, err := tenantActor(ctx)
+	if err != nil {
+		return TenantGrantablePermissionPage{}, err
+	}
+	request, err := pagination.Normalize(input.Request)
+	if err != nil || len(input.Keyword) > maxRoleKeywordLength || len(input.IDs) > 200 || !boundedAuthorizationIDs(input.IDs) {
+		return TenantGrantablePermissionPage{}, ErrTenantAuthorizationInvalid
+	}
+	var active int
+	activeQuery := `SELECT count(*) FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE m.tenant_id=? AND m.id=? AND m.status='active' AND m.deleted_at IS NULL`
+	if err := s.db.GetContext(ctx, &active, s.db.Rebind(activeQuery), actor.TenantID, actor.MembershipID); err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("check assignable membership: %w", err)
+	}
+	if active != 1 {
+		return TenantGrantablePermissionPage{}, ErrTenantAuthorizationForbidden
+	}
+	var admin int
+	if err := s.db.GetContext(ctx, &admin, s.db.Rebind(`SELECT count(*) FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), actor.TenantID, actor.MembershipID); err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("check assignable administrator: %w", err)
+	}
+	where := tenantGrantablePermissionWhere + ` AND EXISTS (SELECT 1 FROM tenant_permission_grants g WHERE g.tenant_id=? AND g.permission_id=p.id AND g.deleted_at IS NULL)`
+	args := []any{actor.TenantID}
+	if admin == 0 {
+		where += ` AND EXISTS (SELECT 1 FROM tenant_role_permissions rp JOIN tenant_member_roles mr ON mr.tenant_id=rp.tenant_id AND mr.role_id=rp.role_id AND mr.membership_id=? AND mr.deleted_at IS NULL JOIN tenant_roles r ON r.tenant_id=rp.tenant_id AND r.id=rp.role_id AND r.status='active' AND r.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.permission_id=p.id AND rp.deleted_at IS NULL)`
+		args = append(args, actor.MembershipID, actor.TenantID)
+	}
+	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
+		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) OR LOWER(p.name) LIKE LOWER(?))`
+		like := "%" + keyword + "%"
+		args = append(args, like, like)
+	}
+	if len(input.IDs) > 0 {
+		where += ` AND p.id IN (?)`
+		args = append(args, input.IDs)
+	}
+	countQuery, countArgs, err := sqlx.In(`SELECT count(*) FROM permissions p WHERE `+where, args...)
+	if err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("build assignable count: %w", err)
+	}
+	var total int64
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(countQuery), countArgs...); err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("count assignable permissions: %w", err)
+	}
+	items := []PermissionView{}
+	listQuery, listArgs, err := sqlx.In(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE `+where+` ORDER BY p.permission_key,p.id LIMIT ? OFFSET ?`, append(args, request.PageSize, pagination.Offset(request))...)
+	if err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("build assignable page: %w", err)
+	}
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(listQuery), listArgs...); err != nil {
+		return TenantGrantablePermissionPage{}, fmt.Errorf("list assignable permissions: %w", err)
+	}
+	return TenantGrantablePermissionPage{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
 func (s *TenantAuthorizationService) permissionViews(ctx context.Context, ids []string) ([]PermissionView, error) {
 	if len(ids) == 0 {
 		return []PermissionView{}, nil
 	}
-	query, args, err := sqlx.In(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE p.id IN (?) AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL ORDER BY p.permission_key`, ids)
+	query, args, err := sqlx.In(`SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE p.id IN (?) AND `+tenantGrantablePermissionWhere+` ORDER BY p.permission_key`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("build assignable permission query: %w", err)
 	}
@@ -608,6 +826,91 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 		return pagination.Result[TenantRole]{}, err
 	}
 	return pagination.Result[TenantRole]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+// PageRoleAssignmentCandidates reports which visible active roles the caller may delegate.
+// SetMemberRoles remains the authoritative check against concurrent grant changes.
+func (s *TenantAuthorizationService) PageRoleAssignmentCandidates(ctx context.Context, input RolePageInput) (RoleAssignmentCandidatePage, error) {
+	actor, err := tenantActor(ctx)
+	if err != nil {
+		return RoleAssignmentCandidatePage{}, err
+	}
+	effective, err := effectivePermissionIDs(ctx, s.db, actor.TenantID, actor.MembershipID)
+	if err != nil {
+		return RoleAssignmentCandidatePage{}, err
+	}
+	input.Statuses = []string{"active"}
+	page, err := s.PageRoles(ctx, input)
+	if err != nil {
+		return RoleAssignmentCandidatePage{}, err
+	}
+	result := RoleAssignmentCandidatePage{Items: make([]RoleAssignmentCandidate, 0, len(page.Items)), Page: page.Page, PageSize: page.PageSize, Total: page.Total}
+	if len(page.Items) == 0 {
+		return result, nil
+	}
+	roleIDs := make([]string, 0, len(page.Items))
+	for _, role := range page.Items {
+		roleIDs = append(roleIDs, role.ID)
+	}
+	assignable, err := s.assignableRolesWithEffective(ctx, actor, roleIDs, effective)
+	if err != nil {
+		return RoleAssignmentCandidatePage{}, err
+	}
+	for _, role := range page.Items {
+		result.Items = append(result.Items, RoleAssignmentCandidate{TenantRole: role, Assignable: assignable[role.ID]})
+	}
+	return result, nil
+}
+
+// assignableRoles evaluates delegation for a bounded batch without requiring
+// role-list visibility; action targets use it after their own scoped lookup.
+func (s *TenantAuthorizationService) assignableRoles(ctx context.Context, actor platformprincipal.Principal, roleIDs []string) (map[string]bool, error) {
+	if len(roleIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+	effective, err := effectivePermissionIDs(ctx, s.db, actor.TenantID, actor.MembershipID)
+	if err != nil {
+		return nil, err
+	}
+	return s.assignableRolesWithEffective(ctx, actor, roleIDs, effective)
+}
+
+func (s *TenantAuthorizationService) assignableRolesWithEffective(ctx context.Context, actor platformprincipal.Principal, roleIDs, effective []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(roleIDs))
+	if len(roleIDs) == 0 {
+		return result, nil
+	}
+	for _, id := range roleIDs {
+		result[id] = true
+	}
+	type permissionLink struct {
+		RoleID       string `db:"role_id"`
+		PermissionID string `db:"permission_id"`
+		Valid        int    `db:"valid"`
+	}
+	query, args, err := sqlx.In(`SELECT rp.role_id,rp.permission_id,CASE WHEN g.permission_id IS NOT NULL AND p.id IS NOT NULL AND `+tenantGrantablePermissionWhere+` THEN 1 ELSE 0 END AS valid FROM tenant_role_permissions rp LEFT JOIN permissions p ON p.id=rp.permission_id LEFT JOIN tenant_permission_grants g ON g.tenant_id=rp.tenant_id AND g.permission_id=rp.permission_id AND g.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id IN (?) AND rp.deleted_at IS NULL`, actor.TenantID, roleIDs)
+	if err != nil {
+		return nil, fmt.Errorf("build role candidate permissions query: %w", err)
+	}
+	links := []permissionLink{}
+	if err := s.db.SelectContext(ctx, &links, s.db.Rebind(query), args...); err != nil {
+		return nil, err
+	}
+	effectiveSet := make(map[string]struct{}, len(effective))
+	for _, id := range effective {
+		effectiveSet[id] = struct{}{}
+	}
+	for _, link := range links {
+		_, ok := result[link.RoleID]
+		if !ok {
+			continue
+		}
+		_, held := effectiveSet[link.PermissionID]
+		if link.Valid != 1 || !held {
+			result[link.RoleID] = false
+		}
+	}
+	return result, nil
 }
 
 func (s *TenantAuthorizationService) pageRoles(ctx context.Context, tenantID string, input RolePageInput, request pagination.Request, scope datapermission.SQLPredicate) ([]TenantRole, int64, error) {
@@ -691,9 +994,124 @@ func (s *TenantAuthorizationService) RolePermissions(ctx context.Context, roleID
 	if _, err := s.GetRole(ctx, roleID); err != nil {
 		return nil, err
 	}
+	return s.rolePermissionViews(ctx, actor.TenantID, roleID)
+}
+
+func (s *TenantAuthorizationService) RoleGrantTarget(ctx context.Context, roleID string) (RoleGrantTarget, error) {
+	parsedID, parseErr := uuid.Parse(strings.TrimSpace(roleID))
+	if parseErr != nil {
+		return RoleGrantTarget{}, ErrTenantAuthorizationInvalid
+	}
+	actor, err := tenantActor(ctx)
+	if err != nil {
+		return RoleGrantTarget{}, err
+	}
+	role, err := s.GetRole(ctx, parsedID.String())
+	if err != nil {
+		return RoleGrantTarget{}, err
+	}
+	permissions, err := s.rolePermissionViews(ctx, actor.TenantID, role.ID)
+	if err != nil {
+		return RoleGrantTarget{}, err
+	}
+	if len(permissions) > 1000 {
+		return RoleGrantTarget{}, ErrTenantAuthorizationInvalid
+	}
+	assignable, err := s.assignablePermissions(ctx, actor, permissions)
+	if err != nil {
+		return RoleGrantTarget{}, err
+	}
+	linked := make([]RoleGrantPermission, 0, len(permissions))
+	for _, permission := range permissions {
+		linked = append(linked, RoleGrantPermission{PermissionView: permission, Assignable: assignable[permission.ID]})
+	}
+	return RoleGrantTarget{
+		ID: role.ID, Code: role.Code, Name: role.Name, Status: role.Status,
+		Version: role.Version, Permissions: linked,
+	}, nil
+}
+
+func (s *TenantAuthorizationService) assignablePermissions(ctx context.Context, actor platformprincipal.Principal, permissions []PermissionView) (map[string]bool, error) {
+	result := make(map[string]bool, len(permissions))
+	active := make([]PermissionView, 0, len(permissions))
+	for _, permission := range permissions {
+		if permission.Status == "active" {
+			active = append(active, permission)
+		}
+	}
+	if len(active) == 0 {
+		return result, nil
+	}
+	effective, err := effectivePermissionIDs(ctx, s.db, actor.TenantID, actor.MembershipID)
+	if err != nil {
+		return nil, err
+	}
+	effectiveSet := make(map[string]struct{}, len(effective))
+	for _, id := range effective {
+		effectiveSet[id] = struct{}{}
+	}
+	ids := make([]string, 0, len(active))
+	for _, permission := range active {
+		ids = append(ids, permission.ID)
+	}
+	query, args, err := sqlx.In(`SELECT p.id FROM permissions p WHERE p.id IN (?) AND `+tenantGrantablePermissionWhere+` AND EXISTS (SELECT 1 FROM tenant_permission_grants g WHERE g.tenant_id=? AND g.permission_id=p.id AND g.deleted_at IS NULL)`, ids, actor.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("build grant-target eligibility query: %w", err)
+	}
+	validIDs := []string{}
+	if err := s.db.SelectContext(ctx, &validIDs, s.db.Rebind(query), args...); err != nil {
+		return nil, fmt.Errorf("list grant-target eligibility: %w", err)
+	}
+	validSet := make(map[string]struct{}, len(validIDs))
+	for _, id := range validIDs {
+		validSet[id] = struct{}{}
+	}
+	for _, permission := range active {
+		if _, ok := effectiveSet[permission.ID]; !ok {
+			continue
+		}
+		if _, ok := validSet[permission.ID]; !ok {
+			continue
+		}
+		result[permission.ID] = true
+	}
+	return result, nil
+}
+
+func (s *TenantAuthorizationService) roleActionTarget(ctx context.Context, roleID string) (TenantRole, error) {
+	parsedID, err := uuid.Parse(strings.TrimSpace(roleID))
+	if err != nil {
+		return TenantRole{}, ErrTenantAuthorizationInvalid
+	}
+	return s.GetRole(ctx, parsedID.String())
+}
+
+func (s *TenantAuthorizationService) RoleUpdateTarget(ctx context.Context, roleID string) (RoleUpdateTarget, error) {
+	role, err := s.roleActionTarget(ctx, roleID)
+	if err != nil {
+		return RoleUpdateTarget{}, err
+	}
+	return RoleUpdateTarget{
+		ID: role.ID, Code: role.Code, Name: role.Name,
+		Description: role.Description, Status: role.Status, Version: role.Version,
+	}, nil
+}
+
+func (s *TenantAuthorizationService) RoleDeleteTarget(ctx context.Context, roleID string) (RoleDeleteTarget, error) {
+	role, err := s.roleActionTarget(ctx, roleID)
+	if err != nil {
+		return RoleDeleteTarget{}, err
+	}
+	return RoleDeleteTarget{
+		ID: role.ID, Code: role.Code, Name: role.Name,
+		Status: role.Status, Version: role.Version,
+	}, nil
+}
+
+func (s *TenantAuthorizationService) rolePermissionViews(ctx context.Context, tenantID, roleID string) ([]PermissionView, error) {
 	permissions := []PermissionView{}
-	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM tenant_role_permissions rp JOIN permissions p ON p.id=rp.permission_id AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id=? AND rp.deleted_at IS NULL ORDER BY p.permission_key`
-	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), actor.TenantID, roleID); err != nil {
+	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action,p.status FROM tenant_role_permissions rp JOIN permissions p ON p.id=rp.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id=? AND rp.deleted_at IS NULL ORDER BY p.permission_key`
+	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), tenantID, roleID); err != nil {
 		return nil, err
 	}
 	return permissions, nil
@@ -721,11 +1139,59 @@ func (s *TenantAuthorizationService) MemberRoles(ctx context.Context, membership
 		return nil, ErrTenantAuthorizationNotFound
 	}
 	roles := []MemberRoleView{}
-	query := `SELECT r.id,r.code,r.name FROM tenant_member_roles mr JOIN tenant_roles r ON r.tenant_id=mr.tenant_id AND r.id=mr.role_id AND r.status='active' AND r.deleted_at IS NULL WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL ORDER BY r.name,r.id`
+	query := `SELECT r.id,r.code,r.name,r.status FROM tenant_member_roles mr JOIN tenant_roles r ON r.tenant_id=mr.tenant_id AND r.id=mr.role_id AND r.deleted_at IS NULL WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL ORDER BY r.name,r.id`
 	if err := s.db.SelectContext(ctx, &roles, s.db.Rebind(query), actor.TenantID, membershipID); err != nil {
 		return nil, err
 	}
 	return roles, nil
+}
+
+// MemberRoleAssignmentTarget returns only the current member state and linked
+// roles needed by the assign-role editor, under that action's data scope.
+func (s *TenantAuthorizationService) MemberRoleAssignmentTarget(ctx context.Context, membershipID string) (MemberRoleAssignmentTarget, error) {
+	parsedID, parseErr := uuid.Parse(strings.TrimSpace(membershipID))
+	if parseErr != nil {
+		return MemberRoleAssignmentTarget{}, ErrTenantAuthorizationInvalid
+	}
+	actor, err := tenantActor(ctx)
+	if err != nil {
+		return MemberRoleAssignmentTarget{}, err
+	}
+	scope, err := s.memberScope(ctx)
+	if err != nil {
+		return MemberRoleAssignmentTarget{}, err
+	}
+	var target MemberRoleAssignmentTarget
+	args := append([]any{actor.TenantID, parsedID.String()}, scope.Args...)
+	query := s.db.Rebind(`SELECT tm.id,tm.username,tm.display_name,tm.status,tm.version FROM tenant_memberships tm WHERE tm.tenant_id=? AND tm.id=? AND tm.deleted_at IS NULL AND ` + scope.Clause)
+	if err := s.db.GetContext(ctx, &target, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return MemberRoleAssignmentTarget{}, ErrTenantAuthorizationNotFound
+		}
+		return MemberRoleAssignmentTarget{}, fmt.Errorf("get member role-assignment target: %w", err)
+	}
+	roles, err := s.MemberRoles(ctx, target.ID)
+	if err != nil {
+		return MemberRoleAssignmentTarget{}, err
+	}
+	if len(roles) > 1000 {
+		return MemberRoleAssignmentTarget{}, ErrTenantAuthorizationInvalid
+	}
+	roleIDs := make([]string, 0, len(roles))
+	for _, role := range roles {
+		if role.Status == "active" {
+			roleIDs = append(roleIDs, role.ID)
+		}
+	}
+	assignable, err := s.assignableRoles(ctx, actor, roleIDs)
+	if err != nil {
+		return MemberRoleAssignmentTarget{}, err
+	}
+	target.Roles = make([]MemberRoleAssignmentView, 0, len(roles))
+	for _, role := range roles {
+		target.Roles = append(target.Roles, MemberRoleAssignmentView{MemberRoleView: role, Assignable: role.Status == "active" && assignable[role.ID]})
+	}
+	return target, nil
 }
 
 func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, name, description, status string, version int64) (TenantRole, error) {
@@ -770,7 +1236,7 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 				return fmt.Errorf("update tenant role affected rows: %w", rowsErr)
 			}
 			if rows != 1 {
-				return ErrTenantAuthorizationConflict
+				return ErrTenantAuthorizationStaleVersion
 			}
 			return nil
 		})
@@ -820,7 +1286,7 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 				return fmt.Errorf("delete tenant role affected rows: %w", rowsErr)
 			}
 			if rows != 1 {
-				return ErrTenantAuthorizationConflict
+				return ErrTenantAuthorizationStaleVersion
 			}
 			return nil
 		})
@@ -1009,30 +1475,19 @@ func (s *TenantAuthorizationService) validateTenantPermissions(ctx context.Conte
 	if len(ids) == 0 {
 		return nil
 	}
-	if s == nil || s.registry == nil {
+	if s == nil {
 		return ErrTenantAuthorizationInvalid
 	}
-	type registeredPermission struct {
-		ID       string `db:"id"`
-		Resource string `db:"resource"`
-		Action   string `db:"action"`
-	}
-	query, args, inErr := sqlx.In(`SELECT id,resource,action FROM permissions WHERE id IN (?) AND node_type='permission' AND status='active' AND deleted_at IS NULL`, ids)
+	query, args, inErr := sqlx.In(`SELECT p.id FROM permissions p WHERE p.id IN (?) AND `+tenantGrantablePermissionWhere, ids)
 	if inErr != nil {
 		return fmt.Errorf("build permission validation query: %w", inErr)
 	}
-	permissions := []registeredPermission{}
+	permissions := []string{}
 	if err := tx.SelectContext(ctx, &permissions, tx.Rebind(query), args...); err != nil {
 		return err
 	}
 	if len(permissions) != len(ids) {
 		return ErrTenantAuthorizationInvalid
-	}
-	for _, permission := range permissions {
-		definition, _, err := s.registry.Resolve(permission.Resource, permission.Action)
-		if err != nil || definition.Scope != resourceaction.ResourceScopeTenant {
-			return ErrTenantAuthorizationInvalid
-		}
 	}
 	return nil
 }

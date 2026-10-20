@@ -101,33 +101,41 @@ func (s *s3Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (s *s3Store) Presign(ctx context.Context, key string, operation Operation, ttl time.Duration) (SignedURL, error) {
-	if err := validateKey(key); err != nil {
+func (s *s3Store) Presign(ctx context.Context, input PresignInput) (SignedURL, error) {
+	if err := validateKey(input.Key); err != nil {
 		return SignedURL{}, err
 	}
-	ttl, err := effectivePresignTTL(s.ttl, ttl)
+	disposition, err := downloadDisposition(input)
+	if err != nil {
+		return SignedURL{}, err
+	}
+	ttl, err := effectivePresignTTL(s.ttl, input.TTL)
 	if err != nil {
 		return SignedURL{}, err
 	}
 	options := func(options *s3.PresignOptions) { options.Expires = ttl }
 	var url, method string
-	switch operation {
+	switch input.Operation {
 	case OperationGet:
-		result, signErr := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key}, options)
+		request := &s3.GetObjectInput{Bucket: &s.bucket, Key: &input.Key}
+		if disposition != "" {
+			request.ResponseContentDisposition = &disposition
+		}
+		result, signErr := s.presign.PresignGetObject(ctx, request, options)
 		if signErr != nil {
 			err = signErr
 		} else {
 			url, method = result.URL, result.Method
 		}
 	case OperationPut:
-		result, signErr := s.presign.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: &s.bucket, Key: &key}, options)
+		result, signErr := s.presign.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: &s.bucket, Key: &input.Key}, options)
 		if signErr != nil {
 			err = signErr
 		} else {
 			url, method = result.URL, result.Method
 		}
 	default:
-		return SignedURL{}, fmt.Errorf("unsupported presign operation %q", operation)
+		return SignedURL{}, fmt.Errorf("unsupported presign operation %q", input.Operation)
 	}
 	if err != nil {
 		return SignedURL{}, fmt.Errorf("presign S3 object: %w", err)

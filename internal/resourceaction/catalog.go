@@ -35,6 +35,8 @@ func PlatformResourceDefinitions() ResourceDefinitions {
 		resource("scheduled-job", "定时任务", ResourceScopePlatform, "create", "read", "list", "update", "delete", "execute"),
 		resource("operation.log", "操作日志", ResourceScopeTenant, "create", "read", "list"),
 		resource("security.log", "安全日志", ResourceScopeTenant, "read", "list"),
+		resource("platform.operation-log", "平台系统操作日志", ResourceScopePlatform, "read", "list"),
+		resource("platform.security-log", "平台系统安全日志", ResourceScopePlatform, "read", "list"),
 		resource("authorization.resource", "资源注册表", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("authorization.action", "资源动作注册表", ResourceScopePlatform, "create", "read", "list", "update", "delete"),
 		resource("authorization.platform-grant", "平台主体授权", ResourceScopePlatform, "create", "read", "list", "update", "delete"),

@@ -63,6 +63,71 @@ func TestSetActionsRejectsDuplicateAndUnboundedInputBeforeDatabase(t *testing.T)
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
+func TestActionEditTargetReturnsOnlyEditablePermissionAndLinkedActions(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	service := &Service{repository: NewRepository(sqlx.NewDb(db, "sqlmock"))}
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	actionID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	now := time.Now()
+	mock.ExpectQuery(`SELECT p\.id.*FROM permissions p LEFT JOIN permissions parent`).
+		WithArgs(permissionID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "parent_name", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow(permissionID, nil, "", "platform.user.read", "Read users", "permission", "identity.user", "read", "private description", 0, "active", false, now, "creator", now, "updater", 4))
+	mock.ExpectQuery(`SELECT a\.id,r\.resource_key,a\.action_key`).
+		WithArgs(permissionID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "resource_key", "action_key", "resource_name", "action_name", "scope"}).
+			AddRow(actionID, "identity.user", "read", "Users", "Read", "platform"))
+
+	target, err := service.ActionEditTarget(t.Context(), permissionID)
+	require.NoError(t, err)
+	require.Equal(t, ActionEditTarget{
+		ID:            permissionID,
+		PermissionKey: "platform.user.read",
+		Name:          "Read users",
+		Resource:      "identity.user",
+		Action:        "read",
+		Version:       4,
+		Actions:       []ActionReference{{ID: actionID, ResourceKey: "identity.user", ActionKey: "read", ResourceName: "Users", ActionName: "Read", Scope: "platform"}},
+	}, target)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestActionEditTargetRejectsInvalidAndNoneditableNodes(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	_, err := service.ActionEditTarget(t.Context(), "not-a-uuid")
+	require.ErrorIs(t, err, ErrInvalid)
+
+	for _, tc := range []struct {
+		name     string
+		nodeType string
+		isSystem bool
+	}{
+		{name: "group", nodeType: "group"},
+		{name: "system permission", nodeType: "permission", isSystem: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+			now := time.Now()
+			mock.ExpectQuery(`SELECT p\.id.*FROM permissions p LEFT JOIN permissions parent`).
+				WithArgs(permissionID).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "parent_name", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+					AddRow(permissionID, nil, "", "platform.user.read", "Read users", tc.nodeType, "identity.user", "read", "", 0, "active", tc.isSystem, now, "creator", now, "updater", 4))
+			local := &Service{repository: NewRepository(sqlx.NewDb(db, "sqlmock"))}
+			_, err = local.ActionEditTarget(t.Context(), permissionID)
+			require.ErrorIs(t, err, ErrConflict)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestSetActionsRejectsCrossScopeLink(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
@@ -78,7 +143,30 @@ func TestSetActionsRejectsCrossScopeLink(t *testing.T) {
 		sqlmock.NewRows(strings.Split(columns, ", ")).AddRow(permissionID, nil, "platform.user.read", "Read users", "permission", "identity.user", "read", "", 0, "active", false, now, "actor", now, "actor", 1),
 	)
 	mock.ExpectQuery(`SELECT r.scope FROM authorization_resources`).WithArgs("identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"scope"}).AddRow("platform"))
-	mock.ExpectQuery(`SELECT a.id,r.scope FROM authorization_resource_actions`).WithArgs(actionID).WillReturnRows(sqlmock.NewRows([]string{"id", "scope"}).AddRow(actionID, "tenant"))
+	mock.ExpectQuery(`SELECT a.id,r.scope,r.resource_key,a.action_key FROM authorization_resource_actions`).WithArgs(actionID).WillReturnRows(sqlmock.NewRows([]string{"id", "scope", "resource_key", "action_key"}).AddRow(actionID, "tenant", "identity.user", "read"))
+	mock.ExpectRollback()
+	_, err = service.SetActions(platformprincipal.SystemContext(t.Context(), "actor"), permissionID, 1, []string{actionID})
+	require.ErrorIs(t, err, ErrInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSetActionsRequiresPrimaryAction(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	service := &Service{transactor: database.NewTransactor(sqlx.NewDb(db, "sqlmock"))}
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	actionID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\?`).WithArgs(permissionID).WillReturnRows(
+		sqlmock.NewRows(strings.Split(columns, ", ")).AddRow(permissionID, nil, "platform.user.read", "Read users", "permission", "identity.user", "read", "", 0, "active", false, now, "actor", now, "actor", 1),
+	)
+	mock.ExpectQuery(`SELECT r.scope FROM authorization_resources`).WithArgs("identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"scope"}).AddRow("platform"))
+	mock.ExpectQuery(`SELECT a.id,r.scope,r.resource_key,a.action_key FROM authorization_resource_actions`).WithArgs(actionID).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "scope", "resource_key", "action_key"}).AddRow(actionID, "platform", "identity.user", "update"),
+	)
 	mock.ExpectRollback()
 	_, err = service.SetActions(platformprincipal.SystemContext(t.Context(), "actor"), permissionID, 1, []string{actionID})
 	require.ErrorIs(t, err, ErrInvalid)
@@ -129,6 +217,37 @@ func TestFilterRecordsRetainsAncestors(t *testing.T) {
 	require.Equal(t, []Record{records[0], records[1], records[2]}, filtered)
 }
 
+func TestAttachParentNamesUsesOnlyReturnedRecords(t *testing.T) {
+	t.Parallel()
+	root, hidden := "root", "hidden"
+	records := []Record{
+		{ID: root, Name: "系统"},
+		{ID: "child", ParentID: &root, Name: "用户"},
+		{ID: "orphan", ParentID: &hidden, Name: "孤立节点"},
+	}
+	attachParentNames(records)
+	require.Equal(t, "", records[0].ParentName)
+	require.Equal(t, "系统", records[1].ParentName)
+	require.Equal(t, "", records[2].ParentName)
+}
+
+func TestRepositoryGetResolvesOnlyActiveParentName(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repository := NewRepository(sqlx.NewDb(db, "sqlmock"))
+	now := time.Now()
+	rows := sqlmock.NewRows([]string{"id", "parent_id", "parent_name", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow("child", "root", "系统", "platform.child", "子权限", "group", "", "", "", 0, "active", false, now, "actor", now, "actor", 1)
+	mock.ExpectQuery(`SELECT p\.id.*LEFT JOIN permissions parent ON parent\.id=p\.parent_id AND parent\.deleted_at IS NULL`).
+		WithArgs("child").WillReturnRows(rows)
+	record, err := repository.Get(t.Context(), "child")
+	require.NoError(t, err)
+	require.Equal(t, "系统", record.ParentName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFilterRecordsWithNoMatchReturnsEmptySlice(t *testing.T) {
 	t.Parallel()
 	filtered := filterRecords([]Record{{ID: "root", Key: "platform", NodeType: "group", Status: "active"}}, TreeInput{Keyword: "missing"})
@@ -143,6 +262,80 @@ func TestPermissionNodesCannotOwnChildren(t *testing.T) {
 		{ID: parent, NodeType: "permission"},
 		{ID: "child", ParentID: &parent, NodeType: "permission"},
 	}))
+}
+
+func TestValidateTreeTxChecksProposedNodeType(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		hasChild  bool
+		nodeType  string
+		wantError error
+	}{
+		{name: "group with child cannot become permission", hasChild: true, nodeType: "permission", wantError: ErrInvalid},
+		{name: "leaf group can become permission", nodeType: "permission"},
+		{name: "group with child can remain group", hasChild: true, nodeType: "group"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			sqlxDB := sqlx.NewDb(db, "sqlmock")
+			mock.ExpectBegin()
+			tx, err := sqlxDB.BeginTxx(t.Context(), nil)
+			require.NoError(t, err)
+			now := time.Now()
+			rows := sqlmock.NewRows(strings.Split(columns, ", ")).AddRow("group", nil, "platform.group", "Group", "group", "", "", "", 0, "active", false, now, "actor", now, "actor", 1)
+			if tt.hasChild {
+				rows.AddRow("child", "group", "platform.child", "Child", "permission", "identity.user", "read", "", 0, "active", false, now, "actor", now, "actor", 1)
+			}
+			mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY sort_order,id LIMIT 10001`).WillReturnRows(rows)
+			mock.ExpectRollback()
+			err = (&Service{}).validateTreeTx(t.Context(), tx, "group", nil, tt.nodeType)
+			if tt.wantError != nil {
+				require.ErrorIs(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestNodeMutationsRejectStaleVersionBeforeWriting(t *testing.T) {
+	t.Parallel()
+	const id = "08896c3a-4c82-473e-90c8-b59f60446139"
+	for _, operation := range []string{"update", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), transactor: database.NewTransactor(sqlx.NewDb(raw, "sqlmock"))}
+			now := time.Now()
+			if operation == "delete" {
+				mock.ExpectQuery(`SELECT p\.id.*FROM permissions p LEFT JOIN permissions parent`).WithArgs(id).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "parent_name", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+						AddRow(id, nil, "", "platform.group", "Group", "group", "", "", "", 0, "active", false, now, "actor", now, "actor", 2))
+			}
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\?`).WithArgs(id).
+				WillReturnRows(sqlmock.NewRows(strings.Split(columns, ", ")).
+					AddRow(id, nil, "platform.group", "Group", "group", "", "", "", 0, "active", false, now, "actor", now, "actor", 2))
+			mock.ExpectRollback()
+			ctx := platformprincipal.SystemContext(t.Context(), "actor")
+			if operation == "update" {
+				_, err = service.Update(ctx, id, 1, Input{Key: "platform.group", Name: "Group", NodeType: "group", Status: "active"})
+			} else {
+				err = service.Delete(ctx, id, 1)
+			}
+			require.ErrorIs(t, err, ErrStaleVersion)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestTreeFiltersAreBoundedAndEnumerated(t *testing.T) {

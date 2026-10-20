@@ -186,7 +186,8 @@ idempotency:
     - /api/v1/tenant-departments/update
     - /api/v1/tenant-departments/delete
     - /api/v1/tenant-departments/members/set
-    - /api/v1/tenant-authorization/permissions/set
+    - /api/v1/platform/tenant-authorization/permissions/set
+    - /api/v1/platform/tenant-authorization/administrators/set
     - /api/v1/tenant-authorization/administrators/set
     - /api/v1/tenant-roles/create
     - /api/v1/tenant-roles/update
@@ -211,6 +212,7 @@ idempotency:
     - /api/v1/dictionary-items/create
     - /api/v1/dictionary-items/update
     - /api/v1/dictionary-items/delete
+    - /api/v1/scheduled-jobs/trigger
   grpc_methods: []
   processing_ttl: 30s
   result_ttl: 24h

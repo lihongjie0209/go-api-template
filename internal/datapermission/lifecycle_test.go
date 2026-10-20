@@ -1,6 +1,10 @@
 package datapermission
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +15,113 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+type policyActorResolverStub struct {
+	called int
+	ids    []string
+	names  map[string]string
+	err    error
+}
+
+func (stub *policyActorResolverStub) ResolveUserIDs(_ context.Context, ids []string) (map[string]string, error) {
+	stub.called++
+	stub.ids = append([]string{}, ids...)
+	return stub.names, stub.err
+}
+
+func TestDataPolicyPresentationResolvesActorsInOneBatch(t *testing.T) {
+	t.Parallel()
+	resolver := &policyActorResolverStub{names: map[string]string{"user-1": "Alice", "user-2": "Bob"}}
+	service := &LifecycleService{actors: resolver}
+	instant := time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
+	policies := []PolicyRecord{
+		{CreatedBy: "user-1", UpdatedBy: "user-2", CreatedAt: instant, UpdatedAt: instant},
+		{CreatedBy: "user-1", UpdatedBy: "system-job", CreatedAt: instant, UpdatedAt: instant},
+	}
+	service.presentPolicies(t.Context(), policies)
+	require.Equal(t, 1, resolver.called)
+	require.Equal(t, []string{"user-1", "user-2", "system-job"}, resolver.ids)
+	require.Equal(t, "Alice", policies[0].CreatedByName)
+	require.Equal(t, "Bob", policies[0].UpdatedByName)
+	require.Equal(t, "system-job", policies[1].UpdatedByName)
+	require.Equal(t, "+08:00", policies[0].CreatedAt.Format("-07:00"))
+
+	versions := []VersionRecord{{
+		CreatedBy: "user-1", UpdatedBy: "user-2",
+		PublishedBy: sql.NullString{String: "user-2", Valid: true},
+		PublishedAt: sql.NullTime{Time: instant, Valid: true},
+		CreatedAt:   instant, UpdatedAt: instant,
+	}}
+	service.presentVersions(t.Context(), versions)
+	require.Equal(t, 2, resolver.called)
+	require.Equal(t, "Alice", versions[0].CreatedByName)
+	require.Equal(t, "Bob", versions[0].PublishedByName)
+	require.Equal(t, "+08:00", versions[0].PublishedAt.Time.Format("-07:00"))
+	encoded, err := json.Marshal(versions[0])
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"published_by_name":"Bob"`)
+}
+
+func TestDataPolicyPresentationFallsBackAfterResolverFailure(t *testing.T) {
+	t.Parallel()
+	resolver := &policyActorResolverStub{err: errors.New("identity unavailable")}
+	service := &LifecycleService{actors: resolver}
+	records := []PolicyRecord{{CreatedBy: "user-1", UpdatedBy: "system-job"}}
+	service.presentPolicies(t.Context(), records)
+	require.Equal(t, "user-1", records[0].CreatedByName)
+	require.Equal(t, "system-job", records[0].UpdatedByName)
+}
+
+func TestDataPolicyRecordsExposePublicationMetadata(t *testing.T) {
+	t.Parallel()
+	publishedAt := time.Date(2026, 10, 13, 9, 30, 0, 0, time.FixedZone("CST", 8*60*60))
+	for _, test := range []struct {
+		name       string
+		policy     PolicyRecord
+		version    VersionRecord
+		wantNumber any
+		wantAt     any
+		wantBy     any
+	}{
+		{
+			name: "published",
+			policy: PolicyRecord{
+				PublishedVersionNumber: sql.NullInt64{Int64: 2, Valid: true},
+			},
+			version: VersionRecord{
+				PublishedAt: sql.NullTime{Time: publishedAt, Valid: true},
+				PublishedBy: sql.NullString{String: "admin-1", Valid: true},
+			},
+			wantNumber: float64(2),
+			wantAt:     "2026-10-13T09:30:00+08:00",
+			wantBy:     "admin-1",
+		},
+		{
+			name: "draft",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			policyJSON, err := json.Marshal(test.policy)
+			require.NoError(t, err)
+			versionJSON, err := json.Marshal(test.version)
+			require.NoError(t, err)
+			var policy, version map[string]any
+			require.NoError(t, json.Unmarshal(policyJSON, &policy))
+			require.NoError(t, json.Unmarshal(versionJSON, &version))
+			require.Contains(t, policy, "id")
+			require.Contains(t, policy, "version")
+			require.Contains(t, version, "id")
+			require.Contains(t, version, "version_number")
+			require.Contains(t, policy, "published_version_number")
+			require.Equal(t, test.wantNumber, policy["published_version_number"])
+			require.Contains(t, version, "published_at")
+			require.Equal(t, test.wantAt, version["published_at"])
+			require.Contains(t, version, "published_by")
+			require.Equal(t, test.wantBy, version["published_by"])
+		})
+	}
+}
 
 func dataPolicyFixture() Policy {
 	authenticated := true
@@ -50,7 +161,7 @@ func dataLifecycleFixture(t *testing.T, withRuntime bool) (*LifecycleService, sq
 		require.NoError(t, engineErr)
 		runtime = NewRuntimeLoader(repository, engine)
 	}
-	return NewLifecycleService(repository, database.NewTransactor(db), schemas, resources, runtime, nil, nil), mock
+	return NewLifecycleService(repository, database.NewTransactor(db), schemas, resources, runtime, nil, nil, nil), mock
 }
 
 func dataTenantContext(t *testing.T) platformprincipal.Principal {

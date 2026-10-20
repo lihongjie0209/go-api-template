@@ -1,6 +1,7 @@
 package tenant
 
 import (
+	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
@@ -83,9 +84,54 @@ func TestDepartmentServiceRejectsUnboundedInputBeforeDatabase(t *testing.T) {
 	_, err = service.Update(ctx, DepartmentUpdate{ID: "department-a", Name: "Engineering", SortOrder: maxDepartmentSortOrder + 1, Version: 1})
 	require.ErrorIs(t, err, ErrInvalid)
 	require.ErrorIs(t, service.Delete(ctx, overlongID, 1), ErrInvalid)
-	require.ErrorIs(t, service.SetMembers(ctx, "department-a", []DepartmentMemberAssignment{{MembershipID: overlongID}}), ErrInvalid)
+	require.ErrorIs(t, service.SetMembers(ctx, "department-a", 1, []DepartmentMemberAssignment{{MembershipID: overlongID}}), ErrInvalid)
+	require.ErrorIs(t, service.SetMembers(ctx, "department-a", 0, nil), ErrInvalid)
 	_, err = service.Members(ctx, overlongID)
 	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestClaimDepartmentAssignmentVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		stored      int64
+		updatedRows int64
+		wantStale   bool
+	}{
+		{name: "current version is claimed", stored: 3, updatedRows: 1},
+		{name: "stale editor cannot write links", stored: 4, wantStale: true},
+		{name: "concurrent update loses claim", stored: 3, updatedRows: 0, wantStale: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT td.name,td.version FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL AND \(td.created_by = \?\) FOR UPDATE`).
+				WithArgs("tenant-a", "department-a", "admin-a").
+				WillReturnRows(sqlmock.NewRows([]string{"name", "version"}).AddRow("研发部", test.stored))
+			if test.stored == 3 {
+				mock.ExpectExec(`UPDATE tenant_departments AS td SET updated_at=\?,updated_by=\?,version=version\+1 WHERE td.tenant_id=\? AND td.id=\? AND td.version=\? AND td.deleted_at IS NULL AND \(td.created_by = \?\)`).
+					WithArgs(sqlmock.AnyArg(), "admin-a", "tenant-a", "department-a", int64(3), "admin-a").
+					WillReturnResult(sqlmock.NewResult(0, test.updatedRows))
+			}
+			mock.ExpectRollback()
+			tx, err := db.BeginTxx(t.Context(), nil)
+			require.NoError(t, err)
+			name, err := claimDepartmentAssignmentVersion(t.Context(), tx, "tenant-a", "department-a", 3, "admin-a", datapermission.SQLPredicate{Clause: "(td.created_by = ?)", Args: []any{"admin-a"}})
+			if test.wantStale {
+				require.ErrorIs(t, err, ErrStaleVersion)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "研发部", name)
+			}
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestDepartmentMembersAppliesTenantAndScopedDepartmentBeforeListing(t *testing.T) {
@@ -130,6 +176,28 @@ func TestDepartmentServiceTreeBoundsDatabaseResult(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDepartmentTreePresentsParentFromVisibleNodes(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT ` + departmentColumns + ` FROM tenant_departments td WHERE td.tenant_id=? AND td.deleted_at IS NULL AND (1 = 1) ORDER BY sort_order,id LIMIT 10001`)).
+		WithArgs("tenant-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("parent-a", "tenant-a", nil, "parent", "Parent", 0, now, "system", now, "system", 1).
+			AddRow("child-a", "tenant-a", "parent-a", "child", "Child", 1, now, "system", now, "system", 1))
+	service := &DepartmentService{db: db}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "membership-system"})
+	tree, err := service.Tree(ctx, "child")
+	require.NoError(t, err)
+	require.Len(t, tree, 1)
+	require.Len(t, tree[0].Children, 1)
+	require.Equal(t, "Parent", tree[0].Children[0].ParentName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDepartmentTreeAppliesTenantAndDataPermissionBeforeConstruction(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
@@ -163,6 +231,50 @@ func TestDepartmentGetAppliesTenantAndDataPermissionInOneQuery(t *testing.T) {
 	record, err := service.get(t.Context(), "tenant-a", "department-a", datapermission.SQLPredicate{Clause: "(td.created_by = ?)", Args: []any{"user-a"}})
 	require.NoError(t, err)
 	require.Equal(t, "department-a", record.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentGetResolvesParentNameOnlyWithinTenantAndDataScope(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	scope := datapermission.SQLPredicate{Clause: "(td.created_by = ?)", Args: []any{"user-a"}}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND (td.created_by = ?)`)).
+		WithArgs("tenant-a", "child-a", "user-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("child-a", "tenant-a", "parent-a", "child", "Child", 0, now, "user-a", now, "user-a", 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT td.name FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND (td.created_by = ?)`)).
+		WithArgs("tenant-a", "parent-a", "user-a").
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Parent"))
+	service := &DepartmentService{db: db}
+	record, err := service.get(t.Context(), "tenant-a", "child-a", scope)
+	require.NoError(t, err)
+	require.Equal(t, "Parent", record.ParentName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentGetDoesNotExposeParentOutsideDataScope(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	scope := datapermission.SQLPredicate{Clause: "(td.created_by = ?)", Args: []any{"user-a"}}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND (td.created_by = ?)`)).
+		WithArgs("tenant-a", "child-a", "user-a").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("child-a", "tenant-a", "parent-a", "child", "Child", 0, now, "user-a", now, "user-a", 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT td.name FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND (td.created_by = ?)`)).
+		WithArgs("tenant-a", "parent-a", "user-a").
+		WillReturnError(sql.ErrNoRows)
+	service := &DepartmentService{db: db}
+	record, err := service.get(t.Context(), "tenant-a", "child-a", scope)
+	require.NoError(t, err)
+	require.Empty(t, record.ParentName)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -10,6 +10,8 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
 )
@@ -56,12 +58,19 @@ type SignedURL struct {
 	Headers   map[string]string
 }
 
+type PresignInput struct {
+	Key          string
+	Operation    Operation
+	TTL          time.Duration
+	DownloadName string
+}
+
 type Store interface {
 	Put(ctx context.Context, input PutInput) (Info, error)
 	Get(ctx context.Context, key string) (*Object, error)
 	Stat(ctx context.Context, key string) (Info, error)
 	Delete(ctx context.Context, key string) error
-	Presign(ctx context.Context, key string, operation Operation, ttl time.Duration) (SignedURL, error)
+	Presign(ctx context.Context, input PresignInput) (SignedURL, error)
 }
 
 func New(ctx context.Context, cfg config.ObjectStorage) (Store, error) {
@@ -147,4 +156,19 @@ func effectivePresignTTL(configured, requested time.Duration) (time.Duration, er
 		return 0, errors.New("presign ttl must be positive and no greater than 24h")
 	}
 	return requested, nil
+}
+
+func downloadDisposition(input PresignInput) (string, error) {
+	if input.DownloadName == "" {
+		return "", nil
+	}
+	name := input.DownloadName
+	if input.Operation != OperationGet || strings.TrimSpace(name) == "" || name == "." || name == ".." || len(name) > 255 || !utf8.ValidString(name) || strings.ContainsAny(name, `/\`) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", errors.New("download name must be a safe filename for a GET presign")
+	}
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	if disposition == "" {
+		return "", errors.New("download name cannot be formatted")
+	}
+	return disposition, nil
 }

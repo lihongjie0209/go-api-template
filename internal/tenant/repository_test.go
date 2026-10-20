@@ -1,12 +1,38 @@
 package tenant
 
 import (
+	"database/sql/driver"
 	"errors"
+	"regexp"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestRepositoryPageUsesSameScopedFiltersForCountAndRows(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	repository := NewRepository(sqlx.NewDb(raw, "pgx"))
+	where := `deleted_at IS NULL AND id = $1 AND code IN ($2, $3) AND owner_user_id IN ($4, $5)`
+	args := []driver.Value{"tenant-a", "alpha", "beta", "owner-a", "owner-b"}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM tenants WHERE " + where)).WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM tenants WHERE " + where + " ORDER BY created_at DESC, id LIMIT $6 OFFSET $7")).WithArgs(append(args, 20, 0)...).WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	_, total, err := repository.Page(t.Context(), "tenant-a", PageInput{Codes: []string{"alpha", "beta"}, OwnerUserIDs: []string{"owner-a", "owner-b"}}, 20, 0)
+	if err != nil || total != 0 {
+		t.Fatalf("Page() total=%d, error=%v", total, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestIsUniqueViolation(t *testing.T) {
 	t.Parallel()

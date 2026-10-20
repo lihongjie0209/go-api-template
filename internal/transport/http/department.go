@@ -27,6 +27,11 @@ type CreateDepartmentRequest struct {
 type DepartmentIDRequest struct {
 	ID string `json:"id" binding:"required"`
 }
+type DepartmentAssignmentTarget struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
+}
 type DepartmentTreeRequest struct {
 	Keyword string `json:"keyword" binding:"omitempty,max=256"`
 }
@@ -43,6 +48,7 @@ type DeleteDepartmentRequest struct {
 }
 type SetDepartmentMembersRequest struct {
 	DepartmentID string                              `json:"department_id" binding:"required"`
+	Version      int64                               `json:"version" binding:"required,gt=0"`
 	Members      []tenant.DepartmentMemberAssignment `json:"members" binding:"max=1000,dive"`
 }
 
@@ -88,6 +94,72 @@ func (h *DepartmentHandler) Get(c *gin.Context) {
 		return
 	}
 	OK(c, value)
+}
+
+// DepartmentUpdateTarget godoc
+// @Summary Get editable department fields and version under update permission
+// @Tags tenant-departments
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DepartmentIDRequest true "Department"
+// @Success 200 {object} Response{body=tenant.DepartmentUpdateTarget}
+// @Router /api/v1/tenant-departments/update-target [post]
+func (h *DepartmentHandler) UpdateTarget(c *gin.Context) {
+	var request DepartmentIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// DepartmentDeleteTarget godoc
+// @Summary Get department identity and version under delete permission
+// @Tags tenant-departments
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DepartmentIDRequest true "Department"
+// @Success 200 {object} Response{body=tenant.DepartmentDeleteTarget}
+// @Router /api/v1/tenant-departments/delete-target [post]
+func (h *DepartmentHandler) DeleteTarget(c *gin.Context) {
+	var request DepartmentIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// AssignmentTarget godoc
+// @Summary Get a versioned department target for member assignment
+// @Tags tenant-departments
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DepartmentIDRequest true "Department"
+// @Success 200 {object} Response{body=DepartmentAssignmentTarget}
+// @Router /api/v1/tenant-departments/members/target [post]
+func (h *DepartmentHandler) AssignmentTarget(c *gin.Context) {
+	var r DepartmentIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	value, err := h.service.Get(c.Request.Context(), r.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, DepartmentAssignmentTarget{ID: value.ID, Name: value.Name, Version: value.Version})
 }
 
 // Tree godoc
@@ -169,7 +241,7 @@ func (h *DepartmentHandler) SetMembers(c *gin.Context) {
 	if !h.bind(c, &r) {
 		return
 	}
-	if err := h.service.SetMembers(c.Request.Context(), r.DepartmentID, r.Members); err != nil {
+	if err := h.service.SetMembers(c.Request.Context(), r.DepartmentID, r.Version, r.Members); err != nil {
 		h.fail(c, err)
 		return
 	}
@@ -212,6 +284,8 @@ func (h *DepartmentHandler) fail(c *gin.Context, err error) {
 		Fail(c, h.logger, apperror.Forbidden("department access denied"))
 	case errors.Is(err, tenant.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("department not found"))
+	case errors.Is(err, tenant.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, tenant.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("department conflict", err))
 	default:

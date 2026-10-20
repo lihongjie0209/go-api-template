@@ -28,14 +28,15 @@ func (actorResolverStub) ResolveUserIDs(context.Context, []string) (map[string]s
 }
 
 type storageStub struct {
-	putInfo   objectstorage.Info
-	putErr    error
-	deleted   []string
-	putType   string
-	putBody   []byte
-	putPath   string
-	putSeeker bool
-	deleteErr error
+	putInfo      objectstorage.Info
+	putErr       error
+	deleted      []string
+	putType      string
+	putBody      []byte
+	putPath      string
+	putSeeker    bool
+	deleteErr    error
+	presignInput objectstorage.PresignInput
 }
 type operationStub struct{}
 
@@ -217,7 +218,8 @@ func TestProcessUploadIntentPreservesCompletedFileAfterAmbiguousCommit(t *testin
 		t.Fatal(err)
 	}
 }
-func (s *storageStub) Presign(context.Context, string, objectstorage.Operation, time.Duration) (objectstorage.SignedURL, error) {
+func (s *storageStub) Presign(_ context.Context, input objectstorage.PresignInput) (objectstorage.SignedURL, error) {
+	s.presignInput = input
 	return objectstorage.SignedURL{URL: "https://download.example/file", ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
@@ -355,12 +357,16 @@ func TestServiceDownloadFailsClosedWhenAccessLogCannotBeStored(t *testing.T) {
 		now, "user-1", now, "user-1", int64(1), nil, nil, nil, int64(0), "", nil,
 	))
 	operations := &failingReadOperationStub{}
-	service := New(db, database.NewTransactor(db), &storageStub{}, nil, operations, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
+	storage := &storageStub{}
+	service := New(db, database.NewTransactor(db), storage, nil, operations, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true}, ObjectStorage: config.ObjectStorage{PresignTTL: time.Minute}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
 
 	download, err := service.Download(ctx, "file-1")
 	if err == nil || download.URL != "" || len(operations.records) != 1 || !operations.records[0].Succeeded {
 		t.Fatalf("download=%+v error=%v operation_records=%+v", download, err, operations.records)
+	}
+	if storage.presignInput.DownloadName != "report.txt" || storage.presignInput.Operation != objectstorage.OperationGet {
+		t.Fatalf("presign input = %+v, want attachment named report.txt", storage.presignInput)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

@@ -28,6 +28,13 @@ type setTenantPermissionsRequest struct {
 type tenantPermissionCeilingRequest struct {
 	TenantID string `json:"tenant_id" binding:"required,max=128"`
 }
+type TenantGrantablePermissionPageRequest struct {
+	pagination.Request
+}
+type assignablePermissionPageRequest struct {
+	pagination.Request
+	IDs []string `json:"ids" binding:"max=200,dive,required,max=128"`
+}
 type administratorPageRequest struct {
 	pagination.Request
 	TenantID      string     `json:"tenant_id" binding:"required,max=128"`
@@ -49,6 +56,7 @@ type setAdministratorRequest struct {
 	TenantID     string `json:"tenant_id" binding:"required,max=128"`
 	MembershipID string `json:"membership_id" binding:"required,max=128"`
 	Enabled      bool   `json:"enabled"`
+	Version      int64  `json:"version" binding:"required,gt=0"`
 }
 type createTenantRoleRequest struct {
 	Code          string   `json:"code" binding:"required,max=63"`
@@ -119,7 +127,7 @@ func (h *TenantAuthorizationHandler) SetTenantPermissions(c *gin.Context) {
 // @Produce json
 // @Security Bearer
 // @Param request body tenantPermissionCeilingRequest true "Tenant"
-// @Success 200 {object} Response{body=[]authorization.PermissionView}
+// @Success 200 {object} Response{body=[]authorization.TenantCeilingPermission}
 // @Router /api/v1/platform/tenant-authorization/permissions/get [post]
 func (h *TenantAuthorizationHandler) TenantPermissionCeiling(c *gin.Context) {
 	var request tenantPermissionCeilingRequest
@@ -132,6 +140,54 @@ func (h *TenantAuthorizationHandler) TenantPermissionCeiling(c *gin.Context) {
 		return
 	}
 	OK(c, permissions)
+}
+
+// TenantPermissionTarget godoc
+// @Summary Get the tenant name and expected version for permission-ceiling management
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantPermissionCeilingRequest true "Tenant"
+// @Success 200 {object} Response{body=authorization.TenantPermissionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/platform/tenant-authorization/permissions/target [post]
+func (h *TenantAuthorizationHandler) TenantPermissionTarget(c *gin.Context) {
+	var request tenantPermissionCeilingRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.TenantPermissionTarget(c.Request.Context(), request.TenantID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// PageTenantGrantablePermissions godoc
+// @Summary Page active permissions eligible for tenant ceilings
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantGrantablePermissionPageRequest true "Page request"
+// @Success 200 {object} Response{body=authorization.TenantGrantablePermissionPage}
+// @Failure 400 {object} Response "Code 10001: invalid request"
+// @Router /api/v1/platform/tenant-authorization/permissions/page [post]
+func (h *TenantAuthorizationHandler) PageTenantGrantablePermissions(c *gin.Context) {
+	var request TenantGrantablePermissionPageRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	page, err := h.service.PageTenantGrantablePermissions(c.Request.Context(), request.Request)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
 }
 
 // PagePlatformAdministratorCandidates godoc
@@ -156,6 +212,70 @@ func (h *TenantAuthorizationHandler) PagePlatformAdministratorCandidates(c *gin.
 		return
 	}
 	OK(c, page)
+}
+
+// PlatformAdministratorTarget godoc
+// @Summary Get the tenant name for platform administrator assignment
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantPermissionCeilingRequest true "Tenant"
+// @Success 200 {object} Response{body=authorization.TenantPermissionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/platform/tenant-authorization/administrators/target [post]
+func (h *TenantAuthorizationHandler) PlatformAdministratorTarget(c *gin.Context) {
+	h.TenantPermissionTarget(c)
+}
+
+// TenantApplicationTargetRead godoc
+// @Summary Get the tenant name for application-grant readers
+// @Tags tenant-applications
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantPermissionCeilingRequest true "Tenant"
+// @Success 200 {object} Response{body=authorization.TenantPermissionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/platform/tenant-applications/target/read [post]
+func (h *TenantAuthorizationHandler) TenantApplicationTargetRead(c *gin.Context) {
+	h.TenantPermissionTarget(c)
+}
+
+// TenantApplicationTargetList godoc
+// @Summary Get the tenant name for application-grant list operators
+// @Tags tenant-applications
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantPermissionCeilingRequest true "Tenant"
+// @Success 200 {object} Response{body=authorization.TenantPermissionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/platform/tenant-applications/target/list [post]
+func (h *TenantAuthorizationHandler) TenantApplicationTargetList(c *gin.Context) {
+	h.TenantPermissionTarget(c)
+}
+
+// TenantApplicationTargetGrant godoc
+// @Summary Get the tenant name for application-grant operators
+// @Tags tenant-applications
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body tenantPermissionCeilingRequest true "Tenant"
+// @Success 200 {object} Response{body=authorization.TenantPermissionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/platform/tenant-applications/target/grant [post]
+func (h *TenantAuthorizationHandler) TenantApplicationTargetGrant(c *gin.Context) {
+	h.TenantPermissionTarget(c)
 }
 
 // PageTenantAdministratorCandidates godoc
@@ -199,7 +319,7 @@ func (h *TenantAuthorizationHandler) SetAdministrator(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	h.respond(c, h.service.SetAdministrator(c.Request.Context(), request.TenantID, request.MembershipID, request.Enabled))
+	h.respond(c, h.service.SetAdministrator(c.Request.Context(), request.TenantID, request.MembershipID, request.Enabled, request.Version))
 }
 
 // CreateRole godoc
@@ -246,6 +366,50 @@ func (h *TenantAuthorizationHandler) GetRole(c *gin.Context) {
 	OK(c, role)
 }
 
+// RoleUpdateTarget godoc
+// @Summary Get editable tenant role fields and current version under update permission
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantRoleIDRequest true "Role"
+// @Success 200 {object} Response{body=authorization.RoleUpdateTarget}
+// @Router /api/v1/tenant-roles/update-target [post]
+func (h *TenantAuthorizationHandler) RoleUpdateTarget(c *gin.Context) {
+	var request TenantRoleIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.RoleUpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
+// RoleDeleteTarget godoc
+// @Summary Get tenant role identity and current version under delete permission
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantRoleIDRequest true "Role"
+// @Success 200 {object} Response{body=authorization.RoleDeleteTarget}
+// @Router /api/v1/tenant-roles/delete-target [post]
+func (h *TenantAuthorizationHandler) RoleDeleteTarget(c *gin.Context) {
+	var request TenantRoleIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.RoleDeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // PageRoles godoc
 // @Summary Page tenant roles
 // @Tags tenant-authorization
@@ -267,6 +431,32 @@ func (h *TenantAuthorizationHandler) PageRoles(c *gin.Context) {
 		Statuses:      r.Statuses,
 		CreatedAtFrom: r.CreatedAtFrom,
 		CreatedAtTo:   r.CreatedAtTo,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
+}
+
+// PageRoleAssignmentCandidates godoc
+// @Summary Page tenant roles eligible for assignment by the current member
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantRolePageRequest true "Filters"
+// @Success 200 {object} Response{body=authorization.RoleAssignmentCandidatePage}
+// @Router /api/v1/tenant-roles/assignment-candidates/page [post]
+func (h *TenantAuthorizationHandler) PageRoleAssignmentCandidates(c *gin.Context) {
+	var r TenantRolePageRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	page, err := h.service.PageRoleAssignmentCandidates(c.Request.Context(), authorization.RolePageInput{
+		Request: r.Request,
+		Keyword: r.Keyword,
+		IDs:     r.IDs,
 	})
 	if err != nil {
 		h.fail(c, err)
@@ -336,6 +526,31 @@ func (h *TenantAuthorizationHandler) RolePermissions(c *gin.Context) {
 	OK(c, permissions)
 }
 
+// RoleGrantTarget godoc
+// @Summary Get a tenant role and its linked permissions for grant editing
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body TenantRoleIDRequest true "Role"
+// @Success 200 {object} Response{body=authorization.RoleGrantTarget}
+// @Failure 400 {object} Response "Code 10001: invalid request"
+// @Failure 403 {object} Response "Permission denied or data scope unavailable"
+// @Failure 404 {object} Response "Role not found in the current tenant and data scope"
+// @Router /api/v1/tenant-roles/permissions/target [post]
+func (h *TenantAuthorizationHandler) RoleGrantTarget(c *gin.Context) {
+	var r TenantRoleIDRequest
+	if !h.bind(c, &r) {
+		return
+	}
+	target, err := h.service.RoleGrantTarget(c.Request.Context(), r.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
+}
+
 // MemberRoles godoc
 // @Summary List displayable roles assigned to a tenant member
 // @Tags tenant-authorization
@@ -356,6 +571,31 @@ func (h *TenantAuthorizationHandler) MemberRoles(c *gin.Context) {
 		return
 	}
 	OK(c, roles)
+}
+
+// MemberRoleAssignmentTarget godoc
+// @Summary Get a tenant member and linked roles for assign-role editing
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body memberRolesRequest true "Member"
+// @Success 200 {object} Response{body=authorization.MemberRoleAssignmentTarget}
+// @Failure 400 {object} Response "Code 10001: invalid request"
+// @Failure 403 {object} Response "Permission denied or data scope unavailable"
+// @Failure 404 {object} Response "Member not found in the current tenant and data scope"
+// @Router /api/v1/tenant-members/roles/target [post]
+func (h *TenantAuthorizationHandler) MemberRoleAssignmentTarget(c *gin.Context) {
+	var request memberRolesRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	target, err := h.service.MemberRoleAssignmentTarget(c.Request.Context(), request.MembershipID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, target)
 }
 
 // SetRolePermissions godoc
@@ -436,6 +676,32 @@ func (h *TenantAuthorizationHandler) AssignablePermissions(c *gin.Context) {
 	OK(c, permissions)
 }
 
+// PageAssignablePermissions godoc
+// @Summary Page permissions the current tenant principal may delegate
+// @Tags tenant-authorization
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body assignablePermissionPageRequest true "Page and optional IDs"
+// @Success 200 {object} Response{body=authorization.TenantGrantablePermissionPage}
+// @Failure 400 {object} Response "Code 10001: invalid request"
+// @Router /api/v1/tenant-authorization/assignable-permissions/page [post]
+func (h *TenantAuthorizationHandler) PageAssignablePermissions(c *gin.Context) {
+	var request assignablePermissionPageRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	page, err := h.service.PageAssignablePermissions(c.Request.Context(), authorization.AssignablePermissionPageInput{
+		Request: request.Request,
+		IDs:     request.IDs,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
+}
+
 func (h *TenantAuthorizationHandler) bind(c *gin.Context, request any) bool {
 	if err := c.ShouldBindJSON(request); err != nil {
 		Fail(c, h.logger, apperror.Invalid("invalid request", err))
@@ -458,6 +724,8 @@ func (h *TenantAuthorizationHandler) fail(c *gin.Context, err error) {
 		Fail(c, h.logger, apperror.Forbidden("tenant authorization denied"))
 	case errors.Is(err, authorization.ErrTenantAuthorizationNotFound):
 		Fail(c, h.logger, apperror.NotFound("tenant authorization resource not found"))
+	case errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, authorization.ErrTenantAuthorizationConflict):
 		Fail(c, h.logger, apperror.Conflict("tenant authorization conflict", err))
 	default:

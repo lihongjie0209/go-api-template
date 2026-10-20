@@ -24,15 +24,16 @@ import (
 )
 
 var (
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrAccountLocked       = errors.New("account locked")
-	ErrRefreshInvalid      = errors.New("refresh token invalid")
-	ErrRefreshReused       = errors.New("refresh token reused")
-	ErrSessionNotFound     = errors.New("session not found")
-	ErrForbidden           = errors.New("authentication operation forbidden")
-	ErrInvalid             = errors.New("invalid authentication request")
-	ErrSecurityUnavailable = errors.New("security audit unavailable")
-	ErrAttemptAudited      = errors.New("authentication attempt audited")
+	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrAccountLocked          = errors.New("account locked")
+	ErrRefreshInvalid         = errors.New("refresh token invalid")
+	ErrRefreshReused          = errors.New("refresh token reused")
+	ErrSessionNotFound        = errors.New("session not found")
+	ErrSessionVersionConflict = errors.New("session version conflict")
+	ErrForbidden              = errors.New("authentication operation forbidden")
+	ErrInvalid                = errors.New("invalid authentication request")
+	ErrSecurityUnavailable    = errors.New("security audit unavailable")
+	ErrAttemptAudited         = errors.New("authentication attempt audited")
 )
 
 type Tokens struct {
@@ -82,6 +83,16 @@ type SessionPage struct {
 	Page     int           `json:"page"`
 	PageSize int           `json:"page_size"`
 	Total    int64         `json:"total"`
+}
+
+type SessionRevokeTarget struct {
+	ID        string        `db:"id" json:"id"`
+	ClientIP  string        `db:"client_ip" json:"client_ip"`
+	UserAgent string        `db:"user_agent" json:"user_agent"`
+	ExpiresAt time.Time     `db:"expires_at" json:"expires_at"`
+	RevokedAt *time.Time    `db:"revoked_at" json:"-"`
+	Version   int64         `db:"version" json:"version"`
+	Status    SessionStatus `db:"-" json:"status"`
 }
 
 type SessionStatus string
@@ -268,6 +279,33 @@ func (s *Service) Sessions(ctx context.Context, input SessionPageInput) (Session
 	return SessionPage{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
+func (s *Service) SessionRevokeTarget(ctx context.Context, sessionID string) (SessionRevokeTarget, error) {
+	actor, err := platformprincipal.Require(ctx)
+	if err != nil || actor.Type != platformprincipal.TypeUser {
+		return SessionRevokeTarget{}, ErrForbidden
+	}
+	if strings.TrimSpace(sessionID) == "" || len(sessionID) > maxSessionID {
+		return SessionRevokeTarget{}, ErrInvalid
+	}
+	var target SessionRevokeTarget
+	query := s.db.Rebind(`SELECT id,client_ip,user_agent,expires_at,revoked_at,version FROM identity_sessions WHERE id=? AND user_id=? AND deleted_at IS NULL`)
+	if err := s.db.GetContext(ctx, &target, query, strings.TrimSpace(sessionID), actor.ID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionRevokeTarget{}, ErrSessionNotFound
+		}
+		return SessionRevokeTarget{}, fmt.Errorf("get session revoke target: %w", err)
+	}
+	if target.RevokedAt != nil {
+		target.Status = SessionStatusRevoked
+	} else if !target.ExpiresAt.After(time.Now()) {
+		target.Status = SessionStatusExpired
+	} else {
+		target.Status = SessionStatusActive
+	}
+	target.ExpiresAt = target.ExpiresAt.In(presentationLocation)
+	return target, nil
+}
+
 func validSessionValues(values []string, limit int) bool {
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" || len(value) > limit {
@@ -336,6 +374,17 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID string, version i
 			return fmt.Errorf("revoke session affected rows: %w", rowsErr)
 		}
 		if rows != 1 {
+			var currentVersion int64
+			lookup := tx.Rebind(`SELECT version FROM identity_sessions WHERE id=? AND user_id=? AND deleted_at IS NULL`)
+			if lookupErr := tx.GetContext(ctx, &currentVersion, lookup, sessionID, actor.ID); lookupErr != nil {
+				if errors.Is(lookupErr, sql.ErrNoRows) {
+					return ErrSessionNotFound
+				}
+				return fmt.Errorf("check session revoke version: %w", lookupErr)
+			}
+			if currentVersion != version {
+				return ErrSessionVersionConflict
+			}
 			return ErrSessionNotFound
 		}
 		return s.recordSecurityTx(ctx, tx, securitylog.Entry{EventType: securitylog.EventSessionRevoked, SubjectID: actor.ID, SubjectType: string(platformprincipal.TypeUser), SessionID: sessionID, Succeeded: true})
@@ -363,6 +412,15 @@ func (s *Service) ForceLogoutAll(ctx context.Context, userID string) error {
 
 func (s *Service) revokeAll(ctx context.Context, userID, actorID, reason string) error {
 	return s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
+		if reason == "forced_logout" {
+			var users int
+			if err := tx.GetContext(ctx, &users, tx.Rebind(`SELECT count(*) FROM identity_users WHERE id=? AND status<>'closed' AND deleted_at IS NULL`), userID); err != nil {
+				return err
+			}
+			if users != 1 {
+				return identity.ErrNotFound
+			}
+		}
 		if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), time.Now(), reason, time.Now(), actorID, userID); err != nil {
 			return err
 		}

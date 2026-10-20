@@ -27,7 +27,7 @@ func jwtEndpoint(path, resource, action string, data accesscontrol.DataPermissio
 
 func dataPermissionExemption(resource, action string) string {
 	switch resource {
-	case "identity.user", "identity.service-account", "tenant", "permission.definition", "application", "tenant.application-grant", "navigation", "dictionary.definition", "dictionary.item", "platform.config", "platform.runtime", "scheduled-job", "authorization.resource", "authorization.action", "authorization.platform-grant", "data-permission.global-policy":
+	case "identity.user", "identity.service-account", "tenant", "permission.definition", "application", "tenant.application-grant", "navigation", "dictionary.definition", "dictionary.item", "platform.config", "platform.runtime", "scheduled-job", "authorization.resource", "authorization.action", "authorization.platform-grant", "data-permission.global-policy", "platform.operation-log", "platform.security-log":
 		return "platform-scoped resource; operation grants are the authorization boundary"
 	case "identity.profile", "identity.session", "identity.credential", "tenant.selection", "authorization.capability", "frontend.telemetry":
 		return "service enforces the authenticated principal ownership predicate"

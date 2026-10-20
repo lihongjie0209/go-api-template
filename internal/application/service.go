@@ -3,10 +3,12 @@ package application
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
@@ -31,6 +33,34 @@ type PageInput struct {
 }
 
 type Page = pagination.Result[Record]
+
+type NavigationTarget struct {
+	ID   string `db:"id" json:"id"`
+	Name string `db:"name" json:"name"`
+}
+
+// DeleteTarget is the authoritative, minimal confirmation for delete-only operators.
+type DeleteTarget struct {
+	ID      string `db:"id" json:"id"`
+	Code    string `db:"code" json:"code"`
+	Name    string `db:"name" json:"name"`
+	Status  string `db:"status" json:"status"`
+	Version int64  `db:"version" json:"version"`
+}
+
+// UpdateTarget contains only the current editable application state and version.
+type UpdateTarget struct {
+	ID          string          `db:"id" json:"id"`
+	Code        string          `db:"code" json:"code"`
+	Name        string          `db:"name" json:"name"`
+	Description string          `db:"description" json:"description"`
+	Icon        string          `db:"icon" json:"icon"`
+	HomePath    string          `db:"home_path" json:"home_path"`
+	Status      string          `db:"status" json:"status"`
+	SortOrder   int64           `db:"sort_order" json:"sort_order"`
+	Metadata    json.RawMessage `db:"metadata" json:"metadata" swaggertype:"object"`
+	Version     int64           `db:"version" json:"version"`
+}
 
 type Service struct {
 	db         *sqlx.DB
@@ -87,6 +117,63 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, err
 	}
 	return records[0], nil
+}
+
+// NavigationTarget resolves the display name needed by navigation-only operators.
+func (s *Service) NavigationTarget(ctx context.Context, id string) (NavigationTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return NavigationTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 128 {
+		return NavigationTarget{}, ErrInvalid
+	}
+	var target NavigationTarget
+	err := s.db.GetContext(ctx, &target, s.db.Rebind(`SELECT id,name FROM applications WHERE id=? AND deleted_at IS NULL`), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NavigationTarget{}, ErrNotFound
+	}
+	return target, err
+}
+
+func (s *Service) DeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return DeleteTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id {
+		return DeleteTarget{}, ErrInvalid
+	}
+	var target DeleteTarget
+	err = s.db.GetContext(ctx, &target, s.db.Rebind(`SELECT id,code,name,status,version FROM applications WHERE id=? AND deleted_at IS NULL`), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeleteTarget{}, ErrNotFound
+	}
+	if err != nil {
+		return DeleteTarget{}, err
+	}
+	return target, nil
+}
+
+func (s *Service) UpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return UpdateTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id {
+		return UpdateTarget{}, ErrInvalid
+	}
+	var target UpdateTarget
+	err = s.db.GetContext(ctx, &target, s.db.Rebind(`SELECT id,code,name,description,icon,home_path,status,sort_order,metadata,version FROM applications WHERE id=? AND deleted_at IS NULL`), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UpdateTarget{}, ErrNotFound
+	}
+	if err != nil {
+		return UpdateTarget{}, err
+	}
+	return target, nil
 }
 
 func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
@@ -166,7 +253,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 			return err
 		}
 		if affected != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -212,7 +299,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 			return err
 		}
 		if affected != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})

@@ -65,9 +65,9 @@ func (s *observedStore) Delete(ctx context.Context, key string) error {
 	done(telemetryError(err))
 	return err
 }
-func (s *observedStore) Presign(ctx context.Context, key string, operation Operation, ttl time.Duration) (SignedURL, error) {
-	ctx, done := s.start(ctx, "presign_"+string(operation))
-	result, err := s.next.Presign(ctx, key, operation, ttl)
+func (s *observedStore) Presign(ctx context.Context, input PresignInput) (SignedURL, error) {
+	ctx, done := s.start(ctx, "presign_"+string(input.Operation))
+	result, err := s.next.Presign(ctx, input)
 	done(telemetryError(err))
 	return result, err
 }

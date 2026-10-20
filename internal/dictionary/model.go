@@ -39,6 +39,7 @@ type Item struct {
 	ID            string          `db:"id" json:"id"`
 	DictionaryID  string          `db:"dictionary_id" json:"dictionary_id"`
 	ParentID      *string         `db:"parent_id" json:"parent_id,omitempty"`
+	ParentName    string          `db:"-" json:"parent_name"`
 	Code          string          `db:"code" json:"code"`
 	Name          string          `db:"name" json:"name"`
 	Value         string          `db:"value" json:"value"`
@@ -64,6 +65,7 @@ type Query struct {
 	Keyword         string          `json:"keyword,omitempty"`
 	IDs             []string        `json:"ids,omitempty"`
 	Codes           []string        `json:"codes,omitempty"`
+	Values          []string        `json:"values,omitempty"`
 	IncludeDisabled bool            `json:"include_disabled"`
 	Sort            []Sort          `json:"sort,omitempty"`
 	Page            int             `json:"page,omitempty"`
@@ -136,9 +138,10 @@ type DefinitionPageInput struct {
 }
 type ItemPageInput struct {
 	pagination.Request
-	DictionaryID string
-	Disabled     *bool
-	ParentID     *string
+	DictionaryID     string
+	Disabled         *bool
+	ParentID         *string
+	ExcludeSubtreeID string
 }
 type ItemPage struct {
 	Items    []Item `json:"items"`

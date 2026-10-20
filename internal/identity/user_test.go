@@ -176,8 +176,71 @@ func TestUpdateSelfPreservesStatusAndUsesOptimisticVersion(t *testing.T) {
 	}
 }
 
+func TestUpdateSelfReportsStaleVersionWithoutInvalidatingCache(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	store := &memoryStore{values: map[string][]byte{
+		"identity:user:v1:id:user-self": []byte(`{"id":"user-self"}`),
+	}}
+	service := &Service{
+		repository: NewRepository(db), transactor: database.NewTransactor(db),
+		cache: store, operations: operationStub{}, security: securityStub{},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-self").WillReturnRows(
+		sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-self", StatusActive, 8, now)...),
+	)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_users SET display_name=`).
+		WithArgs("Alice Updated", "alice@example.com", "13800000000", sqlmock.AnyArg(), "user-self", "user-self", int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-self", Type: platformprincipal.TypeUser})
+	_, err = service.UpdateSelf(ctx, SelfUpdateInput{
+		DisplayName: "Alice Updated", Email: "alice@example.com", Phone: "13800000000", Version: 7,
+	})
+	if !errors.Is(err, ErrStaleVersion) {
+		t.Fatalf("UpdateSelf() error = %v, want stale version", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(t.Context(), "identity:user:v1:id:user-self"); err != nil {
+		t.Fatalf("stale update invalidated cached user: %v", err)
+	}
+}
+
 func userColumnNames() []string {
 	return []string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}
+}
+
+func TestRepositoryPageUsesExactEmailAndPhoneFiltersBeforePagination(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	repository := NewRepository(sqlx.NewDb(raw, "sqlmock"))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users WHERE deleted_at IS NULL AND LOWER\(email\) IN \(\?\) AND phone IN \(\?\)`).
+		WithArgs("alice@example.com", "13800000000").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT .* FROM identity_users u WHERE deleted_at IS NULL AND LOWER\(email\) IN \(\?\) AND phone IN \(\?\).*LIMIT \? OFFSET \?`).
+		WithArgs("alice@example.com", "13800000000", 200, 0).
+		WillReturnRows(sqlmock.NewRows(userColumnNames()))
+	users, total, err := repository.Page(t.Context(), PageInput{Request: pagination.Request{Page: 1, PageSize: 200}, Emails: []string{"Alice@Example.com"}, Phones: []string{"13800000000"}})
+	if err != nil || total != 0 || len(users) != 0 {
+		t.Fatalf("Page() users=%+v total=%d err=%v", users, total, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func userRow(id string, status Status, version int64, now time.Time) []driver.Value {
@@ -218,6 +281,36 @@ func TestDeleteRejectsTenantOwner(t *testing.T) {
 		t.Fatalf("failed mutation invalidated username cache: %v", err)
 	}
 	_ = db.Close()
+}
+
+func TestDeleteReportsStaleVersionWithoutInvalidatingCache(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	store := &memoryStore{values: map[string][]byte{"identity:user:v1:id:user-1": []byte(`{"id":"user-1"}`)}}
+	service := &Service{repository: NewRepository(db), transactor: database.NewTransactor(db), cache: store, operations: operationStub{}, security: securityStub{}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-1", StatusActive, 4, now)...))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE owner_user_id=`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships WHERE user_id=`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE identity_users SET status=`).WithArgs(StatusClosed, sqlmock.AnyArg(), "admin", sqlmock.AnyArg(), "admin", "user-1", int64(3)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	err = service.Delete(platformprincipal.SystemContext(t.Context(), "admin"), "user-1", 3)
+	if !errors.Is(err, ErrStaleVersion) {
+		t.Fatalf("Delete()=%v, want stale version", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(t.Context(), "identity:user:v1:id:user-1"); err != nil {
+		t.Fatalf("stale delete invalidated cached user: %v", err)
+	}
 }
 
 type operationStub struct{}

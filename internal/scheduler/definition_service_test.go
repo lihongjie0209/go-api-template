@@ -27,6 +27,9 @@ func TestDefinitionOrderUsesAllowlist(t *testing.T) {
 
 func TestRunOrderUsesAllowlist(t *testing.T) {
 	t.Parallel()
+	defaultOrder, err := runOrder(nil)
+	require.NoError(t, err)
+	require.Equal(t, "created_at DESC,id ASC", defaultOrder)
 	order, err := runOrder([]pagination.Sort{{Field: "duration_ms", Direction: "asc"}})
 	require.NoError(t, err)
 	require.Equal(t, "duration_ms ASC,id ASC", order)

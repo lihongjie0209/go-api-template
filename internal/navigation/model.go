@@ -18,8 +18,9 @@ var (
 	ErrInvalid       = errors.New("invalid navigation")
 	ErrNotFound      = errors.New("navigation not found")
 	ErrConflict      = errors.New("navigation conflict")
+	ErrStaleVersion  = errors.New("navigation stale version")
 	keyPattern       = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{1,127}$`)
-	pathPattern      = regexp.MustCompile(`^/[A-Za-z0-9_./:-]*$`)
+	pathPattern      = regexp.MustCompile(`^/[A-Za-z0-9_./-]*$`)
 	componentPattern = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
 )
 
@@ -27,6 +28,7 @@ type Record struct {
 	ID            string          `db:"id" json:"id"`
 	ApplicationID string          `db:"application_id" json:"application_id"`
 	ParentID      *string         `db:"parent_id" json:"parent_id"`
+	ParentName    string          `db:"parent_name" json:"parent_name"`
 	Key           string          `db:"navigation_key" json:"navigation_key"`
 	Name          string          `db:"name" json:"name"`
 	Type          string          `db:"navigation_type" json:"navigation_type"`
@@ -89,7 +91,9 @@ func Validate(input Input, resources *resourceaction.Registry) error {
 	}
 	switch input.Type {
 	case "directory":
-		if input.Component != "" || input.Resource != "" || input.Action != "" || (input.RoutePath != "" && !validPath(input.RoutePath)) {
+		if input.Component != "" || input.Resource != "" || input.Action != "" ||
+			(input.RoutePath != "" && !validPath(input.RoutePath)) ||
+			(input.RoutePath == "" && strings.Contains(input.Key, ":")) {
 			return ErrInvalid
 		}
 	case "menu":
@@ -121,6 +125,7 @@ func StableID(applicationCode, key string) (string, error) {
 func Build(records []Record) ([]*Node, error) {
 	applicationID := ""
 	types := make(map[string]string, len(records))
+	names := make(map[string]string, len(records))
 	for _, record := range records {
 		if applicationID == "" {
 			applicationID = record.ApplicationID
@@ -129,10 +134,17 @@ func Build(records []Record) ([]*Node, error) {
 			return nil, ErrInvalid
 		}
 		types[record.ID] = record.Type
+		names[record.ID] = record.Name
 	}
-	for _, record := range records {
+	for index := range records {
+		record := &records[index]
 		if record.ParentID != nil && types[*record.ParentID] != "directory" {
 			return nil, ErrInvalid
+		}
+		if record.ParentID != nil {
+			record.ParentName = names[*record.ParentID]
+		} else {
+			record.ParentName = ""
 		}
 	}
 	forest, err := platformtree.Build(records, func(value Record) string { return value.ID }, func(value Record) (string, bool) {
@@ -152,7 +164,43 @@ func Build(records []Record) ([]*Node, error) {
 		}
 		return result
 	}
-	return convert(forest), nil
+	result := convert(forest)
+	if err := validateRoutePaths(result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func validateRoutePaths(nodes []*Node) error {
+	seen := make(map[string]struct{})
+	var visit func([]*Node, string) error
+	visit = func(level []*Node, parentPath string) error {
+		for _, node := range level {
+			if node.RoutePath == "/" {
+				return ErrInvalid
+			}
+			segment := strings.Join(strings.FieldsFunc(node.RoutePath, func(value rune) bool {
+				return value == '/'
+			}), "/")
+			if segment == "" {
+				segment = node.Key
+			}
+			if segment == "" || strings.Contains(segment, ":") {
+				return ErrInvalid
+			}
+			fullPath := parentPath + "/" + segment
+			canonical := strings.ToLower(fullPath)
+			if _, exists := seen[canonical]; exists {
+				return ErrConflict
+			}
+			seen[canonical] = struct{}{}
+			if err := visit(node.Children, fullPath); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return visit(nodes, "")
 }
 
 // PruneVisible returns a new tree containing allowed menus and the directories
@@ -185,7 +233,18 @@ func PruneVisible(nodes []*Node, allowedMenuIDs map[string]struct{}) []*Node {
 }
 
 func validPath(value string) bool {
-	return pathPattern.MatchString(value) && !strings.Contains(value, "//") && !strings.Contains(value, "..")
+	if value == "/" {
+		return false
+	}
+	if !pathPattern.MatchString(value) || strings.Contains(value, "//") || strings.Contains(value, "..") {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "." {
+			return false
+		}
+	}
+	return true
 }
 func validMetadata(value json.RawMessage) bool {
 	var object map[string]any

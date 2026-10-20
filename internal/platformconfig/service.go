@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -39,6 +40,7 @@ var (
 	ErrInvalid          = errors.New("invalid platform config")
 	ErrNotFound         = errors.New("platform config not found")
 	ErrConflict         = errors.New("platform config conflict")
+	ErrStaleVersion     = errors.New("platform config version is stale")
 	keyPattern          = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{1,127}$`)
 	sensitiveKeyPattern = regexp.MustCompile(`(?i)(password|passwd|secret|token|private[_-]?key|credential|access[_-]?key|dsn)`)
 )
@@ -67,6 +69,26 @@ type PublicView struct {
 	Category  string          `db:"category" json:"category"`
 	ValueType string          `db:"value_type" json:"value_type"`
 	Value     json.RawMessage `db:"value" json:"value" swaggertype:"object"`
+}
+type UpdateTarget struct {
+	ID          string          `db:"id" json:"id"`
+	Key         string          `db:"config_key" json:"key"`
+	Name        string          `db:"name" json:"name"`
+	Category    string          `db:"category" json:"category"`
+	ValueType   string          `db:"value_type" json:"value_type"`
+	Value       json.RawMessage `db:"value" json:"value" swaggertype:"object"`
+	Description string          `db:"description" json:"description"`
+	IsPublic    bool            `db:"is_public" json:"is_public"`
+	Status      string          `db:"status" json:"status"`
+	Version     int64           `db:"version" json:"version"`
+}
+type DeleteTarget struct {
+	ID       string `db:"id" json:"id"`
+	Key      string `db:"config_key" json:"key"`
+	Name     string `db:"name" json:"name"`
+	IsPublic bool   `db:"is_public" json:"is_public"`
+	Status   string `db:"status" json:"status"`
+	Version  int64  `db:"version" json:"version"`
 }
 type Input struct {
 	Key, Name, Category, Description, Status string
@@ -235,6 +257,49 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	}
 	return records[0], nil
 }
+
+func actionTargetID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id {
+		return "", ErrInvalid
+	}
+	return id, nil
+}
+
+func (s *Service) UpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return UpdateTarget{}, err
+	}
+	id, err := actionTargetID(id)
+	if err != nil {
+		return UpdateTarget{}, err
+	}
+	var target UpdateTarget
+	query := `SELECT id,config_key,name,category,value_type,value,description,is_public,status,version FROM platform_configs WHERE id=? AND deleted_at IS NULL`
+	err = s.db.GetContext(ctx, &target, s.db.Rebind(query), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UpdateTarget{}, ErrNotFound
+	}
+	return target, err
+}
+
+func (s *Service) DeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return DeleteTarget{}, err
+	}
+	id, err := actionTargetID(id)
+	if err != nil {
+		return DeleteTarget{}, err
+	}
+	var target DeleteTarget
+	query := `SELECT id,config_key,name,is_public,status,version FROM platform_configs WHERE id=? AND deleted_at IS NULL`
+	err = s.db.GetContext(ctx, &target, s.db.Rebind(query), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeleteTarget{}, ErrNotFound
+	}
+	return target, err
+}
 func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return Page{}, err
@@ -368,7 +433,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 			return fmt.Errorf("update platform config affected rows: %w", rowsErr)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})
@@ -401,7 +466,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 			return fmt.Errorf("delete platform config affected rows: %w", rowsErr)
 		}
 		if rows != 1 {
-			return ErrConflict
+			return ErrStaleVersion
 		}
 		return nil
 	})

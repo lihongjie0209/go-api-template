@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -11,9 +13,22 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
 )
+
+type runLogRecorderStub struct {
+	recordTx func(context.Context, *sqlx.Tx, operationlog.Entry) error
+}
+
+func (runLogRecorderStub) Enabled() bool                                    { return true }
+func (runLogRecorderStub) Record(context.Context, operationlog.Entry) error { return nil }
+func (s runLogRecorderStub) RecordTx(ctx context.Context, tx *sqlx.Tx, entry operationlog.Entry) error {
+	return s.recordTx(ctx, tx, entry)
+}
 
 func TestManagerRefreshAtomicallyReplacesValidatedDefinitions(t *testing.T) {
 	t.Parallel()
@@ -58,13 +73,54 @@ func TestManagerExecuteRecordsBoundedHistory(t *testing.T) {
 		metrics:  &observability.Metrics{},
 		logger:   logger,
 		handlers: NewHandlerRegistry(logger),
+		operations: runLogRecorderStub{recordTx: func(ctx context.Context, tx *sqlx.Tx, entry operationlog.Entry) error {
+			require.NotNil(t, tx)
+			require.Equal(t, "platform.scheduled-job.run.completed", entry.Operation)
+			require.Equal(t, "scheduled_job_run", entry.ResourceType)
+			require.NotEmpty(t, entry.ResourceID)
+			require.Equal(t, "Sample", entry.ResourceName)
+			require.True(t, entry.Succeeded)
+			require.NotEmpty(t, mustRequestID(t, ctx))
+			return nil
+		}},
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO scheduled_job_runs`).
 		WithArgs(sqlmock.AnyArg(), "job-1", "sample-job", "Sample", "system.sample", "manual", "success", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", sqlmock.AnyArg(), "orders-service:scheduler:sample-job", sqlmock.AnyArg(), "orders-service:scheduler:sample-job").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
-	err = manager.execute(t.Context(), Definition{ID: "job-1", Code: "sample-job", Name: "Sample", Handler: "system.sample", TimeoutSeconds: 30, LockTTLSeconds: 60}, "manual")
+	err = manager.execute(requestid.WithContext(t.Context(), "req-1"), Definition{ID: "job-1", Code: "sample-job", Name: "Sample", Handler: "system.sample", TimeoutSeconds: 30, LockTTLSeconds: 60}, "manual")
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManagerRunRecordRollsBackWhenOperationLogCannotBeQueued(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := &Manager{
+		cfg:    config.Config{App: config.App{Name: "orders-service"}},
+		tx:     database.NewTransactor(db),
+		logger: logger,
+		operations: runLogRecorderStub{recordTx: func(context.Context, *sqlx.Tx, operationlog.Entry) error {
+			return errors.New("outbox unavailable")
+		}},
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO scheduled_job_runs`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectRollback()
+	ctx := requestid.WithContext(platformprincipal.SystemContext(t.Context(), "orders-service:scheduler:sample-job"), "req-1")
+	err = manager.recordRun(ctx, Definition{ID: "job-1", Code: "sample-job", Name: "Sample", Handler: "system.sample"}, "cron", "success", time.Now(), time.Now())
+	require.ErrorContains(t, err, "outbox unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func mustRequestID(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	id, ok := requestid.FromContext(ctx)
+	require.True(t, ok)
+	return id
 }

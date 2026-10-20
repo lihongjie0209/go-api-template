@@ -46,13 +46,14 @@ func TestCurrentApplicationsScopesTenantUserAndMembershipInSQL(t *testing.T) {
 	now := time.Now()
 	mock.ExpectQuery(`FROM tenant_application_grants g JOIN applications a.*JOIN tenant_memberships m.*WHERE g.tenant_id=\?`).
 		WithArgs("membership-1", "user-1", "tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "icon", "home_path", "sort_order", "starts_at", "expires_at"}).AddRow("app-1", "console", "Console", "", "/", 0, now, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "icon", "home_path", "sort_order", "starts_at", "expires_at"}).AddRow("app-1", "console", "Console", "业务控制台", "", "/", 0, now, nil))
 	service := &TenantAccessService{db: db}
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"})
 	items, err := service.Current(ctx)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, "Console", items[0].Name)
+	require.Equal(t, "业务控制台", items[0].Description)
 	_, offset := items[0].StartsAt.Zone()
 	require.Equal(t, 8*60*60, offset)
 	require.NoError(t, mock.ExpectationsWereMet())

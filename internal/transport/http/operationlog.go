@@ -39,6 +39,7 @@ type OperationLogPageRequest struct {
 	Sources        []string   `json:"sources"`
 	Protocols      []string   `json:"protocols"`
 	RequestIDs     []string   `json:"request_ids"`
+	TraceIDs       []string   `json:"trace_ids" binding:"max=200"`
 	Succeeded      *bool      `json:"succeeded"`
 	OccurredAtFrom *time.Time `json:"occurred_at_from"`
 	OccurredAtTo   *time.Time `json:"occurred_at_to"`
@@ -182,13 +183,68 @@ func (h *OperationLogHandler) Page(c *gin.Context) {
 		Fail(c, h.logger, apperror.Invalid("invalid operation log filters", err))
 		return
 	}
-	page, err := h.service.Page(c.Request.Context(), operationlog.PageInput{
+	page, err := h.service.Page(c.Request.Context(), request.input())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
+}
+
+func (request OperationLogPageRequest) input() operationlog.PageInput {
+	return operationlog.PageInput{
 		Request: request.Request, Keyword: request.Keyword, IDs: request.IDs, TenantIDs: request.TenantIDs,
 		ActorIDs: request.ActorIDs, ApplicationIDs: request.ApplicationIDs, Operations: request.Operations,
 		ResourceTypes: request.ResourceTypes, ResourceIDs: request.ResourceIDs, Sources: request.Sources,
-		Protocols: request.Protocols, RequestIDs: request.RequestIDs, Succeeded: request.Succeeded,
+		Protocols: request.Protocols, RequestIDs: request.RequestIDs, TraceIDs: request.TraceIDs, Succeeded: request.Succeeded,
 		OccurredAtFrom: request.OccurredAtFrom, OccurredAtTo: request.OccurredAtTo,
-	})
+	}
+}
+
+// SystemGet godoc
+// @Summary Get a platform system operation log
+// @Tags operation-logs
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body OperationLogIDRequest true "System operation log"
+// @Success 200 {object} Response{body=operationlog.Record}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/platform/operation-logs/get [post]
+func (h *OperationLogHandler) SystemGet(c *gin.Context) {
+	var request OperationLogIDRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Fail(c, h.logger, apperror.Invalid("invalid system operation log request", err))
+		return
+	}
+	record, err := h.service.SystemGet(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, record)
+}
+
+// SystemPage godoc
+// @Summary Page platform system operation logs in a bounded time window
+// @Tags operation-logs
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body OperationLogPageRequest true "System log filters; time range required, maximum 31 days"
+// @Success 200 {object} Response{body=operationlog.Page}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Router /api/v1/platform/operation-logs/page [post]
+func (h *OperationLogHandler) SystemPage(c *gin.Context) {
+	var request OperationLogPageRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Fail(c, h.logger, apperror.Invalid("invalid system operation log filters", err))
+		return
+	}
+	page, err := h.service.SystemPage(c.Request.Context(), request.input())
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -198,6 +254,10 @@ func (h *OperationLogHandler) Page(c *gin.Context) {
 
 func (h *OperationLogHandler) fail(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, operationlog.ErrTenantRequired):
+		Fail(c, h.logger, apperror.Forbidden("active tenant is required"))
+	case errors.Is(err, operationlog.ErrPlatformContextRequired):
+		Fail(c, h.logger, apperror.Forbidden("platform context is required"))
 	case errors.Is(err, operationlog.ErrInvalidEntry):
 		Fail(c, h.logger, apperror.Invalid("invalid operation log request", err))
 	case errors.Is(err, operationlog.ErrNotFound):

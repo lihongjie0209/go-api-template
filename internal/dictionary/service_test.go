@@ -3,9 +3,14 @@ package dictionary
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/database"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +25,10 @@ func TestValidateQuery(t *testing.T) {
 		{name: "single character code", query: Query{Code: "x"}},
 		{name: "invalid code", query: Query{Code: "not a code"}, wantErr: true},
 		{name: "unbounded ids", query: Query{Code: "identity.user", IDs: make([]string, 201)}, wantErr: true},
+		{name: "unbounded values", query: Query{Code: "identity.user", Values: make([]string, 201)}, wantErr: true},
+		{name: "blank value", query: Query{Code: "identity.user", Values: []string{"  "}}, wantErr: true},
+		{name: "oversized value payload", query: Query{Code: "identity.user", Values: []string{string(make([]byte, 16*1024+1))}}, wantErr: true},
+		{name: "exact value", query: Query{Code: "identity.user", Values: []string{"internal:id:1"}}},
 		{name: "unknown sort", query: Query{Code: "identity.user", Sort: []Sort{{Field: "created_at", Direction: "asc"}}}, wantErr: true},
 		{name: "extension must be object", query: Query{Code: "identity.user", Extension: json.RawMessage(`[]`)}, wantErr: true},
 	}
@@ -41,6 +50,221 @@ func TestInputBounds(t *testing.T) {
 	t.Parallel()
 	require.False(t, validDefinition(DefinitionInput{Code: "valid", Name: "name", Description: string(make([]byte, maxDescriptionLength+1)), Kind: KindEnum, Source: SourceStatic, Status: "active"}))
 	require.False(t, validItem(ItemInput{DictionaryID: uuidString(1), Code: "valid", Name: "name", Value: string(make([]byte, maxValueLength+1))}))
+}
+
+func TestCreateItemRejectsDuplicateSelectableValue(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{db: db, tx: database.NewTransactor(db)}
+	dictionaryID := uuidString(1)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_type,source_type FROM dictionary_definitions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_type", "source_type"}).AddRow(KindEnum, SourceStatic))
+	mock.ExpectQuery(`SELECT id FROM dictionary_items WHERE dictionary_id=\? AND id<>\? AND deleted_at IS NULL AND COALESCE\(NULLIF\(value,''\),id\)=\? LIMIT 1 FOR UPDATE`).
+		WithArgs(dictionaryID, sqlmock.AnyArg(), "shared").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuidString(2)))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
+	_, err = service.CreateItem(ctx, ItemInput{DictionaryID: dictionaryID, Code: "new", Name: "New", Value: "shared"})
+	require.ErrorIs(t, err, ErrConflict)
+}
+
+func TestEnsureSelectableValueAvailableUsesIDFallback(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, value, effective string
+	}{
+		{name: "explicit value", value: "selected", effective: "selected"},
+		{name: "empty value", value: "", effective: uuidString(2)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, raw.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+			db := sqlx.NewDb(raw, "sqlmock")
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT id FROM dictionary_items WHERE dictionary_id=\? AND id<>\? AND deleted_at IS NULL AND COALESCE\(NULLIF\(value,''\),id\)=\? LIMIT 1 FOR UPDATE`).
+				WithArgs(uuidString(1), uuidString(2), tc.effective).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			mock.ExpectRollback()
+			mock.ExpectClose()
+			tx, err := db.BeginTxx(t.Context(), nil)
+			require.NoError(t, err)
+			require.NoError(t, ensureSelectableValueAvailable(t.Context(), tx, uuidString(1), uuidString(2), tc.value))
+			require.NoError(t, tx.Rollback())
+		})
+	}
+}
+
+func TestUpdateItemLocksDefinitionBeforeCheckingSelectableValue(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{db: db, tx: database.NewTransactor(db)}
+	dictionaryID, itemID := uuidString(1), uuidString(2)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL$`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT dictionary_type,source_type FROM dictionary_definitions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_type", "source_type"}).AddRow(KindEnum, SourceStatic))
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT id FROM dictionary_items WHERE dictionary_id=\? AND id<>\? AND deleted_at IS NULL AND COALESCE\(NULLIF\(value,''\),id\)=\? LIMIT 1 FOR UPDATE`).
+		WithArgs(dictionaryID, itemID, itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuidString(3)))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
+	_, err = service.UpdateItem(ctx, ItemUpdate{ID: itemID, Name: "Updated", Value: "", Version: 1})
+	require.ErrorIs(t, err, ErrConflict)
+}
+
+func TestDeleteItemLocksDefinitionBeforeItem(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{db: db, tx: database.NewTransactor(db)}
+	dictionaryID, itemID := uuidString(1), uuidString(2)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL$`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT id FROM dictionary_definitions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT id FROM dictionary_items WHERE parent_id=\? AND deleted_at IS NULL LIMIT 1 FOR UPDATE`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuidString(3)))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
+	require.ErrorIs(t, service.DeleteItem(ctx, itemID, 1), ErrConflict)
+}
+
+func TestPresentItemsResolvesParentNamesWithinDictionary(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	parentID := uuidString(1)
+	mock.ExpectQuery(`SELECT id,dictionary_id,name FROM dictionary_items WHERE id IN \(\?\) AND deleted_at IS NULL`).
+		WithArgs(parentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "dictionary_id", "name"}).AddRow(parentID, "dictionary-1", "Root"))
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	items := []Item{
+		{ID: uuidString(2), DictionaryID: "dictionary-1", ParentID: &parentID},
+		{ID: uuidString(3), DictionaryID: "dictionary-2", ParentID: &parentID},
+		{ID: parentID, DictionaryID: "dictionary-1"},
+	}
+
+	require.NoError(t, service.presentItems(context.Background(), items))
+	require.Equal(t, "Root", items[0].ParentName)
+	require.Empty(t, items[1].ParentName)
+	require.Empty(t, items[2].ParentName)
+}
+
+func TestPresentItemsSkipsParentQueryForRoots(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	items := []Item{{ID: uuidString(1), DictionaryID: "dictionary-1"}}
+
+	require.NoError(t, service.presentItems(context.Background(), items))
+	require.Empty(t, items[0].ParentName)
+}
+
+func TestPresentItemsPropagatesParentLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	parentID := uuidString(1)
+	mock.ExpectQuery(`SELECT id,dictionary_id,name FROM dictionary_items WHERE id IN \(\?\) AND deleted_at IS NULL`).
+		WithArgs(parentID).
+		WillReturnError(errors.New("database unavailable"))
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	items := []Item{{ID: uuidString(2), DictionaryID: "dictionary-1", ParentID: &parentID}}
+
+	err = service.presentItems(context.Background(), items)
+	require.ErrorContains(t, err, "load dictionary parent names")
+}
+
+func TestPageItemsExcludesCurrentSubtreeBeforeCountAndPagination(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	dictionaryID, currentID := uuidString(1), uuidString(2)
+	const recursiveQuery = `(?s)WITH RECURSIVE excluded\(id\) AS \(.*UNION.*child\.dictionary_id=\?.*\) SELECT `
+	mock.ExpectQuery(recursiveQuery+`COUNT\(\*\) FROM dictionary_items WHERE .*id NOT IN \(SELECT id FROM excluded\)`).
+		WithArgs(currentID, dictionaryID, dictionaryID, dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(recursiveQuery+`.* FROM dictionary_items WHERE .*id NOT IN \(SELECT id FROM excluded\).*ORDER BY sort_order,code,id LIMIT \? OFFSET \?`).
+		WithArgs(currentID, dictionaryID, dictionaryID, dictionaryID, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+
+	result, err := service.PageItems(platformprincipal.SystemContext(t.Context(), "test"), ItemPageInput{
+		DictionaryID: dictionaryID, ExcludeSubtreeID: currentID,
+	})
+	require.NoError(t, err)
+	require.Zero(t, result.Total)
+	require.Empty(t, result.Items)
+}
+
+func TestPageItemsRejectsInvalidExcludedSubtreeID(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	_, err := service.PageItems(platformprincipal.SystemContext(t.Context(), "test"), ItemPageInput{
+		DictionaryID: uuidString(1), ExcludeSubtreeID: "not-a-uuid",
+	})
+	require.ErrorIs(t, err, ErrInvalid)
 }
 
 func TestBuildTree(t *testing.T) {
@@ -70,6 +294,27 @@ func TestProviderRegistry(t *testing.T) {
 	require.Equal(t, "identity.user", result.Code)
 }
 
+func TestCreateDefinitionRejectsUnregisteredProvider(t *testing.T) {
+	t.Parallel()
+	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
+	valid := DefinitionInput{Code: "identity.user", Name: "Users", Kind: KindEnum, Source: SourceProvider, Status: "active"}
+
+	for _, registry := range []*ProviderRegistry{nil, NewProviderRegistry()} {
+		service := &Service{providers: registry}
+		_, err := service.CreateDefinition(ctx, valid)
+		require.ErrorIs(t, err, ErrProviderNotRegistered)
+	}
+}
+
+func TestProviderRegistryHas(t *testing.T) {
+	t.Parallel()
+	registry := NewProviderRegistry()
+	require.False(t, registry.Has("identity.user"))
+	require.NoError(t, registry.Register("identity.user", testProvider{}))
+	require.True(t, registry.Has("identity.user"))
+	require.False(t, registry.Has("identity.other"))
+}
+
 func TestValidProviderResultRejectsDuplicateAndOversizedTrees(t *testing.T) {
 	t.Parallel()
 	id := "00000000-0000-0000-0000-000000000001"
@@ -80,6 +325,24 @@ func TestValidProviderResultRejectsDuplicateAndOversizedTrees(t *testing.T) {
 	require.False(t, validProviderResult(Result{Type: KindEnum, Total: 201, Items: make([]ResultItem, 201)}, Query{}, 1000))
 }
 
+func TestValidProviderResultRejectsDuplicateEffectiveValues(t *testing.T) {
+	t.Parallel()
+	firstID, secondID := uuidString(1), uuidString(2)
+	items := []ResultItem{
+		{ID: firstID, Code: "first", Name: "First", Value: "", Extension: json.RawMessage(`{}`)},
+		{ID: secondID, Code: "second", Name: "Second", Value: firstID, Extension: json.RawMessage(`{}`)},
+	}
+	for _, kind := range []Kind{KindEnum, KindTree} {
+		t.Run(string(kind), func(t *testing.T) {
+			result := Result{Code: "values", Name: "Values", Type: kind, Items: items, Total: 2, Extension: json.RawMessage(`{}`)}
+			if kind == KindEnum {
+				result.Page, result.PageSize = 1, 20
+			}
+			require.False(t, validProviderResult(result, Query{}, 10))
+		})
+	}
+}
+
 func TestFilterTreeItemsRetainsAncestorsAndRejectsDisabledSubtrees(t *testing.T) {
 	t.Parallel()
 	rootID, childID := uuidString(1), uuidString(2)
@@ -88,6 +351,57 @@ func TestFilterTreeItemsRetainsAncestorsAndRejectsDisabledSubtrees(t *testing.T)
 	require.Len(t, filtered, 2)
 	items[0].Disabled = true
 	require.Empty(t, filterTreeItems(items, Query{Keyword: "matched"}))
+}
+
+func TestFilterTreeItemsByExactValueRetainsAncestors(t *testing.T) {
+	t.Parallel()
+	rootID, childID, otherID := uuidString(1), uuidString(2), uuidString(3)
+	items := []Item{
+		{ID: rootID, Code: "root", Value: "root-value"},
+		{ID: childID, ParentID: &rootID, Code: "child", Value: "selected-value"},
+		{ID: otherID, Code: "other", Value: "other-value"},
+	}
+
+	filtered := filterTreeItems(items, Query{Values: []string{"selected-value"}})
+	require.Len(t, filtered, 2)
+	require.Equal(t, []string{rootID, childID}, []string{filtered[0].ID, filtered[1].ID})
+}
+
+func TestFilterTreeItemsByIDWhenValueIsEmpty(t *testing.T) {
+	t.Parallel()
+	rootID, childID := uuidString(1), uuidString(2)
+	items := []Item{
+		{ID: rootID, Code: "root"},
+		{ID: childID, ParentID: &rootID, Code: "child"},
+	}
+
+	filtered := filterTreeItems(items, Query{Values: []string{childID}})
+	require.Len(t, filtered, 2)
+	require.Equal(t, []string{rootID, childID}, []string{filtered[0].ID, filtered[1].ID})
+}
+
+func TestQueryStaticEnumFiltersExactValuesInCountAndPage(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	const selected = "x' OR 1=1 --"
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE .*COALESCE\(NULLIF\(value,''\),id\) IN \(\?\)`).
+		WithArgs("dictionary-1", selected).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE .*COALESCE\(NULLIF\(value,''\),id\) IN \(\?\).*LIMIT \? OFFSET \?`).
+		WithArgs("dictionary-1", selected, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+
+	result, err := service.queryStatic(context.Background(), Definition{ID: "dictionary-1", Kind: KindEnum}, Query{Values: []string{selected}})
+	require.NoError(t, err)
+	require.Zero(t, result.Total)
+	require.Empty(t, result.Items)
 }
 
 func TestBuildTreeRejectsCycleAndReturnsEmptyArray(t *testing.T) {
@@ -112,11 +426,13 @@ func TestBuildTreeHonorsRequestedSort(t *testing.T) {
 func TestValidProviderResultEnforcesPublicContract(t *testing.T) {
 	t.Parallel()
 	id := uuidString(1)
-	result := Result{Code: "gender", Name: "Gender", Type: KindEnum, Page: 1, PageSize: 20, Total: 1, Extension: json.RawMessage(`{}`), Items: []ResultItem{{ID: id, Code: "m", Name: "Male", Extension: json.RawMessage(`{}`)}}}
+	result := Result{Code: "gender", Name: "Gender", Type: KindEnum, Page: 1, PageSize: 20, Total: 1, Extension: json.RawMessage(`{}`), Items: []ResultItem{{ID: id, Code: "m", Name: "Male", Value: "m", Extension: json.RawMessage(`{}`)}}}
 	require.True(t, validProviderResult(result, Query{}, 100))
 	result.Items[0].Disabled = true
 	require.False(t, validProviderResult(result, Query{}, 100))
 	require.True(t, validProviderResult(result, Query{IncludeDisabled: true}, 100))
+	require.True(t, validProviderResult(result, Query{IncludeDisabled: true, Values: []string{"m"}}, 100))
+	require.False(t, validProviderResult(result, Query{IncludeDisabled: true, Values: []string{"other"}}, 100))
 }
 
 func uuidString(last byte) string {

@@ -112,6 +112,11 @@ func TestServicePageRejectsInvalidFiltersBeforeDatabase(t *testing.T) {
 		{Request: pagination.Request{Page: 1, Keyword: string(make([]byte, maxTenantKeywordLength+1))}},
 		{Request: pagination.Request{Page: 1}, IDs: []string{""}},
 		{Request: pagination.Request{Page: 1}, IDs: []string{string(make([]byte, maxTenantIDLength+1))}},
+		{Request: pagination.Request{Page: 1}, Codes: make([]string, 201)},
+		{Request: pagination.Request{Page: 1}, Codes: []string{"invalid code"}},
+		{Request: pagination.Request{Page: 1}, OwnerUserIDs: make([]string, 201)},
+		{Request: pagination.Request{Page: 1}, OwnerUserIDs: []string{" "}},
+		{Request: pagination.Request{Page: 1}, OwnerUserIDs: []string{string(make([]byte, maxTenantIDLength+1))}},
 		{Request: pagination.Request{Page: 1}, Statuses: []Status{"unknown"}},
 		{Request: pagination.Request{Page: 1}, CreatedAtFrom: &from, CreatedAtTo: &to},
 	}
@@ -119,6 +124,17 @@ func TestServicePageRejectsInvalidFiltersBeforeDatabase(t *testing.T) {
 		if _, err := service.Page(ctx, input); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("Page() error = %v, want ErrInvalid", err)
 		}
+	}
+}
+
+func TestNormalizePageInputCanonicalizesCodesAndOwnerIDs(t *testing.T) {
+	t.Parallel()
+	input := PageInput{Codes: []string{" Tenant_A "}, OwnerUserIDs: []string{" owner-a "}}
+	if _, err := normalizePageInput(&input); err != nil {
+		t.Fatal(err)
+	}
+	if input.Codes[0] != "tenant_a" || input.OwnerUserIDs[0] != "owner-a" {
+		t.Fatalf("normalized filters = codes %v, owners %v", input.Codes, input.OwnerUserIDs)
 	}
 }
 

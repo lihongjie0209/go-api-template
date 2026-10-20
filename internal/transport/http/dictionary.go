@@ -62,6 +62,14 @@ type UpdateDictionaryItemRequest struct {
 type DictionaryIDRequest struct {
 	ID string `json:"id" binding:"required,uuid"`
 }
+type DictionaryItemDefinitionTarget struct {
+	ID     string            `json:"id"`
+	Code   string            `json:"code"`
+	Name   string            `json:"name"`
+	Type   dictionary.Kind   `json:"type"`
+	Source dictionary.Source `json:"source"`
+	Status string            `json:"status"`
+}
 type DictionaryPageRequest struct {
 	pagination.Request
 	Types    []dictionary.Kind   `json:"types" binding:"max=10,dive,oneof=enum tree"`
@@ -70,14 +78,15 @@ type DictionaryPageRequest struct {
 }
 type DictionaryItemPageRequest struct {
 	pagination.Request
-	DictionaryID string  `json:"dictionary_id" binding:"required,uuid"`
-	Disabled     *bool   `json:"disabled"`
-	ParentID     *string `json:"parent_id" binding:"omitempty,uuid"`
+	DictionaryID     string  `json:"dictionary_id" binding:"required,uuid"`
+	Disabled         *bool   `json:"disabled"`
+	ParentID         *string `json:"parent_id" binding:"omitempty,uuid"`
+	ExcludeSubtreeID string  `json:"exclude_subtree_id" binding:"omitempty,uuid"`
 }
 
 // QueryDictionary godoc
 // @Summary Query a static or dynamic data dictionary
-// @Description Public endpoint. Enum results are paged; tree results are returned as a bounded complete tree.
+// @Description Public endpoint. Enum results are paged; tree results are returned as a bounded complete tree. Optional values filter matches the selectable value (item value, or item ID when value is empty) exactly and combines with IDs, codes, and keyword using AND; trees retain matching ancestors.
 // @Tags data-dictionaries
 // @Accept json
 // @Produce json
@@ -140,6 +149,126 @@ func (h *DictionaryHandler) GetDefinition(c *gin.Context) {
 	}
 	OK(c, v)
 }
+
+// GetDictionaryUpdateTarget godoc
+// @Summary Get an action-scoped dictionary definition update target
+// @Tags data-dictionaries
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=dictionary.UpdateTarget}
+// @Router /api/v1/dictionaries/update-target [post]
+func (h *DictionaryHandler) UpdateTarget(c *gin.Context) {
+	var request DictionaryIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	value, err := h.service.UpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, value)
+}
+
+// GetDictionaryDeleteTarget godoc
+// @Summary Get an action-scoped dictionary definition delete target
+// @Tags data-dictionaries
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=dictionary.DeleteTarget}
+// @Router /api/v1/dictionaries/delete-target [post]
+func (h *DictionaryHandler) DeleteTarget(c *gin.Context) {
+	var request DictionaryIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	value, err := h.service.DeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, value)
+}
+
+func (h *DictionaryHandler) itemDefinitionTarget(c *gin.Context) {
+	var request DictionaryIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	definition, err := h.service.GetDefinition(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, DictionaryItemDefinitionTarget{
+		ID: definition.ID, Code: definition.Code, Name: definition.Name,
+		Type: definition.Kind, Source: definition.Source, Status: definition.Status,
+	})
+}
+
+// ItemDefinitionTargetRead godoc
+// @Summary Get a dictionary definition target for item readers
+// @Tags data-dictionaries
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=DictionaryItemDefinitionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/dictionary-items/definition-target/read [post]
+func (h *DictionaryHandler) ItemDefinitionTargetRead(c *gin.Context) { h.itemDefinitionTarget(c) }
+
+// ItemDefinitionTargetList godoc
+// @Summary Get a dictionary definition target for item list operators
+// @Tags data-dictionaries
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=DictionaryItemDefinitionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/dictionary-items/definition-target/list [post]
+func (h *DictionaryHandler) ItemDefinitionTargetList(c *gin.Context) { h.itemDefinitionTarget(c) }
+
+// ItemDefinitionTargetCreate godoc
+// @Summary Get a dictionary definition target for item creators
+// @Tags data-dictionaries
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=DictionaryItemDefinitionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/dictionary-items/definition-target/create [post]
+func (h *DictionaryHandler) ItemDefinitionTargetCreate(c *gin.Context) { h.itemDefinitionTarget(c) }
+
+// ItemDefinitionTargetUpdate godoc
+// @Summary Get a dictionary definition target for item editors
+// @Tags data-dictionaries
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=DictionaryItemDefinitionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/dictionary-items/definition-target/update [post]
+func (h *DictionaryHandler) ItemDefinitionTargetUpdate(c *gin.Context) { h.itemDefinitionTarget(c) }
+
+// ItemDefinitionTargetDelete godoc
+// @Summary Get a dictionary definition target for item deleters
+// @Tags data-dictionaries
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Dictionary"
+// @Success 200 {object} Response{body=DictionaryItemDefinitionTarget}
+// @Failure 400 {object} Response
+// @Failure 403 {object} Response
+// @Failure 404 {object} Response
+// @Router /api/v1/dictionary-items/definition-target/delete [post]
+func (h *DictionaryHandler) ItemDefinitionTargetDelete(c *gin.Context) { h.itemDefinitionTarget(c) }
 
 // PageDefinitions godoc
 // @Summary Page data dictionaries
@@ -207,6 +336,50 @@ func (h *DictionaryHandler) GetItem(c *gin.Context) {
 	OK(c, v)
 }
 
+// GetDictionaryItemUpdateTarget godoc
+// @Summary Get an action-scoped dictionary item update target
+// @Tags data-dictionaries
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Item"
+// @Success 200 {object} Response{body=dictionary.ItemUpdateTarget}
+// @Router /api/v1/dictionary-items/update-target [post]
+func (h *DictionaryHandler) ItemUpdateTarget(c *gin.Context) {
+	var request DictionaryIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	value, err := h.service.ItemUpdateTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, value)
+}
+
+// GetDictionaryItemDeleteTarget godoc
+// @Summary Get an action-scoped dictionary item delete target
+// @Tags data-dictionaries
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DictionaryIDRequest true "Item"
+// @Success 200 {object} Response{body=dictionary.ItemDeleteTarget}
+// @Router /api/v1/dictionary-items/delete-target [post]
+func (h *DictionaryHandler) ItemDeleteTarget(c *gin.Context) {
+	var request DictionaryIDRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	value, err := h.service.ItemDeleteTarget(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, value)
+}
+
 // PageItems godoc
 // @Summary Page static dictionary items
 // @Tags data-dictionaries
@@ -221,7 +394,7 @@ func (h *DictionaryHandler) PageItems(c *gin.Context) {
 	if !h.bind(c, &r) {
 		return
 	}
-	v, e := h.service.PageItems(c.Request.Context(), dictionary.ItemPageInput{Request: r.Request, DictionaryID: r.DictionaryID, Disabled: r.Disabled, ParentID: r.ParentID})
+	v, e := h.service.PageItems(c.Request.Context(), dictionary.ItemPageInput{Request: r.Request, DictionaryID: r.DictionaryID, Disabled: r.Disabled, ParentID: r.ParentID, ExcludeSubtreeID: r.ExcludeSubtreeID})
 	if e != nil {
 		h.fail(c, e)
 		return
@@ -326,10 +499,14 @@ func (h *DictionaryHandler) fail(c *gin.Context, e error) {
 	switch {
 	case errors.Is(e, dictionary.ErrInvalid):
 		Fail(c, h.logger, apperror.Invalid("invalid dictionary request", e))
+	case errors.Is(e, dictionary.ErrProviderNotRegistered):
+		Fail(c, h.logger, apperror.Invalid("dictionary provider is not registered", e))
 	case errors.Is(e, dictionary.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("dictionary not found"))
 	case errors.Is(e, dictionary.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("dictionary conflict", e))
+	case errors.Is(e, dictionary.ErrStaleVersion):
+		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, dictionary.ErrProviderUnavailable):
 		Fail(c, h.logger, apperror.Unavailable("dictionary provider unavailable", e))
 	default:

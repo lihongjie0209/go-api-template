@@ -29,11 +29,11 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/outbound"
-	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
 	"github.com/lihongjie0209/go-api-template/internal/policysync"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/resourcecatalog"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
@@ -78,7 +78,7 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(navigation.New),
 		fx.Provide(dictionary.New, dictionary.NewProviderRegistry),
 		fx.Invoke(application.RegisterDictionaryProvider),
-		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), tenant.NewMembershipService, tenant.NewContextService),
+		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), fx.Annotate(newMemberContactSearcher, fx.As(new(tenant.MemberContactSearcher))), tenant.NewMembershipService, tenant.NewContextService),
 		fx.Provide(tenant.NewDepartmentService),
 		fx.Provide(idempotency.New),
 		fx.Provide(observability.NewMetrics),

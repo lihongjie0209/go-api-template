@@ -23,6 +23,11 @@ func NewFileHandler(service *files.Service, logger *slog.Logger) *FileHandler {
 type FileIDRequest struct {
 	ID string `json:"id" binding:"required"`
 }
+type FileDeleteTarget struct {
+	ID           string `json:"id"`
+	OriginalName string `json:"original_name"`
+	Version      int64  `json:"version"`
+}
 type DeleteFileRequest struct {
 	ID      string `json:"id" binding:"required"`
 	Version int64  `json:"version" binding:"required,gt=0"`
@@ -89,6 +94,29 @@ func (h *FileHandler) Get(c *gin.Context) {
 		return
 	}
 	OK(c, record)
+}
+
+// DeleteTarget godoc
+// @Summary Get a versioned file target for confirmed deletion
+// @Tags files
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body FileIDRequest true "File ID"
+// @Success 200 {object} Response{body=FileDeleteTarget}
+// @Router /api/v1/files/delete-target [post]
+func (h *FileHandler) DeleteTarget(c *gin.Context) {
+	var request FileIDRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		Fail(c, h.logger, apperror.Invalid("invalid request", err))
+		return
+	}
+	record, err := h.service.Get(c.Request.Context(), request.ID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, FileDeleteTarget{ID: record.ID, OriginalName: record.OriginalName, Version: record.Version})
 }
 
 // Page godoc
@@ -166,7 +194,7 @@ func (h *FileHandler) fail(c *gin.Context, err error) {
 	case errors.Is(err, files.ErrForbidden):
 		Fail(c, h.logger, apperror.Forbidden("file access denied"))
 	case errors.Is(err, files.ErrVersionConflict):
-		Fail(c, h.logger, apperror.Conflict("file version conflict", err))
+		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, files.ErrInvalidInput):
 		Fail(c, h.logger, apperror.Invalid("invalid file input", err))
 	case errors.Is(err, files.ErrDisabled):

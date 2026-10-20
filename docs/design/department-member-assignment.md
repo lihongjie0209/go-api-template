@@ -1,5 +1,23 @@
 # Department member assignment interfaces
 
+## `POST /api/v1/tenant-departments/members/target`
+
+| Concern | Decision |
+| --- | --- |
+| Contract | Accept `{id}` and return only `{id,name,version}` for one department; invalid, missing, deleted, or out-of-scope IDs use shared errors. This supports known-ID assignment without department-list/read grants. |
+| Authentication | JWT with an active tenant and membership context. |
+| Authorization | `tenant.department:assign-member` and required department data permission; the same action protects the assignment read/write routes. |
+| Operation log | None; query only. |
+| Security log | None; no authentication or privilege mutation. |
+| Cache | None; the version must be authoritative immediately before opening the assignment drawer. |
+| Distributed lock | None; read-only. |
+| Optimistic lock | The target returns the current version; the subsequent set command requires it. |
+| Audit | No write; tenant, logical-delete, and data-permission scope are enforced by the shared department repository get path. |
+| Presentation | Return the department name, never only an opaque ID. |
+| Tests | Success, missing ID, not found/cross-tenant or scoped-out row, and route authorization registration; frontend checks malformed/mismatched targets and principal changes. |
+| Shared capability | Reuse the department service, global envelope/errors, and Resource/Action interceptor; do not add a parallel list permission. |
+| Dictionary provider | No; this narrow sensitive target lookup is not a dictionary. |
+
 ## `POST /api/v1/tenant-departments/members/get`
 
 | Concern | Decision |

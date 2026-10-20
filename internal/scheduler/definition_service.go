@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -10,10 +11,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const definitionColumns = `id,code,name,description,cron_spec,timezone,handler,timeout_seconds,lock_ttl_seconds,status,payload,created_at,created_by,updated_at,updated_by,version`
@@ -45,6 +51,27 @@ type DefinitionPageInput struct {
 }
 
 type DefinitionPage = pagination.Result[Definition]
+type UpdateTarget struct {
+	ID             string          `json:"id"`
+	Code           string          `json:"code"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	CronSpec       string          `json:"cron_spec"`
+	Timezone       string          `json:"timezone"`
+	Handler        string          `json:"handler"`
+	TimeoutSeconds int64           `json:"timeout_seconds"`
+	LockTTLSeconds int64           `json:"lock_ttl_seconds"`
+	Status         string          `json:"status"`
+	Payload        json.RawMessage `json:"payload" swaggertype:"object"`
+	Version        int64           `json:"version"`
+}
+type DeleteTarget struct {
+	ID      string `json:"id"`
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Version int64  `json:"version"`
+}
 type RunPage = pagination.Result[Run]
 type RunPageInput struct {
 	pagination.Request
@@ -63,10 +90,15 @@ type DefinitionService struct {
 	actors     presentation.ActorResolver
 	handlers   *HandlerRegistry
 	runtime    *Manager
+	outbox     manualOutbox
 }
 
-func NewDefinitionService(db *sqlx.DB, tx *database.Transactor, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver, handlers *HandlerRegistry, runtime *Manager) *DefinitionService {
-	return &DefinitionService{db: db, tx: tx, operations: operations, actors: actors, handlers: handlers, runtime: runtime}
+type manualOutbox interface {
+	Store(context.Context, *sqlx.Tx, string, *commonv1.EventEnvelope) error
+}
+
+func NewDefinitionService(db *sqlx.DB, tx *database.Transactor, operations operationlog.TransactionalRecorder, actors presentation.ActorResolver, handlers *HandlerRegistry, runtime *Manager, outbox *eventbus.Outbox) *DefinitionService {
+	return &DefinitionService{db: db, tx: tx, operations: operations, actors: actors, handlers: handlers, runtime: runtime, outbox: outbox}
 }
 
 func (s *DefinitionService) Create(ctx context.Context, input DefinitionInput) (Definition, error) {
@@ -101,11 +133,7 @@ func (s *DefinitionService) Get(ctx context.Context, id string) (Definition, err
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return Definition{}, err
 	}
-	var record Definition
-	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE id=? AND deleted_at IS NULL`), strings.TrimSpace(id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Definition{}, ErrDefinitionNotFound
-	}
+	record, err := s.loadDefinition(ctx, id)
 	if err != nil {
 		return Definition{}, err
 	}
@@ -114,6 +142,59 @@ func (s *DefinitionService) Get(ctx context.Context, id string) (Definition, err
 		return Definition{}, err
 	}
 	return items[0], nil
+}
+
+func (s *DefinitionService) UpdateTarget(ctx context.Context, id string) (UpdateTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return UpdateTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id {
+		return UpdateTarget{}, ErrInvalidDefinition
+	}
+	definition, err := s.loadDefinition(ctx, id)
+	if err != nil {
+		return UpdateTarget{}, err
+	}
+	return UpdateTarget{
+		ID: definition.ID, Code: definition.Code, Name: definition.Name,
+		Description: definition.Description, CronSpec: definition.CronSpec,
+		Timezone: definition.Timezone, Handler: definition.Handler,
+		TimeoutSeconds: definition.TimeoutSeconds, LockTTLSeconds: definition.LockTTLSeconds,
+		Status: definition.Status, Payload: definition.Payload, Version: definition.Version,
+	}, nil
+}
+
+func (s *DefinitionService) DeleteTarget(ctx context.Context, id string) (DeleteTarget, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return DeleteTarget{}, err
+	}
+	id = strings.TrimSpace(id)
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id {
+		return DeleteTarget{}, ErrInvalidDefinition
+	}
+	definition, err := s.loadDefinition(ctx, id)
+	if err != nil {
+		return DeleteTarget{}, err
+	}
+	return DeleteTarget{
+		ID: definition.ID, Code: definition.Code, Name: definition.Name,
+		Status: definition.Status, Version: definition.Version,
+	}, nil
+}
+
+func (s *DefinitionService) loadDefinition(ctx context.Context, id string) (Definition, error) {
+	var record Definition
+	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE id=? AND deleted_at IS NULL`), strings.TrimSpace(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Definition{}, ErrDefinitionNotFound
+	}
+	if err != nil {
+		return Definition{}, err
+	}
+	return record, nil
 }
 
 func (s *DefinitionService) Page(ctx context.Context, input DefinitionPageInput) (DefinitionPage, error) {
@@ -197,7 +278,7 @@ func (s *DefinitionService) Update(ctx context.Context, input UpdateDefinitionIn
 			return execErr
 		}
 		if affected != 1 {
-			return ErrDefinitionConflict
+			return ErrDefinitionStaleVersion
 		}
 		return nil
 	})
@@ -231,7 +312,7 @@ func (s *DefinitionService) Delete(ctx context.Context, id string, version int64
 			return execErr
 		}
 		if affected != 1 {
-			return ErrDefinitionConflict
+			return ErrDefinitionStaleVersion
 		}
 		return nil
 	})
@@ -241,23 +322,50 @@ func (s *DefinitionService) Delete(ctx context.Context, id string, version int64
 	return err
 }
 
-func (s *DefinitionService) Trigger(ctx context.Context, id string) error {
-	definition, err := s.Get(ctx, id)
+type TriggerResult struct {
+	RunID  string `json:"run_id"`
+	Status string `json:"status"`
+}
+
+func (s *DefinitionService) Trigger(ctx context.Context, id string) (TriggerResult, error) {
+	actor, err := platformprincipal.Require(ctx)
 	if err != nil {
-		return err
+		return TriggerResult{}, err
 	}
+	definition, err := s.loadDefinition(ctx, id)
+	if err != nil {
+		return TriggerResult{}, err
+	}
+	if s.outbox == nil {
+		return TriggerResult{}, errors.New("scheduled job dispatch outbox is unavailable")
+	}
+	runID := uuid.NewString()
+	requestID, _ := requestid.FromContext(ctx)
+	traceID := trace.SpanContextFromContext(ctx).TraceID().String()
 	started := time.Now()
-	err = s.runtime.Trigger(ctx, definition)
-	if s.operations != nil {
-		entry := operationlog.Entry{Operation: "platform.scheduled-job.execute", ResourceType: "scheduled_job", ResourceID: definition.ID, ResourceName: definition.Name, Source: "backend", Protocol: "service", Request: map[string]any{"handler": definition.Handler}, Duration: time.Since(started), Succeeded: err == nil}
-		if err != nil {
-			entry.ErrorCode, entry.ErrorMessage = "execution_failed", "scheduled job execution failed"
-		}
-		if recordErr := s.operations.Record(ctx, entry); recordErr != nil && err == nil {
-			return recordErr
-		}
+	payload, err := json.Marshal(manualDispatchPayload{RunID: runID})
+	if err != nil {
+		return TriggerResult{}, err
 	}
-	return err
+	envelope := &commonv1.EventEnvelope{EventId: runID, EventType: manualDispatchEventType, AggregateId: definition.ID, AggregateType: "scheduled_job", SchemaVersion: 1, OccurredAt: timestamppb.New(started), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: traceID, ActorId: actor.ID, ActorType: string(actor.Type)}, Payload: payload}
+	err = s.tx.Within(ctx, &sql.TxOptions{}, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), runID, definition.ID, definition.Code, definition.Name, definition.Handler, "manual", "queued", requestID, traceID, string(definition.Payload), definition.TimeoutSeconds, definition.LockTTLSeconds, started, actor.ID, started, actor.ID)
+		if execErr != nil {
+			return execErr
+		}
+		if err := s.outbox.Store(ctx, tx, manualDispatchEventType, envelope); err != nil {
+			return err
+		}
+		if s.operations != nil {
+			entry := operationlog.Entry{Operation: "platform.scheduled-job.execute", ResourceType: "scheduled_job", ResourceID: definition.ID, ResourceName: definition.Name, Source: "backend", Protocol: "service", Request: map[string]any{"run_id": runID, "handler": definition.Handler}, Duration: time.Since(started), Succeeded: true}
+			return s.operations.RecordTx(ctx, tx, entry)
+		}
+		return nil
+	})
+	if err != nil {
+		return TriggerResult{}, err
+	}
+	return TriggerResult{RunID: runID, Status: "queued"}, nil
 }
 
 func (s *DefinitionService) GetRun(ctx context.Context, id string) (Run, error) {
@@ -284,7 +392,7 @@ func (s *DefinitionService) PageRuns(ctx context.Context, input RunPageInput) (R
 		return RunPage{}, err
 	}
 	request, err := pagination.Normalize(input.Request)
-	if err != nil || strings.TrimSpace(input.ScheduledJobID) == "" || len(input.ScheduledJobID) > 128 || len(input.Statuses) > 3 || len(input.TriggerSources) > 2 || len(input.Sort) > 3 || len(strings.TrimSpace(request.Keyword)) > 256 {
+	if err != nil || strings.TrimSpace(input.ScheduledJobID) == "" || len(input.ScheduledJobID) > 128 || len(input.Statuses) > 5 || len(input.TriggerSources) > 2 || len(input.Sort) > 3 || len(strings.TrimSpace(request.Keyword)) > 256 {
 		return RunPage{}, ErrInvalidDefinition
 	}
 	if input.StartedAtFrom != nil && input.StartedAtTo != nil && !input.StartedAtFrom.Before(*input.StartedAtTo) {
@@ -310,7 +418,7 @@ func (s *DefinitionService) PageRuns(ctx context.Context, input RunPageInput) (R
 		where, args = append(where, query), append(args, queryArgs...)
 	}
 	for _, status := range input.Statuses {
-		if status != "success" && status != "error" && status != "skipped" {
+		if status != "queued" && status != "running" && status != "success" && status != "error" && status != "skipped" {
 			return RunPage{}, ErrInvalidDefinition
 		}
 	}
@@ -396,7 +504,14 @@ func (s *DefinitionService) presentRuns(ctx context.Context, items []Run) error 
 	}
 	for index := range items {
 		items[index].CreatedByName, items[index].UpdatedByName = names[items[index].CreatedBy], names[items[index].UpdatedBy]
-		items[index].StartedAt, items[index].FinishedAt = presentation.Time(items[index].StartedAt), presentation.Time(items[index].FinishedAt)
+		if items[index].StartedAt != nil {
+			value := presentation.Time(*items[index].StartedAt)
+			items[index].StartedAt = &value
+		}
+		if items[index].FinishedAt != nil {
+			value := presentation.Time(*items[index].FinishedAt)
+			items[index].FinishedAt = &value
+		}
 		items[index].CreatedAt, items[index].UpdatedAt = presentation.Time(items[index].CreatedAt), presentation.Time(items[index].UpdatedAt)
 	}
 	return nil
@@ -445,9 +560,9 @@ func definitionOrder(sorts []pagination.Sort) (string, error) {
 
 func runOrder(sorts []pagination.Sort) (string, error) {
 	if len(sorts) == 0 {
-		return "started_at DESC,id ASC", nil
+		return "created_at DESC,id ASC", nil
 	}
-	allowed := map[string]string{"started_at": "started_at", "finished_at": "finished_at", "duration_ms": "duration_ms", "status": "status", "trigger_source": "trigger_source"}
+	allowed := map[string]string{"created_at": "created_at", "started_at": "started_at", "finished_at": "finished_at", "duration_ms": "duration_ms", "status": "status", "trigger_source": "trigger_source"}
 	order, seen := make([]string, 0, len(sorts)+1), map[string]struct{}{}
 	for _, sort := range sorts {
 		column, ok := allowed[sort.Field]

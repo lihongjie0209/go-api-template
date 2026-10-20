@@ -15,10 +15,13 @@ import (
 )
 
 var ErrNotFound = errors.New("security log not found")
+var ErrTenantRequired = errors.New("security log tenant context required")
+var ErrPlatformContextRequired = errors.New("security log platform context required")
 
 type Record struct {
 	ID             string          `db:"id" json:"id"`
 	TenantID       string          `db:"tenant_id" json:"tenant_id"`
+	TenantName     string          `db:"tenant_name" json:"tenant_name"`
 	ActorID        string          `db:"actor_id" json:"actor_id"`
 	ActorName      string          `db:"actor_name" json:"actor_name"`
 	ActorType      string          `db:"actor_type" json:"actor_type"`
@@ -59,6 +62,7 @@ type PageInput struct {
 	EventTypes     []EventType
 	SessionIDs     []string
 	RequestIDs     []string
+	TraceIDs       []string
 	ClientIPs      []string
 	Identifier     string
 	Succeeded      *bool
@@ -73,22 +77,40 @@ type Page struct {
 	Total    int64    `json:"total"`
 }
 
-const recordColumns = `l.id,l.tenant_id,l.actor_id,l.actor_name_snapshot AS actor_name,l.actor_type,l.subject_id,l.subject_name_snapshot AS subject_name,l.subject_type,l.event_type,l.succeeded,l.reason,l.error_code,l.error_message,l.identifier_hash,l.token_id_hash,l.session_id,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.metadata,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
+// Tenant name is a current owned projection; actor and subject names remain immutable snapshots.
+const recordColumns = `l.id,l.tenant_id,COALESCE((SELECT t.name FROM tenants t WHERE t.id=l.tenant_id),'') AS tenant_name,l.actor_id,l.actor_name_snapshot AS actor_name,l.actor_type,l.subject_id,l.subject_name_snapshot AS subject_name,l.subject_type,l.event_type,l.succeeded,l.reason,l.error_code,l.error_message,l.identifier_hash,l.token_id_hash,l.session_id,l.request_id,l.trace_id,l.client_ip,l.user_agent,l.metadata,l.occurred_at,l.created_at,l.created_by,l.updated_at,l.updated_by,l.version`
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
 	if err != nil {
 		return Record{}, err
 	}
+	if strings.TrimSpace(actor.TenantID) == "" {
+		return Record{}, ErrTenantRequired
+	}
+	return s.getScoped(ctx, id, actor.TenantID)
+}
+
+// SystemGet reads only records emitted outside a tenant context.
+func (s *Service) SystemGet(ctx context.Context, id string) (Record, error) {
+	actor, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	if actor.TenantID != "" || actor.Type != platformprincipal.TypeUser {
+		return Record{}, ErrPlatformContextRequired
+	}
+	return s.getScoped(ctx, id, "")
+}
+
+func (s *Service) getScoped(ctx context.Context, id, tenantID string) (Record, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return Record{}, ErrInvalidEntry
 	}
 	where, args := "l.id=? AND l.deleted_at IS NULL", []any{id}
-	if actor.TenantID != "" {
-		where += " AND l.tenant_id=?"
-		args = append(args, actor.TenantID)
-	}
+	where += " AND l.tenant_id=?"
+	args = append(args, tenantID)
 	var record Record
 	if err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+recordColumns+` FROM security_logs l WHERE `+where), args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -109,19 +131,39 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
+	if strings.TrimSpace(actor.TenantID) == "" {
+		return Page{}, ErrTenantRequired
+	}
+	return s.pageScoped(ctx, input, actor.TenantID)
+}
+
+// SystemPage bounds system-only scans to an explicit 31-day window.
+func (s *Service) SystemPage(ctx context.Context, input PageInput) (Page, error) {
+	actor, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return Page{}, err
+	}
+	if actor.TenantID != "" || actor.Type != platformprincipal.TypeUser {
+		return Page{}, ErrPlatformContextRequired
+	}
+	if len(input.TenantIDs) != 0 || input.OccurredAtFrom == nil || input.OccurredAtTo == nil ||
+		!input.OccurredAtFrom.Before(*input.OccurredAtTo) || input.OccurredAtTo.Sub(*input.OccurredAtFrom) > 31*24*time.Hour {
+		return Page{}, ErrInvalidEntry
+	}
+	return s.pageScoped(ctx, input, "")
+}
+
+func (s *Service) pageScoped(ctx context.Context, input PageInput, tenantID string) (Page, error) {
 	request, err := pagination.Normalize(input.Request)
 	if err != nil || invalidPageInput(input) {
 		return Page{}, ErrInvalidEntry
 	}
 	where, args := "l.deleted_at IS NULL", []any{}
-	if actor.TenantID != "" {
-		where += " AND l.tenant_id=?"
-		args = append(args, actor.TenantID)
-	} else if len(input.TenantIDs) > 0 {
-		where, args, err = appendIn(where, args, "tenant_id", input.TenantIDs)
-		if err != nil {
-			return Page{}, ErrInvalidEntry
-		}
+	where += " AND l.tenant_id=?"
+	args = append(args, tenantID)
+	where, args, err = appendIn(where, args, "l.tenant_id", input.TenantIDs)
+	if err != nil {
+		return Page{}, ErrInvalidEntry
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
 		pattern := "%" + strings.ToLower(keyword) + "%"
@@ -131,7 +173,7 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	filters := []struct {
 		column string
 		values []string
-	}{{"id", input.IDs}, {"actor_id", input.ActorIDs}, {"subject_id", input.SubjectIDs}, {"subject_type", input.SubjectTypes}, {"session_id", input.SessionIDs}, {"request_id", input.RequestIDs}, {"client_ip", input.ClientIPs}}
+	}{{"id", input.IDs}, {"actor_id", input.ActorIDs}, {"subject_id", input.SubjectIDs}, {"subject_type", input.SubjectTypes}, {"session_id", input.SessionIDs}, {"request_id", input.RequestIDs}, {"trace_id", input.TraceIDs}, {"client_ip", input.ClientIPs}}
 	for _, filter := range filters {
 		where, args, err = appendIn(where, args, filter.column, filter.values)
 		if err != nil {
@@ -224,7 +266,7 @@ func invalidPageInput(input PageInput) bool {
 			return true
 		}
 	}
-	for _, values := range [][]string{input.IDs, input.TenantIDs, input.ActorIDs, input.SubjectIDs, input.SubjectTypes, input.SessionIDs, input.RequestIDs, input.ClientIPs} {
+	for _, values := range [][]string{input.IDs, input.TenantIDs, input.ActorIDs, input.SubjectIDs, input.SubjectTypes, input.SessionIDs, input.RequestIDs, input.TraceIDs, input.ClientIPs} {
 		if len(values) > 200 {
 			return true
 		}
@@ -232,6 +274,11 @@ func invalidPageInput(input PageInput) bool {
 			if strings.TrimSpace(value) == "" || len(value) > 320 {
 				return true
 			}
+		}
+	}
+	for _, traceID := range input.TraceIDs {
+		if len(traceID) > 64 {
+			return true
 		}
 	}
 	return len(input.EventTypes) > 100

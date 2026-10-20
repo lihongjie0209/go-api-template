@@ -20,6 +20,26 @@ import (
 
 type operationRecorder struct{ entry operationlog.Entry }
 
+func TestOneRowDistinguishesStaleVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		rows    int64
+		wantErr bool
+	}{
+		{name: "updated", rows: 1},
+		{name: "stale version", rows: 0, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := oneRow(sqlmock.NewResult(0, tt.rows), nil)
+			if errors.Is(err, ErrStaleVersion) != tt.wantErr {
+				t.Fatalf("oneRow() error = %v, want stale version %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func (r *operationRecorder) Enabled() bool { return true }
 func (r *operationRecorder) Record(_ context.Context, entry operationlog.Entry) error {
 	r.entry = entry
