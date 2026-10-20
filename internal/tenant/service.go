@@ -162,7 +162,7 @@ func (s *Service) AdminPage(ctx context.Context, input PageInput) (pagination.Re
 	if err != nil {
 		return pagination.Result[View]{}, err
 	}
-	records, total, err := s.repository.Page(ctx, "", input, request.PageSize, pagination.Offset(request))
+	records, total, err := s.repository.AdminPage(ctx, input, request.PageSize, pagination.Offset(request))
 	if err != nil {
 		return pagination.Result[View]{}, err
 	}

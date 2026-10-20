@@ -102,12 +102,20 @@ func (r *Repository) get(ctx context.Context, where string, args ...any) (Record
 }
 
 func (r *Repository) Page(ctx context.Context, tenantID string, input PageInput, limit, offset int) ([]Record, int64, error) {
-	where := "deleted_at IS NULL"
-	args := []any{}
-	if tenantID != "" {
-		where += " AND id = ?"
-		args = append(args, tenantID)
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, 0, ErrForbidden
 	}
+	return r.page(ctx, "deleted_at IS NULL AND id = ?", []any{tenantID}, input, limit, offset)
+}
+
+// AdminPage is called only after Service.AdminPage checks the platform actor.
+// Keeping unscoped access separately named prevents an empty tenant ID from
+// silently widening an ordinary repository query.
+func (r *Repository) AdminPage(ctx context.Context, input PageInput, limit, offset int) ([]Record, int64, error) {
+	return r.page(ctx, "deleted_at IS NULL", nil, input, limit, offset)
+}
+
+func (r *Repository) page(ctx context.Context, where string, args []any, input PageInput, limit, offset int) ([]Record, int64, error) {
 	if input.Keyword != "" {
 		where += " AND (LOWER(code) LIKE ? OR LOWER(name) LIKE ?)"
 		pattern := "%" + strings.ToLower(input.Keyword) + "%"

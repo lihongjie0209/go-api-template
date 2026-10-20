@@ -34,6 +34,54 @@ func TestRepositoryPageUsesSameScopedFiltersForCountAndRows(t *testing.T) {
 	}
 }
 
+func TestRepositoryPageRejectsMissingTenantScopeBeforeQuery(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	repository := NewRepository(sqlx.NewDb(raw, "pgx"))
+	for _, test := range []struct{ name, tenantID string }{
+		{name: "empty"},
+		{name: "whitespace", tenantID: "  "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := repository.Page(t.Context(), test.tenantID, PageInput{}, 20, 0)
+			if !errors.Is(err, ErrForbidden) {
+				t.Fatalf("Page(%q) error = %v, want ErrForbidden", test.tenantID, err)
+			}
+		})
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryAdminPageUsesExplicitUnscopedQuery(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	repository := NewRepository(sqlx.NewDb(raw, "pgx"))
+	where := "deleted_at IS NULL AND code IN ($1, $2)"
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM tenants WHERE "+where)).
+		WithArgs("alpha", "beta").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM tenants WHERE "+where+" ORDER BY created_at DESC, id LIMIT $3 OFFSET $4")).
+		WithArgs("alpha", "beta", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	_, total, err := repository.AdminPage(t.Context(), PageInput{Codes: []string{"alpha", "beta"}}, 20, 0)
+	if err != nil || total != 0 {
+		t.Fatalf("AdminPage() total=%d, error=%v", total, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIsUniqueViolation(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

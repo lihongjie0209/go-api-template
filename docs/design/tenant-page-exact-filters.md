@@ -15,3 +15,21 @@
 | Dictionary provider | No: tenants and their owners are transactional, potentially sensitive resources, not bounded static dictionary entries. |
 
 `code` already has a unique constraint; `owner_user_id` is queried through the existing tenant table. If operational plans show expensive owner filtering at scale, add an index in an independently reviewed migration.
+
+## Repository scope hardening
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Keep both POST page requests, filters, stable sort, response envelope and global errors unchanged. `Repository.Page` rejects an empty tenant ID with the existing forbidden error; `Repository.AdminPage` is the only explicitly named unscoped repository entrypoint. |
+| Authentication | Tenant page remains JWT; platform page remains JWT with the platform route descriptor. No PSK or anonymous access is added. |
+| Authorization | The transport checks `tenant.profile:list` for the current-tenant page or platform `tenant:list` for the admin page before the service call. Service-level tenant context remains mandatory for normal page; the repository independently fails closed if it is missing. |
+| Operation log | None: bounded query only. No mutation or export occurs. |
+| Security log | None: this is not an authentication, privilege-changing, or suspicious action. |
+| Cache | None: page/count use authoritative database state; no invalidation owner or TTL is needed. |
+| Distributed lock | None: read-only pagination has no cross-instance contention invariant. |
+| Optimistic lock | Not applicable to a query; returned record versions remain unchanged. |
+| Audit | No write or actor injection; existing audit fields are read without modification. |
+| Presentation | Existing related owner display name and RFC 3339 time formatting remain unchanged. |
+| Tests | Unit tests prove empty tenant ID causes no query, scoped count/items share the tenant predicate, and the explicit admin method stays unscoped. Existing Testcontainers tenant lifecycle covers database compatibility in CI. |
+| Shared capability | Reuse the existing repository, pagination, authorization and error mapping; no new SDK component is needed. |
+| Dictionary provider | None: tenant records are transactional and sensitive, not bounded reference data. |

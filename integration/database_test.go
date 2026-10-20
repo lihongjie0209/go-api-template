@@ -1722,6 +1722,10 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatalf("admin tenant page=%+v err=%v", adminPage, err)
 	}
 	tenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "owner-1", Type: platformprincipal.TypeUser, TenantID: created.ID})
+	tenantPage, err := service.Page(tenantCtx, tenant.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, IDs: []string{created.ID}})
+	if err != nil || tenantPage.Total != 1 || len(tenantPage.Items) != 1 || tenantPage.Items[0].ID != created.ID {
+		t.Fatalf("tenant-scoped page=%+v err=%v", tenantPage, err)
+	}
 	deleteTarget, err := service.DeleteTarget(tenantCtx)
 	if err != nil || deleteTarget.ID != created.ID || deleteTarget.Version != created.Version || deleteTarget.Name != created.Name {
 		t.Fatalf("current tenant delete target=%+v err=%v", deleteTarget, err)
@@ -1731,6 +1735,10 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatalf("current tenant update target=%+v err=%v", updateTarget, err)
 	}
 	otherTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeUser, TenantID: "another-tenant"})
+	otherTenantPage, err := service.Page(otherTenantCtx, tenant.PageInput{Request: pagination.Request{Page: 1, PageSize: 20}, IDs: []string{created.ID}})
+	if err != nil || otherTenantPage.Total != 0 || len(otherTenantPage.Items) != 0 {
+		t.Fatalf("cross-tenant page leaked data=%+v err=%v", otherTenantPage, err)
+	}
 	if _, err := service.DeleteTarget(otherTenantCtx); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("other tenant delete target error=%v", err)
 	}
