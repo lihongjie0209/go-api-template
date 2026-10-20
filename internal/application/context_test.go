@@ -22,7 +22,7 @@ func TestCurrentApplicationContextScopesEveryPrincipalDimension(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
-	mock.ExpectQuery(`FROM application_session_contexts c JOIN identity_sessions s.*JOIN tenant_memberships m.*JOIN tenant_application_grants g.*WHERE c.session_id=\? AND c.tenant_id=\? AND c.membership_id=\? AND c.user_id=\?`).
+	mock.ExpectQuery(`FROM application_session_contexts c JOIN identity_sessions s.*JOIN tenant_memberships m.*JOIN tenant_application_grants g.*JOIN tenants t ON t.id=c.tenant_id AND t.status='active' AND t.deleted_at IS NULL.*WHERE c.session_id=\? AND c.tenant_id=\? AND c.membership_id=\? AND c.user_id=\?`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "session-1", "tenant-1", "membership-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{}))
 	_, err = (&TenantAccessService{db: db}).CurrentContext(applicationContextTestPrincipal(t.Context()))
@@ -36,7 +36,7 @@ func TestSwitchApplicationContextCreatesThenReturnsAuthorizedContext(t *testing.
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
 	mock.ExpectBegin()
-	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g.*JOIN identity_sessions s`).
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g.*JOIN identity_sessions s.*JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL`).
 		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "session-1", sqlmock.AnyArg(), "app-1").
 		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Console"))
 	mock.ExpectQuery(`SELECT id,version FROM application_session_contexts`).WithArgs("session-1", "tenant-1").WillReturnRows(sqlmock.NewRows([]string{"id", "version"}))

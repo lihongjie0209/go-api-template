@@ -310,7 +310,7 @@ func (s *TenantAccessService) Current(ctx context.Context) ([]Current, error) {
 		return nil, ErrGrantForbidden
 	}
 	items := []Current{}
-	query := `SELECT a.id,a.code,a.name,a.description,a.icon,a.home_path,a.sort_order,g.starts_at,g.expires_at FROM tenant_application_grants g JOIN applications a ON a.id=g.application_id AND a.status='active' AND a.deleted_at IS NULL JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) ORDER BY a.sort_order,a.id`
+	query := `SELECT a.id,a.code,a.name,a.description,a.icon,a.home_path,a.sort_order,g.starts_at,g.expires_at FROM tenant_application_grants g JOIN applications a ON a.id=g.application_id AND a.status='active' AND a.deleted_at IS NULL JOIN tenant_memberships m ON m.tenant_id=g.tenant_id AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE g.tenant_id=? AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) ORDER BY a.sort_order,a.id`
 	now := time.Now()
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), actor.MembershipID, actor.ID, actor.TenantID, now, now); err != nil {
 		return nil, err

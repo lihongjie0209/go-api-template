@@ -44,7 +44,7 @@ func TestCurrentApplicationsScopesTenantUserAndMembershipInSQL(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
 	now := time.Now()
-	mock.ExpectQuery(`FROM tenant_application_grants g JOIN applications a.*JOIN tenant_memberships m.*WHERE g.tenant_id=\?`).
+	mock.ExpectQuery(`FROM tenant_application_grants g JOIN applications a.*JOIN tenant_memberships m.*JOIN tenants t ON t.id=g.tenant_id AND t.status='active' AND t.deleted_at IS NULL.*WHERE g.tenant_id=\?`).
 		WithArgs("membership-1", "user-1", "tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "icon", "home_path", "sort_order", "starts_at", "expires_at"}).AddRow("app-1", "console", "Console", "业务控制台", "", "/", 0, now, nil))
 	service := &TenantAccessService{db: db}

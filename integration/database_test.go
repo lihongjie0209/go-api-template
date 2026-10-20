@@ -1368,6 +1368,26 @@ func testApplicationNavigationLifecycle(t *testing.T, ctx context.Context, db *s
 	if err != nil || selected.Version != 2 {
 		t.Fatalf("updated selected application=%+v err=%v", selected, err)
 	}
+	setTenantStatus := func(status string) {
+		t.Helper()
+		if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE tenants SET status=? WHERE id=? AND deleted_at IS NULL`), status, "authorization-tenant")
+			return err
+		}); err != nil {
+			t.Fatalf("set application-context tenant status to %s: %v", status, err)
+		}
+	}
+	setTenantStatus("disabled")
+	if currentApplications, err := access.Current(currentCtx); err != nil || len(currentApplications) != 0 {
+		t.Fatalf("disabled tenant application list=%+v err=%v", currentApplications, err)
+	}
+	if _, err := access.CurrentContext(currentCtx); !errors.Is(err, application.ErrContextNotFound) {
+		t.Fatalf("disabled tenant application context error=%v", err)
+	}
+	if _, err := access.SwitchContext(currentCtx, application.SwitchInput{ApplicationID: app.ID, Version: selected.Version}); !errors.Is(err, application.ErrGrantForbidden) {
+		t.Fatalf("switch application for disabled tenant error=%v", err)
+	}
+	setTenantStatus("active")
 	root, err := navigations.Create(actorCtx, navigation.Input{ApplicationID: app.ID, Key: "system", Name: "系统", Type: "directory", Visible: true, Status: "active"})
 	if err != nil {
 		t.Fatal(err)

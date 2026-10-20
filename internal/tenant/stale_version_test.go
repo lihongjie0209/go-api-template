@@ -30,6 +30,9 @@ func TestTenantVersionMissIsDistinctFromUniqueConflict(t *testing.T) {
 			db := sqlx.NewDb(raw, "sqlmock")
 			mock.ExpectBegin()
 			if test.name == "delete" {
+				mock.ExpectExec("UPDATE application_session_contexts SET deleted_at").
+					WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
+					WillReturnResult(sqlmock.NewResult(0, 1))
 				for range 9 {
 					mock.ExpectExec("UPDATE tenant_").WillReturnResult(sqlmock.NewResult(0, 0))
 				}
@@ -51,5 +54,32 @@ func TestTenantVersionMissIsDistinctFromUniqueConflict(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestDeleteTenantStopsWhenApplicationContextCleanupFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE application_session_contexts SET deleted_at").
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
+		WillReturnError(errors.New("context cleanup unavailable"))
+	mock.ExpectRollback()
+	tx, err := db.Beginx()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteTenant(context.Background(), tx, "tenant-1", 2, "actor-1"); err == nil {
+		t.Fatal("delete succeeded after application context cleanup failed")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
