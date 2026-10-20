@@ -365,9 +365,35 @@ func TestService_SetPasswordCreatesRestrictedCredential(t *testing.T) {
 		sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), int64(0), sqlmock.AnyArg(), true,
 		sqlmock.AnyArg(), "admin", sqlmock.AnyArg(), "admin",
 	).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).WithArgs(
+		sqlmock.AnyArg(), "password_reset", sqlmock.AnyArg(), "admin", "user-1",
+	).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	require.NoError(t, service.SetPassword(ctx, "user-1", "correct horse battery staple"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_SetPasswordRollsBackNewCredentialWhenSessionRevocationFails(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{})
+	ctx := platformprincipal.SystemContext(t.Context(), "admin")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO identity_user_credentials .*must_change_password`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).
+		WillReturnError(errors.New("database unavailable"))
+	mock.ExpectRollback()
+
+	require.Error(t, service.SetPassword(ctx, "user-1", "correct horse battery staple"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

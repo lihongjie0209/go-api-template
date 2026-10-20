@@ -77,7 +77,7 @@ func TestS3AdapterAgainstS3Mock(t *testing.T) {
 	if readErr != nil || closeErr != nil || string(data) != content {
 		t.Fatalf("Get() body=%q read=%v close=%v", data, readErr, closeErr)
 	}
-	signed, err := store.Presign(ctx, key, objectstorage.OperationGet, time.Minute)
+	signed, err := store.Presign(ctx, objectstorage.PresignInput{Key: key, Operation: objectstorage.OperationGet, TTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -148,7 +148,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testLogQueryPresentation(t, ctx, db)
 			testResourceCatalogLifecycle(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
-			testManagedAuthorizationLifecycle(t, ctx, db)
+			testManagedAuthorizationLifecycle(t, ctx, db, permissionID)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testApplicationNavigationLifecycle(t, ctx, db)
 			testPlatformConfigLifecycle(t, ctx, db)
@@ -1004,6 +1004,11 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" || !tokens.MustChangePassword {
 		t.Fatalf("login tokens=%+v err=%v", tokens, err)
 	}
+	jwtVerifier := auth.NewWithDatabase(authCfg, db)
+	verified, tokenState, err := jwtVerifier.VerifyWithState(ctx, tokens.AccessToken)
+	if err != nil || verified.ID != created.ID || !tokenState.MustChangePassword {
+		t.Fatalf("temporary-password token verification principal=%+v state=%+v err=%v", verified, tokenState, err)
+	}
 	rotated, err := authenticationService.Refresh(ctx, tokens.RefreshToken)
 	if err != nil || rotated.RefreshToken == tokens.RefreshToken || !rotated.MustChangePassword {
 		t.Fatalf("refresh tokens=%+v err=%v", rotated, err)
@@ -1017,9 +1022,16 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := authenticationService.ChangePassword(creatorCtx, "correct horse battery staple", "a different correct horse battery staple"); err != nil {
 		t.Fatalf("change temporary password: %v", err)
 	}
+	if _, err := jwtVerifier.Verify(ctx, tokens.AccessToken); err == nil {
+		t.Fatal("password change did not revoke the temporary-password access token")
+	}
 	unrestricted, err := authenticationService.Login(ctx, "alice.smith", "a different correct horse battery staple", "127.0.0.1", "integration-test")
 	if err != nil || unrestricted.MustChangePassword {
 		t.Fatalf("unrestricted login tokens=%+v err=%v", unrestricted, err)
+	}
+	verified, tokenState, err = jwtVerifier.VerifyWithState(ctx, unrestricted.AccessToken)
+	if err != nil || verified.ID != created.ID || tokenState.MustChangePassword {
+		t.Fatalf("changed-password token verification principal=%+v state=%+v err=%v", verified, tokenState, err)
 	}
 	revokeTokens, err := authenticationService.Login(ctx, "alice.smith", "a different correct horse battery staple", "203.0.113.1", "integration-revoke-target")
 	if err != nil {
@@ -1144,7 +1156,7 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	return leaf.ID
 }
 
-func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
+func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, tenantPermissionID string) {
 	t.Helper()
 	actorCtx := platformprincipal.SystemContext(ctx, "authorization-integration")
 	transactor := appdb.NewTransactor(db)
@@ -1242,7 +1254,7 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	}
 	tenantCeilingService := authorization.NewTenantAuthorizationService(db, transactor, nil, nil, nil, nil, config.Config{}, nil)
 	tenantCeilingOptions, err := tenantCeilingService.PageTenantGrantablePermissions(actorCtx, pagination.Request{Keyword: "integration.permissions.read"})
-	if err != nil || tenantCeilingOptions.Total != 1 || len(tenantCeilingOptions.Items) != 1 || tenantCeilingOptions.Items[0].ID != leaf.ID {
+	if err != nil || tenantCeilingOptions.Total != 1 || len(tenantCeilingOptions.Items) != 1 || tenantCeilingOptions.Items[0].ID != tenantPermissionID {
 		t.Fatalf("tenant ceiling options=%+v err=%v", tenantCeilingOptions, err)
 	}
 	platformCeilingOptions, err := tenantCeilingService.PageTenantGrantablePermissions(actorCtx, pagination.Request{Keyword: "integration.platform.catalog.read"})
@@ -1494,6 +1506,7 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		observability.NewMetrics(cfg, nil, nil),
 		logger,
 		handlers,
+		discardOperationRecorder{},
 	)
 	if err != nil {
 		t.Fatalf("create scheduler runtime: %v", err)
@@ -1624,8 +1637,8 @@ func (s *integrationStorage) Delete(_ context.Context, key string) error {
 	s.deleted = append(s.deleted, key)
 	return nil
 }
-func (*integrationStorage) Presign(_ context.Context, _ string, _ objectstorage.Operation, ttl time.Duration) (objectstorage.SignedURL, error) {
-	return objectstorage.SignedURL{URL: "https://files.example/download", Method: "GET", ExpiresAt: time.Now().Add(ttl)}, nil
+func (*integrationStorage) Presign(_ context.Context, input objectstorage.PresignInput) (objectstorage.SignedURL, error) {
+	return objectstorage.SignedURL{URL: "https://files.example/download", Method: "GET", ExpiresAt: time.Now().Add(input.TTL)}, nil
 }
 
 func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {

@@ -36,6 +36,10 @@ The next domain work must keep identity and tenancy separate:
 - Login can occur without an authenticated principal. Security logging for
   login must accept an explicit target/identifier digest and must never require
   user context before authentication succeeds.
+- A signed access-token claim is not authoritative for mutable credential
+  state. User-token verification must recheck the active session, user, and
+  credential; every password reset path must revoke existing sessions in the
+  same transaction, including the path that creates a missing credential.
 - Tenant isolation is a mandatory SQL/repository boundary, not only a service
   authorization check. Every query, update, delete, count, join, cache key, and
   uniqueness rule for a tenant-owned table must include the authenticated

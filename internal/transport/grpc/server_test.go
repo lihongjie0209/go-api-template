@@ -257,14 +257,15 @@ func TestGRPCPasswordChangeRequirementBlocksBusinessCalls(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		method   string
+		claim    bool
 		forced   bool
 		stream   bool
 		wantCode codes.Code
 	}{
-		{name: "unary business requires password change", method: hellov1.HelloService_Ping_FullMethodName, forced: true, wantCode: codes.PermissionDenied},
+		{name: "unary business requires password change even with stale claim", method: hellov1.HelloService_Ping_FullMethodName, forced: true, wantCode: codes.PermissionDenied},
 		{name: "stream business requires password change", method: "/example.v1.ExampleService/Watch", forced: true, stream: true, wantCode: codes.PermissionDenied},
 		{name: "health remains available", method: "/grpc.health.v1.Health/Check", forced: true, wantCode: codes.OK},
-		{name: "normal user can call business method", method: hellov1.HelloService_Ping_FullMethodName, wantCode: codes.OK},
+		{name: "normal user can call business method despite stale claim", method: hellov1.HelloService_Ping_FullMethodName, claim: true, wantCode: codes.OK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -280,14 +281,14 @@ func TestGRPCPasswordChangeRequirementBlocksBusinessCalls(t *testing.T) {
 			service := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(rawDB, "sqlmock"))
 			token, err := service.IssuePrincipalWithState(
 				platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"},
-				auth.TokenState{MustChangePassword: test.forced},
+				auth.TokenState{MustChangePassword: test.claim},
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions s JOIN identity_users u`).
+			mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u`).
 				WithArgs("session-1", "user-1", sqlmock.AnyArg()).
-				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}).AddRow(test.forced))
 			ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token))
 			called := false
 			if test.stream {

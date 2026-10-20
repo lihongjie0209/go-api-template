@@ -141,19 +141,19 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		return platformprincipal.Principal{}, TokenState{}, parseErr
 	}
 	t := claims.PrincipalType
+	state := TokenState{MustChangePassword: claims.MustChangePassword}
 	switch t {
 	case platformprincipal.TypeUser:
 		if s.db == nil {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("session validation is unavailable")
 		}
-		var count int
-		query := `SELECT count(*) FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
+		query := `SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
 		args := []any{claims.SessionID, claims.Subject, time.Now()}
 		if claims.TenantID != "" {
 			query += ` AND EXISTS (SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE m.id=? AND m.tenant_id=? AND m.user_id=s.user_id AND m.status='active' AND m.deleted_at IS NULL)`
 			args = append(args, claims.MembershipID, claims.TenantID)
 		}
-		if err := s.db.GetContext(ctx, &count, s.db.Rebind(query), args...); err != nil || count != 1 {
+		if err := s.db.GetContext(ctx, &state.MustChangePassword, s.db.Rebind(query), args...); err != nil {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("session is revoked or expired")
 		}
 	case platformprincipal.TypeServiceAccount:
@@ -166,7 +166,7 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
 		}
 	}
-	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, TokenState{MustChangePassword: claims.MustChangePassword}, nil
+	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, state, nil
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
 func (s *Service) Issue(subject string) (string, error) {

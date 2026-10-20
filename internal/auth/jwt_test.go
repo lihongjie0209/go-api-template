@@ -60,7 +60,7 @@ func TestService_VerifyRejectsSessionWhenIdentityUserIsDisabled(t *testing.T) {
 	}
 	service.db = sqlx.NewDb(db, "sqlmock")
 	service.verifier = new(authn.JWKSVerifier)
-	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions s JOIN identity_users u`).WithArgs("session-1", "user-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u`).WithArgs("session-1", "user-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
 	if _, err := service.Verify(context.Background(), raw); err == nil {
 		t.Fatal("Verify() accepted a session for a disabled user")
 	}
@@ -68,6 +68,78 @@ func TestService_VerifyRejectsSessionWhenIdentityUserIsDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.Close()
+}
+
+func TestService_VerifyUsesCurrentCredentialPasswordRequirement(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		claimState bool
+		stored     bool
+	}{
+		{name: "newly required", stored: true},
+		{name: "requirement cleared", claimState: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			jwtConfig, err := testutil.JWTConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			service := NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(db, "sqlmock"))
+			raw, err := service.IssuePrincipalWithState(
+				platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"},
+				TokenState{MustChangePassword: test.claimState},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u.*JOIN identity_user_credentials c`).
+				WithArgs("session-1", "user-1", sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}).AddRow(test.stored))
+			_, state, err := service.VerifyWithState(t.Context(), raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.MustChangePassword != test.stored {
+				t.Fatalf("MustChangePassword = %v, want %v", state.MustChangePassword, test.stored)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestService_VerifyRejectsSessionWithoutActiveCredential(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	service := NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(db, "sqlmock"))
+	raw, err := service.IssuePrincipal(platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions s.*JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL`).
+		WithArgs("session-1", "user-1", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
+	if _, err := service.Verify(t.Context(), raw); err == nil {
+		t.Fatal("Verify accepted a session without an active credential")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestService_VerifyRejectsDisabledServiceAccount(t *testing.T) {
@@ -145,9 +217,9 @@ func TestServiceVerifyRevalidatesTenantMembershipOwnership(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	service.db = sqlx.NewDb(db, "sqlmock")
-	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_sessions s JOIN identity_users u.*EXISTS \(SELECT 1 FROM tenant_memberships m JOIN tenants t`).
+	mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u.*EXISTS \(SELECT 1 FROM tenant_memberships m JOIN tenants t`).
 		WithArgs("session-1", "user-1", sqlmock.AnyArg(), "member-1", "tenant-1").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
 
 	if _, err := service.Verify(t.Context(), raw); err == nil {
 		t.Fatal("Verify() accepted a tenant membership not owned by the token subject")

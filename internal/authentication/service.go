@@ -444,6 +444,10 @@ func setPasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, userID, hash, actorI
 	err := tx.GetContext(ctx, &credential, tx.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,must_change_password,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL FOR UPDATE`), userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO identity_user_credentials (id,user_id,password_hash,failed_attempts,password_changed_at,must_change_password,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), userID, hash, 0, now, true, now, actorID, now, actorID)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason=?,updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), now, reason, now, actorID, userID)
 		return err
 	}
 	if err != nil {
