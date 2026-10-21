@@ -95,6 +95,36 @@ func TestCreateItemRejectsDuplicateSelectableValue(t *testing.T) {
 	require.ErrorIs(t, err, ErrConflict)
 }
 
+func TestCreateItemPropagatesParentLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{db: db, tx: database.NewTransactor(db), cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 100}}}
+	dictionaryID, parentID := uuidString(1), uuidString(2)
+	lookupErr := errors.New("parent lookup unavailable")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_type,source_type FROM dictionary_definitions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_type", "source_type"}).AddRow(KindTree, SourceStatic))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL`).
+		WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE id=\? AND dictionary_id=\? AND deleted_at IS NULL`).
+		WithArgs(parentID, dictionaryID).
+		WillReturnError(lookupErr)
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
+	_, err = service.CreateItem(ctx, ItemInput{DictionaryID: dictionaryID, ParentID: &parentID, Code: "child", Name: "Child"})
+	require.ErrorIs(t, err, lookupErr)
+	require.NotErrorIs(t, err, ErrInvalid)
+}
+
 func TestEnsureSelectableValueAvailableUsesIDFallback(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -155,6 +185,39 @@ func TestUpdateItemLocksDefinitionBeforeCheckingSelectableValue(t *testing.T) {
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
 	_, err = service.UpdateItem(ctx, ItemUpdate{ID: itemID, Name: "Updated", Value: "", Version: 1})
 	require.ErrorIs(t, err, ErrConflict)
+}
+
+func TestUpdateItemPropagatesAncestorLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{db: db, tx: database.NewTransactor(db), cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 100}}}
+	dictionaryID, itemID, parentID := uuidString(1), uuidString(2), uuidString(3)
+	lookupErr := errors.New("ancestor lookup unavailable")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL$`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT dictionary_type,source_type FROM dictionary_definitions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_type", "source_type"}).AddRow(KindTree, SourceStatic))
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(parentID).
+		WillReturnError(lookupErr)
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
+	_, err = service.UpdateItem(ctx, ItemUpdate{ID: itemID, ParentID: &parentID, Name: "Child", Version: 1})
+	require.ErrorIs(t, err, lookupErr)
+	require.NotErrorIs(t, err, ErrInvalid)
 }
 
 func TestDeleteItemLocksDefinitionBeforeItem(t *testing.T) {

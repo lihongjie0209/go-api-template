@@ -399,7 +399,10 @@ func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 		}
 		if in.ParentID != nil {
 			var count int
-			if e := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM dictionary_items WHERE id=? AND dictionary_id=? AND deleted_at IS NULL`), *in.ParentID, in.DictionaryID); e != nil || count != 1 {
+			if e := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM dictionary_items WHERE id=? AND dictionary_id=? AND deleted_at IS NULL`), *in.ParentID, in.DictionaryID); e != nil {
+				return fmt.Errorf("check dictionary parent: %w", e)
+			}
+			if count != 1 {
 				return ErrInvalid
 			}
 		}
@@ -560,7 +563,13 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 					DictionaryID string  `db:"dictionary_id"`
 					ParentID     *string `db:"parent_id"`
 				}
-				if e := tx.GetContext(ctx, &parent, tx.Rebind(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), *current); e != nil || parent.DictionaryID != dictionaryID {
+				if e := tx.GetContext(ctx, &parent, tx.Rebind(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), *current); e != nil {
+					if errors.Is(e, sql.ErrNoRows) {
+						return ErrInvalid
+					}
+					return fmt.Errorf("load dictionary ancestor: %w", e)
+				}
+				if parent.DictionaryID != dictionaryID {
 					return ErrInvalid
 				}
 				current = parent.ParentID
