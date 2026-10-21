@@ -749,8 +749,38 @@ func TestLoadMigrationWithProfile_ProductionDoesNotRequireAPISecrets(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseName != "orders_db" || cfg.Schema != "orders" || cfg.Table != "orders_schema_migrations" {
+	if cfg.DatabaseName != "orders_db" || cfg.Schema != "orders" || cfg.Table != "orders_schema_migrations" || cfg.LockTimeout != 30*time.Second {
 		t.Fatalf("migration config = %+v", cfg)
+	}
+}
+
+func TestLoadMigrationWithProfile_EnvironmentOverridesLockTimeout(t *testing.T) {
+	t.Setenv("APP_MIGRATION_LOCK_TIMEOUT", "45s")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	content := "migration:\n  path: migrations/postgres\n  database_url: postgres://localhost/app\n  table: app_schema_migrations\n  lock_timeout: 10s\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadMigrationWithProfile(path, "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LockTimeout != 45*time.Second {
+		t.Fatalf("lock timeout = %s, want 45s", cfg.LockTimeout)
+	}
+}
+
+func TestMigrationValidateRejectsUnboundedLockTimeout(t *testing.T) {
+	t.Parallel()
+	for _, timeout := range []time.Duration{-time.Second, 500 * time.Millisecond, 6 * time.Minute} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			t.Parallel()
+			cfg := Migration{Path: "migrations/postgres", DatabaseURL: "postgres://localhost/app", Table: "app_schema_migrations", LockTimeout: timeout}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "migration.lock_timeout") {
+				t.Fatalf("Validate() error = %v, want lock timeout error", err)
+			}
+		})
 	}
 }
 

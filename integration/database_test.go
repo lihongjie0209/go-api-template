@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	migratedb "github.com/golang-migrate/migrate/v4/database"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
@@ -152,6 +154,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			}
 			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
 			if databaseType == "postgres" {
+				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
 				testPostgresAuditInfrastructure(t, ctx, db)
 				testPostgresLogPartitions(t, ctx, db)
 			} else {
@@ -181,6 +184,48 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testPostgresMigrationLockTimeout(t *testing.T, ctx context.Context, db *sqlx.DB, cfg config.Migration) {
+	t.Helper()
+	cfg.Table = "integration_lock_timeout_schema_migrations"
+	cfg.LockTimeout = time.Second
+	parsed, err := url.Parse(cfg.DatabaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema string
+	if err := db.GetContext(ctx, &schema, `SELECT current_schema()`); err != nil {
+		t.Fatal(err)
+	}
+	lockID, err := migratedb.GenerateAdvisoryLockId(parsed.Path, schema, cfg.Table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.DB.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, unlockErr := conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, lockID); unlockErr != nil {
+			t.Errorf("release migration lock: %v", unlockErr)
+		}
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Errorf("close lock connection: %v", closeErr)
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, lockID); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if err := migration.Run(cfg, "up", 0); err == nil {
+		t.Fatal("contended migration lock unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("contended migration waited %s, want less than 10s", elapsed)
 	}
 }
 

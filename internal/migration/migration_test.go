@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -108,5 +109,52 @@ func TestWithMigrationTableMySQLDSN(t *testing.T) {
 	const expected = "mysql://app:app@tcp(mysql:3306)/orders_db?x-migrations-table=orders_schema_migrations"
 	if result != expected {
 		t.Fatalf("result = %q, want %q", result, expected)
+	}
+}
+
+func TestWithMigrationLockTimeoutPreservesPostgresOptions(t *testing.T) {
+	t.Parallel()
+	for _, scheme := range []string{"postgres", "postgresql"} {
+		t.Run(scheme, func(t *testing.T) {
+			t.Parallel()
+			original := scheme + "://app:secret@db/orders?sslmode=verify-full&search_path=orders&x-migrations-table=orders_schema_migrations&lock_timeout=0"
+			result, err := withMigrationLockTimeout(original, 45*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := url.Parse(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := parsed.Query()
+			if query.Get("lock_timeout") != "45000" || query.Get("sslmode") != "verify-full" || query.Get("search_path") != "orders" || query.Get("x-migrations-table") != "orders_schema_migrations" {
+				t.Fatalf("migration query options = %v", query)
+			}
+		})
+	}
+}
+
+func TestWithMigrationLockTimeoutPreservesMySQLURL(t *testing.T) {
+	t.Parallel()
+	const original = "mysql://app:secret@tcp(db:3306)/orders?x-migrations-table=orders_schema_migrations"
+	result, err := withMigrationLockTimeout(original, 30*time.Second)
+	if err != nil || result != original {
+		t.Fatalf("withMigrationLockTimeout() = %q, %v", result, err)
+	}
+}
+
+func TestWithMigrationLockTimeoutRejectsConflictingConnectionOptions(t *testing.T) {
+	t.Parallel()
+	_, err := withMigrationLockTimeout("postgres://db/orders?options=-c+lock_timeout%3D0", 30*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "lock_timeout") {
+		t.Fatalf("withMigrationLockTimeout() error = %v, want conflicting option", err)
+	}
+}
+
+func TestRunRejectsOutOfRangeLockTimeoutBeforeOpeningDatabase(t *testing.T) {
+	t.Parallel()
+	err := Run(config.Migration{Path: ".", DatabaseURL: "postgres://db/orders", LockTimeout: 6 * time.Minute}, "up", 0)
+	if err == nil || !strings.Contains(err.Error(), "migration.lock_timeout") {
+		t.Fatalf("Run() error = %v, want lock timeout error", err)
 	}
 }

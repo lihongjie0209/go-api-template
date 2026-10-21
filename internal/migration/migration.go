@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 )
 
 const schemaCreationTimeout = 30 * time.Second
+
+const defaultLockTimeout = 30 * time.Second
 
 func Run(cfg config.Migration, direction string, steps int) (runErr error) {
 	if direction != "up" && direction != "down" {
@@ -36,12 +39,26 @@ func Run(cfg config.Migration, direction string, steps int) (runErr error) {
 	if err != nil {
 		return err
 	}
+	lockTimeout := cfg.LockTimeout
+	if lockTimeout == 0 {
+		lockTimeout = defaultLockTimeout
+	}
+	if lockTimeout < time.Second || lockTimeout > 5*time.Minute {
+		return errors.New("migration.lock_timeout must be between 1s and 5m")
+	}
+	databaseURL, err = withMigrationLockTimeout(databaseURL, lockTimeout)
+	if err != nil {
+		return err
+	}
 	if err := ensureSchema(cfg, databaseURL); err != nil {
 		return err
 	}
 	m, err := migrate.New(source, databaseURL)
 	if err != nil {
 		return fmt.Errorf("create migrator: %w", err)
+	}
+	if isPostgresURL(databaseURL) {
+		m.LockTimeout = lockTimeout + 5*time.Second
 	}
 	defer func() {
 		sourceErr, databaseErr := m.Close()
@@ -63,6 +80,27 @@ func Run(cfg config.Migration, direction string, steps int) (runErr error) {
 		return fmt.Errorf("run migration: %w", err)
 	}
 	return runErr
+}
+
+func isPostgresURL(databaseURL string) bool {
+	return strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://")
+}
+
+func withMigrationLockTimeout(databaseURL string, timeout time.Duration) (string, error) {
+	if !isPostgresURL(databaseURL) {
+		return databaseURL, nil
+	}
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse migration database URL: %w", err)
+	}
+	query := parsed.Query()
+	if strings.Contains(strings.ToLower(query.Get("options")), "lock_timeout") {
+		return "", errors.New("migration.database_url options must not override lock_timeout")
+	}
+	query.Set("lock_timeout", strconv.FormatInt(timeout.Milliseconds(), 10))
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func withMigrationOptions(databaseURL, databaseName, table, schema string) (string, error) {

@@ -221,13 +221,14 @@ type Cron struct {
 	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
 }
 type Migration struct {
-	AutoUp       bool   `mapstructure:"auto_up"`
-	CreateSchema bool   `mapstructure:"create_schema"`
-	Path         string `mapstructure:"path"`
-	DatabaseURL  string `mapstructure:"database_url"`
-	Table        string `mapstructure:"table"`
-	Schema       string `mapstructure:"-"`
-	DatabaseName string `mapstructure:"-"`
+	AutoUp       bool          `mapstructure:"auto_up"`
+	CreateSchema bool          `mapstructure:"create_schema"`
+	Path         string        `mapstructure:"path"`
+	DatabaseURL  string        `mapstructure:"database_url"`
+	Table        string        `mapstructure:"table"`
+	LockTimeout  time.Duration `mapstructure:"lock_timeout"`
+	Schema       string        `mapstructure:"-"`
+	DatabaseName string        `mapstructure:"-"`
 }
 type User struct {
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
@@ -488,6 +489,9 @@ func loadWithProfile(path, explicitProfile string, validate func(Config) error) 
 
 // Validate checks the complete standalone migration contract.
 func (m Migration) Validate() error {
+	if m.LockTimeout != 0 && (m.LockTimeout < time.Second || m.LockTimeout > 5*time.Minute) {
+		return errors.New("migration.lock_timeout must be between 1s and 5m")
+	}
 	if strings.TrimSpace(m.Path) == "" {
 		return errors.New("migration.path is required")
 	}
@@ -633,6 +637,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("migration.auto_up", false)
 	v.SetDefault("migration.create_schema", false)
 	v.SetDefault("migration.table", "go_api_template_schema_migrations")
+	v.SetDefault("migration.lock_timeout", "30s")
 	v.SetDefault("user.cache_ttl", "5m")
 	v.SetDefault("distributed_lock.ttl", "10s")
 	v.SetDefault("distributed_lock.retry_delay", "100ms")

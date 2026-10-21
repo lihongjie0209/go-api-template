@@ -137,6 +137,7 @@ cron:
 migration:
   auto_up: false
   create_schema: false
+  lock_timeout: 30s
   path: migrations/postgres
   database_url: ""
   table: go_api_template_schema_migrations
