@@ -2,6 +2,7 @@ package grpctransport
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -250,6 +251,48 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	}
 	if scheme, schemeOK := accesscontrol.CredentialSchemeFromContext(ctx); !schemeOK || scheme != accesscontrol.CredentialSchemeBearer {
 		t.Fatalf("credential scheme = %q, %v", scheme, schemeOK)
+	}
+}
+
+func TestAuthenticateGRPCDistinguishesStateOutageFromRevocation(t *testing.T) {
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	service := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(rawDB, "sqlmock"))
+	token, err := service.IssuePrincipal(platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token))
+	for _, test := range []struct {
+		name   string
+		outage bool
+		want   codes.Code
+	}{
+		{name: "database outage", outage: true, want: codes.Unavailable},
+		{name: "revoked session", want: codes.Unauthenticated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			query := mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions`)
+			if test.outage {
+				query.WillReturnError(errors.New("database connection lost"))
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
+			}
+			_, err := authenticateGRPCOptional(ctx, "/hello.v1.UserService/GetUser", service, config.Auth{})
+			if got := status.Code(err); got != test.want {
+				t.Fatalf("status code = %s, want %s: %v", got, test.want, err)
+			}
+		})
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
+	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
@@ -22,6 +24,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/idempotency"
 	appLimit "github.com/lihongjie0209/go-api-template/internal/ratelimit"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -417,6 +420,60 @@ func TestDatabaseAuthenticationVerifiesSuppliedCredentials(t *testing.T) {
 				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
 			}
 		})
+	}
+}
+
+func TestDatabaseAuthenticationDistinguishesStateOutageFromRevocation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	service := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(db, "sqlmock"))
+	token, err := service.IssuePrincipal(platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+	router.Use(RequestID(), DatabaseAuthentication(service, logger, config.Config{}))
+	router.POST("/test", func(c *gin.Context) { OK(c, nil) })
+	for _, test := range []struct {
+		name   string
+		outage bool
+		status int
+		code   int
+	}{
+		{name: "database outage", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
+		{name: "revoked session", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			query := mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions`)
+			if test.outage {
+				query.WillReturnError(errors.New("database connection lost"))
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
+			}
+			request := httptest.NewRequest(http.MethodPost, "/test", nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			var body Response
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != test.status || body.Code != test.code || body.RequestID == "" || strings.Contains(recorder.Body.String(), "database connection lost") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -42,6 +42,10 @@ The next domain work must keep identity and tenancy separate:
 - Login can occur without an authenticated principal. Security logging for
   login must accept an explicit target/identifier digest and must never require
   user context before authentication succeeds.
+- Signed-token state checks must fail closed while distinguishing an inactive
+  session/account from an unavailable authoritative store. An infrastructure
+  outage returns dependency-unavailable (HTTP 503 / gRPC Unavailable), not an
+  invalid-token response that could make clients discard valid credentials.
 - A signed access-token claim is not authoritative for mutable credential
   state. User-token verification must recheck the active session, user, and
   credential; every password reset path must revoke existing sessions in the

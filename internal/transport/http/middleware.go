@@ -417,6 +417,10 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 		}
 		identity, err := service.Verify(c.Request.Context(), raw)
 		if err != nil {
+			if errors.Is(err, auth.ErrStateUnavailable) {
+				Fail(c, logger, apperror.Unavailable("authentication state unavailable", err))
+				return
+			}
 			Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
 			return
 		}
@@ -447,6 +451,10 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 		case strings.EqualFold(scheme, "Bearer"):
 			verified, state, err := service.VerifyWithState(c.Request.Context(), raw)
 			if err != nil {
+				if errors.Is(err, auth.ErrStateUnavailable) {
+					Fail(c, logger, apperror.Unavailable("authentication state unavailable", err))
+					return
+				}
 				Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
 				return
 			}

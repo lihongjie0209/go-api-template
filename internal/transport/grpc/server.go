@@ -305,6 +305,9 @@ func authenticateGRPCOptional(ctx context.Context, method string, service *auth.
 	case strings.EqualFold(scheme, "Bearer"):
 		verified, state, err := service.VerifyWithState(ctx, raw)
 		if err != nil {
+			if errors.Is(err, auth.ErrStateUnavailable) {
+				return nil, status.Error(codes.Unavailable, "authentication state unavailable")
+			}
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
 		if state.MustChangePassword && !isInfrastructureMethod(method) {

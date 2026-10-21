@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -35,6 +36,11 @@ type Claims struct {
 type TokenState struct {
 	MustChangePassword bool
 }
+
+// ErrStateUnavailable means a signed token could not be checked against the
+// authoritative session or account store. Callers must not treat it as revocation.
+var ErrStateUnavailable = errors.New("authentication state unavailable")
+
 type signingKey struct {
 	id, algorithm   string
 	private, public any
@@ -145,7 +151,7 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 	switch t {
 	case platformprincipal.TypeUser:
 		if s.db == nil {
-			return platformprincipal.Principal{}, TokenState{}, errors.New("session validation is unavailable")
+			return platformprincipal.Principal{}, TokenState{}, ErrStateUnavailable
 		}
 		query := `SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
 		args := []any{claims.SessionID, claims.Subject, time.Now()}
@@ -154,15 +160,24 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 			args = append(args, claims.MembershipID, claims.TenantID)
 		}
 		if err := s.db.GetContext(ctx, &state.MustChangePassword, s.db.Rebind(query), args...); err != nil {
-			return platformprincipal.Principal{}, TokenState{}, errors.New("session is revoked or expired")
+			if errors.Is(err, sql.ErrNoRows) {
+				return platformprincipal.Principal{}, TokenState{}, errors.New("session is revoked or expired")
+			}
+			return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 		}
 	case platformprincipal.TypeServiceAccount:
 		if s.db == nil {
-			return platformprincipal.Principal{}, TokenState{}, errors.New("service account validation is unavailable")
+			return platformprincipal.Principal{}, TokenState{}, ErrStateUnavailable
 		}
 		var count int
 		query := s.db.Rebind(`SELECT count(*) FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
-		if err := s.db.GetContext(ctx, &count, query, claims.Subject, time.Now()); err != nil || count != 1 {
+		if err := s.db.GetContext(ctx, &count, query, claims.Subject, time.Now()); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
+			}
+			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
+		}
+		if count != 1 {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
 		}
 	}

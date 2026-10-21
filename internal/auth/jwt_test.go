@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"testing"
 	"time"
 
@@ -173,6 +174,50 @@ func TestService_VerifyRejectsDisabledServiceAccount(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestService_VerifyDistinguishesStateStoreFailureFromInactiveToken(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		principal platformprincipal.Principal
+		query     string
+		columns   []string
+	}{
+		{name: "user session", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}, query: `SELECT c.must_change_password FROM identity_sessions`, columns: []string{"must_change_password"}},
+		{name: "service account", principal: platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, query: `SELECT count\(\*\) FROM identity_service_accounts`, columns: []string{"count"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			jwtConfig, err := testutil.JWTConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			service := NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(db, "sqlmock"))
+			raw, err := service.IssuePrincipal(test.principal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, failure := range []bool{true, false} {
+				query := mock.ExpectQuery(test.query)
+				if failure {
+					query.WillReturnError(errors.New("database connection lost"))
+				} else {
+					query.WillReturnRows(sqlmock.NewRows(test.columns))
+				}
+				_, _, verifyErr := service.VerifyWithState(t.Context(), raw)
+				if verifyErr == nil || errors.Is(verifyErr, ErrStateUnavailable) != failure {
+					t.Fatalf("store failure=%v, VerifyWithState error=%v", failure, verifyErr)
+				}
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
