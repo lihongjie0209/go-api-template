@@ -322,6 +322,18 @@ Status values:
 | Query contract and presentation | Role page supports bounded case-insensitive code/name/description search, ID/status `IN` filters and half-open creation-time ranges with stable creation/ID ordering. Permission and role assignment responses include displayable keys/names rather than IDs alone. Role get/page use one shared Identity actor-resolution call per response, preserve stable ID fallback and explicitly render timestamps in `Asia/Shanghai`. Effective-permission reads deliberately bypass cache because they are security decisions. |
 | Tests | Unit tests cover active membership gating, administrator/non-administrator effective permissions, tenant predicates, subset rejection, bounded filters, role-version pruning, batched actor presentation with fallback/+08 conversion and rollback on transactional security-event failure. The PostgreSQL/MySQL integration lifecycle includes ceiling/member-role stale-version rejection, last-administrator protection, delegation, role presentation and logical deletion; GitHub Actions run `35065952569` passed. |
 
+### Identity batch lookup contract
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | `IdentityService.BatchGetUsers` takes at most 200 IDs. Empty IDs mean an empty response, not an unrestricted user page; this differs from optional `IDs` filtering on the general page endpoint. Invalid non-empty IDs use the existing validation error. |
+| Authentication/authorization | The registered gRPC operation retains its existing permission binding. Even the empty-batch fast path requires a principal; it cannot bypass authentication merely because no SQL is needed. |
+| Operation/security log | This is a bounded read and emits neither business nor security event. Mutations and sensitive reads keep their separate logging contracts. |
+| Cache/lock/version | The batch reads the Identity repository directly. No cache, distributed lock, or optimistic version is needed for a non-mutating lookup. |
+| Audit/presentation | Returned users retain the shared user fields, timestamps and version; no new audit write or dictionary provider is appropriate for sensitive transactional identities. |
+| Tests | Self-contained gRPC unit tests prove empty IDs produce no users and no SQL while still requiring authentication. Existing repository and service tests own non-empty filtering and database behavior. |
+| Shared capability | Reuses the existing Identity page service for non-empty batches and its global error/protobuf contract; no parallel query implementation or SDK primitive. |
+
 ## Authentication, JWT, JWKS and session audit decisions
 
 | Concern | Current decision and evidence |

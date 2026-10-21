@@ -7,6 +7,7 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
 	"google.golang.org/grpc/codes"
@@ -27,10 +28,18 @@ func (s *identityServer) GetUser(ctx context.Context, r *identityv1.GetUserReque
 	return &identityv1.GetUserResponse{User: toProtoUser(u)}, nil
 }
 func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchGetUsersRequest) (*identityv1.BatchGetUsersResponse, error) {
-	if len(r.GetUserIds()) > 200 {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return nil, status.Error(codes.Unauthenticated, "authentication required")
+	}
+	ids := r.GetUserIds()
+	if len(ids) > 200 {
 		return nil, status.Error(codes.InvalidArgument, "at most 200 user ids")
 	}
-	result, e := s.service.Page(ctx, identity.PageInput{Request: pagination.Request{Page: 1, PageSize: 200}, IDs: r.GetUserIds()})
+	if len(ids) == 0 {
+		// An empty IN set must not turn into an unfiltered user page.
+		return &identityv1.BatchGetUsersResponse{Users: []*identityv1.User{}}, nil
+	}
+	result, e := s.service.Page(ctx, identity.PageInput{Request: pagination.Request{Page: 1, PageSize: 200}, IDs: ids})
 	if e != nil {
 		return nil, identityError(e)
 	}

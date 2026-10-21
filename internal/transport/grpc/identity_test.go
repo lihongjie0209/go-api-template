@@ -12,6 +12,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
@@ -103,5 +104,35 @@ func TestIdentityListUsersExactModeFailsClosedOnDatabaseError(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIdentityBatchGetUsersEmptyIDsReturnsNoUsersWithoutQuery(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	server := &identityServer{service: identity.New(identity.NewRepository(sqlx.NewDb(raw, "sqlmock")), nil, nil, nil, nil, nil, config.Config{})}
+	ctx := platformprincipal.SystemContext(t.Context(), "identity-batch-test")
+	response, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.GetUsers()) != 0 {
+		t.Fatalf("empty ID batch returned %d users", len(response.GetUsers()))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentityBatchGetUsersEmptyIDsStillRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+	server := &identityServer{}
+	_, err := server.BatchGetUsers(t.Context(), &identityv1.BatchGetUsersRequest{})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("empty batch without principal code=%v, want unauthenticated", status.Code(err))
 	}
 }

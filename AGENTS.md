@@ -98,6 +98,11 @@ interpolate client-provided SQL identifiers. Page responses use:
 }
 ```
 
+Batch lookup operations with an empty ID list must return an empty collection
+without issuing an unfiltered page/list query. They must still enforce the
+normal authentication boundary. An omitted optional page filter is not the
+same contract as an explicitly empty batch lookup.
+
 Before finalizing a list/page contract, review every meaningful resource field
 against frontend query needs. Explicitly decide whether it supports exact
 matching, case-insensitive fuzzy matching, multi-value/`IN` matching (especially
