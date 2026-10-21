@@ -109,6 +109,12 @@ global error codes. Do not create service-local equivalents for common errors.
 OpenAPI annotations, request validation, authorization requirements, and error
 responses are part of the interface implementation.
 
+Health probes must fail closed for configured mandatory dependencies: a missing
+client handle is `down`, not `disabled`. Report `disabled` only when the
+dependency is explicitly disabled by configuration. Never infer queue consumer
+readiness merely from a retry loop; it requires an authoritative subscription
+ready signal from the transport.
+
 ## Mandatory per-interface design review
 
 Before implementing an interface, add a short design decision table to the

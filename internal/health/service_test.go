@@ -94,6 +94,22 @@ func TestService_ReadyFailsWhenMandatoryRedisClientIsMissing(t *testing.T) {
 	}
 }
 
+func TestService_ReadyFailsWhenEnabledDatabaseHandleIsMissing(t *testing.T) {
+	t.Parallel()
+	server, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(server.Close)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := New(nil, client, config.Config{Database: config.Database{Enabled: true}, Health: config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}})
+	status, ready := service.Ready(t.Context())
+	if ready || status.Status != "not_ready" || status.Dependencies["database"].Status != "down" || status.Dependencies["redis"].Status != "up" {
+		t.Fatalf("Ready() = %#v, %t", status, ready)
+	}
+}
+
 func TestService_ReadyHonorsParentCancellation(t *testing.T) {
 	t.Parallel()
 	database, _, err := sqlmock.New(sqlmock.MonitorPingsOption(true))

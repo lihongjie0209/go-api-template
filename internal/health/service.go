@@ -18,9 +18,10 @@ type Dependency struct {
 	Latency string `json:"latency,omitempty"`
 }
 type Service struct {
-	db    *sqlx.DB
-	redis *redis.Client
-	cfg   config.Health
+	db              *sqlx.DB
+	redis           *redis.Client
+	databaseEnabled bool
+	cfg             config.Health
 }
 type result struct {
 	name       string
@@ -29,7 +30,7 @@ type result struct {
 }
 
 func New(db *sqlx.DB, client *redis.Client, cfg config.Config) *Service {
-	return &Service{db: db, redis: client, cfg: cfg.Health}
+	return &Service{db: db, redis: client, databaseEnabled: cfg.Database.Enabled, cfg: cfg.Health}
 }
 func (s *Service) Live() Status { return Status{Status: "up"} }
 
@@ -54,6 +55,10 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 
 func (s *Service) checkDatabase(parent context.Context, results chan<- result) {
 	if s.db == nil {
+		if s.databaseEnabled {
+			results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
+			return
+		}
 		results <- result{name: "database", dependency: Dependency{Status: "disabled"}, ready: true}
 		return
 	}
