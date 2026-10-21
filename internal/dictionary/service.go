@@ -673,6 +673,9 @@ func validateQuery(q Query) error {
 	if !codePattern.MatchString(strings.ToLower(strings.TrimSpace(q.Code))) || len(q.Keyword) > 256 || len(q.IDs) > 200 || len(q.Codes) > 200 || len(q.Values) > 200 || len(q.Sort) > 3 || !validJSON(q.Extension) {
 		return ErrInvalid
 	}
+	if _, err := pagination.Normalize(pagination.Request{Page: q.Page, PageSize: q.PageSize}); err != nil {
+		return ErrInvalid
+	}
 	valueBytes := 0
 	for _, value := range q.Values {
 		valueBytes += len(value)
@@ -705,6 +708,7 @@ func validateQuery(q Query) error {
 func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	q.Code = strings.ToLower(strings.TrimSpace(q.Code))
 	q.Keyword = strings.TrimSpace(q.Keyword)
+	q.Codes = append([]string(nil), q.Codes...)
 	for i := range q.Codes {
 		q.Codes[i] = strings.ToLower(strings.TrimSpace(q.Codes[i]))
 	}
@@ -757,6 +761,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	}
 	count := 0
 	seen := map[string]struct{}{}
+	seenCodes := map[string]struct{}{}
 	seenValues := map[string]struct{}{}
 	allowedIDs := make(map[string]struct{}, len(query.IDs))
 	for _, id := range query.IDs {
@@ -804,6 +809,10 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 				return false, false
 			}
 			seen[item.ID] = struct{}{}
+			if _, exists := seenCodes[item.Code]; exists {
+				return false, false
+			}
+			seenCodes[item.Code] = struct{}{}
 			selectableValue := item.Value
 			if selectableValue == "" {
 				selectableValue = item.ID
@@ -829,6 +838,9 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	if result.Type == KindEnum {
 		page, err := normalizePage(query.Page, query.PageSize)
 		if err != nil || result.Page != page[0] || result.PageSize != page[1] || len(result.Items) > page[1] || result.Total < int64(len(result.Items)) {
+			return false
+		}
+		if len(result.Items) > 0 && result.Total < int64(pagination.Offset(pagination.Request{Page: page[0], PageSize: page[1]})+len(result.Items)) {
 			return false
 		}
 	} else if result.Page != 0 || result.PageSize != 0 {
@@ -918,16 +930,11 @@ func appendIn(where string, args []any, column string, values []string) (string,
 	return where + ` AND ` + column + ` IN (` + strings.Join(marks, ",") + `)`, args
 }
 func normalizePage(page, size int) ([2]int, error) {
-	if page == 0 {
-		page = 1
-	}
-	if size == 0 {
-		size = 20
-	}
-	if page < 1 || size < 1 || size > 200 {
+	normalized, err := pagination.Normalize(pagination.Request{Page: page, PageSize: size})
+	if err != nil {
 		return [2]int{}, ErrInvalid
 	}
-	return [2]int{page, size}, nil
+	return [2]int{normalized.Page, normalized.PageSize}, nil
 }
 func filterTreeItems(items []Item, query Query) []Item {
 	byID := make(map[string]Item, len(items))

@@ -13,6 +13,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
@@ -26,6 +27,10 @@ func TestValidateQuery(t *testing.T) {
 	}{
 		{name: "valid", query: Query{Code: "identity.user", Sort: []Sort{{Field: "name", Direction: "asc"}}, Extension: json.RawMessage(`{"tenant_id":"t1"}`)}},
 		{name: "single character code", query: Query{Code: "x"}},
+		{name: "maximum page", query: Query{Code: "identity.user", Page: pagination.MaxPage}},
+		{name: "page exceeds platform limit", query: Query{Code: "identity.user", Page: pagination.MaxPage + 1}, wantErr: true},
+		{name: "negative page", query: Query{Code: "identity.user", Page: -1}, wantErr: true},
+		{name: "page size exceeds platform limit", query: Query{Code: "identity.user", PageSize: pagination.MaxPageSize + 1}, wantErr: true},
 		{name: "invalid code", query: Query{Code: "not a code"}, wantErr: true},
 		{name: "unbounded ids", query: Query{Code: "identity.user", IDs: make([]string, 201)}, wantErr: true},
 		{name: "unbounded values", query: Query{Code: "identity.user", Values: make([]string, 201)}, wantErr: true},
@@ -50,6 +55,12 @@ func TestValidateQuery(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueryRejectsOversizedPageBeforeDatabase(t *testing.T) {
+	t.Parallel()
+	_, err := (&Service{}).Query(t.Context(), Query{Code: "identity.user", Page: pagination.MaxPage + 1})
+	require.ErrorIs(t, err, ErrInvalid)
 }
 
 func TestInputBounds(t *testing.T) {
@@ -380,11 +391,13 @@ func TestProviderQueryDoesNotShareCacheAcrossPrincipals(t *testing.T) {
 		db: sqlx.NewDb(raw, "sqlmock"), providers: registry, cache: forbiddenProviderCache{t: t},
 		cfg: config.Config{Dictionary: config.Dictionary{CacheTTL: time.Minute, MaxTreeNodes: 100}},
 	}
+	codes := []string{" CONTEXT.SAMPLE "}
 	for _, principalID := range []string{"tenant-a-user", "tenant-b-user"} {
 		ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: principalID, Type: platformprincipal.TypeUser})
-		result, err := service.Query(ctx, Query{Code: "context.sample"})
+		result, err := service.Query(ctx, Query{Code: "context.sample", Codes: codes})
 		require.NoError(t, err)
 		require.Equal(t, principalID, result.Name)
+		require.Equal(t, []string{" CONTEXT.SAMPLE "}, codes)
 	}
 }
 
@@ -414,6 +427,27 @@ func TestValidProviderResultRejectsDuplicateEffectiveValues(t *testing.T) {
 			require.False(t, validProviderResult(result, Query{}, 10))
 		})
 	}
+}
+
+func TestValidProviderResultRejectsDuplicateCodesAndImpossiblePage(t *testing.T) {
+	t.Parallel()
+	items := []ResultItem{
+		{ID: uuidString(1), Code: "first", Name: "First", Value: "value-one", Extension: json.RawMessage(`{}`)},
+		{ID: uuidString(2), Code: "second", Name: "Second", Value: "value-two", Extension: json.RawMessage(`{}`)},
+	}
+	result := Result{Code: "identity.user", Name: "Users", Type: KindEnum, Items: items, Page: 1, PageSize: 20, Total: 2, Extension: json.RawMessage(`{}`)}
+	require.True(t, validProviderResult(result, Query{}, 100))
+	duplicate := result
+	duplicate.Items = append([]ResultItem(nil), items...)
+	duplicate.Items[1].Code = "first"
+	require.False(t, validProviderResult(duplicate, Query{}, 100))
+	pageTwo := result
+	pageTwo.Items = items[:1]
+	pageTwo.Page = 2
+	pageTwo.Total = 1
+	require.False(t, validProviderResult(pageTwo, Query{Page: 2, PageSize: 20}, 100))
+	pageTwo.Total = 21
+	require.True(t, validProviderResult(pageTwo, Query{Page: 2, PageSize: 20}, 100))
 }
 
 func TestFilterTreeItemsRetainsAncestorsAndRejectsDisabledSubtrees(t *testing.T) {

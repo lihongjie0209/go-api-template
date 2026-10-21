@@ -216,7 +216,10 @@ and sort filter. A tree may additionally include only ancestors of matching
 nodes; its total is the number of returned nodes, including those ancestors.
 Validate these invariants at the public dictionary boundary, even for an
 in-process provider. Bound the number of sort fields and reject duplicate
-fields before building SQL or calling the provider.
+fields before building SQL or calling the provider. Provider item codes are
+unique within the dictionary, just like static item codes. Enum page metadata
+must use the platform pagination limits and be consistent with the returned
+items and total; reject an invalid page before invoking a provider.
 The dictionary module may cache static entries by definition revision. It must
 not place dynamic-provider results in that shared cache: the provider owns its
 data freshness and may depend on request context that is absent from the
