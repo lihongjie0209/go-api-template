@@ -18,9 +18,6 @@ type Authorizer struct {
 
 type authorizationMemoKey struct{}
 type authorizationMemo struct {
-	rolesLoaded  bool
-	roles        []string
-	rolesErr     error
 	grantsLoaded bool
 	grants       map[string]struct{}
 	grantsErr    error
@@ -139,30 +136,4 @@ func (a *Authorizer) managedTenantGrants(ctx context.Context, principal platform
 		result[row.Resource+"\x00"+row.Action] = struct{}{}
 	}
 	return result, nil
-}
-
-func (a *Authorizer) roles(ctx context.Context, principal platformprincipal.Principal) ([]string, error) {
-	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
-		return nil, nil
-	}
-	if memo, ok := ctx.Value(authorizationMemoKey{}).(*authorizationMemo); ok {
-		if !memo.rolesLoaded {
-			memo.roles, memo.rolesErr = a.queryRoles(ctx, principal)
-			memo.rolesLoaded = true
-		}
-		return memo.roles, memo.rolesErr
-	}
-	return a.queryRoles(ctx, principal)
-}
-
-func (a *Authorizer) queryRoles(ctx context.Context, principal platformprincipal.Principal) ([]string, error) {
-	roles := []string{}
-	query := a.db.Rebind(`SELECT DISTINCT r.code FROM tenant_member_roles mr
-		JOIN tenant_memberships m ON m.id=mr.membership_id AND m.tenant_id=mr.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL
-		JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id
-		WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL ORDER BY r.code`)
-	if err := a.db.SelectContext(ctx, &roles, query, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
-		return nil, fmt.Errorf("resolve subject roles: %w", err)
-	}
-	return roles, nil
 }

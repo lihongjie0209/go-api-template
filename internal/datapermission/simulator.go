@@ -13,13 +13,13 @@ import (
 var ErrInvalidSimulation = errors.New("data permission: invalid simulation")
 
 type SimulationInput struct {
-	Policy             Policy             `json:"policy"`
-	Action             string             `json:"action"`
-	Subject            resourceaction.Subject       `json:"subject"`
-	Resource           resourceaction.Resource      `json:"resource"`
-	SubjectAttributes  SubjectAttributes  `json:"subject_attributes"`
-	ResourceAttributes ResourceAttributes `json:"resource_attributes"`
-	ProposedAttributes ResourceAttributes `json:"proposed_attributes"`
+	Policy             Policy                  `json:"policy"`
+	Action             string                  `json:"action"`
+	Subject            resourceaction.Subject  `json:"subject"`
+	Resource           resourceaction.Resource `json:"resource"`
+	SubjectAttributes  SubjectAttributes       `json:"subject_attributes"`
+	ResourceAttributes ResourceAttributes      `json:"resource_attributes"`
+	ProposedAttributes ResourceAttributes      `json:"proposed_attributes"`
 }
 
 type PredicatePreview struct {

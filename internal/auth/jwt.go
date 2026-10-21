@@ -318,7 +318,11 @@ func publicJWK(key signingKey) JWK {
 	case *rsa.PublicKey:
 		return JWK{KTY: "RSA", Use: "sig", KID: key.id, ALG: key.algorithm, N: base64.RawURLEncoding.EncodeToString(public.N.Bytes()), E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(public.E)).Bytes())}
 	case *ecdsa.PublicKey:
-		return JWK{KTY: "EC", Use: "sig", KID: key.id, ALG: key.algorithm, CRV: "P-256", X: base64.RawURLEncoding.EncodeToString(public.X.FillBytes(make([]byte, 32))), Y: base64.RawURLEncoding.EncodeToString(public.Y.FillBytes(make([]byte, 32)))}
+		encoded, err := public.Bytes()
+		if err != nil || len(encoded) != 65 || encoded[0] != 4 {
+			return JWK{}
+		}
+		return JWK{KTY: "EC", Use: "sig", KID: key.id, ALG: key.algorithm, CRV: "P-256", X: base64.RawURLEncoding.EncodeToString(encoded[1:33]), Y: base64.RawURLEncoding.EncodeToString(encoded[33:])}
 	default:
 		return JWK{}
 	}

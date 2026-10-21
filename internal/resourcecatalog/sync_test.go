@@ -58,7 +58,7 @@ func TestStableCatalogIDs(t *testing.T) {
 func TestBackfillLegacyPermissionLinksOnce(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 	sqlxDB := sqlx.NewDb(db, "pgx")
 	generator, err := stableid.New(Namespace)
 	require.NoError(t, err)

@@ -26,7 +26,7 @@ func TestTenantVersionMissIsDistinctFromUniqueConflict(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer raw.Close()
+			t.Cleanup(func() { _ = raw.Close() })
 			db := sqlx.NewDb(raw, "sqlmock")
 			mock.ExpectBegin()
 			if test.name == "delete" {
@@ -67,7 +67,7 @@ func TestDeleteTenantStopsWhenApplicationContextCleanupFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
 	mock.ExpectBegin()
 	for _, pattern := range tenantPolicyCleanupPatterns() {
@@ -107,7 +107,7 @@ func TestDeleteTenantStopsWhenPolicyCleanupFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE data_permission_policy_actions SET deleted_at").

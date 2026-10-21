@@ -90,7 +90,7 @@ func TestPlatformGrantValidation(t *testing.T) {
 func TestPlatformGrantRejectsUnknownPrincipalBeforeWriting(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 	sqlxDB := sqlx.NewDb(db, "pgx")
 	service := NewPlatformGrantService(sqlxDB, database.NewTransactor(sqlxDB), nil, nil)
 	ctx := platformprincipal.SystemContext(t.Context(), "grant-admin")
@@ -106,7 +106,7 @@ func TestPlatformGrantRejectsUnknownPrincipalBeforeWriting(t *testing.T) {
 func TestPlatformGrantRejectsPermissionWithoutActivePlatformAction(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer raw.Close()
+	t.Cleanup(func() { _ = raw.Close() })
 	sqlxDB := sqlx.NewDb(raw, "pgx")
 	service := NewPlatformGrantService(sqlxDB, database.NewTransactor(sqlxDB), nil, nil)
 	ctx := platformprincipal.SystemContext(t.Context(), "grant-admin")

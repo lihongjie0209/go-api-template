@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"testing"
 	"time"
@@ -40,6 +41,13 @@ func TestService_ES256IssueParseAndJWKS(t *testing.T) {
 	keys := service.JWKS().Keys
 	if len(keys) != 1 || keys[0].KTY != "EC" || keys[0].CRV != "P-256" || keys[0].KID != "ec-2026-09" || keys[0].X == "" || keys[0].Y == "" {
 		t.Fatalf("jwks=%+v", keys)
+	}
+	point, err := private.PublicKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys[0].X != base64.RawURLEncoding.EncodeToString(point[1:33]) || keys[0].Y != base64.RawURLEncoding.EncodeToString(point[33:]) {
+		t.Fatalf("jwks coordinates do not match signing key")
 	}
 }
 

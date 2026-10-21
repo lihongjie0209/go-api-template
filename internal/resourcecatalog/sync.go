@@ -178,14 +178,13 @@ func backfillLegacyPermissionLinks(ctx context.Context, tx *sqlx.Tx, generator s
 
 func checkBuild(stored, incoming revisionRow) error {
 	previous, previousErr := time.Parse(time.RFC3339, stored.BuildTime)
-	if previousErr != nil {
-		return nil // First deployment or a local development build.
+	if previousErr == nil {
+		next, nextErr := time.Parse(time.RFC3339, incoming.BuildTime)
+		if nextErr != nil || next.Before(previous) || next.Equal(previous) && incoming.CommitID != stored.CommitID {
+			return ErrStaleBuild
+		}
 	}
-	next, nextErr := time.Parse(time.RFC3339, incoming.BuildTime)
-	if nextErr != nil || next.Before(previous) || next.Equal(previous) && incoming.CommitID != stored.CommitID {
-		return ErrStaleBuild
-	}
-	return nil
+	return nil // An unparseable stored time denotes a first deployment or local build.
 }
 
 func syncResource(ctx context.Context, tx *sqlx.Tx, id string, definition resourceaction.ResourceDefinition) error {

@@ -49,13 +49,13 @@ const (
 
 // Endpoint binds one transport operation to its complete authorization metadata.
 type Endpoint struct {
-	Transport      Transport          `json:"transport"`
-	Operation      string             `json:"operation"`
-	Authentication AuthenticationMode `json:"authentication"`
-	Resource       string             `json:"resource,omitempty"`
-	Action         string             `json:"action,omitempty"`
+	Transport      Transport                    `json:"transport"`
+	Operation      string                       `json:"operation"`
+	Authentication AuthenticationMode           `json:"authentication"`
+	Resource       string                       `json:"resource,omitempty"`
+	Action         string                       `json:"action,omitempty"`
 	Scope          resourceaction.ResourceScope `json:"scope,omitempty"`
-	DataPermission DataPermissionMode `json:"data_permission"`
+	DataPermission DataPermissionMode           `json:"data_permission"`
 	// DataPermissionReason is mandatory for protected operations that
 	// deliberately do not use row-level data permission.
 	DataPermissionReason string `json:"data_permission_reason,omitempty"`

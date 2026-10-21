@@ -1325,7 +1325,7 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if action.ResourceName != resource.Name {
 		t.Fatalf("created action resource name=%q, want %q", action.ResourceName, resource.Name)
 	}
-	page, err := catalog.PageResources(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "manual"}, Statuses: []string{"active"}})
+	page, err := catalog.PageResources(actorCtx, resourcecatalog.PageInput{Request: pagination.Request{Page: 1, PageSize: 20, Keyword: "Catalog Display"}, Statuses: []string{"active"}})
 	if err != nil || page.Total != 1 || page.Items[0].ID != resource.ID {
 		t.Fatalf("resource page=%+v err=%v", page, err)
 	}

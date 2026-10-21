@@ -45,7 +45,7 @@ func TestCatalogInputValidation(t *testing.T) {
 func TestCodeOwnedResourceCannotBeUpdated(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 	sqlxDB := sqlx.NewDb(db, "pgx")
 	service := NewService(sqlxDB, database.NewTransactor(sqlxDB), nil, nil)
 	id := "082c606d-f4d9-4339-8d0b-c77e5d839451"

@@ -52,11 +52,11 @@ type PolicyBoundary struct {
 
 type PolicySpec struct {
 	Subject           resourceaction.SubjectMatcher `json:"subject" yaml:"subject"`
-	Resource          string              `json:"resource" yaml:"resource"`
-	Actions           []string            `json:"actions" yaml:"actions"`
-	Condition         string              `json:"condition,omitempty" yaml:"condition,omitempty"`
-	ProposedCondition string              `json:"proposed_condition,omitempty" yaml:"proposed_condition,omitempty"`
-	Effect            Effect              `json:"effect" yaml:"effect"`
+	Resource          string                        `json:"resource" yaml:"resource"`
+	Actions           []string                      `json:"actions" yaml:"actions"`
+	Condition         string                        `json:"condition,omitempty" yaml:"condition,omitempty"`
+	ProposedCondition string                        `json:"proposed_condition,omitempty" yaml:"proposed_condition,omitempty"`
+	Effect            Effect                        `json:"effect" yaml:"effect"`
 }
 
 type CompiledPolicy struct {
