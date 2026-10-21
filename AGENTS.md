@@ -217,6 +217,11 @@ nodes; its total is the number of returned nodes, including those ancestors.
 Validate these invariants at the public dictionary boundary, even for an
 in-process provider. Bound the number of sort fields and reject duplicate
 fields before building SQL or calling the provider.
+The dictionary module may cache static entries by definition revision. It must
+not place dynamic-provider results in that shared cache: the provider owns its
+data freshness and may depend on request context that is absent from the
+definition-only cache key. A provider that needs caching must own scoped keys,
+TTL, and invalidation for its own data.
 
 ### Permission design is mandatory
 

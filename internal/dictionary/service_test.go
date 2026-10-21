@@ -329,6 +329,65 @@ func TestProviderRegistryHas(t *testing.T) {
 	require.False(t, registry.Has("identity.other"))
 }
 
+type contextualProvider struct{}
+
+func (contextualProvider) Query(ctx context.Context, _ Query) (Result, error) {
+	principal, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Code: "context.sample", Name: principal.ID, Type: KindEnum, Items: []ResultItem{}, Page: 1, PageSize: 20, Extension: json.RawMessage(`{}`)}, nil
+}
+
+type forbiddenProviderCache struct{ t *testing.T }
+
+func (c forbiddenProviderCache) Get(context.Context, string) ([]byte, error) {
+	c.t.Fatal("provider result must not be read from the shared dictionary cache")
+	return nil, nil
+}
+func (c forbiddenProviderCache) Set(context.Context, string, []byte, time.Duration) error {
+	c.t.Fatal("provider result must not be written to the shared dictionary cache")
+	return nil
+}
+func (c forbiddenProviderCache) SetIfAbsent(context.Context, string, []byte, time.Duration) (bool, error) {
+	c.t.Fatal("provider result must not be written to the shared dictionary cache")
+	return false, nil
+}
+func (c forbiddenProviderCache) Delete(context.Context, ...string) error { return nil }
+func (c forbiddenProviderCache) Exists(context.Context, string) (bool, error) {
+	c.t.Fatal("provider result must not be read from the shared dictionary cache")
+	return false, nil
+}
+
+func TestProviderQueryDoesNotShareCacheAcrossPrincipals(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	for range 2 {
+		mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active' AND deleted_at IS NULL`).
+			WithArgs("context.sample").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "dictionary_code", "name", "dictionary_type", "source_type", "version"}).
+				AddRow(uuidString(1), "context.sample", "Context sample", KindEnum, SourceProvider, 1))
+	}
+	mock.ExpectClose()
+	registry := NewProviderRegistry()
+	require.NoError(t, registry.Register("context.sample", contextualProvider{}))
+	service := &Service{
+		db: sqlx.NewDb(raw, "sqlmock"), providers: registry, cache: forbiddenProviderCache{t: t},
+		cfg: config.Config{Dictionary: config.Dictionary{CacheTTL: time.Minute, MaxTreeNodes: 100}},
+	}
+	for _, principalID := range []string{"tenant-a-user", "tenant-b-user"} {
+		ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: principalID, Type: platformprincipal.TypeUser})
+		result, err := service.Query(ctx, Query{Code: "context.sample"})
+		require.NoError(t, err)
+		require.Equal(t, principalID, result.Name)
+	}
+}
+
 func TestValidProviderResultRejectsDuplicateAndOversizedTrees(t *testing.T) {
 	t.Parallel()
 	id := "00000000-0000-0000-0000-000000000001"

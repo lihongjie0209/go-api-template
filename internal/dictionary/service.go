@@ -723,9 +723,10 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	if d.Kind == KindTree && (q.Page != 0 || q.PageSize != 0) {
 		return Result{}, ErrInvalid
 	}
-	requestJSON, _ := json.Marshal(q)
-	cacheKey := fmt.Sprintf("dictionary:query:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
-	if s.cache != nil {
+	cacheKey := ""
+	if d.Source == SourceStatic && s.cache != nil {
+		requestJSON, _ := json.Marshal(q)
+		cacheKey = fmt.Sprintf("dictionary:query:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
 		if cached, cacheErr := cache.GetJSON[Result](ctx, s.cache, cacheKey); cacheErr == nil {
 			return cached, nil
 		}
@@ -745,7 +746,7 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	} else {
 		result, err = s.queryStatic(ctx, d, q)
 	}
-	if err == nil && s.cache != nil {
+	if err == nil && cacheKey != "" {
 		_ = cache.SetJSON(ctx, s.cache, cacheKey, result, s.cfg.Dictionary.CacheTTL)
 	}
 	return result, err
