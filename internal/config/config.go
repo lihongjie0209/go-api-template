@@ -826,8 +826,11 @@ func (c Config) Validate() error {
 	if c.Dictionary.CacheTTL <= 0 || c.Dictionary.CacheTTL > maxCacheTTL || c.Dictionary.MaxTreeNodes <= 0 || c.Dictionary.MaxTreeNodes > 100000 {
 		return errors.New("dictionary cache duration or max_tree_nodes is invalid")
 	}
-	if c.Authentication.RefreshTTL <= 0 || c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
-		return errors.New("authentication refresh, failure, and lock settings must be positive")
+	if c.Authentication.RefreshTTL <= 0 || c.Authentication.RefreshTTL > 90*24*time.Hour {
+		return errors.New("authentication.refresh_ttl must be positive and no greater than 90 days")
+	}
+	if c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
+		return errors.New("authentication failure and lock settings must be positive")
 	}
 	if c.Idempotency.Enabled && ((len(c.Idempotency.HTTPPaths) == 0 && len(c.Idempotency.GRPCMethods) == 0) || c.Idempotency.ProcessingTTL < time.Second || c.Idempotency.ProcessingTTL > 15*time.Minute || c.Idempotency.ProcessingTTL <= c.HTTP.RequestTimeout || c.Idempotency.ResultTTL < time.Minute || c.Idempotency.ResultTTL > 7*24*time.Hour || c.Idempotency.FailureTTL < time.Second || c.Idempotency.FailureTTL > 24*time.Hour || c.Idempotency.MaxResponseBytes <= 0 || c.Idempotency.MaxResponseBytes > 16<<20) {
 		return errors.New("enabled idempotency requires at least one route pattern, processing_ttl between 1s and 15m and greater than http.request_timeout, result_ttl between 1m and 7d, failure_ttl between 1s and 24h, and max_response_bytes no greater than 16 MiB")

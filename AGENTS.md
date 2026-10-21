@@ -53,6 +53,8 @@ The next domain work must keep identity and tenancy separate:
   security event; an unknown token must not revoke an unrelated session.
   Rotation, lineage insert, versioned session update and success audit commit
   atomically, and expired lineage is cleaned in bounded audited batches.
+  Configuration must cap the refresh-token lifetime; the template maximum is
+  90 days for both file and environment overrides.
 - Failed-login counters are an explicit high-concurrency exception to an
   expected-version predicate: use one atomic SQL increment guarded by the
   observed credential hash and current active/unlocked state. This lets

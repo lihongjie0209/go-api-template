@@ -25,6 +25,39 @@ func TestLoad_EnvironmentOverridesFile(t *testing.T) {
 	}
 }
 
+func TestLoad_BoundsRefreshTokenLifetimeFromFileAndEnvironment(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		fileValue string
+		envValue  string
+		wantError bool
+	}{
+		{name: "maximum file lifetime", fileValue: "2160h"},
+		{name: "excessive file lifetime", fileValue: "2161h", wantError: true},
+		{name: "environment override exceeds limit", fileValue: "720h", envValue: "2161h", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte("authentication:\n  refresh_ttl: "+test.fileValue+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.envValue != "" {
+				t.Setenv("APP_AUTHENTICATION_REFRESH_TTL", test.envValue)
+			}
+			cfg, err := Load(path)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "refresh_ttl") {
+					t.Fatalf("Load() config=%+v error=%v, want refresh_ttl limit", cfg.Authentication, err)
+				}
+				return
+			}
+			if err != nil || cfg.Authentication.RefreshTTL != 90*24*time.Hour {
+				t.Fatalf("Load() refresh_ttl=%s error=%v", cfg.Authentication.RefreshTTL, err)
+			}
+		})
+	}
+}
+
 func TestLoad_IdempotencyRouteListsCanBeOverriddenByEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
