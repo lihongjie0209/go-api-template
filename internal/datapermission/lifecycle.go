@@ -159,7 +159,10 @@ func (r *Repository) LoadAllPublished(ctx context.Context) ([]Policy, error) {
 	query := `SELECT p.code,p.scope,p.tenant_id,v.document FROM data_permission_policies p
 		JOIN data_permission_policy_versions v ON v.policy_id=p.id AND v.version_number=p.published_version_number
 		 AND v.status='published' AND v.deleted_at IS NULL
-		WHERE p.status='active' AND p.deleted_at IS NULL ORDER BY p.scope,COALESCE(p.tenant_id,''),p.code`
+		LEFT JOIN tenants t ON t.id=p.tenant_id AND t.deleted_at IS NULL
+		WHERE p.status='active' AND p.deleted_at IS NULL
+		 AND (p.scope='global' OR (p.scope='tenant' AND t.id IS NOT NULL))
+		ORDER BY p.scope,COALESCE(p.tenant_id,''),p.code`
 	if err := r.db.SelectContext(ctx, &rows, query); err != nil {
 		return nil, fmt.Errorf("load published data policies: %w", err)
 	}

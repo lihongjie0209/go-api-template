@@ -6,8 +6,39 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLoadPublishedPoliciesRequiresLiveTenantForTenantScope(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	authenticated := true
+	makeDocument := func(code string, scope PolicyScopeType, tenantID string) string {
+		document, err := MarshalPolicy(Policy{
+			APIVersion: PolicyAPIVersion,
+			Kind:       PolicyKind,
+			Metadata:   PolicyMetadata{Code: code, Name: code},
+			Scope:      PolicyBoundary{Type: scope, TenantID: tenantID},
+			Spec:       PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated}, Resource: "tenant.member", Actions: []string{"read"}, Effect: EffectAllow},
+		})
+		require.NoError(t, err)
+		return string(document)
+	}
+	mock.ExpectQuery(`(?s)FROM data_permission_policies p.*LEFT JOIN tenants t ON t.id=p.tenant_id AND t.deleted_at IS NULL.*p.scope='global' OR \(p.scope='tenant' AND t.id IS NOT NULL\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}).
+			AddRow("global-member", "global", nil, makeDocument("global-member", PolicyScopeGlobal, "")).
+			AddRow("tenant-member", "tenant", "tenant-1", makeDocument("tenant-member", PolicyScopeTenant, "tenant-1")))
+
+	policies, err := NewRepository(sqlx.NewDb(raw, "sqlmock")).LoadAllPublished(t.Context())
+	require.NoError(t, err)
+	require.Len(t, policies, 2)
+	require.Equal(t, PolicyScopeGlobal, policies[0].Scope.Type)
+	require.Equal(t, PolicyScopeTenant, policies[1].Scope.Type)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestRepositoryGetRestrictsTenantVisibilityInSQL(t *testing.T) {
 	t.Parallel()

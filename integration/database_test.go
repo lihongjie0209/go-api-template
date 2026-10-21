@@ -922,6 +922,158 @@ func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	}
 }
 
+func TestHistoricalTenantPolicyMigration(t *testing.T) {
+	for _, databaseType := range []string{"postgres", "mysql"} {
+		t.Run(databaseType, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+			defer cancel()
+			dsn, migrationURL := startDatabase(t, ctx, databaseType)
+			migrationPath, err := filepath.Abs(filepath.Join("..", "migrations", databaseType))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schema := ""
+			if databaseType == "postgres" {
+				schema = "integration_historical"
+			}
+			cfg := config.Migration{Path: migrationPath, DatabaseURL: migrationURL, Table: "integration_historical_" + databaseType + "_migrations", Schema: schema, CreateSchema: schema != ""}
+			if err := migration.Run(cfg, "up", 41); err != nil {
+				t.Fatalf("prepare database at migration 41: %v", err)
+			}
+			db, err := appdb.Open(ctx, config.Database{Type: databaseType, DSN: dsn, Schema: schema, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: time.Minute, ConnMaxIdleTime: time.Minute, PingTimeout: 10 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			testHistoricalTenantPolicyCleanup(t, ctx, db, cfg)
+		})
+	}
+}
+
+func testHistoricalTenantPolicyCleanup(t *testing.T, ctx context.Context, db *sqlx.DB, cfg config.Migration) {
+	t.Helper()
+	deletedTenantID, liveTenantID, missingTenantID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	type fixture struct {
+		name, scope, tenantID string
+		ids                   [3]string
+		wantActive            bool
+	}
+	fixtures := []fixture{
+		{name: "deleted", scope: "tenant", tenantID: deletedTenantID},
+		{name: "missing", scope: "tenant", tenantID: missingTenantID},
+		{name: "live", scope: "tenant", tenantID: liveTenantID, wantActive: true},
+		{name: "global", scope: "global", wantActive: true},
+	}
+	actorCtx := platformprincipal.SystemContext(ctx, "integration-policy-migration")
+	authenticated := true
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		for _, tenantRecord := range []struct{ id, code string }{{deletedTenantID, "historical-deleted"}, {liveTenantID, "historical-live"}} {
+			if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenants(id,code,name,description,status,owner_user_id,owner_name,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), tenantRecord.id, tenantRecord.code, tenantRecord.code, "", "active", "system", "System", now, "integration-policy-migration", now, "integration-policy-migration"); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE tenants SET deleted_at=? WHERE id=? AND deleted_at IS NULL`), now, deletedTenantID); err != nil {
+			return err
+		}
+		for index := range fixtures {
+			item := &fixtures[index]
+			item.ids = [3]string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
+			code := "historical-policy-" + item.name
+			document, err := datapermission.MarshalPolicy(datapermission.Policy{
+				APIVersion: datapermission.PolicyAPIVersion,
+				Kind:       datapermission.PolicyKind,
+				Metadata:   datapermission.PolicyMetadata{Code: code, Name: item.name},
+				Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeType(item.scope), TenantID: item.tenantID},
+				Spec: datapermission.PolicySpec{
+					Subject:   resourceaction.SubjectMatcher{Authenticated: &authenticated},
+					Resource:  "tenant.member",
+					Actions:   []string{"read"},
+					Condition: "resource.owner_id == subject.id",
+					Effect:    datapermission.EffectAllow,
+				},
+			})
+			if err != nil {
+				return err
+			}
+			var tenantArg any
+			if item.scope == "tenant" {
+				tenantArg = item.tenantID
+			}
+			if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO data_permission_policies(id,code,name,scope,tenant_id,published_version_number,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), item.ids[0], code, item.name, item.scope, tenantArg, 1, "active", now, "integration-policy-migration", now, "integration-policy-migration"); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO data_permission_policy_versions(id,policy_id,version_number,document,status,published_at,published_by,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), item.ids[1], item.ids[0], 1, string(document), "published", now, "integration-policy-migration", now, "integration-policy-migration", now, "integration-policy-migration"); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO data_permission_policy_actions(id,policy_version_id,resource,action,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), item.ids[2], item.ids[1], "tenant.member", "read", now, "integration-policy-migration", now, "integration-policy-migration"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed historical policies: %v", err)
+	}
+	loaded, err := datapermission.NewRepository(db).LoadAllPublished(ctx)
+	if err != nil || len(loaded) != 2 {
+		t.Fatalf("published policies before cleanup=%d, want live/global only: %v", len(loaded), err)
+	}
+	if err := migration.Run(cfg, "up", 1); err != nil {
+		t.Fatalf("retire historical policies: %v", err)
+	}
+	assertPolicies := func() {
+		t.Helper()
+		for _, item := range fixtures {
+			want := 0
+			if item.wantActive {
+				want = 1
+			}
+			for index, table := range []string{"data_permission_policies", "data_permission_policy_versions", "data_permission_policy_actions"} {
+				var active int
+				if err := db.GetContext(ctx, &active, db.Rebind(`SELECT count(*) FROM `+table+` WHERE id=? AND deleted_at IS NULL`), item.ids[index]); err != nil || active != want {
+					t.Fatalf("historical %s %s active=%d, want %d: %v", item.name, table, active, want, err)
+				}
+			}
+		}
+	}
+	assertPolicies()
+	var retiredVersion int64
+	if err := db.GetContext(ctx, &retiredVersion, db.Rebind(`SELECT version FROM data_permission_policies WHERE id=? AND deleted_by='system:migration'`), fixtures[0].ids[0]); err != nil {
+		t.Fatalf("historical policy audit actor: %v", err)
+	}
+	if err := migration.Run(cfg, "down", -1); err != nil {
+		t.Fatalf("repeat historical policy migration down: %v", err)
+	}
+	if err := migration.Run(cfg, "up", 1); err != nil {
+		t.Fatalf("repeat historical policy migration up: %v", err)
+	}
+	assertPolicies()
+	var repeatedVersion int64
+	if err := db.GetContext(ctx, &repeatedVersion, db.Rebind(`SELECT version FROM data_permission_policies WHERE id=?`), fixtures[0].ids[0]); err != nil || repeatedVersion != retiredVersion {
+		t.Fatalf("repeated cleanup version=%d, want %d: %v", repeatedVersion, retiredVersion, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		for _, item := range fixtures {
+			if !item.wantActive {
+				continue
+			}
+			for _, row := range []struct{ table, id string }{
+				{"data_permission_policy_actions", item.ids[2]},
+				{"data_permission_policy_versions", item.ids[1]},
+				{"data_permission_policies", item.ids[0]},
+			} {
+				if _, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE `+row.table+` SET deleted_at=? WHERE id=? AND deleted_at IS NULL`), time.Now(), row.id); err != nil {
+					return err
+				}
+			}
+		}
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE tenants SET deleted_at=? WHERE id=? AND deleted_at IS NULL`), time.Now(), liveTenantID)
+		return err
+	}); err != nil {
+		t.Fatalf("cleanup historical policy fixtures: %v", err)
+	}
+}
+
 func assertServiceMigrationHistory(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType, table string) {
 	t.Helper()
 	var customHistory, defaultHistory int
