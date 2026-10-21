@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,6 +46,27 @@ func (m releaseTrackingMutex) Unlock(context.Context) error {
 	return nil
 }
 func (releaseTrackingMutex) Until() time.Time { return time.Now().Add(time.Minute) }
+
+type contendingLocker struct {
+	mutex      cache.Lock
+	contention int32
+	attempts   atomic.Int32
+	cancel     context.CancelFunc
+}
+
+func (l *contendingLocker) TryLock(context.Context, string, time.Duration) (cache.Lock, bool, error) {
+	if l.attempts.Add(1) <= l.contention {
+		if l.cancel != nil {
+			l.cancel()
+		}
+		return nil, false, nil
+	}
+	return l.mutex, true, nil
+}
+
+func (*contendingLocker) Lock(context.Context, string, time.Duration, time.Duration) (cache.Lock, error) {
+	return nil, errors.New("unexpected blocking acquisition")
+}
 
 func TestRunSampleFailsWhenDistributedLockIsUnavailable(t *testing.T) {
 	t.Parallel()
@@ -206,5 +228,33 @@ func TestRunJobRecoversHandlerPanicAndReleasesLock(t *testing.T) {
 	}
 	if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte("job_panic")) {
 		t.Fatalf("scheduler log exposed panic value or omitted safe reason: %s", output.String())
+	}
+}
+
+func TestManualJobRetriesLockContentionWithinDeadline(t *testing.T) {
+	t.Parallel()
+	locker := &contendingLocker{mutex: mutexStub{}, contention: 1}
+	called := 0
+	err := runManualJobContext(t.Context(), "reconcile", time.Second, time.Millisecond, locker, func(context.Context) error {
+		called++
+		return nil
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil || locker.attempts.Load() != 2 || called != 1 {
+		t.Fatalf("manual lock retry error=%v attempts=%d called=%d", err, locker.attempts.Load(), called)
+	}
+}
+
+func TestManualJobStopsRetryingWhenDeadlineContextEnds(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	locker := &contendingLocker{contention: 100, cancel: cancel}
+	called := false
+	err := runManualJobContext(ctx, "reconcile", time.Second, time.Second, locker, func(context.Context) error {
+		called = true
+		return nil
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !errors.Is(err, context.Canceled) || locker.attempts.Load() != 1 || called {
+		t.Fatalf("manual retry cancellation error=%v attempts=%d called=%t", err, locker.attempts.Load(), called)
 	}
 }

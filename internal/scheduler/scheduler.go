@@ -324,16 +324,9 @@ func startJobContext(parent context.Context, serviceName, job string, timeout ti
 }
 
 func runJobContext(ctx context.Context, job string, lockTTL time.Duration, locker cache.Locker, execute func(context.Context) error, logger *slog.Logger) error {
-	acquired, err := cache.TryWithLock(ctx, locker, "cron:"+job, lockTTL, func(ctx context.Context) (runErr error) {
-		defer func() {
-			if recover() != nil {
-				runErr = ErrJobPanicked
-			}
-		}()
-		return execute(ctx)
-	})
+	acquired, err := cache.TryWithLock(ctx, locker, "cron:"+job, lockTTL, recoverJobPanic(execute))
 	if err != nil {
-		logger.ErrorContext(ctx, "scheduled job failed", "job", job, "error", safeJobFailure(err))
+		logJobFailure(ctx, logger, job, err)
 		return err
 	}
 	if !acquired {
@@ -341,6 +334,51 @@ func runJobContext(ctx context.Context, job string, lockTTL time.Duration, locke
 		return ErrSkipped
 	}
 	return nil
+}
+
+func runManualJobContext(ctx context.Context, job string, lockTTL, retryDelay time.Duration, locker cache.Locker, execute func(context.Context) error, logger *slog.Logger) error {
+	if retryDelay <= 0 {
+		retryDelay = 100 * time.Millisecond
+	}
+	ticker := time.NewTicker(retryDelay)
+	defer ticker.Stop()
+	callback := recoverJobPanic(execute)
+	for {
+		if err := ctx.Err(); err != nil {
+			logJobFailure(ctx, logger, job, err)
+			return err
+		}
+		acquired, err := cache.TryWithLock(ctx, locker, "cron:"+job, lockTTL, callback)
+		if err != nil {
+			logJobFailure(ctx, logger, job, err)
+			return err
+		}
+		if acquired {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			err := ctx.Err()
+			logJobFailure(ctx, logger, job, err)
+			return err
+		case <-ticker.C:
+		}
+	}
+}
+
+func recoverJobPanic(execute func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) (runErr error) {
+		defer func() {
+			if recover() != nil {
+				runErr = ErrJobPanicked
+			}
+		}()
+		return execute(ctx)
+	}
+}
+
+func logJobFailure(ctx context.Context, logger *slog.Logger, job string, err error) {
+	logger.ErrorContext(ctx, "scheduled job failed", "job", job, "error", safeJobFailure(err))
 }
 
 func (m *Manager) logOperationFailure(ctx context.Context, message string, err error) {

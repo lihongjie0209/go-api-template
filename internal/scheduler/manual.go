@@ -182,7 +182,7 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	}()
 	handler, err := m.handlers.Resolve(run.Handler)
 	if err == nil {
-		err = runJobContext(ctx, run.JobCode, time.Duration(run.LockTTLSeconds)*time.Second, m.locker, func(ctx context.Context) error {
+		err = runManualJobContext(ctx, run.JobCode, time.Duration(run.LockTTLSeconds)*time.Second, m.cfg.DistributedLock.RetryDelay, m.locker, func(ctx context.Context) error {
 			return handler(ctx, json.RawMessage(run.Payload))
 		}, m.logger)
 	}

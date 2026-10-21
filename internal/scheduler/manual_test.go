@@ -201,10 +201,11 @@ func TestExecuteManualFinishesOutsideHTTPContext(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	locker := &contendingLocker{mutex: mutexStub{}, contention: 1}
 	manager := &Manager{
-		cfg:      config.Config{App: config.App{Name: "orders-service"}},
+		cfg:      config.Config{App: config.App{Name: "orders-service"}, DistributedLock: config.DistributedLock{RetryDelay: time.Millisecond}},
 		tx:       database.NewTransactor(db),
-		locker:   lockerStub{mutex: mutexStub{}, acquired: true},
+		locker:   locker,
 		metrics:  &observability.Metrics{},
 		logger:   logger,
 		handlers: NewHandlerRegistry(logger),
@@ -232,6 +233,7 @@ func TestExecuteManualFinishesOutsideHTTPContext(t *testing.T) {
 	cancelRequest()
 	require.ErrorIs(t, requestCtx.Err(), context.Canceled)
 	manager.executeManual(context.WithoutCancel(requestCtx), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", LeaseOwner: "lease-1"})
+	require.Equal(t, int32(2), locker.attempts.Load())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

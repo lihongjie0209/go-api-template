@@ -280,6 +280,9 @@ available. A feature must not introduce a second transport for the same event.
   non-sensitive failure reason before releasing their distributed lease. Both
   cron and manual runs must persist a terminal failure and operation log;
   recovery logging must never include panic values or stack contents.
+- Cron executions may skip on lock contention, but an accepted manual run must
+  retry contention within its configured execution deadline. If the deadline
+  expires, record an error; do not mark a queued manual action as `skipped`.
 - Do not use Redis lists/streams as an ad-hoc business queue unless an explicit
   architecture decision accepts its operational and delivery tradeoffs. Do not
   use the durable message queue for request-path cache reads, locks, rate limits,
