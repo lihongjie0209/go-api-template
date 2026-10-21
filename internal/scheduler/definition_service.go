@@ -207,8 +207,8 @@ func (s *DefinitionService) Page(ctx context.Context, input DefinitionPageInput)
 	}
 	where, args := []string{"deleted_at IS NULL"}, []any{}
 	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
-		where = append(where, `(LOWER(code) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?) OR LOWER(handler) LIKE LOWER(?))`)
-		value := "%" + keyword + "%"
+		where = append(where, `(LOWER(code) LIKE LOWER(?) ESCAPE '!' OR LOWER(name) LIKE LOWER(?) ESCAPE '!' OR LOWER(handler) LIKE LOWER(?) ESCAPE '!')`)
+		value := database.LikeContainsPattern(keyword)
 		args = append(args, value, value, value)
 	}
 	for _, filter := range []struct {
@@ -400,8 +400,8 @@ func (s *DefinitionService) PageRuns(ctx context.Context, input RunPageInput) (R
 	}
 	where, args := []string{"scheduled_job_id=?", "deleted_at IS NULL"}, []any{input.ScheduledJobID}
 	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
-		where = append(where, `(LOWER(request_id) LIKE LOWER(?) OR LOWER(trace_id) LIKE LOWER(?))`)
-		value := "%" + keyword + "%"
+		where = append(where, `(LOWER(request_id) LIKE LOWER(?) ESCAPE '!' OR LOWER(trace_id) LIKE LOWER(?) ESCAPE '!')`)
+		value := database.LikeContainsPattern(keyword)
 		args = append(args, value, value)
 	}
 	for _, filter := range []struct {

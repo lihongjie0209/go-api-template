@@ -187,8 +187,8 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	where := []string{"deleted_at IS NULL"}
 	args := []any{}
 	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
-		where = append(where, `(LOWER(code) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))`)
-		value := "%" + keyword + "%"
+		where = append(where, `(LOWER(code) LIKE LOWER(?) ESCAPE '!' OR LOWER(name) LIKE LOWER(?) ESCAPE '!')`)
+		value := database.LikeContainsPattern(keyword)
 		args = append(args, value, value)
 	}
 	var queryErr error

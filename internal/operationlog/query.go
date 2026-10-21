@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -187,8 +188,8 @@ func (s *Service) pageScoped(ctx context.Context, input PageInput, tenantID, ope
 		return Page{}, ErrInvalidEntry
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		pattern := "%" + strings.ToLower(keyword) + "%"
-		where += ` AND (LOWER(l.operation) LIKE ? OR LOWER(l.resource_type) LIKE ? OR LOWER(l.resource_id) LIKE ? OR LOWER(l.resource_name_snapshot) LIKE ? OR LOWER(l.actor_id) LIKE ? OR LOWER(l.actor_name_snapshot) LIKE ? OR LOWER(l.request_id) LIKE ?)`
+		pattern := database.LikeContainsPattern(strings.ToLower(keyword))
+		where += ` AND (LOWER(l.operation) LIKE ? ESCAPE '!' OR LOWER(l.resource_type) LIKE ? ESCAPE '!' OR LOWER(l.resource_id) LIKE ? ESCAPE '!' OR LOWER(l.resource_name_snapshot) LIKE ? ESCAPE '!' OR LOWER(l.actor_id) LIKE ? ESCAPE '!' OR LOWER(l.actor_name_snapshot) LIKE ? ESCAPE '!' OR LOWER(l.request_id) LIKE ? ESCAPE '!')`
 		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	for _, filter := range []struct {

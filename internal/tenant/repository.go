@@ -117,8 +117,8 @@ func (r *Repository) AdminPage(ctx context.Context, input PageInput, limit, offs
 
 func (r *Repository) page(ctx context.Context, where string, args []any, input PageInput, limit, offset int) ([]Record, int64, error) {
 	if input.Keyword != "" {
-		where += " AND (LOWER(code) LIKE ? OR LOWER(name) LIKE ?)"
-		pattern := "%" + strings.ToLower(input.Keyword) + "%"
+		where += " AND (LOWER(code) LIKE ? ESCAPE '!' OR LOWER(name) LIKE ? ESCAPE '!')"
+		pattern := appdb.LikeContainsPattern(strings.ToLower(input.Keyword))
 		args = append(args, pattern, pattern)
 	}
 	if len(input.IDs) > 0 {

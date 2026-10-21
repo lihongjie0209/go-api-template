@@ -226,8 +226,8 @@ func (s *Service) Sessions(ctx context.Context, input SessionPageInput) (Session
 	where := "user_id=? AND deleted_at IS NULL"
 	args := []any{actor.ID}
 	if input.Keyword != "" {
-		pattern := "%" + strings.ToLower(input.Keyword) + "%"
-		where += " AND (LOWER(client_ip) LIKE ? OR LOWER(user_agent) LIKE ?)"
+		pattern := database.LikeContainsPattern(strings.ToLower(input.Keyword))
+		where += " AND (LOWER(client_ip) LIKE ? ESCAPE '!' OR LOWER(user_agent) LIKE ? ESCAPE '!')"
 		args = append(args, pattern, pattern)
 	}
 	for _, filter := range []struct {

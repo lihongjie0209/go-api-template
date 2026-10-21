@@ -184,8 +184,8 @@ func (r *Repository) PageMembers(ctx context.Context, tenantID string, input Mem
 	where := "tm.tenant_id=? AND tm.deleted_at IS NULL AND " + scope.Clause
 	args := append([]any{tenantID}, scope.Args...)
 	if input.Keyword != "" {
-		where += " AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)"
-		p := "%" + strings.ToLower(input.Keyword) + "%"
+		where += " AND (LOWER(username) LIKE ? ESCAPE '!' OR LOWER(display_name) LIKE ? ESCAPE '!')"
+		p := database.LikeContainsPattern(strings.ToLower(input.Keyword))
 		args = append(args, p, p)
 	}
 	filters := []struct {

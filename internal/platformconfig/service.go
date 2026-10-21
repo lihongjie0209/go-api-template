@@ -334,8 +334,8 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	}
 	where, args := `deleted_at IS NULL`, []any{}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		where += ` AND (LOWER(config_key) LIKE ? OR LOWER(name) LIKE ? OR LOWER(description) LIKE ?)`
-		pattern := "%" + strings.ToLower(keyword) + "%"
+		where += ` AND (LOWER(config_key) LIKE ? ESCAPE '!' OR LOWER(name) LIKE ? ESCAPE '!' OR LOWER(description) LIKE ? ESCAPE '!')`
+		pattern := database.LikeContainsPattern(strings.ToLower(keyword))
 		args = append(args, pattern, pattern, pattern)
 	}
 	for _, filter := range []struct {

@@ -235,8 +235,8 @@ func (s *TenantAccessService) Page(ctx context.Context, input GrantPageInput) (G
 	where := []string{"g.tenant_id=?", "g.deleted_at IS NULL", "t.deleted_at IS NULL", "a.deleted_at IS NULL"}
 	args := []any{input.TenantID}
 	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
-		where = append(where, `(LOWER(a.code) LIKE LOWER(?) OR LOWER(a.name) LIKE LOWER(?))`)
-		value := "%" + keyword + "%"
+		where = append(where, `(LOWER(a.code) LIKE LOWER(?) ESCAPE '!' OR LOWER(a.name) LIKE LOWER(?) ESCAPE '!')`)
+		value := database.LikeContainsPattern(keyword)
 		args = append(args, value, value)
 	}
 	var buildErr error

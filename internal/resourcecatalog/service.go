@@ -447,9 +447,9 @@ func pageConditions(input PageInput, idColumn, keyColumn string, extraKeywordCol
 		// All columns come from fixed repository call sites, never from request data.
 		columns := append([]string{keyColumn, alias + "name"}, extraKeywordColumns...)
 		predicates := make([]string, 0, len(columns))
-		like := "%" + keyword + "%"
+		like := database.LikeContainsPattern(keyword)
 		for _, column := range columns {
-			predicates = append(predicates, "LOWER("+column+") LIKE LOWER(?)")
+			predicates = append(predicates, "LOWER("+column+") LIKE LOWER(?) ESCAPE '!'")
 			args = append(args, like)
 		}
 		where += " AND (" + strings.Join(predicates, " OR ") + ")"

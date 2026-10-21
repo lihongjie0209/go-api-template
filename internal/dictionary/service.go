@@ -232,8 +232,8 @@ func (s *Service) PageDefinitions(ctx context.Context, in DefinitionPageInput) (
 	where := `deleted_at IS NULL`
 	args := []any{}
 	if in.Keyword != "" {
-		where += ` AND (lower(dictionary_code) LIKE ? OR lower(name) LIKE ?)`
-		like := "%" + strings.ToLower(in.Keyword) + "%"
+		where += ` AND (lower(dictionary_code) LIKE ? ESCAPE '!' OR lower(name) LIKE ? ESCAPE '!')`
+		like := database.LikeContainsPattern(strings.ToLower(in.Keyword))
 		args = append(args, like, like)
 	}
 	typeStrings := make([]string, len(in.Types))
@@ -309,8 +309,8 @@ func (s *Service) PageItems(ctx context.Context, in ItemPageInput) (ItemPage, er
 	where := `dictionary_id=? AND deleted_at IS NULL`
 	args := []any{in.DictionaryID}
 	if in.Keyword != "" {
-		where += ` AND (lower(code) LIKE ? OR lower(name) LIKE ?)`
-		like := "%" + strings.ToLower(in.Keyword) + "%"
+		where += ` AND (lower(code) LIKE ? ESCAPE '!' OR lower(name) LIKE ? ESCAPE '!')`
+		like := database.LikeContainsPattern(strings.ToLower(in.Keyword))
 		args = append(args, like, like)
 	}
 	if in.Disabled != nil {
@@ -864,8 +864,8 @@ func (s *Service) queryStatic(ctx context.Context, d Definition, q Query) (Resul
 			where += ` AND disabled=false`
 		}
 		if q.Keyword != "" {
-			where += ` AND (lower(code) LIKE ? OR lower(name) LIKE ?)`
-			like := "%" + strings.ToLower(q.Keyword) + "%"
+			where += ` AND (lower(code) LIKE ? ESCAPE '!' OR lower(name) LIKE ? ESCAPE '!')`
+			like := database.LikeContainsPattern(strings.ToLower(q.Keyword))
 			args = append(args, like, like)
 		}
 		where, args = appendIn(where, args, "id", q.IDs)

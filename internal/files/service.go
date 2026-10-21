@@ -269,8 +269,8 @@ func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
 	where, args := fileActorScope(actor)
 	where += ` AND deleted_at IS NULL`
 	if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
-		where += ` AND LOWER(original_name) LIKE ?`
-		args = append(args, "%"+keyword+"%")
+		where += ` AND LOWER(original_name) LIKE ? ESCAPE '!'`
+		args = append(args, database.LikeContainsPattern(keyword))
 	}
 	for _, filter := range []struct {
 		column string

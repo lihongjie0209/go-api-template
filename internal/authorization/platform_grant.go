@@ -163,8 +163,8 @@ func (s *PlatformGrantService) PageGrantablePermissions(ctx context.Context, inp
 		args = append(args, inArgs...)
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) OR LOWER(p.name) LIKE LOWER(?))`
-		like := "%" + keyword + "%"
+		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.name) LIKE LOWER(?) ESCAPE '!')`
+		like := database.LikeContainsPattern(keyword)
 		args = append(args, like, like)
 	}
 	var total int64
@@ -273,8 +273,8 @@ func (s *PlatformGrantService) Page(ctx context.Context, input PlatformGrantPage
 		args = append(args, in...)
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) OR LOWER(p.name) LIKE LOWER(?))`
-		like := "%" + keyword + "%"
+		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.name) LIKE LOWER(?) ESCAPE '!')`
+		like := database.LikeContainsPattern(keyword)
 		args = append(args, like, like)
 	}
 	var total int64

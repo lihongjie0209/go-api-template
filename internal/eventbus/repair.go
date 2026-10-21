@@ -54,8 +54,8 @@ func (s *RepairService) Dead(ctx context.Context, request pagination.Request) (D
 	where := "dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL"
 	args := []any{}
 	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
-		where += " AND (LOWER(id) LIKE ? OR LOWER(subject) LIKE ?)"
-		pattern := "%" + strings.ToLower(keyword) + "%"
+		where += " AND (LOWER(id) LIKE ? ESCAPE '!' OR LOWER(subject) LIKE ? ESCAPE '!')"
+		pattern := database.LikeContainsPattern(strings.ToLower(keyword))
 		args = append(args, pattern, pattern)
 	}
 	var total int64

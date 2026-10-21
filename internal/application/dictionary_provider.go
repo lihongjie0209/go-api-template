@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/dictionary"
 	platformstableid "github.com/lihongjie0209/microservice-platform-go/stableid"
 )
@@ -43,8 +44,8 @@ func (p *DictionaryProvider) Query(ctx context.Context, query dictionary.Query) 
 		where = append(where, "status='active'")
 	}
 	if query.Keyword != "" {
-		where = append(where, "(LOWER(code) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))")
-		value := "%" + query.Keyword + "%"
+		where = append(where, "(LOWER(code) LIKE LOWER(?) ESCAPE '!' OR LOWER(name) LIKE LOWER(?) ESCAPE '!')")
+		value := database.LikeContainsPattern(query.Keyword)
 		args = append(args, value, value)
 	}
 	var err error

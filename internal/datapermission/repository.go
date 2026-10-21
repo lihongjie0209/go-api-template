@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 )
 
@@ -82,8 +83,9 @@ func (r *Repository) Page(ctx context.Context, tenantID string, input PolicyPage
 		if len(keyword) > 256 {
 			return PolicyPage{}, ErrInvalidPolicy
 		}
-		where += " AND (lower(code) LIKE ? OR lower(name) LIKE ?)"
-		args = append(args, "%"+keyword+"%", "%"+keyword+"%")
+		where += " AND (lower(code) LIKE ? ESCAPE '!' OR lower(name) LIKE ? ESCAPE '!')"
+		pattern := database.LikeContainsPattern(keyword)
+		args = append(args, pattern, pattern)
 	}
 	where, args, err = appendEnumFilter(where, args, "scope", scopeValues(input.Scopes), []string{string(PolicyScopeGlobal), string(PolicyScopeTenant)})
 	if err != nil {

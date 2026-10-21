@@ -358,6 +358,15 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || selectedEnum.Total != 1 || len(selectedEnum.Items) != 1 || selectedEnum.Items[0].Code != "f" {
 		t.Fatalf("enum value lookup must be exact and independent of code: %#v err=%v", selectedEnum, err)
 	}
+	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: enumDefinition.ID, Code: "literal", Name: "literal %_! marker"}); err != nil {
+		t.Fatalf("create literal wildcard item: %v", err)
+	}
+	for _, keyword := range []string{"%", "_", "!", "%_!"} {
+		literal, queryErr := service.Query(ctx, dictionary.Query{Code: "test.gender", Keyword: keyword})
+		if queryErr != nil || literal.Total != 1 || len(literal.Items) != 1 || literal.Items[0].Code != "literal" {
+			t.Fatalf("literal wildcard keyword %q matched unexpected items: %#v err=%v", keyword, literal, queryErr)
+		}
+	}
 	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "duplicate-value", Name: "Duplicate", Value: "guangdong-value"}); !errors.Is(err, dictionary.ErrConflict) {
 		t.Fatalf("duplicate selectable value create error=%v", err)
 	}

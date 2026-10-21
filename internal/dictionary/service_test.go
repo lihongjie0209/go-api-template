@@ -418,6 +418,29 @@ func TestQueryStaticEnumFiltersExactValuesInCountAndPage(t *testing.T) {
 	require.Empty(t, result.Items)
 }
 
+func TestQueryStaticEnumTreatsKeywordWildcardsAsLiteral(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	pattern := "%!%!_!!%"
+	where := `dictionary_id=\? AND deleted_at IS NULL AND disabled=false AND \(lower\(code\) LIKE \? ESCAPE '!' OR lower\(name\) LIKE \? ESCAPE '!'\)`
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE `+where).
+		WithArgs("dictionary-1", pattern, pattern).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE `+where+` ORDER BY .* LIMIT \? OFFSET \?`).
+		WithArgs("dictionary-1", pattern, pattern, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	result, err := service.queryStatic(t.Context(), Definition{ID: "dictionary-1", Kind: KindEnum}, Query{Keyword: "%_!"})
+	require.NoError(t, err)
+	require.Zero(t, result.Total)
+}
+
 func TestBuildTreeRejectsCycleAndReturnsEmptyArray(t *testing.T) {
 	t.Parallel()
 	firstID, secondID := uuidString(1), uuidString(2)

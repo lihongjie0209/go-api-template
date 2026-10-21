@@ -339,8 +339,8 @@ func (s *TenantAuthorizationService) PageTenantGrantablePermissions(ctx context.
 	where := tenantGrantablePermissionWhere
 	args := []any{}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) OR LOWER(p.name) LIKE LOWER(?))`
-		like := "%" + keyword + "%"
+		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.name) LIKE LOWER(?) ESCAPE '!')`
+		like := database.LikeContainsPattern(keyword)
 		args = append(args, like, like)
 	}
 	var total int64
@@ -423,8 +423,8 @@ func normalizeAdministratorPageInput(input AdministratorPageInput) (pagination.R
 func (s *TenantAuthorizationService) pageAdministratorCandidates(ctx context.Context, tenantID string, input AdministratorPageInput, request pagination.Request) ([]AdministratorCandidate, int64, error) {
 	where, args := `m.tenant_id=? AND m.deleted_at IS NULL`, []any{tenantID}
 	if input.Keyword != "" {
-		where += ` AND (LOWER(m.username) LIKE ? OR LOWER(m.display_name) LIKE ?)`
-		pattern := "%" + strings.ToLower(input.Keyword) + "%"
+		where += ` AND (LOWER(m.username) LIKE ? ESCAPE '!' OR LOWER(m.display_name) LIKE ? ESCAPE '!')`
+		pattern := database.LikeContainsPattern(strings.ToLower(input.Keyword))
 		args = append(args, pattern, pattern)
 	}
 	for _, filter := range []struct {
@@ -724,8 +724,8 @@ func (s *TenantAuthorizationService) PageAssignablePermissions(ctx context.Conte
 		args = append(args, actor.MembershipID, actor.TenantID)
 	}
 	if keyword := strings.TrimSpace(input.Keyword); keyword != "" {
-		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) OR LOWER(p.name) LIKE LOWER(?))`
-		like := "%" + keyword + "%"
+		where += ` AND (LOWER(p.permission_key) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.name) LIKE LOWER(?) ESCAPE '!')`
+		like := database.LikeContainsPattern(keyword)
 		args = append(args, like, like)
 	}
 	if len(input.IDs) > 0 {
@@ -916,8 +916,8 @@ func (s *TenantAuthorizationService) assignableRolesWithEffective(ctx context.Co
 func (s *TenantAuthorizationService) pageRoles(ctx context.Context, tenantID string, input RolePageInput, request pagination.Request, scope datapermission.SQLPredicate) ([]TenantRole, int64, error) {
 	where, args := `tr.tenant_id=? AND tr.deleted_at IS NULL AND `+scope.Clause, append([]any{tenantID}, scope.Args...)
 	if keyword := input.Keyword; keyword != "" {
-		where += ` AND (LOWER(tr.code) LIKE ? OR LOWER(tr.name) LIKE ? OR LOWER(tr.description) LIKE ?)`
-		pattern := "%" + strings.ToLower(keyword) + "%"
+		where += ` AND (LOWER(tr.code) LIKE ? ESCAPE '!' OR LOWER(tr.name) LIKE ? ESCAPE '!' OR LOWER(tr.description) LIKE ? ESCAPE '!')`
+		pattern := database.LikeContainsPattern(strings.ToLower(keyword))
 		args = append(args, pattern, pattern, pattern)
 	}
 	for _, filter := range []struct {

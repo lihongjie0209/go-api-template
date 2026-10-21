@@ -202,9 +202,9 @@ func (r *Repository) get(ctx context.Context, predicate string, args ...any) (Us
 func (r *Repository) Page(ctx context.Context, input PageInput) ([]User, int64, error) {
 	where, args := "deleted_at IS NULL", []any{}
 	if input.Keyword != "" {
-		where += " AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ? OR LOWER(email) LIKE ? OR phone LIKE ?)"
-		pattern := "%" + strings.ToLower(input.Keyword) + "%"
-		args = append(args, pattern, pattern, pattern, "%"+strings.TrimSpace(input.Keyword)+"%")
+		where += " AND (LOWER(username) LIKE ? ESCAPE '!' OR LOWER(display_name) LIKE ? ESCAPE '!' OR LOWER(email) LIKE ? ESCAPE '!' OR phone LIKE ? ESCAPE '!')"
+		pattern := database.LikeContainsPattern(strings.ToLower(input.Keyword))
+		args = append(args, pattern, pattern, pattern, database.LikeContainsPattern(strings.TrimSpace(input.Keyword)))
 	}
 	for _, filter := range []struct {
 		clause string

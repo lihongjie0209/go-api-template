@@ -145,6 +145,14 @@ interpolate client-provided SQL identifiers. Page responses use:
 }
 ```
 
+Keyword/fuzzy searches treat client text literally: `%`, `_`, and the chosen
+SQL `LIKE` escape character must not act as caller-controlled wildcards. Use
+the shared `database.LikeContainsPattern` helper with `ESCAPE '!'` on every
+`LIKE` branch, including count and page queries; preserve bound parameters.
+Static SQL searches and in-process dictionary providers must agree on this
+matching behavior. Tests must cover `%`, `_`, and `!` against both PostgreSQL
+and MySQL where the query supports both.
+
 Batch lookup operations with an empty ID list must return an empty collection
 without issuing an unfiltered page/list query. They must still enforce the
 normal authentication boundary. An omitted optional page filter is not the

@@ -108,7 +108,7 @@ func TestPageActionsKeywordMatchesParentResource(t *testing.T) {
 		ResourceID: resourceID,
 		Statuses:   []string{"active"},
 	}
-	where := `a.deleted_at IS NULL AND (LOWER(a.action_key) LIKE LOWER(?) OR LOWER(a.name) LIKE LOWER(?) OR LOWER(r.resource_key) LIKE LOWER(?) OR LOWER(r.name) LIKE LOWER(?)) AND a.status IN (?) AND r.deleted_at IS NULL AND a.resource_id=?`
+	where := `a.deleted_at IS NULL AND (LOWER(a.action_key) LIKE LOWER(?) ESCAPE '!' OR LOWER(a.name) LIKE LOWER(?) ESCAPE '!' OR LOWER(r.resource_key) LIKE LOWER(?) ESCAPE '!' OR LOWER(r.name) LIKE LOWER(?) ESCAPE '!') AND a.status IN (?) AND r.deleted_at IS NULL AND a.resource_id=?`
 	countSQL := `SELECT count(*) FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE ` + where
 	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(countSQL))).WithArgs("%成员%", "%成员%", "%成员%", "%成员%", "active", resourceID).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(actionSelect+` WHERE `+where+` ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?`))).WithArgs("%成员%", "%成员%", "%成员%", "%成员%", "active", resourceID, 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}))
