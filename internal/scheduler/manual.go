@@ -93,15 +93,17 @@ func (m *Manager) manualLoop(ctx context.Context) {
 	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	preferExpired := true
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		run, found, err := m.claimManual(ctx)
+		run, found, err := m.claimManual(ctx, preferExpired)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			m.logOperationFailure(ctx, "claim manual scheduled job", err)
 		}
 		if found {
+			preferExpired = !preferExpired
 			m.executeManual(ctx, run)
 			continue
 		}
@@ -114,22 +116,31 @@ func (m *Manager) manualLoop(ctx context.Context) {
 	}
 }
 
-func (m *Manager) claimManual(ctx context.Context) (manualRun, bool, error) {
+func (m *Manager) claimManual(ctx context.Context, preferExpired bool) (manualRun, bool, error) {
 	actorCtx := platformprincipal.SystemContext(ctx, m.cfg.App.Name+":scheduler:manual")
 	var run manualRun
 	workerID := uuid.NewString()
 	err := m.tx.Within(actorCtx, &sql.TxOptions{}, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		const columns = `id,scheduled_job_id,job_code,job_name,handler,payload,timeout_seconds,lock_ttl_seconds,request_id`
-		queued := tx.Rebind(`SELECT ` + columns + ` FROM scheduled_job_runs WHERE trigger_source='manual' AND status='queued' AND dispatched_at IS NOT NULL AND deleted_at IS NULL ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
-		if err := tx.GetContext(actorCtx, &run, queued); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
+		loadQueued := func() error {
+			query := tx.Rebind(`SELECT ` + columns + ` FROM scheduled_job_runs WHERE trigger_source='manual' AND status='queued' AND dispatched_at IS NOT NULL AND deleted_at IS NULL ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
+			return tx.GetContext(actorCtx, &run, query)
+		}
+		loadExpired := func() error {
+			query := tx.Rebind(`SELECT ` + columns + ` FROM scheduled_job_runs WHERE trigger_source='manual' AND status='running' AND lease_until<? AND deleted_at IS NULL ORDER BY lease_until,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
+			return tx.GetContext(actorCtx, &run, query, now)
+		}
+		first, second := loadQueued, loadExpired
+		if preferExpired {
+			first, second = second, first
+		}
+		if err := first(); errors.Is(err, sql.ErrNoRows) {
+			if err := second(); err != nil {
 				return err
 			}
-			expired := tx.Rebind(`SELECT ` + columns + ` FROM scheduled_job_runs WHERE trigger_source='manual' AND status='running' AND lease_until<? AND deleted_at IS NULL ORDER BY lease_until,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
-			if err := tx.GetContext(actorCtx, &run, expired, now); err != nil {
-				return err
-			}
+		} else if err != nil {
+			return err
 		}
 		result, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET status='running',started_at=?,finished_at=NULL,lease_owner=?,lease_until=?,updated_at=?,updated_by=? WHERE id=? AND trigger_source='manual' AND deleted_at IS NULL AND ((status='queued' AND dispatched_at IS NOT NULL) OR (status='running' AND lease_until<?))`), now, workerID, now.Add(manualLeaseDuration), now, m.cfg.App.Name+":scheduler:manual", run.ID, now)
 		if err != nil {

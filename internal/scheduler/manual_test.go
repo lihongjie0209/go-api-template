@@ -146,7 +146,7 @@ func TestClaimManualOnlySelectsDispatchedOrExpiredRun(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* FROM scheduled_job_runs WHERE .*dispatched_at IS NOT NULL`).WillReturnRows(sqlmock.NewRows(columns).AddRow("run-1", "job-1", "job-code", "Job", "system.sample", "{}", 30, 60, "req-1"))
 	mock.ExpectExec(`UPDATE scheduled_job_runs SET status='running'.*dispatched_at IS NOT NULL`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "orders-service:scheduler:manual", "run-1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	run, found, err := manager.claimManual(t.Context())
+	run, found, err := manager.claimManual(t.Context(), false)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "run-1", run.ID)
@@ -166,11 +166,48 @@ func TestClaimManualRecoversExpiredRun(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* status='running' AND lease_until<`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows(columns).AddRow("run-1", "job-1", "job-code", "Job", "system.sample", "{}", 30, 60, "req-1"))
 	mock.ExpectExec(`UPDATE scheduled_job_runs SET status='running'`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	run, found, err := manager.claimManual(t.Context())
+	run, found, err := manager.claimManual(t.Context(), false)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "run-1", run.ID)
 	require.NotEmpty(t, run.LeaseOwner)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestClaimManualPrefersExpiredRunWhileQueuedRunsExist(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	manager := &Manager{cfg: config.Config{App: config.App{Name: "orders-service"}}, tx: database.NewTransactor(sqlx.NewDb(raw, "sqlmock"))}
+	columns := []string{"id", "scheduled_job_id", "job_code", "job_name", "handler", "payload", "timeout_seconds", "lock_ttl_seconds", "request_id"}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* status='running' AND lease_until<`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows(columns).AddRow("expired-run", "job-1", "job-code", "Job", "system.sample", "{}", 30, 60, "req-1"))
+	mock.ExpectExec(`UPDATE scheduled_job_runs SET status='running'`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	run, found, err := manager.claimManual(t.Context(), true)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "expired-run", run.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestClaimManualFallsBackToQueuedRunWhenNoLeaseExpired(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	manager := &Manager{cfg: config.Config{App: config.App{Name: "orders-service"}}, tx: database.NewTransactor(sqlx.NewDb(raw, "sqlmock"))}
+	columns := []string{"id", "scheduled_job_id", "job_code", "job_name", "handler", "payload", "timeout_seconds", "lock_ttl_seconds", "request_id"}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* status='running' AND lease_until<`).WithArgs(sqlmock.AnyArg()).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT .* status='queued' AND dispatched_at IS NOT NULL`).WillReturnRows(sqlmock.NewRows(columns).AddRow("queued-run", "job-1", "job-code", "Job", "system.sample", "{}", 30, 60, "req-1"))
+	mock.ExpectExec(`UPDATE scheduled_job_runs SET status='running'`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	run, found, err := manager.claimManual(t.Context(), true)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "queued-run", run.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

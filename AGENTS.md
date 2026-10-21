@@ -287,6 +287,10 @@ available. A feature must not introduce a second transport for the same event.
   lease loss. Distinguish cancellation from an active renewal failure: persist
   the terminal timeout result while the database lease is still owned, but
   leave a worker interrupted by service shutdown for lease-based recovery.
+- Workers claiming durable manual runs must give expired leases a bounded
+  chance to resume even while new queued runs keep arriving. Alternate claim
+  preference and fall back to the other class when the preferred class is
+  empty; preserve indexed claim queries and `SKIP LOCKED`.
 - Do not use Redis lists/streams as an ad-hoc business queue unless an explicit
   architecture decision accepts its operational and delivery tradeoffs. Do not
   use the durable message queue for request-path cache reads, locks, rate limits,
