@@ -333,7 +333,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, fmt.Errorf("%w: verify service account credential: %w", ErrAuthenticationUnavailable, err))
 	}
 	if !valid {
-		if recordErr := s.recordFailure(ctx, value.Account, failedEntry); recordErr != nil && s.security.FailClosed() {
+		if recordErr := s.recordFailure(ctx, value, failedEntry); recordErr != nil && s.security.FailClosed() {
 			return Account{}, "", fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
 		}
 		return Account{}, "", ErrInvalidCredentials
@@ -392,7 +392,7 @@ func (s *Service) rejectAuthentication(ctx context.Context, entry securitylog.En
 	return authenticationErr
 }
 
-func (s *Service) recordFailure(ctx context.Context, account Account, entry securitylog.Entry) error {
+func (s *Service) recordFailure(ctx context.Context, account credential, entry securitylog.Entry) error {
 	if s.maxFailedAttempts <= 0 || s.lockDuration <= 0 {
 		return s.security.Record(ctx, entry)
 	}
@@ -400,9 +400,15 @@ func (s *Service) recordFailure(ctx context.Context, account Account, entry secu
 	return s.transactor.Within(accountCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		lockedUntil := now.Add(s.lockDuration)
-		query := tx.Rebind(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts+1,locked_until=CASE WHEN failed_attempts+1>=? THEN ? ELSE locked_until END,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NULL`)
-		if _, err := tx.ExecContext(accountCtx, query, s.maxFailedAttempts, lockedUntil, now, account.ID, account.ID); err != nil {
+		// Compare the observed hash, not version: concurrent wrong attempts must
+		// all count, but an attempt against a rotated secret must not lock it.
+		query := tx.Rebind(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts+1,locked_until=CASE WHEN failed_attempts+1>=? THEN ? ELSE locked_until END,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND secret_hash=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?) AND (locked_until IS NULL OR locked_until<=?)`)
+		result, err := tx.ExecContext(accountCtx, query, s.maxFailedAttempts, lockedUntil, now, account.ID, account.ID, account.SecretHash, StatusActive, now, now)
+		if err != nil {
 			return err
+		}
+		if _, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("record service account failure affected rows: %w", err)
 		}
 		return s.security.RecordTx(accountCtx, tx, entry)
 	})

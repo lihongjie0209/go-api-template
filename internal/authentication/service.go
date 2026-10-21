@@ -554,17 +554,15 @@ func (s *Service) recordFailure(ctx context.Context, c Credential, identifier, i
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:login")
 	return s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
-		q := tx.Rebind(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts+1,locked_until=CASE WHEN failed_attempts+1>=? THEN ? ELSE locked_until END,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NULL`)
-		result, err := tx.ExecContext(systemCtx, q, s.cfg.Authentication.MaxFailedAttempts, now.Add(s.cfg.Authentication.LockDuration), now, c.UserID, c.ID)
+		// Hash equality fences password rotation while the SQL increment still
+		// counts concurrent invalid attempts against the same credential.
+		q := tx.Rebind(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts+1,locked_until=CASE WHEN failed_attempts+1>=? THEN ? ELSE locked_until END,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND user_id=? AND password_hash=? AND deleted_at IS NULL AND (locked_until IS NULL OR locked_until<=?) AND EXISTS (SELECT 1 FROM identity_users u WHERE u.id=identity_user_credentials.user_id AND u.status='active' AND u.deleted_at IS NULL)`)
+		result, err := tx.ExecContext(systemCtx, q, s.cfg.Authentication.MaxFailedAttempts, now.Add(s.cfg.Authentication.LockDuration), now, c.UserID, c.ID, c.UserID, c.PasswordHash, now)
 		if err != nil {
 			return err
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
+		if _, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("record login failure affected rows: %w", err)
-		}
-		if rows != 1 {
-			return ErrInvalidCredentials
 		}
 		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogin, SubjectID: c.UserID, SubjectType: string(platformprincipal.TypeUser), Identifier: identifier, Succeeded: false, Reason: "invalid_credentials", ClientIP: ip, UserAgent: userAgent})
 	})

@@ -47,6 +47,12 @@ The next domain work must keep identity and tenancy separate:
   Infrastructure failures fail closed with dependency-unavailable, never an
   invalid-credentials response; no issued token is returned before the
   successful-use write and security event commit together.
+- Failed-login counters are an explicit high-concurrency exception to an
+  expected-version predicate: use one atomic SQL increment guarded by the
+  observed credential hash and current active/unlocked state. This lets
+  simultaneous wrong attempts count while preventing an attempt against an
+  old password/secret from locking a newly rotated credential. A skipped
+  increment still records the failed authentication security event.
 - Signed-token state checks must fail closed while distinguishing an inactive
   session/account from an unavailable authoritative store. An infrastructure
   outage returns dependency-unavailable (HTTP 503 / gRPC Unavailable), not an

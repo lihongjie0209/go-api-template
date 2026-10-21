@@ -279,9 +279,28 @@ func TestService_RecordFailureUsesAtomicIncrement(t *testing.T) {
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
 	service := New(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{Authentication: config.Authentication{MaxFailedAttempts: 5, LockDuration: 15 * time.Minute}})
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts\+1,locked_until=CASE`).WithArgs(int64(5), sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "credential-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts\+1,locked_until=CASE.*WHERE id=\? AND user_id=\? AND password_hash=\?.*EXISTS \(SELECT 1 FROM identity_users u`).WithArgs(int64(5), sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "credential-1", "user-1", "observed-hash", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	require.NoError(t, service.recordFailure(t.Context(), Credential{ID: "credential-1", UserID: "user-1", FailedAttempts: 99, Version: 8}, "alice", "127.0.0.1", "test"))
+	require.NoError(t, service.recordFailure(t.Context(), Credential{ID: "credential-1", UserID: "user-1", PasswordHash: "observed-hash", FailedAttempts: 99, Version: 8}, "alice", "127.0.0.1", "test"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RecordFailureAfterPasswordChangeAuditsWithoutCounting(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "sqlmock")
+	recorder := &transactionalSecurityRecorder{}
+	service := NewWithSecurity(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{Authentication: config.Authentication{MaxFailedAttempts: 5, LockDuration: 15 * time.Minute}}, recorder)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts\+1,locked_until=CASE.*WHERE id=\? AND user_id=\? AND password_hash=\?.*EXISTS \(SELECT 1 FROM identity_users u`).
+		WithArgs(int64(5), sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "credential-1", "user-1", "old-hash", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	require.NoError(t, service.recordFailure(t.Context(), Credential{ID: "credential-1", UserID: "user-1", PasswordHash: "old-hash"}, "alice", "127.0.0.1", "test"))
+	require.Len(t, recorder.entries, 1)
+	require.False(t, recorder.entries[0].Succeeded)
+	require.Equal(t, "invalid_credentials", recorder.entries[0].Reason)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -319,10 +338,10 @@ func TestService_RecordFailureRollsBackWhenSecurityEventCannotBeStored(t *testin
 	recorder := &transactionalSecurityRecorder{err: errors.New("outbox unavailable")}
 	service := NewWithSecurity(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, config.Config{Authentication: config.Authentication{MaxFailedAttempts: 5, LockDuration: 15 * time.Minute}}, recorder)
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts\+1,locked_until=CASE`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=failed_attempts\+1,locked_until=CASE.*WHERE id=\? AND user_id=\? AND password_hash=\?`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
 
-	err = service.recordFailure(t.Context(), Credential{ID: "credential-1", UserID: "user-1"}, "alice", "127.0.0.1", "test")
+	err = service.recordFailure(t.Context(), Credential{ID: "credential-1", UserID: "user-1", PasswordHash: "observed-hash"}, "alice", "127.0.0.1", "test")
 	require.ErrorIs(t, err, ErrSecurityUnavailable)
 	require.Len(t, recorder.entries, 1)
 	require.False(t, recorder.entries[0].Succeeded)

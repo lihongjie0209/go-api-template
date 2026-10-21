@@ -200,13 +200,47 @@ func TestService_AuthenticateAtomicallyTracksFailedAttempts(t *testing.T) {
 			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts\+1`).
-		WithArgs(int64(2), sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1").
+	mock.ExpectExec(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts\+1.*WHERE id=\$[0-9]+ AND secret_hash=\$[0-9]+ AND status=\$[0-9]+`).
+		WithArgs(int64(2), sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", hash, StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	if _, err := service.Authenticate(t.Context(), "billing-worker", "wrong-secret-value"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("Authenticate() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_AuthenticateDoesNotCountOldSecretFailureAfterRotation(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	security := &securityRecorder{}
+	service := New(db, database.NewTransactor(db), nil, security, config.Config{Authentication: config.Authentication{MaxFailedAttempts: 2, LockDuration: time.Minute}})
+	hash, err := service.hasher.Hash("correct-secret-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash))
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts\+1.*WHERE id=\$[0-9]+ AND secret_hash=\$[0-9]+ AND status=\$[0-9]+`).
+		WithArgs(int64(2), sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", hash, StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	if _, err := service.Authenticate(t.Context(), "billing-worker", "wrong-secret-value"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Authenticate error = %v, want invalid credentials", err)
+	}
+	if security.entry.EventType != securitylog.EventLogin || security.entry.Succeeded {
+		t.Fatalf("security entry = %+v", security.entry)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
