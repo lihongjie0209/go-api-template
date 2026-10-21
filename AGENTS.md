@@ -103,6 +103,9 @@ Batch lookup operations with an empty ID list must return an empty collection
 without issuing an unfiltered page/list query. They must still enforce the
 normal authentication boundary. An omitted optional page filter is not the
 same contract as an explicitly empty batch lookup.
+An internal adapter that converts optional search filters into candidate IDs
+must reject missing or blank filters before calling a general page API; an
+empty filter must never silently become an unrestricted candidate scan.
 
 Before finalizing a list/page contract, review every meaningful resource field
 against frontend query needs. Explicitly decide whether it supports exact

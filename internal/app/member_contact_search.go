@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
@@ -23,6 +24,19 @@ func newMemberContactSearcher(users *identity.Service) *memberContactSearcher {
 var _ tenant.MemberContactSearcher = (*memberContactSearcher)(nil)
 
 func (s *memberContactSearcher) SearchContactUserIDs(ctx context.Context, emails, phones []string) ([]string, error) {
+	if len(emails) == 0 && len(phones) == 0 {
+		return nil, tenant.ErrInvalid
+	}
+	for _, value := range emails {
+		if strings.TrimSpace(value) == "" {
+			return nil, tenant.ErrInvalid
+		}
+	}
+	for _, value := range phones {
+		if strings.TrimSpace(value) == "" {
+			return nil, tenant.ErrInvalid
+		}
+	}
 	result, err := s.users.Page(ctx, identity.PageInput{
 		Request: pagination.Request{Page: 1, PageSize: pagination.MaxPageSize},
 		Emails:  emails,
