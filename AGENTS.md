@@ -470,6 +470,10 @@ message queue with an outbox.
 - Mutation endpoints explicitly opt in; query/list endpoints must not use an
   idempotency key as a cache substitute. HTTP and unary gRPC use the shared SDK
   state machine and the same semantic rules.
+- HTTP/gRPC ingress must reject malformed `Idempotency-Key` values before
+  business work. Internal callers that require idempotency must validate the
+  key explicitly before placing it in Context; the local Context adapter drops
+  malformed keys so they cannot propagate upstream or enable automatic retries.
 - Fingerprints include service, transport operation, canonical request data,
   principal type/ID, tenant, membership, and session dimensions. Reusing a key
   across tenant or principal contexts must conflict rather than replay data.

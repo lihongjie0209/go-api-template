@@ -164,6 +164,35 @@ func TestHTTPClient_PropagatesCorrelationHeaders(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_InvalidIdempotencyKeyDoesNotPropagateOrEnableRetry(t *testing.T) {
+	t.Parallel()
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts.Add(1)
+		if key := request.Header.Get("Idempotency-Key"); key != "" {
+			t.Errorf("unexpected idempotency key %q", key)
+		}
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	cfg := validHTTPUpstream(server.URL)
+	cfg.Retry.MaxAttempts = 3
+	client, err := NewHTTPClient("test", cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := idempotency.WithContext(t.Context(), "valid-key")
+	ctx = idempotency.WithContext(ctx, "invalid\nkey")
+	response, err := client.Do(ctx, http.MethodPost, "/mutation", []byte(`{}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("attempts = %d, want 1", got)
+	}
+}
+
 func TestHTTPClient_RejectsTLSConfigWithPlainHTTPURL(t *testing.T) {
 	t.Parallel()
 	cfg := validHTTPUpstream("http://example.com")
