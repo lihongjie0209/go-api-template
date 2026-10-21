@@ -273,7 +273,10 @@ fields before building SQL or calling the provider.
   hints with a principal-bound revision covering effective operation grants and
   the published data-permission snapshot, plus a short expiry. The operation
   decision and revision must use the same grant snapshot; a failed authoritative
-  grant read fails closed. Every business endpoint must repeat authorization.
+  grant read fails closed. A missing grant-snapshot provider must fail startup,
+  including in generated services and test compositions; do not pass a typed
+  nil revision provider through an interface. Every business endpoint must
+  repeat authorization.
 - Row capability registration fails startup and CI unless the provider's
   resource exists in the canonical Resource/Action registry, has tenant scope,
   and owns a registered data-permission Schema. A provider must not silently

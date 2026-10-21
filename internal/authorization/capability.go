@@ -73,8 +73,11 @@ type policyRevisions interface {
 	ForRequest(context.Context, platformprincipal.Principal) (context.Context, string, error)
 }
 
-func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) *CapabilityService {
-	return newCapabilityService(authorizer, dataScopes, resources, providers, revisions, time.Now)
+func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) (*CapabilityService, error) {
+	if authorizer == nil || resources == nil || revisions == nil {
+		return nil, ErrCapabilityUnavailable
+	}
+	return newCapabilityService(authorizer, dataScopes, resources, providers, revisions, time.Now), nil
 }
 
 func newCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions policyRevisions, now func() time.Time) *CapabilityService {

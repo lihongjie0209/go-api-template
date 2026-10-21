@@ -29,7 +29,7 @@ Two POST + JSON operations are supported:
 | Audit | No table is written. Principal, tenant, endpoint context, subject roles, and department projections are all server-derived. |
 | Presentation | Results expose only boolean decisions keyed by the caller correlation key or resource ID. Policy IDs, expressions, internal attributes, and deny reasons are not returned. |
 | Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation before dependency access, one tenant-scoped batch row query, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
-| Shared capability | Reuses the Resource/Action registry, grant authorizer and data-permission evaluator. Endpoint lookup and bounded row evaluation are shared infrastructure rather than handler-local logic. |
+| Shared capability | Reuses the Resource/Action registry, grant authorizer and data-permission evaluator. A missing revision service fails construction at startup; test compositions supply an explicit grant-snapshot fake instead of a nil revision dependency. Endpoint lookup and bounded row evaluation are shared infrastructure rather than handler-local logic. |
 | Dictionary | Not exposed as a dictionary: capability results are principal-, tenant-, policy-, and time-dependent security decisions. |
 
 ## Page capability semantics

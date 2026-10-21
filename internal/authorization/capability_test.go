@@ -205,3 +205,11 @@ func TestCapabilityServiceRejectsDuplicateRowIDs(t *testing.T) {
 	_, err = service.EvaluateRows(ctx, "tenant.member", []string{"update"}, []string{"member-1", "member-1"})
 	require.ErrorIs(t, err, ErrCapabilityInvalid)
 }
+
+func TestNewCapabilityServiceRejectsMissingRevisionDependency(t *testing.T) {
+	t.Parallel()
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	_, err = NewCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }), nil, resources, nil, nil)
+	require.ErrorIs(t, err, ErrCapabilityUnavailable)
+}

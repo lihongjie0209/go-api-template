@@ -71,6 +71,10 @@ func (allowCapabilityAuthorizer) Authorize(context.Context, platformprincipal.Pr
 	return nil
 }
 
+func (allowCapabilityAuthorizer) Snapshot(ctx context.Context, _ platformprincipal.Principal) (context.Context, string, error) {
+	return ctx, "integration-allow", nil
+}
+
 func (integrationLifecycleLocker) TryLock(context.Context, string, time.Duration) (cache.Lock, bool, error) {
 	return integrationLifecycleLock{}, true, nil
 }
@@ -2532,7 +2536,14 @@ func testMemberDataPermissionEnforcement(t *testing.T, ctx context.Context, db *
 	if err != nil {
 		t.Fatal(err)
 	}
-	capabilities := authorization.NewCapabilityService(allowCapabilityAuthorizer{}, scopes, resources, rowProviders, nil)
+	revisions, err := authorization.NewPolicyRevisions(nil, allowCapabilityAuthorizer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := authorization.NewCapabilityService(allowCapabilityAuthorizer{}, scopes, resources, rowProviders, revisions)
+	if err != nil {
+		t.Fatal(err)
+	}
 	capabilityEndpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{
 		Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/tenant-members/status/update", Authentication: accesscontrol.AuthenticationJWT,
 		Resource: "tenant.member", Action: "update", DataPermission: accesscontrol.DataPermissionRequired,
