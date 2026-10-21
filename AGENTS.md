@@ -42,6 +42,11 @@ The next domain work must keep identity and tenancy separate:
 - Login can occur without an authenticated principal. Security logging for
   login must accept an explicit target/identifier digest and must never require
   user context before authentication succeeds.
+- Login implementations must distinguish invalid credentials or concurrent
+  credential revocation from database, signer, or security-audit failures.
+  Infrastructure failures fail closed with dependency-unavailable, never an
+  invalid-credentials response; no issued token is returned before the
+  successful-use write and security event commit together.
 - Signed-token state checks must fail closed while distinguishing an inactive
   session/account from an unavailable authoritative store. An infrastructure
   outage returns dependency-unavailable (HTTP 503 / gRPC Unavailable), not an

@@ -294,6 +294,135 @@ func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing
 	}
 }
 
+func TestService_AuthenticateDistinguishesLookupFailureFromUnknownAccount(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		storeError bool
+	}{
+		{name: "database unavailable", storeError: true},
+		{name: "unknown account"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "pgx")
+			security := &securityRecorder{}
+			service := New(db, database.NewTransactor(db), nil, security, config.Config{})
+			query := mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg())
+			if test.storeError {
+				query.WillReturnError(errors.New("database connection lost"))
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			}
+			_, err = service.Authenticate(t.Context(), "billing-worker", "present-secret")
+			if test.storeError && (!errors.Is(err, ErrAuthenticationUnavailable) || errors.Is(err, ErrInvalidCredentials)) {
+				t.Fatalf("Authenticate error = %v, want dependency unavailable", err)
+			}
+			if !test.storeError && (!errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrAuthenticationUnavailable)) {
+				t.Fatalf("Authenticate error = %v, want invalid credentials", err)
+			}
+			if security.entry.EventType != securitylog.EventLogin || security.entry.Succeeded {
+				t.Fatalf("security entry = %+v", security.entry)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestService_AuthenticateDistinguishesSuccessWriteFailure(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := New(db, database.NewTransactor(db), nil, &securityRecorder{}, config.Config{})
+	hash, err := service.hasher.Hash("correct-secret-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", int64(4), hash, StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(errors.New("database write lost"))
+	mock.ExpectRollback()
+	account, token, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string) (string, string, error) {
+		return "issued-but-not-returned", "token-1", nil
+	})
+	if !errors.Is(err, ErrAuthenticationUnavailable) || account.ID != "" || token != "" {
+		t.Fatalf("AuthenticateAndIssue account=%+v token=%q error=%v", account, token, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_AuthenticateDistinguishesIssuerFailure(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	security := &securityRecorder{}
+	service := New(db, database.NewTransactor(db), nil, security, config.Config{})
+	hash, err := service.hasher.Hash("correct-secret-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
+	account, token, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string) (string, string, error) {
+		return "", "", errors.New("signing key unavailable")
+	})
+	if !errors.Is(err, ErrAuthenticationUnavailable) || account.ID != "" || token != "" {
+		t.Fatalf("AuthenticateAndIssue account=%+v token=%q error=%v", account, token, err)
+	}
+	if security.entry.Reason != "credential_issue_failed" || security.entry.Succeeded {
+		t.Fatalf("security entry = %+v", security.entry)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_AuthenticateRejectsCorruptStoredHashAsUnavailable(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	security := &securityRecorder{}
+	service := New(db, database.NewTransactor(db), nil, security, config.Config{})
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, "not-a-valid-argon2-hash"))
+	_, err = service.Authenticate(t.Context(), "billing-worker", "present-secret")
+	if !errors.Is(err, ErrAuthenticationUnavailable) || errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Authenticate error = %v, want unavailable for stored-hash corruption", err)
+	}
+	if security.entry.Reason != "credential_verification_failed" || security.entry.Succeeded {
+		t.Fatalf("security entry = %+v", security.entry)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func containsCredential(payload, secret string) bool {
 	return strings.Contains(payload, secret) || strings.Contains(payload, "secret_hash")
 }

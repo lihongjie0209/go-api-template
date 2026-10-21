@@ -16,6 +16,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -122,6 +123,54 @@ func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *te
 	}
 	if strings.Contains(string(encoded), "password") || strings.Contains(string(encoded), "access_token") {
 		t.Fatalf("security entry leaked credential: %s", encoded)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuthenticationHandler_LoginDistinguishesStoreOutageFromInvalidCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "pgx")
+	security := &securityRecorderStub{}
+	accounts := serviceaccount.New(db, database.NewTransactor(db), nil, security, config.Config{})
+	handler := NewAuthenticationHandler(auth.New(config.Config{}), accounts, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	router := gin.New()
+	router.Use(RequestID())
+	router.POST("/api/v1/auth/login", handler.Login)
+	for _, test := range []struct {
+		name   string
+		outage bool
+		status int
+		code   int
+	}{
+		{name: "database unavailable", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
+		{name: "unknown account", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			query := mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", serviceaccount.StatusActive, sqlmock.AnyArg())
+			if test.outage {
+				query.WillReturnError(errors.New("database connection lost"))
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"client_id":"billing-worker","client_secret":"present-secret"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			var body Response
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != test.status || body.Code != test.code || body.RequestID == "" || strings.Contains(response.Body.String(), "database connection lost") {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

@@ -23,12 +23,13 @@ import (
 )
 
 var (
-	ErrInvalid             = errors.New("invalid service account")
-	ErrNotFound            = errors.New("service account not found")
-	ErrConflict            = errors.New("service account conflict")
-	ErrStaleVersion        = errors.New("service account version is stale")
-	ErrInvalidCredentials  = errors.New("invalid service account credentials")
-	ErrSecurityUnavailable = errors.New("service account security audit unavailable")
+	ErrInvalid                   = errors.New("invalid service account")
+	ErrNotFound                  = errors.New("service account not found")
+	ErrConflict                  = errors.New("service account conflict")
+	ErrStaleVersion              = errors.New("service account version is stale")
+	ErrInvalidCredentials        = errors.New("invalid service account credentials")
+	ErrAuthenticationUnavailable = errors.New("service account authentication unavailable")
+	ErrSecurityUnavailable       = errors.New("service account security audit unavailable")
 )
 
 var clientIDPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,127}$`)
@@ -314,6 +315,11 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 	var value credential
 	query := s.db.Rebind(`SELECT ` + accountColumns + `,a.secret_hash FROM identity_service_accounts a WHERE client_id=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
 	if err := s.db.GetContext(ctx, &value, query, clientID, StatusActive, time.Now()); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			failedEntry.Reason = "authentication_store_unavailable"
+			failedEntry.ErrorCode = "authentication_store_unavailable"
+			return Account{}, "", s.rejectAuthentication(ctx, failedEntry, fmt.Errorf("%w: lookup service account: %w", ErrAuthenticationUnavailable, err))
+		}
 		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
 	failedEntry.SubjectID = value.ID
@@ -321,7 +327,12 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
 	valid, err := s.hasher.Verify(secret, value.SecretHash)
-	if err != nil || !valid {
+	if err != nil {
+		failedEntry.Reason = "credential_verification_failed"
+		failedEntry.ErrorCode = "credential_verification_failed"
+		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, fmt.Errorf("%w: verify service account credential: %w", ErrAuthenticationUnavailable, err))
+	}
+	if !valid {
 		if recordErr := s.recordFailure(ctx, value.Account, failedEntry); recordErr != nil && s.security.FailClosed() {
 			return Account{}, "", fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
 		}
@@ -333,7 +344,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		if err != nil {
 			failedEntry.Reason = "credential_issue_failed"
 			failedEntry.ErrorCode = "credential_issue_failed"
-			return Account{}, "", s.rejectAuthentication(ctx, failedEntry, err)
+			return Account{}, "", s.rejectAuthentication(ctx, failedEntry, fmt.Errorf("%w: issue service account token: %w", ErrAuthenticationUnavailable, err))
 		}
 	}
 	// Re-check the exact credential version while recording success. A concurrent
@@ -362,10 +373,10 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrSecurityUnavailable) {
+		if errors.Is(err, ErrSecurityUnavailable) || errors.Is(err, ErrInvalidCredentials) {
 			return Account{}, "", err
 		}
-		return Account{}, "", ErrInvalidCredentials
+		return Account{}, "", fmt.Errorf("%w: record successful service account login: %w", ErrAuthenticationUnavailable, err)
 	}
 	value.LastUsedAt = &authenticatedAt
 	value.FailedAttempts = 0

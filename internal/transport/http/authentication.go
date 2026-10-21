@@ -63,6 +63,10 @@ func (h *AuthenticationHandler) Login(c *gin.Context) {
 			Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", authenticateErr))
 			return
 		}
+		if errors.Is(authenticateErr, serviceaccount.ErrAuthenticationUnavailable) {
+			Fail(c, h.logger, apperror.Unavailable("authentication is temporarily unavailable", authenticateErr))
+			return
+		}
 		Fail(c, h.logger, apperror.Unauthorized("invalid credentials"))
 		return
 	}
