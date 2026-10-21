@@ -81,5 +81,7 @@ func TestEndpointRegistryFindUsesStableTargetOrder(t *testing.T) {
 
 	result := registry.Find("tenant.member", "update")
 	require.Equal(t, []string{"POST /api/v1/members/a-update", "POST /api/v1/members/z-update"}, []string{result[0].Operation, result[1].Operation})
+	result[0].Operation = "POST /api/v1/members/tampered"
+	require.Equal(t, "POST /api/v1/members/a-update", registry.Find("tenant.member", "update")[0].Operation)
 	require.Empty(t, registry.Find("tenant.member", "read"))
 }

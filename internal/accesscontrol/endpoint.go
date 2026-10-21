@@ -113,6 +113,14 @@ func EndpointFromContext(ctx context.Context) (Endpoint, bool) {
 // EndpointRegistry is the immutable source of transport authorization metadata.
 type EndpointRegistry struct {
 	endpoints map[string]Endpoint
+	// byAction is built once at startup so bounded navigation evaluation does
+	// not scan every registered route for each menu node.
+	byAction map[resourceActionKey][]Endpoint
+}
+
+type resourceActionKey struct {
+	resource string
+	action   string
 }
 
 // NewEndpointRegistry validates descriptors against the Resource/Action registry.
@@ -120,7 +128,10 @@ func NewEndpointRegistry(resources *resourceaction.Registry, endpoints []Endpoin
 	if resources == nil {
 		return nil, ErrInvalidEndpoint
 	}
-	registry := &EndpointRegistry{endpoints: make(map[string]Endpoint, len(endpoints))}
+	registry := &EndpointRegistry{
+		endpoints: make(map[string]Endpoint, len(endpoints)),
+		byAction:  make(map[resourceActionKey][]Endpoint),
+	}
 	for _, endpoint := range endpoints {
 		definition, err := validateEndpoint(resources, endpoint)
 		if err != nil {
@@ -132,6 +143,15 @@ func NewEndpointRegistry(resources *resourceaction.Registry, endpoints []Endpoin
 			return nil, fmt.Errorf("%w: %s", ErrDuplicateEndpoint, endpoint.Operation)
 		}
 		registry.endpoints[key] = endpoint
+		if endpoint.Resource != "" {
+			actionKey := resourceActionKey{resource: endpoint.Resource, action: endpoint.Action}
+			registry.byAction[actionKey] = append(registry.byAction[actionKey], endpoint)
+		}
+	}
+	for key := range registry.byAction {
+		slices.SortFunc(registry.byAction[key], func(left, right Endpoint) int {
+			return strings.Compare(endpointKey(left.Transport, left.Operation), endpointKey(right.Transport, right.Operation))
+		})
 	}
 	return registry, nil
 }
@@ -167,16 +187,11 @@ func (r *EndpointRegistry) Find(resource, action string) []Endpoint {
 	if r == nil {
 		return nil
 	}
-	result := make([]Endpoint, 0)
-	for _, endpoint := range r.endpoints {
-		if endpoint.Resource == resource && endpoint.Action == action {
-			result = append(result, endpoint)
-		}
+	targets := r.byAction[resourceActionKey{resource: resource, action: action}]
+	if len(targets) == 0 {
+		return []Endpoint{}
 	}
-	slices.SortFunc(result, func(left, right Endpoint) int {
-		return strings.Compare(endpointKey(left.Transport, left.Operation), endpointKey(right.Transport, right.Operation))
-	})
-	return result
+	return slices.Clone(targets)
 }
 
 // ValidateCoverage requires an exact match between runtime operations and descriptors.
