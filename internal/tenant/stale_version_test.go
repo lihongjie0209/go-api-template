@@ -30,6 +30,11 @@ func TestTenantVersionMissIsDistinctFromUniqueConflict(t *testing.T) {
 			db := sqlx.NewDb(raw, "sqlmock")
 			mock.ExpectBegin()
 			if test.name == "delete" {
+				for _, pattern := range tenantPolicyCleanupPatterns() {
+					mock.ExpectExec(pattern).
+						WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
+						WillReturnResult(sqlmock.NewResult(0, 1))
+				}
 				mock.ExpectExec("UPDATE application_session_contexts SET deleted_at").
 					WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
@@ -65,6 +70,11 @@ func TestDeleteTenantStopsWhenApplicationContextCleanupFails(t *testing.T) {
 	defer raw.Close()
 	db := sqlx.NewDb(raw, "sqlmock")
 	mock.ExpectBegin()
+	for _, pattern := range tenantPolicyCleanupPatterns() {
+		mock.ExpectExec(pattern).
+			WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	}
 	mock.ExpectExec("UPDATE application_session_contexts SET deleted_at").
 		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
 		WillReturnError(errors.New("context cleanup unavailable"))
@@ -75,6 +85,41 @@ func TestDeleteTenantStopsWhenApplicationContextCleanupFails(t *testing.T) {
 	}
 	if err := deleteTenant(context.Background(), tx, "tenant-1", 2, "actor-1"); err == nil {
 		t.Fatal("delete succeeded after application context cleanup failed")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tenantPolicyCleanupPatterns() []string {
+	return []string{
+		`(?s)UPDATE data_permission_policy_actions SET deleted_at.*p.scope='tenant' AND p.tenant_id=\?`,
+		`(?s)UPDATE data_permission_policy_versions SET deleted_at.*p.scope='tenant' AND p.tenant_id=\?`,
+		`(?s)UPDATE data_permission_policies SET deleted_at.*scope='tenant' AND tenant_id=\?`,
+	}
+}
+
+func TestDeleteTenantStopsWhenPolicyCleanupFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE data_permission_policy_actions SET deleted_at").
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
+		WillReturnError(errors.New("policy cleanup unavailable"))
+	mock.ExpectRollback()
+	tx, err := db.Beginx()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteTenant(context.Background(), tx, "tenant-1", 2, "actor-1"); err == nil {
+		t.Fatal("delete succeeded after policy cleanup failed")
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

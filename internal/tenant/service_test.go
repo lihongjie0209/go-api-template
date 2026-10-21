@@ -85,6 +85,69 @@ type ownerResolverStub struct {
 	err      error
 }
 
+type policyRuntimeStub struct {
+	changed func(context.Context) error
+}
+
+func (s policyRuntimeStub) Changed(ctx context.Context) error { return s.changed(ctx) }
+
+func TestAdminDeleteRefreshesPoliciesOnlyAfterCommit(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectQuery(`FROM tenants WHERE id = \? AND deleted_at IS NULL`).WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("tenant-1", "tenant-one", "Tenant One", "", "active", "user-1", "User One", now, "system", now, "system", 2))
+	mock.ExpectBegin()
+	for _, table := range []string{"data_permission_policy_actions", "data_permission_policy_versions", "data_permission_policies", "application_session_contexts", "tenant_member_roles", "tenant_department_members", "tenant_role_permissions", "tenant_roles", "tenant_administrators", "tenant_permission_grants", "tenant_application_grants", "tenant_memberships", "tenant_departments", "tenants"} {
+		mock.ExpectExec("UPDATE " + table + " SET").WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectCommit()
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil, config.Config{})
+	called := false
+	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error {
+		called = true
+		return mock.ExpectationsWereMet()
+	}})
+	if err := service.AdminDelete(platformprincipal.SystemContext(t.Context(), "system"), "tenant-1", 2); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("policy runtime was not refreshed after tenant deletion")
+	}
+}
+
+func TestTenantDeletePolicyRefreshFailureIsVisible(t *testing.T) {
+	want := errors.New("policy runtime unavailable")
+	service := &Service{}
+	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error { return want }})
+	if err := service.afterDelete(t.Context(), "tenant-1"); !errors.Is(err, want) {
+		t.Fatalf("refresh failure = %v, want wrapped runtime error", err)
+	}
+}
+
+func TestTenantDeletePolicyRefreshSurvivesClientCancellation(t *testing.T) {
+	requestCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	service := &Service{policyTimeout: time.Second}
+	service.SetPolicyRuntime(policyRuntimeStub{changed: func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("post-commit refresh inherited canceled request: %v", err)
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("post-commit refresh has no deadline")
+		}
+		return nil
+	}})
+	if err := service.afterDelete(requestCtx, "tenant-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *ownerResolverStub) ResolveUsername(_ context.Context, username string) (UserSnapshot, error) {
 	r.username = username
 	return UserSnapshot{}, r.err

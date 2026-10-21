@@ -48,19 +48,30 @@ type PageInput struct {
 }
 
 type Service struct {
-	repository *Repository
-	transactor *database.Transactor
-	cache      cache.Store
-	operations operationlog.TransactionalRecorder
-	security   securitylog.TransactionalRecorder
-	users      UserResolver
-	logger     *slog.Logger
-	cacheTTL   time.Duration
+	repository    *Repository
+	transactor    *database.Transactor
+	cache         cache.Store
+	policies      PolicyRuntime
+	operations    operationlog.TransactionalRecorder
+	security      securitylog.TransactionalRecorder
+	users         UserResolver
+	logger        *slog.Logger
+	cacheTTL      time.Duration
+	policyTimeout time.Duration
+}
+
+// PolicyRuntime refreshes the published data-permission snapshot after a
+// tenant deletion commits. Its database revision poll recovers lost hints.
+type PolicyRuntime interface {
+	Changed(context.Context) error
 }
 
 func New(repository *Repository, transactor *database.Transactor, store cache.Store, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, users UserResolver, logger *slog.Logger, cfg config.Config) *Service {
-	return &Service{repository: repository, transactor: transactor, cache: store, operations: operations, security: security, users: users, logger: logger, cacheTTL: cfg.Tenant.CacheTTL}
+	return &Service{repository: repository, transactor: transactor, cache: store, operations: operations, security: security, users: users, logger: logger, cacheTTL: cfg.Tenant.CacheTTL, policyTimeout: cfg.PolicySync.Timeout}
 }
+
+// SetPolicyRuntime is called during dependency injection before listeners run.
+func (s *Service) SetPolicyRuntime(runtime PolicyRuntime) { s.policies = runtime }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
 	actor, err := requirePlatformActor(ctx)
@@ -337,7 +348,7 @@ func (s *Service) AdminDelete(ctx context.Context, id string, version int64) err
 		return deleteTenant(ctx, tx, id, version, actor.ID)
 	})
 	if err == nil {
-		s.invalidate(ctx, id)
+		return s.afterDelete(ctx, id)
 	}
 	return err
 }
@@ -385,9 +396,25 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	}
 	err = s.mutate(ctx, "tenant.delete", id, map[string]any{"name": current.Name, "version": version}, func(tx *sqlx.Tx) error { return deleteTenant(ctx, tx, id, version, actor.ID) })
 	if err == nil {
-		s.invalidate(ctx, id)
+		return s.afterDelete(ctx, id)
 	}
 	return err
+}
+
+func (s *Service) afterDelete(ctx context.Context, id string) error {
+	s.invalidate(ctx, id)
+	if s.policies != nil {
+		timeout := s.policyTimeout
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout+time.Second)
+		defer cancel()
+		if err := s.policies.Changed(refreshCtx); err != nil {
+			return fmt.Errorf("refresh tenant data permission policies: %w", err)
+		}
+	}
+	return nil
 }
 
 var ErrInvalid = errors.New("invalid tenant input")

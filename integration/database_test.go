@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/application"
@@ -1873,7 +1874,87 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := departments.Delete(departmentCtx, root.ID, root.Version); err != nil {
 		t.Fatal(err)
 	}
+	otherTenant, err := service.Create(createCtx, tenant.CreateInput{Code: "integration-policy-other", Name: "Other Policy Tenant", OwnerUsername: "owner.one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyIDs := map[string][3]string{}
+	authenticated := true
+	for _, fixture := range []struct {
+		name, scope, tenantID string
+	}{
+		{name: "deleted", scope: "tenant", tenantID: created.ID},
+		{name: "other", scope: "tenant", tenantID: otherTenant.ID},
+		{name: "global", scope: "global"},
+	} {
+		ids := [3]string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
+		policyIDs[fixture.name] = ids
+		code := "integration-tenant-delete-" + fixture.name
+		document, err := datapermission.MarshalPolicy(datapermission.Policy{
+			APIVersion: datapermission.PolicyAPIVersion,
+			Kind:       datapermission.PolicyKind,
+			Metadata:   datapermission.PolicyMetadata{Code: code, Name: fixture.name},
+			Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeType(fixture.scope), TenantID: fixture.tenantID},
+			Spec: datapermission.PolicySpec{
+				Subject:   resourceaction.SubjectMatcher{Authenticated: &authenticated},
+				Resource:  "tenant.member",
+				Actions:   []string{"read"},
+				Condition: "resource.owner_id == subject.id",
+				Effect:    datapermission.EffectAllow,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tenantArg any
+		if fixture.scope == "tenant" {
+			tenantArg = fixture.tenantID
+		}
+		if err := appdb.NewTransactor(db).Within(createCtx, nil, func(tx *sqlx.Tx) error {
+			now := time.Now()
+			if _, err := tx.ExecContext(createCtx, tx.Rebind(`INSERT INTO data_permission_policies(id,code,name,scope,tenant_id,published_version_number,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), ids[0], code, fixture.name, fixture.scope, tenantArg, 1, "active", now, "owner-1", now, "owner-1"); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(createCtx, tx.Rebind(`INSERT INTO data_permission_policy_versions(id,policy_id,version_number,document,status,published_at,published_by,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), ids[1], ids[0], 1, string(document), "published", now, "owner-1", now, "owner-1", now, "owner-1"); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(createCtx, tx.Rebind(`INSERT INTO data_permission_policy_actions(id,policy_version_id,resource,action,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), ids[2], ids[1], "tenant.member", "read", now, "owner-1", now, "owner-1")
+			return err
+		}); err != nil {
+			t.Fatalf("seed %s data permission policy: %v", fixture.name, err)
+		}
+	}
 	if err := service.AdminDelete(createCtx, created.ID, updated.Version); err != nil {
+		t.Fatal(err)
+	}
+	for name, ids := range policyIDs {
+		wantActive := 1
+		if name == "deleted" {
+			wantActive = 0
+		}
+		for index, table := range []string{"data_permission_policies", "data_permission_policy_versions", "data_permission_policy_actions"} {
+			var active int
+			if err := db.GetContext(ctx, &active, db.Rebind(`SELECT count(*) FROM `+table+` WHERE id=? AND deleted_at IS NULL`), ids[index]); err != nil || active != wantActive {
+				t.Fatalf("%s policy %s active=%d, want %d, err=%v", name, table, active, wantActive, err)
+			}
+		}
+	}
+	if err := appdb.NewTransactor(db).Within(createCtx, nil, func(tx *sqlx.Tx) error {
+		globalIDs := policyIDs["global"]
+		for _, cleanup := range []struct{ table, id string }{
+			{table: "data_permission_policy_actions", id: globalIDs[2]},
+			{table: "data_permission_policy_versions", id: globalIDs[1]},
+			{table: "data_permission_policies", id: globalIDs[0]},
+		} {
+			if _, err := tx.ExecContext(createCtx, tx.Rebind(`UPDATE `+cleanup.table+` SET deleted_at=? WHERE id=? AND deleted_at IS NULL`), time.Now(), cleanup.id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("cleanup global policy fixture: %v", err)
+	}
+	if err := service.AdminDelete(createCtx, otherTenant.ID, otherTenant.Version); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Get(tenantCtx, created.ID); !errors.Is(err, tenant.ErrNotFound) {

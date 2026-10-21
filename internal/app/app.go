@@ -79,6 +79,9 @@ func New(cfg config.Config) *fx.App {
 		fx.Provide(dictionary.New, dictionary.NewProviderRegistry),
 		fx.Invoke(application.RegisterDictionaryProvider),
 		fx.Provide(tenant.NewRepository, tenant.New, fx.Annotate(tenant.NewUserResolver, fx.As(new(tenant.UserResolver)), fx.As(new(presentation.ActorResolver))), fx.Annotate(newMemberContactSearcher, fx.As(new(tenant.MemberContactSearcher))), tenant.NewMembershipService, tenant.NewContextService),
+		fx.Invoke(func(service *tenant.Service, runtime *datapermission.RuntimeLoader) {
+			service.SetPolicyRuntime(runtime)
+		}),
 		fx.Provide(tenant.NewDepartmentService),
 		fx.Provide(idempotency.New),
 		fx.Provide(observability.NewMetrics),

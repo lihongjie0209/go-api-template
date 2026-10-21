@@ -208,6 +208,30 @@ func updateTenant(ctx context.Context, tx *sqlx.Tx, id, name, description string
 }
 func deleteTenant(ctx context.Context, tx *sqlx.Tx, id string, version int64, actorID string) error {
 	now := time.Now()
+	policyCleanup := []struct {
+		table string
+		query string
+	}{
+		{
+			table: "data_permission_policy_actions",
+			query: `UPDATE data_permission_policy_actions SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE deleted_at IS NULL AND policy_version_id IN (
+				SELECT v.id FROM data_permission_policy_versions v JOIN data_permission_policies p ON p.id=v.policy_id WHERE p.scope='tenant' AND p.tenant_id=?)`,
+		},
+		{
+			table: "data_permission_policy_versions",
+			query: `UPDATE data_permission_policy_versions SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE deleted_at IS NULL AND policy_id IN (
+				SELECT p.id FROM data_permission_policies p WHERE p.scope='tenant' AND p.tenant_id=?)`,
+		},
+		{
+			table: "data_permission_policies",
+			query: `UPDATE data_permission_policies SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE deleted_at IS NULL AND scope='tenant' AND tenant_id=?`,
+		},
+	}
+	for _, cleanup := range policyCleanup {
+		if _, err := tx.ExecContext(ctx, tx.Rebind(cleanup.query), now, actorID, now, actorID, id); err != nil {
+			return fmt.Errorf("delete tenant dependents from %s: %w", cleanup.table, err)
+		}
+	}
 	for _, table := range []string{"application_session_contexts", "tenant_member_roles", "tenant_department_members", "tenant_role_permissions", "tenant_roles", "tenant_administrators", "tenant_permission_grants", "tenant_application_grants", "tenant_memberships", "tenant_departments"} {
 		query := tx.Rebind(`UPDATE ` + table + ` SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ?, version = version + 1 WHERE tenant_id = ? AND deleted_at IS NULL`)
 		if _, err := tx.ExecContext(ctx, query, now, actorID, now, actorID, id); err != nil {
