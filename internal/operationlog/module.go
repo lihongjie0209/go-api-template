@@ -19,7 +19,7 @@ func start(lifecycle fx.Lifecycle, service *Service, logger *slog.Logger) {
 }
 
 func consumerOptions(service *Service, logger *slog.Logger) eventbusConsumerOptions {
-	return eventbusConsumerOptions{Durable: service.cfg.Durable, FilterSubject: service.cfg.Subject, Handler: service.consume, OnError: func(err error) { logger.Error("operation log consumer failed", "error", err) }}
+	return eventbusConsumerOptions{Durable: service.cfg.Durable, FilterSubject: service.cfg.Subject, Handler: service.consume, OnError: eventbus.ConsumerErrorHandler(logger, "operation-log")}
 }
 
 type eventbusConsumerOptions = platformeventbus.ConsumerOptions

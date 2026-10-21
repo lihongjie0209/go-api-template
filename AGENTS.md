@@ -217,6 +217,9 @@ otherwise unsuitable for dictionary use.
   independent `securitylog.Recorder`.
 - Log persistence is asynchronous through the configured queue. Business code
   must not write operation/security log tables directly.
+- Queue consumer error callbacks must use the shared safe-error logger; SDK
+  callbacks may carry handler errors, event identifiers, or connection details.
+  Never forward their raw error text to application logs or traces.
 - Never record passwords, secrets, bearer tokens, refresh tokens, cookies, or
   raw credentials. Use the shared sanitization and keyed digest facilities.
 - Persisted failure fields such as outbox `last_error`, dead-letter metadata,

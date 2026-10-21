@@ -14,8 +14,12 @@ func start(lifecycle fx.Lifecycle, service *Service, logger *slog.Logger) {
 		return
 	}
 	eventbus.RegisterConsumer(lifecycle, "security-log", logger, func(ctx context.Context) error {
-		return service.bus.ConsumeWithOptions(ctx, platformeventbus.ConsumerOptions{Durable: service.cfg.Durable, FilterSubject: service.cfg.Subject, Handler: service.consume, OnError: func(err error) { logger.Error("security log consumer failed", "error", err) }})
+		return service.bus.ConsumeWithOptions(ctx, consumerOptions(service, logger))
 	})
+}
+
+func consumerOptions(service *Service, logger *slog.Logger) platformeventbus.ConsumerOptions {
+	return platformeventbus.ConsumerOptions{Durable: service.cfg.Durable, FilterSubject: service.cfg.Subject, Handler: service.consume, OnError: eventbus.ConsumerErrorHandler(logger, "security-log")}
 }
 func asRecorder(service *Service) Recorder                           { return service }
 func asTransactionalRecorder(service *Service) TransactionalRecorder { return service }

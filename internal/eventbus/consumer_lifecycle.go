@@ -32,3 +32,11 @@ func RegisterConsumer(lifecycle fx.Lifecycle, name string, logger *slog.Logger, 
 func logConsumerFailure(ctx context.Context, logger *slog.Logger, name string, err error) {
 	logger.ErrorContext(ctx, "event consumer stopped", "consumer", name, "error", observability.SafeError(err, errEventConsumerFailed))
 }
+
+// ConsumerErrorHandler logs asynchronous consumer failures without exposing
+// handler errors, payloads, or dependency connection details.
+func ConsumerErrorHandler(logger *slog.Logger, name string) func(error) {
+	return func(err error) {
+		logger.Error("event consumer processing failed", "consumer", name, "error", observability.SafeError(err, errEventConsumerFailed))
+	}
+}
