@@ -785,6 +785,8 @@ func TestBuildTreeRejectsInvalidAncestryAndReturnsEmptyArray(t *testing.T) {
 		{name: "cycle", items: []Item{{ID: firstID, ParentID: &secondID}, {ID: secondID, ParentID: &firstID}}},
 		{name: "orphan", items: []Item{{ID: firstID, ParentID: &missingID}}},
 		{name: "duplicate", items: []Item{{ID: firstID}, {ID: firstID}}},
+		{name: "empty ID", items: []Item{{ID: ""}}},
+		{name: "self parent", items: []Item{{ID: firstID, ParentID: &firstID}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -804,6 +806,54 @@ func TestBuildTreeHonorsRequestedSort(t *testing.T) {
 	tree, err := buildTree(items, []Sort{{Field: "name", Direction: "desc"}})
 	require.NoError(t, err)
 	require.Equal(t, "Zulu", tree[0].Name)
+}
+
+func TestBuildResultTreeSortsEveryLevelAndKeepsEmptyChildren(t *testing.T) {
+	t.Parallel()
+	rootA, rootB := uuidString(1), uuidString(2)
+	childA, childB := uuidString(3), uuidString(4)
+	items := []Item{
+		{ID: childA, ParentID: &rootA, Code: "a", Name: "Alpha"},
+		{ID: rootA, Code: "a", Name: "Alpha"},
+		{ID: childB, ParentID: &rootA, Code: "b", Name: "Zulu"},
+		{ID: rootB, Code: "b", Name: "Zulu"},
+	}
+	result, err := buildResultTree(items, []Sort{{Field: "name", Direction: "desc"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{rootB, rootA}, []string{result[0].ID, result[1].ID})
+	require.Equal(t, []string{childB, childA}, []string{result[1].Children[0].ID, result[1].Children[1].ID})
+	require.NotNil(t, result[0].Children)
+	require.NotNil(t, result[1].Children[0].Children)
+	require.Empty(t, result[1].Children[0].Children)
+}
+
+func TestBuildResultTreeKeepsDeepAncestryWithoutMutatingInput(t *testing.T) {
+	t.Parallel()
+	const depth = 128
+	items := make([]Item, depth)
+	for i := range items {
+		items[i].ID = uuidString(byte(i + 1))
+		if i > 0 {
+			items[i].ParentID = &items[i-1].ID
+		}
+	}
+	result, err := buildResultTree(items, nil)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	current := &result[0]
+	for i := range items {
+		require.Equal(t, items[i].ID, current.ID)
+		if i == depth-1 {
+			require.NotNil(t, current.Children)
+			require.Empty(t, current.Children)
+			break
+		}
+		require.Len(t, current.Children, 1)
+		current = &current.Children[0]
+	}
+	for _, item := range items {
+		require.Nil(t, item.Children)
+	}
 }
 
 func TestValidProviderResultEnforcesPublicContract(t *testing.T) {

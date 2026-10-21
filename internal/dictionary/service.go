@@ -22,6 +22,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	platformtree "github.com/lihongjie0209/microservice-platform-go/tree"
 )
 
 var (
@@ -1069,53 +1070,42 @@ func filterTreeItems(items []Item, query Query) []Item {
 }
 
 func buildTree(items []Item, rules []Sort) ([]Item, error) {
-	byParent := map[string][]Item{}
-	ids := make(map[string]bool, len(items))
 	for _, v := range items {
-		if v.ID == "" || ids[v.ID] {
+		if v.ID == "" {
 			return nil, ErrInvalid
 		}
-		ids[v.ID] = true
 	}
-	for _, v := range items {
-		key := ""
-		if v.ParentID != nil {
-			if !ids[*v.ParentID] {
-				return nil, ErrInvalid
-			}
-			key = *v.ParentID
+	ordered := append([]Item(nil), items...)
+	sort.SliceStable(ordered, func(i, j int) bool { return itemLess(ordered[i], ordered[j], rules) })
+	forest, err := platformtree.Build(ordered, func(v Item) string { return v.ID }, func(v Item) (string, bool) {
+		if v.ParentID == nil {
+			return "", false
 		}
-		byParent[key] = append(byParent[key], v)
-	}
-	visited := map[string]bool{}
-	visiting := map[string]bool{}
-	var walk func(string) ([]Item, error)
-	walk = func(id string) ([]Item, error) {
-		children := append([]Item{}, byParent[id]...)
-		sort.SliceStable(children, func(i, j int) bool { return itemLess(children[i], children[j], rules) })
-		for i := range children {
-			if visiting[children[i].ID] {
-				return nil, ErrInvalid
-			}
-			visiting[children[i].ID] = true
-			nested, err := walk(children[i].ID)
-			if err != nil {
-				return nil, err
-			}
-			children[i].Children = nested
-			visiting[children[i].ID] = false
-			visited[children[i].ID] = true
-		}
-		return children, nil
-	}
-	tree, err := walk("")
+		return *v.ParentID, true
+	})
 	if err != nil {
-		return nil, err
-	}
-	if len(visited) != len(items) {
 		return nil, ErrInvalid
 	}
-	return tree, nil
+	result := make([]Item, len(forest))
+	type pending struct {
+		source *platformtree.Node[Item]
+		target *Item
+	}
+	stack := make([]pending, 0, len(items))
+	for i, node := range forest {
+		stack = append(stack, pending{source: node, target: &result[i]})
+	}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		current := stack[last]
+		stack = stack[:last]
+		*current.target = current.source.Value
+		current.target.Children = make([]Item, len(current.source.Children))
+		for i, child := range current.source.Children {
+			stack = append(stack, pending{source: child, target: &current.target.Children[i]})
+		}
+	}
+	return result, nil
 }
 func itemLess(left, right Item, rules []Sort) bool {
 	if len(rules) == 0 {
@@ -1152,14 +1142,24 @@ func buildResultTree(items []Item, rules []Sort) ([]ResultItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	var convert func([]Item) []ResultItem
-	convert = func(nodes []Item) []ResultItem {
-		result := make([]ResultItem, len(nodes))
-		for i, node := range nodes {
-			result[i] = toResultItem(node)
-			result[i].Children = convert(node.Children)
-		}
-		return result
+	result := make([]ResultItem, len(tree))
+	type pending struct {
+		source *Item
+		target *ResultItem
 	}
-	return convert(tree), nil
+	stack := make([]pending, 0, len(items))
+	for i := range tree {
+		stack = append(stack, pending{source: &tree[i], target: &result[i]})
+	}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		current := stack[last]
+		stack = stack[:last]
+		*current.target = toResultItem(*current.source)
+		current.target.Children = make([]ResultItem, len(current.source.Children))
+		for i := range current.source.Children {
+			stack = append(stack, pending{source: &current.source.Children[i], target: &current.target.Children[i]})
+		}
+	}
+	return result, nil
 }
