@@ -58,6 +58,46 @@ func TestLoad_BoundsRefreshTokenLifetimeFromFileAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoad_BoundsAccessTokenLifetimeAndSessionRelationship(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		fileValue  string
+		envValue   string
+		refreshTTL string
+		wantError  string
+	}{
+		{name: "minimum access lifetime", fileValue: "1m"},
+		{name: "maximum access lifetime", fileValue: "24h"},
+		{name: "zero access lifetime", fileValue: "0s", wantError: "jwt.ttl"},
+		{name: "short access lifetime", fileValue: "59s", wantError: "jwt.ttl"},
+		{name: "excessive access lifetime", fileValue: "25h", wantError: "jwt.ttl"},
+		{name: "environment override exceeds limit", fileValue: "2h", envValue: "25h", wantError: "jwt.ttl"},
+		{name: "access lifetime exceeds session", fileValue: "2h", refreshTTL: "1h", wantError: "authentication.refresh_ttl"},
+		{name: "equal access and session lifetime", fileValue: "2h", refreshTTL: "2h"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			contents := "jwt:\n  ttl: " + test.fileValue + "\n"
+			if test.refreshTTL != "" {
+				contents += "authentication:\n  refresh_ttl: " + test.refreshTTL + "\n"
+			}
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.envValue != "" {
+				t.Setenv("APP_JWT_TTL", test.envValue)
+			}
+			_, err := Load(path)
+			if test.wantError == "" && err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+			if test.wantError != "" && (err == nil || !strings.Contains(err.Error(), test.wantError)) {
+				t.Fatalf("Load() error = %v, want %s validation", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestLoad_IdempotencyRouteListsCanBeOverriddenByEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

@@ -237,6 +237,9 @@ func (s *Service) IssuePrincipalWithState(principal platformprincipal.Principal,
 	if principal.Type == platformprincipal.TypeServiceAccount && (principal.SessionID != "" || principal.TenantID != "" || principal.MembershipID != "" || state.MustChangePassword) {
 		return "", errors.New("service account jwt cannot carry user session or tenant context")
 	}
+	if s.ttl < config.MinAccessTokenTTL || s.ttl > config.MaxAccessTokenTTL {
+		return "", errors.New("jwt.ttl must be between 1 minute and 24 hours")
+	}
 	now := time.Now()
 	jti, err := randomID()
 	if err != nil {

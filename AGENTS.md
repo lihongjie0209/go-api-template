@@ -55,6 +55,9 @@ The next domain work must keep identity and tenancy separate:
   atomically, and expired lineage is cleaned in bounded audited batches.
   Configuration must cap the refresh-token lifetime; the template maximum is
   90 days for both file and environment overrides.
+  Access-token lifetime must be between 1 minute and 24 hours, must not exceed
+  the refresh-session lifetime, and must be checked again at the signer boundary
+  so a direct constructor cannot issue an unsafe token.
 - Failed-login counters are an explicit high-concurrency exception to an
   expected-version predicate: use one atomic SQL increment guarded by the
   observed credential hash and current active/unlocked state. This lets

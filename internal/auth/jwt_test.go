@@ -321,6 +321,30 @@ func TestService_IssueRejectsEmptyPrincipal(t *testing.T) {
 	}
 }
 
+func TestService_IssueRejectsUnsafeAccessTokenLifetimeWithoutLoader(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		ttl  time.Duration
+	}{
+		{name: "zero", ttl: 0},
+		{name: "too short", ttl: 59 * time.Second},
+		{name: "too long", ttl: 25 * time.Hour},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			jwtConfig.TTL = test.ttl
+			service := New(config.Config{JWT: jwtConfig})
+			if _, err := service.Issue("service-account-1"); err == nil {
+				t.Fatalf("Issue() accepted unsafe ttl %s", test.ttl)
+			}
+		})
+	}
+}
+
 func TestService_IssueRejectsUnsafePrincipalShapes(t *testing.T) {
 	t.Parallel()
 	jwtConfig, err := testutil.JWTConfig()

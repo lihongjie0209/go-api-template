@@ -174,6 +174,13 @@ type Swagger struct {
 	Enabled     bool `mapstructure:"enabled"`
 	RequireAuth bool `mapstructure:"require_auth"`
 }
+
+const (
+	MinAccessTokenTTL  = time.Minute
+	MaxAccessTokenTTL  = 24 * time.Hour
+	MaxRefreshTokenTTL = 90 * 24 * time.Hour
+)
+
 type JWT struct {
 	Issuer         string               `mapstructure:"issuer"`
 	Audience       string               `mapstructure:"audience"`
@@ -798,6 +805,9 @@ func (c Config) Validate() error {
 	if c.JWT.Algorithm != "" && c.JWT.Algorithm != "RS256" && c.JWT.Algorithm != "ES256" {
 		return errors.New("jwt.algorithm must be RS256 or ES256")
 	}
+	if c.JWT.TTL < MinAccessTokenTTL || c.JWT.TTL > MaxAccessTokenTTL {
+		return errors.New("jwt.ttl must be between 1 minute and 24 hours")
+	}
 	if c.Auth.PSK.Enabled && len(c.Auth.PSK.Key) < 32 {
 		return errors.New("enabled auth.psk requires a key of at least 32 bytes")
 	}
@@ -826,8 +836,8 @@ func (c Config) Validate() error {
 	if c.Dictionary.CacheTTL <= 0 || c.Dictionary.CacheTTL > maxCacheTTL || c.Dictionary.MaxTreeNodes <= 0 || c.Dictionary.MaxTreeNodes > 100000 {
 		return errors.New("dictionary cache duration or max_tree_nodes is invalid")
 	}
-	if c.Authentication.RefreshTTL <= 0 || c.Authentication.RefreshTTL > 90*24*time.Hour {
-		return errors.New("authentication.refresh_ttl must be positive and no greater than 90 days")
+	if c.Authentication.RefreshTTL < c.JWT.TTL || c.Authentication.RefreshTTL > MaxRefreshTokenTTL {
+		return errors.New("authentication.refresh_ttl must be at least jwt.ttl and no greater than 90 days")
 	}
 	if c.Authentication.MaxFailedAttempts <= 0 || c.Authentication.LockDuration <= 0 {
 		return errors.New("authentication failure and lock settings must be positive")
