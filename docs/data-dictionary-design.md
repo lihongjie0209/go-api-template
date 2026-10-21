@@ -14,7 +14,7 @@
 | Optimistic lock | Definition and item update/delete require a positive expected version. Item mutations also increment the parent definition version for cache invalidation. |
 | Audit | Every table has created/updated actor and time, version, and logical-delete fields. PostgreSQL/Kingbase enable the common audit trigger; all writes use the shared transactor and principal context. |
 | Presentation | Management responses include persisted audit fields. Public values include ID, code, name, value, disabled state, sort order, parent/tree structure and JSON extension, but omit actor and audit metadata. Timestamps follow the platform Asia/Shanghai presentation convention. |
-| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, static cache-key equivalence, provider cache bypass and filter/sort enforcement, ancestor retention, filtered tree totals, disabled SQL pushdown, leaf `children: []` and nullable `parent_id` serialization, cycle rejection, and rejection of unregistered in-process providers before database access. A parsed Swagger contract test requires the public dictionary result to reference an item schema with mandatory array-valued `children` and mandatory nullable `parent_id`. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search, disabled-row node-limit behavior, serialized tree shape, and enum paging without another service. |
+| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, static cache-key equivalence, provider cache bypass and filter/sort enforcement, ancestor retention regardless of source order, filtered tree totals, disabled SQL pushdown, cycle/orphan rejection, leaf `children: []` and nullable `parent_id` serialization, and rejection of unregistered in-process providers before database access. A deep-match benchmark guards the bounded tree filter against quadratic parent-chain traversal. A parsed Swagger contract test requires the public dictionary result to reference an item schema with mandatory array-valued `children` and mandatory nullable `parent_id`. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search, disabled-row node-limit behavior, serialized tree shape, and enum paging without another service. |
 | Shared capability | Reuses pagination, cache store, transactions, operation outbox recorder, Resource/Action registry, common envelope and error codes. The Go provider interface and query/result types are the future SDK extraction boundary. |
 
 ## Dictionary-item management target
@@ -69,6 +69,14 @@ breaks ties for a requested sort. Tree `total` includes all returned nodes,
 including retained ancestors. The public service validates this contract
 before returning a provider result; provider results are not cached by the
 dictionary module.
+
+Static tree filtering memoizes each matched node's ancestor validity. This
+keeps deep, heavily matched trees linear in the bounded node count while still
+rejecting orphaned, cyclic, or disabled-ancestor branches. The original
+2,000-node local benchmark took roughly 0.33–0.39 seconds and allocated
+276 MB per query; after memoization it took roughly 0.7–0.9 milliseconds and
+allocated 1.4 MB on the same machine. These are in-process measurements, not
+end-to-end service latency guarantees.
 
 ## Module checklist addition
 

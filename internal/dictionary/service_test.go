@@ -632,6 +632,8 @@ func TestFilterTreeItemsRetainsAncestorsAndRejectsDisabledSubtrees(t *testing.T)
 	items := []Item{{ID: rootID, Code: "root", Name: "Root"}, {ID: childID, ParentID: &rootID, Code: "child", Name: "Matched child"}}
 	filtered := filterTreeItems(items, Query{Keyword: "matched"})
 	require.Len(t, filtered, 2)
+	reversed := []Item{items[1], items[0]}
+	require.Equal(t, []Item{items[1], items[0]}, filterTreeItems(reversed, Query{Keyword: "matched"}))
 	items[0].Disabled = true
 	require.Empty(t, filterTreeItems(items, Query{Keyword: "matched"}))
 }
@@ -861,4 +863,61 @@ func TestQueryStaticTreeIncludeDisabledRetainsDisabledRows(t *testing.T) {
 
 func uuidString(last byte) string {
 	return fmt.Sprintf("00000000-0000-0000-0000-%012d", last)
+}
+
+func BenchmarkFilterTreeItemsDeepMatches(b *testing.B) {
+	const nodes = 2000
+	items := make([]Item, nodes)
+	for index := range items {
+		items[index] = Item{ID: fmt.Sprintf("node-%05d", index), Code: "matched", Name: "Matched Node"}
+		if index > 0 {
+			parentID := items[index-1].ID
+			items[index].ParentID = &parentID
+		}
+	}
+	query := Query{Keyword: "matched"}
+	b.ReportAllocs()
+	for b.Loop() {
+		result := filterTreeItems(items, query)
+		if len(result) != nodes {
+			b.Fatalf("filtered %d nodes, want %d", len(result), nodes)
+		}
+	}
+}
+
+func TestFilterTreeItemsRejectsInvalidAncestry(t *testing.T) {
+	t.Parallel()
+	rootID, childID := uuidString(1), uuidString(2)
+	cycleAID, cycleBID := uuidString(3), uuidString(4)
+	missingID := uuidString(5)
+	orphanParentID := uuidString(6)
+	items := []Item{
+		{ID: rootID, Code: "root", Name: "Matched root"},
+		{ID: childID, ParentID: &rootID, Code: "child", Name: "Matched child"},
+		{ID: cycleAID, ParentID: &cycleBID, Code: "cycle-a", Name: "Matched cycle A"},
+		{ID: cycleBID, ParentID: &cycleAID, Code: "cycle-b", Name: "Matched cycle B"},
+		{ID: missingID, ParentID: &orphanParentID, Code: "orphan", Name: "Matched orphan"},
+	}
+	for _, test := range []struct {
+		name            string
+		includeDisabled bool
+		disableRoot     bool
+		wantCodes       []string
+	}{
+		{name: "valid branch", wantCodes: []string{"root", "child"}},
+		{name: "disabled ancestor hides branch", disableRoot: true, wantCodes: []string{}},
+		{name: "explicit disabled branch", includeDisabled: true, disableRoot: true, wantCodes: []string{"root", "child"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := append([]Item(nil), items...)
+			input[0].Disabled = test.disableRoot
+			filtered := filterTreeItems(input, Query{Keyword: "matched", IncludeDisabled: test.includeDisabled})
+			codes := make([]string, 0, len(filtered))
+			for _, item := range filtered {
+				codes = append(codes, item.Code)
+			}
+			require.Equal(t, test.wantCodes, codes)
+		})
+	}
 }

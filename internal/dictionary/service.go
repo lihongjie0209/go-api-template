@@ -972,6 +972,7 @@ func filterTreeItems(items []Item, query Query) []Item {
 	for _, item := range items {
 		byID[item.ID] = item
 	}
+	keyword := strings.ToLower(query.Keyword)
 	idFilter := make(map[string]struct{}, len(query.IDs))
 	for _, id := range query.IDs {
 		idFilter[id] = struct{}{}
@@ -984,13 +985,21 @@ func filterTreeItems(items []Item, query Query) []Item {
 	for _, value := range query.Values {
 		valueFilter[value] = struct{}{}
 	}
-	keep := map[string]struct{}{}
+	const (
+		checking uint8 = iota + 1
+		validPath
+		invalidPath
+	)
+	// Resolve each matched node's ancestry once. Rewalking every matching
+	// node's full parent chain is quadratic for a deep tree.
+	pathStatus := make(map[string]uint8, len(items))
+	path := make([]string, 0, 8)
 	for _, item := range items {
 		if !query.IncludeDisabled && item.Disabled {
 			continue
 		}
 		matched := true
-		if query.Keyword != "" && !strings.Contains(strings.ToLower(item.Code), strings.ToLower(query.Keyword)) && !strings.Contains(strings.ToLower(item.Name), strings.ToLower(query.Keyword)) {
+		if keyword != "" && !strings.Contains(strings.ToLower(item.Code), keyword) && !strings.Contains(strings.ToLower(item.Name), keyword) {
 			matched = false
 		}
 		if _, ok := idFilter[item.ID]; len(idFilter) != 0 && !ok {
@@ -1009,17 +1018,20 @@ func filterTreeItems(items []Item, query Query) []Item {
 		if !matched {
 			continue
 		}
-		chain := []string{}
+		path = path[:0]
 		current := item
 		valid := true
-		seen := map[string]struct{}{}
+	resolve:
 		for {
-			if _, exists := seen[current.ID]; exists {
+			switch pathStatus[current.ID] {
+			case checking, invalidPath:
 				valid = false
-				break
+				break resolve
+			case validPath:
+				break resolve
 			}
-			seen[current.ID] = struct{}{}
-			chain = append(chain, current.ID)
+			pathStatus[current.ID] = checking
+			path = append(path, current.ID)
 			if current.ParentID == nil {
 				break
 			}
@@ -1030,15 +1042,17 @@ func filterTreeItems(items []Item, query Query) []Item {
 			}
 			current = parent
 		}
+		status := invalidPath
 		if valid {
-			for _, id := range chain {
-				keep[id] = struct{}{}
-			}
+			status = validPath
+		}
+		for _, id := range path {
+			pathStatus[id] = status
 		}
 	}
-	filtered := make([]Item, 0, len(keep))
+	filtered := make([]Item, 0, len(pathStatus))
 	for _, item := range items {
-		if _, ok := keep[item.ID]; ok {
+		if pathStatus[item.ID] == validPath {
 			filtered = append(filtered, item)
 		}
 	}
