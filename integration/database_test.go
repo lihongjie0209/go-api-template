@@ -390,6 +390,15 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 
 func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
+	tenantID := uuid.NewString()
+	fixtureCtx := platformprincipal.SystemContext(ctx, "data-permission-integration")
+	if err := appdb.NewTransactor(db).Within(fixtureCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(fixtureCtx, tx.Rebind(`INSERT INTO tenants(id,code,name,description,status,owner_user_id,owner_name,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), tenantID, "data-permission-integration", "Data Permission Integration", "", "active", "system", "System", now, "data-permission-integration", now, "data-permission-integration")
+		return err
+	}); err != nil {
+		t.Fatalf("create data permission tenant fixture: %v", err)
+	}
 	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{
 		"owner_id": {Column: "tm.user_id", Type: datapermission.ValueTypeText},
 	})
@@ -415,7 +424,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 		APIVersion: datapermission.PolicyAPIVersion,
 		Kind:       datapermission.PolicyKind,
 		Metadata:   datapermission.PolicyMetadata{Code: "integration-member-owner", Name: "Integration member owner"},
-		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: "tenant-data"},
+		Scope:      datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
 		Spec: datapermission.PolicySpec{
 			Subject:   resourceaction.SubjectMatcher{Authenticated: &authenticated},
 			Resource:  "tenant.member",
@@ -424,7 +433,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 			Effect:    datapermission.EffectAllow,
 		},
 	}
-	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "data-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-data"})
+	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "data-admin", Type: platformprincipal.TypeUser, TenantID: tenantID})
 	created, version, err := service.Create(actorCtx, document)
 	if err != nil || created.Version != 1 || version.Status != datapermission.VersionDraft {
 		t.Fatalf("create data permission policy=%+v version=%+v err=%v", created, version, err)
@@ -433,7 +442,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
 		t.Fatalf("publish data permission policy=%+v err=%v", published, err)
 	}
-	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
+	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || predicate.Clause != "(tm.user_id = ?)" || len(predicate.Args) != 1 || predicate.Args[0] != "member-1" {
 		t.Fatalf("compiled data permission predicate=%+v err=%v", predicate, err)
 	}
@@ -441,7 +450,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || disabled.Status != datapermission.StatusDisabled {
 		t.Fatalf("disable data permission policy=%+v err=%v", disabled, err)
 	}
-	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: "tenant-data"}, datapermission.SubjectAttributes{"id": "member-1"})
+	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || denied.Clause != "(1 = 0)" {
 		t.Fatalf("disabled data permission predicate=%+v err=%v", denied, err)
 	}
@@ -1946,7 +1955,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || adminUpdateTarget.Version != updated.Version || adminUpdateTarget.Name != updated.Name {
 		t.Fatalf("updated platform tenant target=%+v err=%v", adminUpdateTarget, err)
 	}
-	if _, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Stale", Status: tenant.StatusActive, Version: adminUpdated.Version}); !errors.Is(err, tenant.ErrConflict) {
+	if _, err := service.Update(tenantCtx, tenant.UpdateInput{ID: created.ID, Name: "Stale", Status: tenant.StatusActive, Version: adminUpdated.Version}); !errors.Is(err, tenant.ErrStaleVersion) {
 		t.Fatalf("stale update error = %v", err)
 	}
 	var membershipID string
