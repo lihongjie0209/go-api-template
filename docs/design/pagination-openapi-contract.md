@@ -21,3 +21,9 @@ and scheduled job runs.
 | Tests | A parsed Swagger test checks all seven repaired page models and each route's envelope body reference. A second parsed contract iterates every `/page` route (32 at the time of this audit), requires one typed, mandatory request body with integer `page` and `page_size`, and requires a POST success body with typed `items`, `page`, `page_size`, and `total`. Runtime JSON and resource-catalog service tests check the empty-page `items: []` shape. Existing module unit and CI Testcontainers suites continue to cover query semantics. |
 | Shared capability | Keep the shared pagination request/normalization helpers. Concrete output types are needed at the OpenAPI boundary because the current generator cannot resolve generic aliases; they do not reimplement pagination behavior. |
 | Dictionary provider | This response-model change does not make sensitive permission, grant, job, or resource data public dictionaries. Application display metadata retains its separately reviewed provider. |
+
+The generated Swagger contract also scans every documented POST request body.
+Bodies must be required and have a resolved model with fields. The eight
+intentionally empty `{}` request bodies are explicitly listed in the test,
+including both inline-object and named-struct forms, so a new empty generated
+schema cannot silently replace a real request model.
