@@ -396,6 +396,146 @@ func TestTreeDictionaryJSONAlwaysIncludesChildrenArray(t *testing.T) {
 			require.JSONEq(t, `"`+rootID+`"`, string(result.Items[0].Children[0].ParentID))
 			require.NotNil(t, result.Items[0].Children[0].Children)
 			require.Empty(t, result.Items[0].Children[0].Children)
+			if test.name == "provider tree" {
+				require.Nil(t, test.items[0].Children[0].Children)
+			}
+		})
+	}
+}
+
+func TestValidateStoredTreeDepth(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		total      int
+		reachable  int
+		maxDepth   int
+		queryError error
+		wantError  error
+	}{
+		{name: "at depth limit", total: 512, reachable: 512, maxDepth: maxDictionaryTreeDepth},
+		{name: "over depth limit", total: 513, reachable: 513, maxDepth: maxDictionaryTreeDepth + 1, wantError: ErrInvalid},
+		{name: "disconnected nodes", total: 3, reachable: 2, maxDepth: 2, wantError: ErrInvalid},
+		{name: "query failure", queryError: errors.New("database unavailable")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, raw.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+			db := sqlx.NewDb(raw, "sqlmock")
+			mock.ExpectBegin()
+			query := mock.ExpectQuery(`WITH RECURSIVE tree_nodes\(id,depth\) AS`).
+				WithArgs(uuidString(1), uuidString(1), maxDictionaryTreeDepth+1, uuidString(1))
+			if test.queryError != nil {
+				query.WillReturnError(test.queryError)
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"total", "reachable", "max_depth"}).AddRow(test.total, test.reachable, test.maxDepth))
+			}
+			mock.ExpectRollback()
+			mock.ExpectClose()
+			tx, err := db.BeginTxx(t.Context(), nil)
+			require.NoError(t, err)
+			err = validateStoredTreeDepth(t.Context(), tx, uuidString(1))
+			if test.queryError != nil {
+				require.ErrorIs(t, err, test.queryError)
+			} else if test.wantError != nil {
+				require.ErrorIs(t, err, test.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, tx.Rollback())
+		})
+	}
+}
+
+func TestCreateItemRollsBackOverDepthTree(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	dictionaryID := uuidString(1)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_type,source_type FROM dictionary_definitions`).WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_type", "source_type"}).AddRow(KindTree, SourceStatic))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL`).WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT id FROM dictionary_items WHERE dictionary_id=\? AND id<>\?`).
+		WithArgs(dictionaryID, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(`INSERT INTO dictionary_items`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`WITH RECURSIVE tree_nodes\(id,depth\) AS`).
+		WithArgs(dictionaryID, dictionaryID, maxDictionaryTreeDepth+1, dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"total", "reachable", "max_depth"}).AddRow(513, 513, 513))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	service := &Service{db: db, tx: database.NewTransactor(db), cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 1000}}}
+	ctx := platformprincipal.SystemContext(t.Context(), "admin")
+	_, err = service.CreateItem(ctx, ItemInput{DictionaryID: dictionaryID, Code: "root", Name: "Root"})
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestUpdateItemRollsBackOverDepthTree(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	dictionaryID, itemID := uuidString(1), uuidString(2)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL$`).WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT dictionary_type,source_type FROM dictionary_definitions`).WithArgs(dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_type", "source_type"}).AddRow(KindTree, SourceStatic))
+	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs(itemID).
+		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
+	mock.ExpectQuery(`SELECT id FROM dictionary_items WHERE dictionary_id=\? AND id<>\?`).
+		WithArgs(dictionaryID, itemID, itemID).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(`UPDATE dictionary_items SET parent_id=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`WITH RECURSIVE tree_nodes\(id,depth\) AS`).
+		WithArgs(dictionaryID, dictionaryID, maxDictionaryTreeDepth+1, dictionaryID).
+		WillReturnRows(sqlmock.NewRows([]string{"total", "reachable", "max_depth"}).AddRow(513, 513, 513))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	service := &Service{db: db, tx: database.NewTransactor(db)}
+	ctx := platformprincipal.SystemContext(t.Context(), "admin")
+	_, err = service.UpdateItem(ctx, ItemUpdate{ID: itemID, Name: "Root", Version: 1})
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestValidProviderResultRejectsExcessiveTreeDepth(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		depth int
+		valid bool
+	}{
+		{name: "at limit", depth: maxDictionaryTreeDepth, valid: true},
+		{name: "over limit", depth: maxDictionaryTreeDepth + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			items := []ResultItem{}
+			for i := test.depth; i >= 1; i-- {
+				id := fmt.Sprintf("00000000-0000-4000-8000-%012x", i)
+				var parentID *string
+				if i > 1 {
+					parent := fmt.Sprintf("00000000-0000-4000-8000-%012x", i-1)
+					parentID = &parent
+				}
+				items = []ResultItem{{ID: id, ParentID: parentID, Code: fmt.Sprintf("node-%d", i), Name: "Node", Extension: json.RawMessage(`{}`), Children: items}}
+			}
+			result := Result{Code: "test.tree", Name: "Tree", Type: KindTree, Items: items, Total: int64(test.depth), Extension: json.RawMessage(`{}`)}
+			require.Equal(t, test.valid, validProviderResult(result, Query{}, maxDictionaryTreeDepth+1))
 		})
 	}
 }
@@ -829,10 +969,10 @@ func TestBuildResultTreeSortsEveryLevelAndKeepsEmptyChildren(t *testing.T) {
 
 func TestBuildResultTreeKeepsDeepAncestryWithoutMutatingInput(t *testing.T) {
 	t.Parallel()
-	const depth = 128
+	const depth = maxDictionaryTreeDepth
 	items := make([]Item, depth)
 	for i := range items {
-		items[i].ID = uuidString(byte(i + 1))
+		items[i].ID = fmt.Sprintf("node-%04d", i)
 		if i > 0 {
 			items[i].ParentID = &items[i-1].ID
 		}
@@ -856,6 +996,44 @@ func TestBuildResultTreeKeepsDeepAncestryWithoutMutatingInput(t *testing.T) {
 	}
 }
 
+func TestBuildResultTreeRejectsExcessiveDepth(t *testing.T) {
+	t.Parallel()
+	items := make([]Item, maxDictionaryTreeDepth+1)
+	for i := range items {
+		items[i].ID = fmt.Sprintf("node-%04d", i)
+		if i > 0 {
+			items[i].ParentID = &items[i-1].ID
+		}
+	}
+	_, err := buildResultTree(items, nil)
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+func TestBuildResultTreeSortsSiblingsAcrossSDKDepthBoundary(t *testing.T) {
+	t.Parallel()
+	items := make([]Item, 128)
+	for i := range items {
+		items[i].ID = fmt.Sprintf("node-%04d", i)
+		if i > 0 {
+			items[i].ParentID = &items[i-1].ID
+		}
+	}
+	parentID := items[len(items)-1].ID
+	items = append(items,
+		Item{ID: "child-b", ParentID: &parentID, Name: "Zulu"},
+		Item{ID: "child-a", ParentID: &parentID, Name: "Alpha"},
+	)
+	result, err := buildResultTree(items, []Sort{{Field: "name", Direction: "asc"}})
+	require.NoError(t, err)
+	current := &result[0]
+	for i := 1; i < 128; i++ {
+		require.Len(t, current.Children, 1)
+		current = &current.Children[0]
+	}
+	require.Len(t, current.Children, 2)
+	require.Equal(t, []string{"child-a", "child-b"}, []string{current.Children[0].ID, current.Children[1].ID})
+}
+
 func BenchmarkBuildResultTree(b *testing.B) {
 	for _, test := range []struct {
 		name   string
@@ -863,9 +1041,9 @@ func BenchmarkBuildResultTree(b *testing.B) {
 		nested bool
 	}{
 		{name: "wide_1024", size: 1024},
+		{name: "wide_10000", size: 10000},
 		{name: "depth_128", size: 128, nested: true},
 		{name: "depth_512", size: 512, nested: true},
-		{name: "depth_1024", size: 1024, nested: true},
 	} {
 		b.Run(test.name, func(b *testing.B) {
 			items := make([]Item, test.size)
@@ -878,6 +1056,30 @@ func BenchmarkBuildResultTree(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				if _, err := buildResultTree(items, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkEncodeResultTree(b *testing.B) {
+	for _, depth := range []int{128, 512} {
+		b.Run(fmt.Sprintf("depth_%d", depth), func(b *testing.B) {
+			items := make([]Item, depth)
+			for i := range items {
+				items[i].ID = fmt.Sprintf("node-%d", i)
+				if i > 0 {
+					items[i].ParentID = &items[i-1].ID
+				}
+			}
+			tree, err := buildResultTree(items, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := json.Marshal(Result{Type: KindTree, Items: tree}); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -652,6 +652,11 @@ deleted_by text
 - Tree reads must have a configured maximum node count and must apply tenant,
   application, status, authorization, and logical-delete filters before tree
   construction. Never fetch a global tree and filter it afterward.
+- Tree contracts must also bound maximum depth at writes, reads, and provider
+  validation. A node-count limit alone does not prevent deep-chain CPU,
+  allocation, JSON nesting, or database-recursion exhaustion. Reject a write
+  that would exceed the depth limit in the same transaction; do not create
+  data that the read/serialization path cannot return.
 - Search results are flat by default. If an endpoint promises tree search, it
   must document whether ancestors are included for context and whether
   unmatched descendants are omitted.

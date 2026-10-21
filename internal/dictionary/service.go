@@ -39,6 +39,7 @@ const definitionColumns = `id,dictionary_code,name,dictionary_type,source_type,d
 const itemColumns = `id,dictionary_id,parent_id,code,name,value,disabled,sort_order,extension,created_at,created_by,updated_at,updated_by,version`
 const maxDescriptionLength = 4096
 const maxValueLength = 1 << 20
+const maxDictionaryTreeDepth = 512
 
 type Service struct {
 	db         *sqlx.DB
@@ -412,6 +413,9 @@ func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 		}
 		now := time.Now()
 		_, e := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO dictionary_items(id,dictionary_id,parent_id,code,name,value,disabled,sort_order,extension,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, in.DictionaryID, in.ParentID, in.Code, in.Name, in.Value, in.Disabled, in.SortOrder, string(in.Extension), now, actor.ID, now, actor.ID)
+		if e == nil && definition.Kind == KindTree {
+			e = validateStoredTreeDepth(ctx, tx, in.DictionaryID)
+		}
 		if e == nil {
 			_, e = tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_definitions SET updated_at=?,updated_by=? WHERE id=?`), now, actor.ID, in.DictionaryID)
 		}
@@ -594,6 +598,11 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 		if n == 0 {
 			return ErrStaleVersion
 		}
+		if definition.Kind == KindTree {
+			if e := validateStoredTreeDepth(ctx, tx, dictionaryID); e != nil {
+				return e
+			}
+		}
 		_, e = tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_definitions SET updated_at=?,updated_by=? WHERE id=?`), now, actor.ID, dictionaryID)
 		if e != nil {
 			return e
@@ -616,6 +625,28 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 		item = records[0]
 	}
 	return item, err
+}
+
+func validateStoredTreeDepth(ctx context.Context, tx *sqlx.Tx, dictionaryID string) error {
+	var counts struct {
+		Total     int `db:"total"`
+		Reachable int `db:"reachable"`
+		MaxDepth  int `db:"max_depth"`
+	}
+	const query = `WITH RECURSIVE tree_nodes(id,depth) AS (
+		SELECT id,1 FROM dictionary_items WHERE dictionary_id=? AND parent_id IS NULL AND deleted_at IS NULL
+		UNION ALL
+		SELECT child.id,tree_nodes.depth+1 FROM dictionary_items child JOIN tree_nodes ON child.parent_id=tree_nodes.id
+		WHERE child.dictionary_id=? AND child.deleted_at IS NULL AND tree_nodes.depth<?
+	) SELECT (SELECT COUNT(*) FROM dictionary_items WHERE dictionary_id=? AND deleted_at IS NULL) AS total,
+		COUNT(*) AS reachable,COALESCE(MAX(depth),0) AS max_depth FROM tree_nodes`
+	if err := tx.GetContext(ctx, &counts, tx.Rebind(query), dictionaryID, dictionaryID, maxDictionaryTreeDepth+1, dictionaryID); err != nil {
+		return fmt.Errorf("validate dictionary tree depth: %w", err)
+	}
+	if counts.Reachable != counts.Total || counts.MaxDepth > maxDictionaryTreeDepth {
+		return ErrInvalid
+	}
+	return nil
 }
 func (s *Service) DeleteItem(ctx context.Context, id string, version int64) error {
 	actor, err := platformprincipal.Require(ctx)
@@ -835,8 +866,14 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 		}
 		return true
 	}
-	var walk func([]ResultItem, *string) (bool, bool)
-	walk = func(items []ResultItem, expectedParent *string) (bool, bool) {
+	var walk func([]ResultItem, *string, int) (bool, bool)
+	walk = func(items []ResultItem, expectedParent *string, depth int) (bool, bool) {
+		if len(items) == 0 {
+			return false, true
+		}
+		if depth > maxDictionaryTreeDepth {
+			return false, false
+		}
 		anyMatch := false
 		for index, item := range items {
 			count++
@@ -871,7 +908,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 			if len(item.Extension) == 0 || !validJSON(item.Extension) {
 				return false, false
 			}
-			childMatch, valid := walk(item.Children, &item.ID)
+			childMatch, valid := walk(item.Children, &item.ID, depth+1)
 			if !valid || (!matches(item, selectableValue) && !childMatch) {
 				return false, false
 			}
@@ -887,7 +924,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	} else if result.Page != 0 || result.PageSize != 0 {
 		return false
 	}
-	if _, valid := walk(result.Items, nil); !valid {
+	if _, valid := walk(result.Items, nil, 1); !valid {
 		return false
 	}
 	if result.Type == KindTree && result.Total != int64(count) {
@@ -1070,21 +1107,130 @@ func filterTreeItems(items []Item, query Query) []Item {
 }
 
 func buildItemForest(items []Item, rules []Sort) ([]*platformtree.Node[Item], error) {
-	for _, v := range items {
-		if v.ID == "" {
-			return nil, ErrInvalid
-		}
-	}
 	ordered := append([]Item(nil), items...)
 	sort.SliceStable(ordered, func(i, j int) bool { return itemLess(ordered[i], ordered[j], rules) })
-	forest, err := platformtree.Build(ordered, func(v Item) string { return v.ID }, func(v Item) (string, bool) {
-		if v.ParentID == nil {
-			return "", false
+	allRoots := true
+	for _, item := range ordered {
+		if item.ID == "" {
+			return nil, ErrInvalid
 		}
-		return *v.ParentID, true
-	})
-	if err != nil {
+		if item.ParentID != nil {
+			allRoots = false
+			break
+		}
+	}
+	buildWhole := func() ([]*platformtree.Node[Item], error) {
+		forest, err := platformtree.Build(ordered, func(v Item) string { return v.ID }, func(v Item) (string, bool) {
+			if v.ParentID == nil {
+				return "", false
+			}
+			return *v.ParentID, true
+		})
+		if err != nil {
+			return nil, ErrInvalid
+		}
+		return forest, nil
+	}
+	if allRoots {
+		return buildWhole()
+	}
+	parents := make(map[string]*string, len(ordered))
+	for _, item := range ordered {
+		if item.ID == "" {
+			return nil, ErrInvalid
+		}
+		if _, exists := parents[item.ID]; exists {
+			return nil, ErrInvalid
+		}
+		parents[item.ID] = item.ParentID
+	}
+	depths := make(map[string]int, len(ordered))
+	state := make(map[string]byte, len(ordered))
+	maxDepth := 0
+	for _, item := range ordered {
+		if state[item.ID] == 2 {
+			continue
+		}
+		path := make([]string, 0)
+		current := item.ID
+		base := 0
+		for {
+			switch state[current] {
+			case 1:
+				return nil, ErrInvalid
+			case 2:
+				base = depths[current]
+				goto resolved
+			}
+			state[current] = 1
+			path = append(path, current)
+			parent := parents[current]
+			if parent == nil {
+				goto resolved
+			}
+			if _, exists := parents[*parent]; !exists {
+				return nil, ErrInvalid
+			}
+			current = *parent
+		}
+	resolved:
+		for i := len(path) - 1; i >= 0; i-- {
+			base++
+			depths[path[i]] = base
+			state[path[i]] = 2
+			if base > maxDepth {
+				maxDepth = base
+			}
+		}
+	}
+	// The SDK validates each item's entire ancestor chain. Small windows keep
+	// validation bounded while preserving its ordering and structural checks.
+	const maxSDKTreeDepth = 32
+	if maxDepth > maxDictionaryTreeDepth {
 		return nil, ErrInvalid
+	}
+	if maxDepth <= maxSDKTreeDepth {
+		return buildWhole()
+	}
+	groups := make([][]Item, (maxDepth+maxSDKTreeDepth-1)/maxSDKTreeDepth)
+	for _, item := range ordered {
+		group := (depths[item.ID] - 1) / maxSDKTreeDepth
+		groups[group] = append(groups[group], item)
+	}
+	forest := make([]*platformtree.Node[Item], 0)
+	nodes := make(map[string]*platformtree.Node[Item], len(ordered))
+	for groupIndex, group := range groups {
+		partial, err := platformtree.Build(group, func(v Item) string { return v.ID }, func(v Item) (string, bool) {
+			if v.ParentID == nil || (depths[*v.ParentID]-1)/maxSDKTreeDepth != groupIndex {
+				return "", false
+			}
+			return *v.ParentID, true
+		})
+		if err != nil {
+			return nil, ErrInvalid
+		}
+		if groupIndex == 0 {
+			forest = partial
+		} else {
+			for _, root := range partial {
+				if root.Value.ParentID == nil {
+					return nil, ErrInvalid
+				}
+				parent, exists := nodes[*root.Value.ParentID]
+				if !exists {
+					return nil, ErrInvalid
+				}
+				parent.Children = append(parent.Children, root)
+			}
+		}
+		stack := append([]*platformtree.Node[Item](nil), partial...)
+		for len(stack) > 0 {
+			last := len(stack) - 1
+			node := stack[last]
+			stack = stack[:last]
+			nodes[node.Value.ID] = node
+			stack = append(stack, node.Children...)
+		}
 	}
 	return forest, nil
 }

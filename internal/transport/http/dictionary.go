@@ -86,7 +86,7 @@ type DictionaryItemPageRequest struct {
 
 // QueryDictionary godoc
 // @Summary Query a static or dynamic data dictionary
-// @Description Public endpoint. Enum results are paged; tree results are returned as a bounded complete tree. Optional values filter matches the selectable value (item value, or item ID when value is empty) exactly and combines with IDs, codes, and keyword using AND; trees retain matching ancestors.
+// @Description Public endpoint. Enum results are paged; tree results are returned as a complete tree bounded by the configured node cap and 512 levels of depth. Optional values filter matches the selectable value (item value, or item ID when value is empty) exactly and combines with IDs, codes, and keyword using AND; trees retain matching ancestors.
 // @Tags data-dictionaries
 // @Accept json
 // @Produce json

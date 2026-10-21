@@ -82,6 +82,35 @@ type Result struct {
 	Total     int64           `json:"total"`
 	Extension json.RawMessage `json:"extension" swaggertype:"object"`
 }
+
+func (result Result) MarshalJSON() ([]byte, error) {
+	type alias Result
+	if result.Type != KindTree {
+		return json.Marshal(alias(result))
+	}
+	items := make([]ResultItem, len(result.Items))
+	type pending struct {
+		source *ResultItem
+		target *ResultItem
+	}
+	stack := make([]pending, 0, len(result.Items))
+	for i := range result.Items {
+		stack = append(stack, pending{source: &result.Items[i], target: &items[i]})
+	}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		current := stack[last]
+		stack = stack[:last]
+		*current.target = *current.source
+		current.target.Children = make([]ResultItem, len(current.source.Children))
+		for i := range current.source.Children {
+			stack = append(stack, pending{source: &current.source.Children[i], target: &current.target.Children[i]})
+		}
+	}
+	result.Items = items
+	return json.Marshal(alias(result))
+}
+
 type ProviderQueryRequest = Query
 type ProviderQueryResponse = Result
 type ResultItem struct {
@@ -94,14 +123,6 @@ type ResultItem struct {
 	SortOrder int64           `json:"sort_order"`
 	Extension json.RawMessage `json:"extension" swaggertype:"object"`
 	Children  []ResultItem    `json:"children" binding:"required"`
-}
-
-func (item ResultItem) MarshalJSON() ([]byte, error) {
-	type alias ResultItem
-	if item.Children == nil {
-		item.Children = []ResultItem{}
-	}
-	return json.Marshal(alias(item))
 }
 
 type DefinitionInput struct {

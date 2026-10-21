@@ -397,6 +397,10 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if _, err := service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: child.ID, ParentID: &root.ID, Name: "Guangdong", Value: "", SortOrder: 1, Version: child.Version + 1}); !errors.Is(err, dictionary.ErrStaleVersion) {
 		t.Fatalf("stale dictionary item update error=%v", err)
 	}
+	child, err = service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: child.ID, ParentID: &root.ID, Name: "Guangdong", Value: "guangdong-value", SortOrder: 1, Version: child.Version})
+	if err != nil || child.Version < 2 {
+		t.Fatalf("update dictionary tree item with depth validation: %#v err=%v", child, err)
+	}
 	stored, err := service.GetItem(actorCtx, root.ID)
 	if err != nil || stored.CreatedBy != "dictionary-test" || stored.Version != 1 {
 		t.Fatalf("dictionary audit fields not maintained: %#v err=%v", stored, err)
