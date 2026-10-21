@@ -220,6 +220,10 @@ otherwise unsuitable for dictionary use.
 - Queue consumer error callbacks must use the shared safe-error logger; SDK
   callbacks may carry handler errors, event identifiers, or connection details.
   Never forward their raw error text to application logs or traces.
+- Long-running queue consumers must retry unexpected subscription exits with
+  bounded jittered backoff and stop promptly when their lifecycle Context is
+  canceled. A transient broker or subscription failure must not permanently
+  disable operation, security, or scheduled-job event consumption.
 - Never record passwords, secrets, bearer tokens, refresh tokens, cookies, or
   raw credentials. Use the shared sanitization and keyed digest facilities.
 - Persisted failure fields such as outbox `last_error`, dead-letter metadata,
