@@ -282,11 +282,17 @@ func (s *Service) GetItem(ctx context.Context, id string) (Item, error) {
 		err = ErrNotFound
 	}
 	if err == nil {
+		_, err = storedItemBytes(item)
+	}
+	if err == nil {
 		records := []Item{item}
 		err = s.presentItems(ctx, records)
 		item = records[0]
 	}
-	return item, err
+	if err != nil {
+		return Item{}, err
+	}
+	return item, nil
 }
 func (s *Service) PageItems(ctx context.Context, in ItemPageInput) (ItemPage, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
@@ -338,8 +344,8 @@ func (s *Service) PageItems(ctx context.Context, in ItemPageInput) (ItemPage, er
 		return ItemPage{}, err
 	}
 	queryArgs := append(append(append([]any{}, prefixArgs...), args...), page.PageSize, pagination.Offset(page))
-	items := []Item{}
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(prefix+`SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY sort_order,code,id LIMIT ? OFFSET ?`), queryArgs...); err != nil {
+	items, err := s.selectQueryItems(ctx, prefix+`SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY sort_order,code,id LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
 		return ItemPage{}, err
 	}
 	if err := s.presentItems(ctx, items); err != nil {
@@ -898,7 +904,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 		anyMatch := false
 		for index, item := range items {
 			count++
-			if count > maxNodes || uuid.Validate(item.ID) != nil || !codePattern.MatchString(item.Code) || strings.TrimSpace(item.Name) == "" || len(item.Name) > 256 || len(item.Value) > maxValueLength || (!query.IncludeDisabled && item.Disabled) {
+			if count > maxNodes || uuid.Validate(item.ID) != nil || !codePattern.MatchString(item.Code) || strings.TrimSpace(item.Name) == "" || len(item.Name) > 256 || len(item.Value) > maxValueLength || len(item.Extension) == 0 || !validJSON(item.Extension) || (!query.IncludeDisabled && item.Disabled) {
 				return false, false
 			}
 			encodedBytes, err := resultItemBytes(item)
@@ -929,9 +935,6 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 			}
 			seenValues[selectableValue] = struct{}{}
 			if result.Type == KindEnum && len(item.Children) != 0 {
-				return false, false
-			}
-			if len(item.Extension) == 0 || !validJSON(item.Extension) {
 				return false, false
 			}
 			childMatch, valid := walk(item.Children, &item.ID, depth+1)
@@ -970,6 +973,22 @@ func resultItemBytes(item ResultItem) (int, error) {
 	return len(encoded), nil
 }
 
+func storedItemBytes(item Item) (int, error) {
+	// Migrations or maintenance can write rows without the API's input checks.
+	// Reject oversized fields before JSON escaping amplifies their size.
+	if len(item.Code) > 128 || len(item.Name) > 256 || len(item.Value) > maxValueLength || len(item.Extension) > 16<<10 {
+		return 0, ErrResultTooLarge
+	}
+	encodedBytes, err := resultItemBytes(toResultItem(item))
+	if err != nil {
+		return 0, fmt.Errorf("encode dictionary item size: %w", err)
+	}
+	if encodedBytes > maxDictionaryItemsBytes {
+		return 0, ErrResultTooLarge
+	}
+	return encodedBytes, nil
+}
+
 func (s *Service) selectQueryItems(ctx context.Context, query string, args ...any) ([]Item, error) {
 	rows, err := s.db.QueryxContext(ctx, s.db.Rebind(query), args...)
 	if err != nil {
@@ -983,9 +1002,9 @@ func (s *Service) selectQueryItems(ctx context.Context, query string, args ...an
 		if err := rows.StructScan(&item); err != nil {
 			return nil, err
 		}
-		encodedBytes, err := resultItemBytes(toResultItem(item))
+		encodedBytes, err := storedItemBytes(item)
 		if err != nil {
-			return nil, fmt.Errorf("encode dictionary item size: %w", err)
+			return nil, err
 		}
 		if encodedBytes > maxDictionaryItemsBytes-itemBytes {
 			return nil, ErrResultTooLarge

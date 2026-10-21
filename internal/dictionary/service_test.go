@@ -428,6 +428,27 @@ func TestPageItemsRejectsInvalidExcludedSubtreeID(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
+func TestPageItemsRejectsOversizedStoredItem(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	dictionaryID := uuidString(1)
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL`).
+		WithArgs(dictionaryID).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	now := time.Now()
+	rows := sqlmock.NewRows(strings.Split(itemColumns, ",")).AddRow(uuidString(2), dictionaryID, nil, "item", "Item", strings.Repeat("v", maxValueLength+1), false, 1, []byte(`{}`), now, "system", now, "system", 1)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL ORDER BY sort_order,code,id LIMIT \? OFFSET \?`).
+		WithArgs(dictionaryID, 20, 0).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	_, err = service.PageItems(platformprincipal.SystemContext(t.Context(), "test"), ItemPageInput{DictionaryID: dictionaryID})
+	require.ErrorIs(t, err, ErrResultTooLarge)
+}
+
 func TestBuildTree(t *testing.T) {
 	t.Parallel()
 	rootID, childID := "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"
@@ -1395,6 +1416,67 @@ func TestQueryStaticEnumRejectsOversizedItemPage(t *testing.T) {
 	_, err = service.queryStatic(t.Context(), Definition{ID: dictionaryID, Kind: KindEnum}, Query{})
 	require.ErrorIs(t, err, ErrResultTooLarge)
 	require.ErrorIs(t, err, ErrConflict)
+}
+
+func TestSelectQueryItemsRejectsOversizedStoredFields(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		code      string
+		itemName  string
+		value     string
+		extension []byte
+	}{
+		{name: "code", code: strings.Repeat("c", 129), itemName: "Item", extension: []byte(`{}`)},
+		{name: "name", code: "item", itemName: strings.Repeat("n", 257), extension: []byte(`{}`)},
+		{name: "value", code: "item", itemName: "Item", value: strings.Repeat("v", maxValueLength+1), extension: []byte(`{}`)},
+		{name: "extension", code: "item", itemName: "Item", extension: []byte(`{"data":"` + strings.Repeat("x", 16<<10) + `"}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, raw.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+			now := time.Now()
+			rows := sqlmock.NewRows(strings.Split(itemColumns, ",")).AddRow(uuidString(1), uuidString(4), nil, tt.code, tt.itemName, tt.value, false, 1, tt.extension, now, "system", now, "system", 1)
+			mock.ExpectQuery(`SELECT .* FROM dictionary_items`).WillReturnRows(rows)
+			mock.ExpectClose()
+			service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+			_, err = service.selectQueryItems(t.Context(), `SELECT `+itemColumns+` FROM dictionary_items`)
+			require.ErrorIs(t, err, ErrResultTooLarge)
+		})
+	}
+}
+
+func TestGetItemRejectsOversizedStoredValue(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	id := uuidString(1)
+	now := time.Now()
+	rows := sqlmock.NewRows(strings.Split(itemColumns, ",")).AddRow(id, uuidString(4), nil, "item", "Item", strings.Repeat("v", maxValueLength+1), false, 1, []byte(`{}`), now, "system", now, "system", 1)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	item, err := service.GetItem(platformprincipal.SystemContext(t.Context(), "test"), id)
+	require.ErrorIs(t, err, ErrResultTooLarge)
+	require.Equal(t, Item{}, item)
+}
+
+func TestValidProviderResultRejectsOversizedItemExtension(t *testing.T) {
+	t.Parallel()
+	result := Result{Code: "large", Name: "Large", Type: KindEnum, Page: 1, PageSize: 20, Total: 1, Extension: json.RawMessage(`{}`), Items: []ResultItem{
+		{ID: uuidString(1), Code: "one", Name: "One", Extension: json.RawMessage(`{"data":"` + strings.Repeat("x", 16<<10) + `"}`)},
+	}}
+	require.False(t, validProviderResult(result, Query{}, 20))
 }
 
 func TestValidProviderResultBoundsEscapedItemBytes(t *testing.T) {

@@ -504,7 +504,7 @@ func (h *DictionaryHandler) fail(c *gin.Context, e error) {
 	case errors.Is(e, dictionary.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("dictionary not found"))
 	case errors.Is(e, dictionary.ErrResultTooLarge):
-		Fail(c, h.logger, apperror.Conflict("dictionary query exceeds result size limit; reduce page size or narrow the dictionary", e))
+		Fail(c, h.logger, apperror.Conflict("dictionary query exceeds item size limit; reduce page size, narrow the dictionary, or correct oversized item data", e))
 	case errors.Is(e, dictionary.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("dictionary conflict", e))
 	case errors.Is(e, dictionary.ErrStaleVersion):

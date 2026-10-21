@@ -458,10 +458,13 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil {
 		t.Fatalf("create large dictionary: %v", err)
 	}
+	largeItemIDs := make([]string, 0, 2)
 	for index, value := range []string{strings.Repeat("<", 1<<20), strings.Repeat(">", 1<<20)} {
-		if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: largeDefinition.ID, Code: fmt.Sprintf("large%d", index), Name: "Large", Value: value, SortOrder: int64(index)}); err != nil {
+		item, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: largeDefinition.ID, Code: fmt.Sprintf("large%d", index), Name: "Large", Value: value, SortOrder: int64(index)})
+		if err != nil {
 			t.Fatalf("create large dictionary item: %v", err)
 		}
+		largeItemIDs = append(largeItemIDs, item.ID)
 	}
 	if _, err := service.Query(ctx, dictionary.Query{Code: "test.large"}); !errors.Is(err, dictionary.ErrResultTooLarge) {
 		t.Fatalf("oversized enum page must be rejected: %v", err)
@@ -469,6 +472,21 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	boundedPage, err := service.Query(ctx, dictionary.Query{Code: "test.large", Page: 1, PageSize: 1})
 	if err != nil || boundedPage.Total != 2 || len(boundedPage.Items) != 1 {
 		t.Fatalf("small page from large dictionary must remain available: %#v err=%v", boundedPage, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE dictionary_items SET value=? WHERE id=?`), strings.Repeat("v", (1<<20)+1), largeItemIDs[0])
+		return execErr
+	}); err != nil {
+		t.Fatalf("prepare oversized stored dictionary item: %v", err)
+	}
+	if _, err := service.Query(ctx, dictionary.Query{Code: "test.large", Page: 1, PageSize: 1}); !errors.Is(err, dictionary.ErrResultTooLarge) {
+		t.Fatalf("oversized stored item must be rejected by public query: %v", err)
+	}
+	if _, err := service.PageItems(actorCtx, dictionary.ItemPageInput{Request: pagination.Request{Page: 1, PageSize: 1}, DictionaryID: largeDefinition.ID}); !errors.Is(err, dictionary.ErrResultTooLarge) {
+		t.Fatalf("oversized stored item must be rejected by management page: %v", err)
+	}
+	if _, err := service.GetItem(actorCtx, largeItemIDs[0]); !errors.Is(err, dictionary.ErrResultTooLarge) {
+		t.Fatalf("oversized stored item must be rejected by management get: %v", err)
 	}
 	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "duplicate-value", Name: "Duplicate", Value: "guangdong-value"}); !errors.Is(err, dictionary.ErrConflict) {
 		t.Fatalf("duplicate selectable value create error=%v", err)
