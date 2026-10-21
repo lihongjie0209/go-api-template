@@ -50,7 +50,7 @@ Requests support:
 - case-insensitive search keyword;
 - bounded ID/code/value lists and explicit `include_disabled`;
 - enum page/page size, or an unpaged bounded tree;
-- allowlisted sorting by `sort_order`, `code`, or `name`;
+- at most three distinct allowlisted sort fields from `sort_order`, `code`, or `name`;
 - a bounded JSON `extension` object passed through without interpretation.
 
 Responses use stable string IDs, code, name, value, optional parent ID,

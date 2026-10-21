@@ -32,6 +32,9 @@ func TestValidateQuery(t *testing.T) {
 		{name: "blank value", query: Query{Code: "identity.user", Values: []string{"  "}}, wantErr: true},
 		{name: "oversized value payload", query: Query{Code: "identity.user", Values: []string{string(make([]byte, 16*1024+1))}}, wantErr: true},
 		{name: "exact value", query: Query{Code: "identity.user", Values: []string{"internal:id:1"}}},
+		{name: "three distinct sort fields", query: Query{Code: "identity.user", Sort: []Sort{{Field: "name", Direction: "asc"}, {Field: "code", Direction: "desc"}, {Field: "sort_order", Direction: "asc"}}}},
+		{name: "too many sort fields", query: Query{Code: "identity.user", Sort: []Sort{{Field: "name", Direction: "asc"}, {Field: "code", Direction: "asc"}, {Field: "sort_order", Direction: "asc"}, {Field: "name", Direction: "desc"}}}, wantErr: true},
+		{name: "duplicate sort field", query: Query{Code: "identity.user", Sort: []Sort{{Field: "name", Direction: "asc"}, {Field: "name", Direction: "desc"}}}, wantErr: true},
 		{name: "unknown sort", query: Query{Code: "identity.user", Sort: []Sort{{Field: "created_at", Direction: "asc"}}}, wantErr: true},
 		{name: "extension must be object", query: Query{Code: "identity.user", Extension: json.RawMessage(`[]`)}, wantErr: true},
 	}

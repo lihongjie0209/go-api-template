@@ -670,7 +670,7 @@ func (s *Service) DeleteItem(ctx context.Context, id string, version int64) erro
 	return err
 }
 func validateQuery(q Query) error {
-	if !codePattern.MatchString(strings.ToLower(strings.TrimSpace(q.Code))) || len(q.Keyword) > 256 || len(q.IDs) > 200 || len(q.Codes) > 200 || len(q.Values) > 200 || !validJSON(q.Extension) {
+	if !codePattern.MatchString(strings.ToLower(strings.TrimSpace(q.Code))) || len(q.Keyword) > 256 || len(q.IDs) > 200 || len(q.Codes) > 200 || len(q.Values) > 200 || len(q.Sort) > 3 || !validJSON(q.Extension) {
 		return ErrInvalid
 	}
 	valueBytes := 0
@@ -690,10 +690,15 @@ func validateQuery(q Query) error {
 			return ErrInvalid
 		}
 	}
+	seenSort := make(map[string]struct{}, len(q.Sort))
 	for _, v := range q.Sort {
 		if (v.Field != "sort_order" && v.Field != "code" && v.Field != "name") || (v.Direction != "asc" && v.Direction != "desc") {
 			return ErrInvalid
 		}
+		if _, exists := seenSort[v.Field]; exists {
+			return ErrInvalid
+		}
+		seenSort[v.Field] = struct{}{}
 	}
 	return nil
 }

@@ -207,7 +207,8 @@ Provider results must honor every requested keyword, ID, code, value, disabled,
 and sort filter. A tree may additionally include only ancestors of matching
 nodes; its total is the number of returned nodes, including those ancestors.
 Validate these invariants at the public dictionary boundary, even for an
-in-process provider.
+in-process provider. Bound the number of sort fields and reject duplicate
+fields before building SQL or calling the provider.
 
 ### Permission design is mandatory
 
