@@ -621,6 +621,7 @@ func TestService_RefreshRollsBackRotationWhenAccessTokenSigningFails(t *testing.
 	mock.ExpectRollback()
 	_, err = service.Refresh(t.Context(), raw)
 	require.ErrorContains(t, err, "signing is not configured")
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -698,6 +699,7 @@ func TestService_RefreshPreservesDatabaseFailure(t *testing.T) {
 
 	_, err = service.Refresh(t.Context(), raw)
 	require.ErrorIs(t, err, databaseErr)
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
 	require.NotErrorIs(t, err, ErrRefreshInvalid)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -718,8 +720,80 @@ func TestService_LogoutPreservesDatabaseFailure(t *testing.T) {
 
 	err = service.Logout(t.Context(), "refresh-token")
 	require.ErrorIs(t, err, databaseErr)
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
 	require.NotErrorIs(t, err, ErrRefreshInvalid)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshAndLogoutRejectMissingTokenWithoutUnavailable(t *testing.T) {
+	for _, operation := range []string{"refresh", "logout"} {
+		t.Run(operation, func(t *testing.T) {
+			rawDB, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = rawDB.Close() })
+			db := sqlx.NewDb(rawDB, "sqlmock")
+			service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+			mock.ExpectBegin()
+			if operation == "refresh" {
+				mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(tokenHash("refresh-token"), tokenHash("refresh-token")).WillReturnRows(
+					sqlmock.NewRows([]string{"id"}),
+				)
+				mock.ExpectRollback()
+				_, err = service.Refresh(t.Context(), "refresh-token")
+			} else {
+				mock.ExpectQuery(`SELECT id,user_id,version FROM identity_sessions`).WithArgs(tokenHash("refresh-token")).WillReturnRows(
+					sqlmock.NewRows([]string{"id"}),
+				)
+				mock.ExpectRollback()
+				err = service.Logout(t.Context(), "refresh-token")
+			}
+			require.ErrorIs(t, err, ErrRefreshInvalid)
+			require.NotErrorIs(t, err, ErrAuthenticationUnavailable)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestService_RefreshAndLogoutRollBackWhenSecurityAuditFails(t *testing.T) {
+	for _, operation := range []string{"refresh", "logout"} {
+		t.Run(operation, func(t *testing.T) {
+			rawDB, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = rawDB.Close() })
+			db := sqlx.NewDb(rawDB, "sqlmock")
+			jwtConfig, err := testutil.JWTConfig()
+			require.NoError(t, err)
+			recorder := &transactionalSecurityRecorder{err: errors.New("security outbox unavailable")}
+			service := NewWithSecurity(db, database.NewTransactor(db), nil, auth.New(config.Config{JWT: jwtConfig}), config.Config{JWT: jwtConfig}, recorder)
+			raw := "refresh-token"
+			mock.ExpectBegin()
+			if operation == "refresh" {
+				hash := tokenHash(raw)
+				mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(
+					sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+						AddRow("session-1", "user-1", hash, "", time.Now().Add(time.Hour), nil, false, 2),
+				)
+				mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectRollback()
+				tokens, refreshErr := service.Refresh(t.Context(), raw)
+				require.ErrorIs(t, refreshErr, ErrSecurityUnavailable)
+				require.NotErrorIs(t, refreshErr, ErrAuthenticationUnavailable)
+				require.Empty(t, tokens.AccessToken)
+				require.Empty(t, tokens.RefreshToken)
+			} else {
+				mock.ExpectQuery(`SELECT id,user_id,version FROM identity_sessions`).WithArgs(tokenHash(raw)).WillReturnRows(
+					sqlmock.NewRows([]string{"id", "user_id", "version"}).AddRow("session-1", "user-1", 2),
+				)
+				mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectRollback()
+				logoutErr := service.Logout(t.Context(), raw)
+				require.ErrorIs(t, logoutErr, ErrSecurityUnavailable)
+				require.NotErrorIs(t, logoutErr, ErrAuthenticationUnavailable)
+			}
+			require.Len(t, recorder.entries, 1)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestService_ChangePasswordRollsBackWhenSecurityEventCannotBeStored(t *testing.T) {

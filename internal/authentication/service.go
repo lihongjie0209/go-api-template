@@ -595,7 +595,7 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	}
 	newRaw, newHash, err := newRefreshToken()
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("%w: create rotated refresh token: %w", ErrAuthenticationUnavailable, err)
 	}
 	oldHash := tokenHash(raw)
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:refresh")
@@ -644,7 +644,10 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventTokenRefresh, SubjectID: current.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: current.ID, TokenID: raw, Succeeded: true})
 	})
 	if err != nil {
-		return Tokens{}, err
+		if errors.Is(err, ErrRefreshInvalid) || errors.Is(err, ErrSecurityUnavailable) {
+			return Tokens{}, err
+		}
+		return Tokens{}, fmt.Errorf("%w: rotate refresh session: %w", ErrAuthenticationUnavailable, err)
 	}
 	if reused {
 		return Tokens{}, ErrRefreshReused
@@ -656,7 +659,7 @@ func (s *Service) Logout(ctx context.Context, raw string) error {
 		return ErrInvalid
 	}
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:logout")
-	return s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
+	err := s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
 		var current session
 		lookup := tx.Rebind(`SELECT id,user_id,version FROM identity_sessions WHERE refresh_token_hash=? AND revoked_at IS NULL AND deleted_at IS NULL FOR UPDATE`)
 		if err := tx.GetContext(systemCtx, &current, lookup, tokenHash(raw)); err != nil {
@@ -680,6 +683,10 @@ func (s *Service) Logout(ctx context.Context, raw string) error {
 		}
 		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogout, SubjectID: current.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: current.ID, TokenID: raw, Succeeded: true})
 	})
+	if err == nil || errors.Is(err, ErrRefreshInvalid) || errors.Is(err, ErrSecurityUnavailable) {
+		return err
+	}
+	return fmt.Errorf("%w: revoke logout session: %w", ErrAuthenticationUnavailable, err)
 }
 func newRefreshToken() (string, string, error) {
 	value := make([]byte, 32)

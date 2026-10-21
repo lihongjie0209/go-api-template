@@ -383,6 +383,17 @@ Status values:
 | Audit and presentation | The system login actor is transaction-local for the anonymous request; audited credential/session writes retain trigger-maintained timestamps and version. Errors use global codes and request ID; token expiry remains a duration, so no date presentation or related display name is exposed here. |
 | Tests and shared capability | Service unit tests cover missing versus unavailable identity/credential data, oversized password, malformed stored hash, signing failure and session-write rollback. HTTP tests pin the 401 versus 503 envelope and non-leakage; existing Testcontainers authentication coverage stays within this service. Reuses the shared response, error, security-log, transaction and principal components. |
 
+### Refresh and logout failure classification
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | `POST /api/v1/auth/refresh` returns new access/refresh tokens; `POST /api/v1/auth/logout` returns the shared empty success envelope. Both validate a bounded refresh token. Missing, expired, revoked, or reused tokens remain unauthorized; database, signer, random-source, security-audit, or commit failures return global dependency-unavailable (503), without leaking technical details. The OpenAPI error responses document 400/401/503. |
+| Authentication and authorization | Both operations authenticate possession of the refresh token inside a row-locked authoritative transaction; neither accepts a client-provided principal or tenant. The refresh query also requires an active user and credential. No separate Resource/Action or data-dictionary provider applies to the secret token. |
+| Operation and security logs | No operation log is emitted. Successful refresh/logout and the security event commit atomically. Reuse revokes the session and records a failed refresh event in that transaction. Other failures use the independent security recorder with a hashed token identifier, client metadata and bounded reason; raw token values and database errors must not reach client responses or durable logs. |
+| Cache, lock and consistency | Refresh/session state bypasses caches. `SELECT FOR UPDATE`, versioned writes and one database transaction serialize rotation/revocation; an additional Redis lock is unnecessary. A failed write, signer or security event cannot return a new token. |
+| Audit and presentation | Transaction-local system actors maintain audited session columns and version through the common database boundary. The shared envelope includes request ID; token expiry remains a duration and no related ID is displayed by these operations. |
+| Tests and shared capability | Unit regressions distinguish missing token from database outage and verify rollback on signer/security failure. HTTP tests pin unauthorized versus unavailable codes, request ID and non-leakage. PostgreSQL/MySQL Testcontainers continue to exercise the session lifecycle in this service; shared error, response, transaction and security-log components are reused. |
+
 ## PBAC authorization audit decisions
 
 | Concern | Current decision and evidence |

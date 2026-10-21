@@ -227,3 +227,65 @@ func TestUserLoginDistinguishesIdentityStoreOutageFromUnknownUser(t *testing.T) 
 		})
 	}
 }
+
+func TestUserRefreshAndLogoutDistinguishStoreOutageFromInvalidToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, operation := range []string{"refresh", "logout"} {
+		for _, failure := range []struct {
+			name   string
+			outage bool
+			status int
+			code   int
+		}{
+			{name: "database unavailable", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
+			{name: "unknown token", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized},
+		} {
+			t.Run(operation+"/"+failure.name, func(t *testing.T) {
+				rawDB, mock, err := sqlmock.New()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = rawDB.Close() })
+				db := sqlx.NewDb(rawDB, "sqlmock")
+				service := authentication.New(db, database.NewTransactor(db), nil, nil, config.Config{})
+				security := &securityRecorderStub{}
+				handler := NewUserAuthenticationHandler(service, security, slog.New(slog.NewTextHandler(io.Discard, nil)))
+				router := gin.New()
+				router.Use(RequestID(), SecurityClientContext())
+				path := "/api/v1/auth/" + operation
+				if operation == "refresh" {
+					router.POST(path, handler.Refresh)
+				} else {
+					router.POST(path, handler.Logout)
+				}
+				mock.ExpectBegin()
+				var query *sqlmock.ExpectedQuery
+				if operation == "refresh" {
+					query = mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg())
+				} else {
+					query = mock.ExpectQuery(`SELECT id,user_id,version FROM identity_sessions`).WithArgs(sqlmock.AnyArg())
+				}
+				if failure.outage {
+					query.WillReturnError(errors.New("database connection lost"))
+				} else {
+					query.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+				}
+				mock.ExpectRollback()
+				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"refresh_token":"present-token"}`))
+				request.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				var body Response
+				if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if response.Code != failure.status || body.Code != failure.code || body.RequestID == "" || strings.Contains(response.Body.String(), "database connection lost") {
+					t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+				}
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}

@@ -5521,6 +5521,18 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/httptransport.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       summary: Revoke a user session
       tags:
       - authentication
@@ -5593,6 +5605,18 @@ paths:
                 body:
                   $ref: '#/definitions/authentication.Tokens'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       summary: Rotate a refresh token and issue new tokens
       tags:
       - authentication

@@ -105,6 +105,9 @@ func (h *UserAuthenticationHandler) Login(c *gin.Context) {
 // @Produce json
 // @Param request body RefreshRequest true "Refresh token"
 // @Success 200 {object} Response{body=authentication.Tokens}
+// @Failure 400 {object} Response
+// @Failure 401 {object} Response
+// @Failure 503 {object} Response
 // @Router /api/v1/auth/refresh [post]
 func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 	var r RefreshRequest
@@ -133,6 +136,9 @@ func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 // @Produce json
 // @Param request body RefreshRequest true "Refresh token"
 // @Success 200 {object} Response
+// @Failure 400 {object} Response
+// @Failure 401 {object} Response
+// @Failure 503 {object} Response
 // @Router /api/v1/auth/logout [post]
 func (h *UserAuthenticationHandler) Logout(c *gin.Context) {
 	var r RefreshRequest
