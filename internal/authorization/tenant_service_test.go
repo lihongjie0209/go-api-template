@@ -666,6 +666,30 @@ func TestEnsureRoleAssignableRejectsRoleAboveCallerCeiling(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEnsureRolesAssignablePropagatesRoleCountFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(`SELECT DISTINCT permission_id FROM tenant_role_permissions`).
+		WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_roles`).
+		WithArgs("tenant-1", "role-1").
+		WillReturnError(context.DeadlineExceeded)
+	actor := platformprincipal.Principal{TenantID: "tenant-1", MembershipID: "member-1"}
+	err = (&TenantAuthorizationService{}).ensureRolesAssignable(t.Context(), tx, actor, []string{"role-1"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrTenantAuthorizationInvalid)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSetRolePermissionsCanRemoveNoLongerAssignablePermission(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)

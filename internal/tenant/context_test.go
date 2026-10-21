@@ -47,6 +47,22 @@ func TestContextService_CurrentRequiresActiveTenantAndMembership(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestContextService_CurrentPropagatesMembershipLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &ContextService{db: sqlx.NewDb(raw, "sqlmock")}
+	mock.ExpectQuery(`FROM tenant_memberships m JOIN tenants`).
+		WithArgs("tenant-1", "membership-1", "user-1").
+		WillReturnError(context.DeadlineExceeded)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"})
+	_, err = service.Current(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrForbidden)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestContextService_AvailableRejectsServiceAccount(t *testing.T) {
 	service := &ContextService{}
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount})

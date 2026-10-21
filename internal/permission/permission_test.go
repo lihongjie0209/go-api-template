@@ -73,9 +73,56 @@ func TestServiceValidationRequiresRegisteredResourceAction(t *testing.T) {
 	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	service := &Service{resources: resources}
-	require.NoError(t, service.validateInput(Input{Key: "platform.users.read", Name: "查询用户", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"}))
-	require.ErrorIs(t, service.validateInput(Input{Key: "platform.unknown.read", Name: "未知资源", NodeType: "permission", Resource: "unknown.resource", Action: "read", Status: "active"}), ErrInvalid)
-	require.ErrorIs(t, service.validateInput(Input{Key: "platform.users.unknown", Name: "未知操作", NodeType: "permission", Resource: "identity.user", Action: "unknown", Status: "active"}), ErrInvalid)
+	require.NoError(t, service.validateInput(t.Context(), Input{Key: "platform.users.read", Name: "查询用户", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"}))
+	require.ErrorIs(t, service.validateInput(t.Context(), Input{Key: "platform.unknown.read", Name: "未知资源", NodeType: "permission", Resource: "unknown.resource", Action: "read", Status: "active"}), ErrInvalid)
+	require.ErrorIs(t, service.validateInput(t.Context(), Input{Key: "platform.users.unknown", Name: "未知操作", NodeType: "permission", Resource: "identity.user", Action: "unknown", Status: "active"}), ErrInvalid)
+}
+
+func TestServiceValidationPropagatesResourceLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	service := &Service{resources: resources, repository: NewRepository(sqlx.NewDb(raw, "sqlmock"))}
+	mock.ExpectQuery(`SELECT count\(\*\) FROM authorization_resources r JOIN authorization_resource_actions a`).
+		WithArgs("external.resource", "read").
+		WillReturnError(context.DeadlineExceeded)
+	err = service.validateInput(t.Context(), Input{Key: "platform.external.read", Name: "Read external", NodeType: "permission", Resource: "external.resource", Action: "read", Status: "active"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionUpdatePropagatesNewActionScopeLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	service := &Service{resources: resources, transactor: database.NewTransactor(db)}
+	const id = "08896c3a-4c82-473e-90c8-b59f60446139"
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(strings.Split(columns, ", ")).
+			AddRow(id, nil, "platform.user.read", "Read user", "permission", "identity.user", "read", "", 0, "active", false, now, "actor", now, "actor", 1))
+	mock.ExpectQuery(`SELECT r.scope FROM authorization_resources r JOIN authorization_resource_actions a`).
+		WithArgs("identity.user", "read").
+		WillReturnRows(sqlmock.NewRows([]string{"scope"}).AddRow("platform"))
+	mock.ExpectQuery(`SELECT r.scope FROM authorization_resources r JOIN authorization_resource_actions a`).
+		WithArgs("identity.user", "update").
+		WillReturnError(context.DeadlineExceeded)
+	mock.ExpectRollback()
+	ctx := platformprincipal.SystemContext(t.Context(), "actor")
+	_, err = service.Update(ctx, id, 1, Input{Key: "platform.user.update", Name: "Update user", NodeType: "permission", Resource: "identity.user", Action: "update", Status: "active"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSetActionsRejectsDuplicateAndUnboundedInputBeforeDatabase(t *testing.T) {

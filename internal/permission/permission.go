@@ -471,7 +471,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 		return Record{}, e
 	}
 	input = normalize(input)
-	if e = s.validateInput(input); e != nil {
+	if e = s.validateInput(ctx, input); e != nil {
 		return Record{}, e
 	}
 	id := uuid.NewString()
@@ -500,7 +500,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		return Record{}, false, err
 	}
 	input = normalize(input)
-	if err := s.validateInput(input); err != nil {
+	if err := s.validateInput(ctx, input); err != nil {
 		return Record{}, false, err
 	}
 	id, err := SeedID(input.Key)
@@ -669,7 +669,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		return Record{}, ErrInvalid
 	}
 	input = normalize(input)
-	if e = s.validateInput(input); e != nil {
+	if e = s.validateInput(ctx, input); e != nil {
 		return Record{}, e
 	}
 	if input.ParentID != nil && *input.ParentID == id {
@@ -692,7 +692,10 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 				return err
 			}
 			newScope, err := primaryActionScope(ctx, tx, input.Resource, input.Action)
-			if err != nil || newScope != oldScope {
+			if err != nil {
+				return err
+			}
+			if newScope != oldScope {
 				return ErrInvalid
 			}
 		}
@@ -725,7 +728,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 	return s.get(ctx, id)
 }
 
-func (s *Service) validateInput(input Input) error {
+func (s *Service) validateInput(ctx context.Context, input Input) error {
 	if err := validate(input); err != nil {
 		return err
 	}
@@ -741,7 +744,10 @@ func (s *Service) validateInput(input Input) error {
 		}
 		var count int
 		query := s.repository.db.Rebind(`SELECT count(*) FROM authorization_resources r JOIN authorization_resource_actions a ON a.resource_id=r.id WHERE r.resource_key=? AND a.action_key=? AND r.status='active' AND a.status='active' AND r.deleted_at IS NULL AND a.deleted_at IS NULL`)
-		if queryErr := s.repository.db.Get(&count, query, input.Resource, input.Action); queryErr != nil || count == 0 {
+		if queryErr := s.repository.db.GetContext(ctx, &count, query, input.Resource, input.Action); queryErr != nil {
+			return fmt.Errorf("check registered resource/action: %w", queryErr)
+		}
+		if count == 0 {
 			return fmt.Errorf("%w: resource/action is not registered", ErrInvalid)
 		}
 	}

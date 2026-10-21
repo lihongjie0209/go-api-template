@@ -98,7 +98,10 @@ func (s *ContextService) Current(ctx context.Context) (AvailableTenant, error) {
 	var selected AvailableTenant
 	query := `SELECT m.tenant_id,t.code tenant_code,t.name tenant_name,m.id membership_id,CASE WHEN a.id IS NULL THEN false ELSE true END is_administrator,m.joined_at FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL LEFT JOIN tenant_administrators a ON a.tenant_id=m.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL WHERE m.tenant_id=? AND m.id=? AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL`
 	if err := s.db.GetContext(ctx, &selected, s.db.Rebind(query), actor.TenantID, actor.MembershipID, actor.ID); err != nil {
-		return AvailableTenant{}, ErrForbidden
+		if errors.Is(err, sql.ErrNoRows) {
+			return AvailableTenant{}, ErrForbidden
+		}
+		return AvailableTenant{}, fmt.Errorf("load current tenant: %w", err)
 	}
 	return selected, nil
 }

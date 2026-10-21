@@ -83,6 +83,46 @@ func TestService_ChangePasswordRevokesEveryActiveSession(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestService_ChangePasswordPropagatesCredentialLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).
+		WithArgs("user-1").
+		WillReturnError(context.DeadlineExceeded)
+	mock.ExpectRollback()
+	err = service.ChangePassword(ctx, "old password value", "new password value")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrInvalidCredentials)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_ChangePasswordRejectsCorruptStoredHashAsDependencyFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).
+			AddRow("credential-1", "user-1", "corrupt-hash", 0, nil, false, 1))
+	mock.ExpectRollback()
+	err = service.ChangePassword(ctx, "old password value", "new password value")
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+	require.ErrorIs(t, err, auth.ErrInvalidPasswordHash)
+	require.NotErrorIs(t, err, ErrInvalidCredentials)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestService_SessionsAlwaysScopesQueryToCurrentUser(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

@@ -192,10 +192,16 @@ func (s *Service) ChangePassword(ctx context.Context, oldPassword, newPassword s
 		var credential Credential
 		q := tx.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,must_change_password,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL FOR UPDATE`)
 		if err := tx.GetContext(ctx, &credential, q, actor.ID); err != nil {
-			return ErrInvalidCredentials
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrInvalidCredentials
+			}
+			return fmt.Errorf("%w: load password credential: %w", ErrAuthenticationUnavailable, err)
 		}
 		valid, verifyErr := s.hasher.Verify(oldPassword, credential.PasswordHash)
-		if verifyErr != nil || !valid {
+		if verifyErr != nil {
+			return fmt.Errorf("%w: verify password credential: %w", ErrAuthenticationUnavailable, verifyErr)
+		}
+		if !valid {
 			return ErrInvalidCredentials
 		}
 		if err := updatePasswordAndRevoke(ctx, tx, credential, passwordUpdate{

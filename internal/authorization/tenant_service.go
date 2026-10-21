@@ -1452,7 +1452,10 @@ func (s *TenantAuthorizationService) ensureRolesAssignable(ctx context.Context, 
 	if inErr != nil {
 		return fmt.Errorf("build role validation query: %w", inErr)
 	}
-	if err := tx.GetContext(ctx, &roleCount, tx.Rebind(countQuery), countArgs...); err != nil || roleCount != len(roleIDs) {
+	if err := tx.GetContext(ctx, &roleCount, tx.Rebind(countQuery), countArgs...); err != nil {
+		return fmt.Errorf("count assignable tenant roles: %w", err)
+	}
+	if roleCount != len(roleIDs) {
 		return ErrTenantAuthorizationInvalid
 	}
 	return s.ensureAssignable(ctx, tx, actor, permissions)
