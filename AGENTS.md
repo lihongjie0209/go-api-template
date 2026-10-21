@@ -276,6 +276,10 @@ available. A feature must not introduce a second transport for the same event.
   running, and terminal states. A consumer's acknowledgement window must not
   contain a longer-running handler; use a bounded, recoverable worker with an
   ownership lease and a stable business idempotency key.
+- Scheduled and queued handler boundaries must recover panics into a fixed,
+  non-sensitive failure reason before releasing their distributed lease. Both
+  cron and manual runs must persist a terminal failure and operation log;
+  recovery logging must never include panic values or stack contents.
 - Do not use Redis lists/streams as an ad-hoc business queue unless an explicit
   architecture decision accepts its operational and delivery tradeoffs. Do not
   use the durable message queue for request-path cache reads, locks, rate limits,

@@ -99,7 +99,7 @@ func (m *Manager) manualLoop(ctx context.Context) {
 		}
 		run, found, err := m.claimManual(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			m.logger.ErrorContext(ctx, "claim manual scheduled job", "error", err)
+			m.logOperationFailure(ctx, "claim manual scheduled job", err)
 		}
 		if found {
 			m.executeManual(ctx, run)
@@ -172,7 +172,7 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 				return
 			case <-ticker.C:
 				if err := m.renewManual(ctx, run.ID, run.LeaseOwner); err != nil {
-					m.logger.ErrorContext(ctx, "manual scheduled job lease lost", "error", err)
+					m.logOperationFailure(ctx, "manual scheduled job lease lost", err)
 					leaseLost = true
 					cancel()
 					return
@@ -196,7 +196,7 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	}
 	status := statusForRun(err)
 	if finishErr := m.finishManual(ctx, run, status, started); finishErr != nil {
-		m.logger.ErrorContext(parent, "finish manual scheduled job", "error", finishErr)
+		m.logOperationFailure(parent, "finish manual scheduled job", finishErr)
 	}
 	m.metrics.ObserveCron(run.Handler, status, started)
 }

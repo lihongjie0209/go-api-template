@@ -29,7 +29,12 @@ import (
 
 var ErrSkipped = errors.New("scheduled job skipped because its distributed lock is held")
 
+// ErrJobPanicked reports a recovered handler panic without exposing its value.
+var ErrJobPanicked = errors.New("job_panic")
+
 var errJobExecutionFailed = errors.New("scheduled_job_failed")
+var errSchedulerOperationFailed = errors.New("scheduler_operation_failed")
+var errSchedulerConsumerFailed = errors.New("scheduler_consumer_failed")
 
 type Manager struct {
 	cfg            config.Config
@@ -56,7 +61,7 @@ func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Tr
 	if err != nil {
 		return nil, err
 	}
-	runner := cron.New(cron.WithLocation(location), cron.WithSeconds(), cron.WithChain(cron.Recover(cron.PrintfLogger(slogWriter{logger})), cron.SkipIfStillRunning(cron.PrintfLogger(slogWriter{logger}))))
+	runner := cron.New(cron.WithLocation(location), cron.WithSeconds(), cron.WithChain(cron.Recover(safeCronLogger{logger}), cron.SkipIfStillRunning(safeCronLogger{logger})))
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
 	manager := &Manager{cfg: cfg, db: db, tx: tx, locker: locker, metrics: metrics, logger: logger, handlers: handlers, operations: operations, runner: runner, dynamicEntries: map[string]cron.EntryID{}, refresh: make(chan struct{}, 1), ctx: schedulerCtx, cancel: cancelScheduler, done: make(chan struct{}), manualWake: make(chan struct{}, 1)}
 	for range 4 {
@@ -140,7 +145,7 @@ func (m *Manager) refreshLoop() {
 		err := m.Refresh(ctx)
 		cancel()
 		if err != nil && !errors.Is(err, context.Canceled) {
-			m.logger.ErrorContext(m.ctx, "refresh scheduled jobs failed", "error", err)
+			m.logOperationFailure(m.ctx, "refresh scheduled jobs failed", err)
 		}
 	}
 }
@@ -252,7 +257,7 @@ func (m *Manager) recordRun(executionCtx context.Context, definition Definition,
 		return nil
 	})
 	if err != nil {
-		m.logger.ErrorContext(executionCtx, "record scheduled job run failed", "handler", definition.Handler, "error", err)
+		m.logger.ErrorContext(executionCtx, "record scheduled job run failed", "handler", definition.Handler, "error", observability.SafeError(err, errSchedulerOperationFailed))
 	}
 	return err
 }
@@ -302,6 +307,9 @@ func recordJobFailure(span trace.Span, err error) {
 }
 
 func safeJobFailure(err error) error {
+	if errors.Is(err, ErrJobPanicked) {
+		return ErrJobPanicked
+	}
 	if errors.Is(err, ErrSkipped) {
 		return ErrSkipped
 	}
@@ -316,7 +324,14 @@ func startJobContext(parent context.Context, serviceName, job string, timeout ti
 }
 
 func runJobContext(ctx context.Context, job string, lockTTL time.Duration, locker cache.Locker, execute func(context.Context) error, logger *slog.Logger) error {
-	acquired, err := cache.TryWithLock(ctx, locker, "cron:"+job, lockTTL, execute)
+	acquired, err := cache.TryWithLock(ctx, locker, "cron:"+job, lockTTL, func(ctx context.Context) (runErr error) {
+		defer func() {
+			if recover() != nil {
+				runErr = ErrJobPanicked
+			}
+		}()
+		return execute(ctx)
+	})
 	if err != nil {
 		logger.ErrorContext(ctx, "scheduled job failed", "job", job, "error", safeJobFailure(err))
 		return err
@@ -328,10 +343,22 @@ func runJobContext(ctx context.Context, job string, lockTTL time.Duration, locke
 	return nil
 }
 
-type slogWriter struct{ logger *slog.Logger }
+func (m *Manager) logOperationFailure(ctx context.Context, message string, err error) {
+	m.logger.ErrorContext(ctx, message, "error", observability.SafeError(err, errSchedulerOperationFailed))
+}
 
-func (w slogWriter) Printf(format string, args ...any) {
-	w.logger.Error("scheduler event", "detail", format, "args", args)
+type safeCronLogger struct{ logger *slog.Logger }
+
+func (l safeCronLogger) Info(_ string, _ ...any) {
+	l.logger.Info("scheduler event", "reason", "job_skipped")
+}
+
+func (l safeCronLogger) Error(_ error, _ string, _ ...any) {
+	l.logger.Error("scheduler event", "reason", "job_panic")
+}
+
+func logSchedulerConsumerFailure(logger *slog.Logger, err error) {
+	logger.Error("manual scheduled job consumer failed", "error", observability.SafeError(err, errSchedulerConsumerFailed))
 }
 
 func startManualConsumer(lc fx.Lifecycle, cfg config.Config, manager *Manager, bus *eventbus.Bus, logger *slog.Logger) {
@@ -339,7 +366,7 @@ func startManualConsumer(lc fx.Lifecycle, cfg config.Config, manager *Manager, b
 		return
 	}
 	eventbus.RegisterConsumer(lc, "scheduled-job-manual", logger, func(ctx context.Context) error {
-		return bus.ConsumeWithOptions(ctx, platformeventbus.ConsumerOptions{Durable: "scheduled-job-manual", FilterSubject: manualDispatchEventType, Handler: manager.consumeManual, OnError: func(err error) { logger.Error("manual scheduled job consumer failed", "error", err) }})
+		return bus.ConsumeWithOptions(ctx, platformeventbus.ConsumerOptions{Durable: "scheduled-job-manual", FilterSubject: manualDispatchEventType, Handler: manager.consumeManual, OnError: func(err error) { logSchedulerConsumerFailure(logger, err) }})
 	})
 }
 

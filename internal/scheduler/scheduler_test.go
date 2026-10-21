@@ -12,6 +12,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"github.com/robfig/cron/v3"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -35,6 +36,15 @@ type mutexStub struct{}
 func (mutexStub) Extend(context.Context) error { return nil }
 func (mutexStub) Unlock(context.Context) error { return nil }
 func (mutexStub) Until() time.Time             { return time.Now().Add(time.Minute) }
+
+type releaseTrackingMutex struct{ released *bool }
+
+func (releaseTrackingMutex) Extend(context.Context) error { return nil }
+func (m releaseTrackingMutex) Unlock(context.Context) error {
+	*m.released = true
+	return nil
+}
+func (releaseTrackingMutex) Until() time.Time { return time.Now().Add(time.Minute) }
 
 func TestRunSampleFailsWhenDistributedLockIsUnavailable(t *testing.T) {
 	t.Parallel()
@@ -135,5 +145,66 @@ func TestRecordJobFailureDoesNotExposeHandlerErrorInTrace(t *testing.T) {
 	}
 	if !foundSafeCode {
 		t.Fatalf("trace event lacks safe failure code: %v", spans[0].Events()[0].Attributes)
+	}
+}
+
+func TestSchedulerOperationalLogsDoNotExposeDependencyErrors(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		code string
+		run  func(*slog.Logger)
+	}{
+		{
+			name: "database", code: "scheduler_operation_failed",
+			run: func(logger *slog.Logger) {
+				manager := &Manager{logger: logger}
+				manager.logOperationFailure(t.Context(), "claim manual scheduled job", errors.New("database URL with secret-value"))
+			},
+		},
+		{
+			name: "consumer", code: "scheduler_consumer_failed",
+			run: func(logger *slog.Logger) {
+				logSchedulerConsumerFailure(logger, errors.New("queue URL with secret-value"))
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var output bytes.Buffer
+			test.run(slog.New(slog.NewJSONHandler(&output, nil)))
+			if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte(test.code)) {
+				t.Fatalf("scheduler log leaked dependency error or omitted safe code: %s", output.String())
+			}
+		})
+	}
+}
+
+func TestCronRecoveryDoesNotLogPanicValueOrStack(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	job := cron.NewChain(cron.Recover(safeCronLogger{logger})).Then(cron.FuncJob(func() {
+		panic("secret-value")
+	}))
+	job.Run()
+	if bytes.Contains(output.Bytes(), []byte("secret-value")) || bytes.Contains(output.Bytes(), []byte("stack")) || !bytes.Contains(output.Bytes(), []byte("job_panic")) {
+		t.Fatalf("cron recovery log exposed panic content or omitted safe reason: %s", output.String())
+	}
+}
+
+func TestRunJobRecoversHandlerPanicAndReleasesLock(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	released := false
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	err := runJob(t.Context(), "orders-service", "reconcile", time.Second, time.Second, lockerStub{mutex: releaseTrackingMutex{released: &released}, acquired: true}, func(context.Context) error {
+		panic("secret-value")
+	}, logger)
+	if !errors.Is(err, ErrJobPanicked) || !released {
+		t.Fatalf("runJob() error=%v released=%t, want recovered panic and released lock", err, released)
+	}
+	if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte("job_panic")) {
+		t.Fatalf("scheduler log exposed panic value or omitted safe reason: %s", output.String())
 	}
 }

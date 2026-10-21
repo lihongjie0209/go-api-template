@@ -1,7 +1,9 @@
 package eventbus
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -47,5 +49,15 @@ func TestRegisterConsumerStartsAsynchronouslyAndJoinsOnStop(t *testing.T) {
 	case <-returned:
 	default:
 		t.Fatal("OnStop() returned before the consumer")
+	}
+}
+
+func TestConsumerFailureLogOmitsDependencyDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	logConsumerFailure(t.Context(), logger, "scheduled-job-manual", errors.New("queue endpoint with secret-value"))
+	if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte("event_consumer_failed")) {
+		t.Fatalf("consumer log exposed dependency error or omitted safe code: %s", output.String())
 	}
 }

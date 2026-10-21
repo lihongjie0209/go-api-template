@@ -235,6 +235,36 @@ func TestExecuteManualFinishesOutsideHTTPContext(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestExecuteManualRecordsHandlerPanicAsFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := &Manager{
+		cfg:      config.Config{App: config.App{Name: "orders-service"}},
+		tx:       database.NewTransactor(sqlx.NewDb(raw, "sqlmock")),
+		locker:   lockerStub{mutex: mutexStub{}, acquired: true},
+		metrics:  &observability.Metrics{},
+		logger:   logger,
+		handlers: NewHandlerRegistry(logger),
+		operations: runLogRecorderStub{recordTx: func(_ context.Context, _ *sqlx.Tx, entry operationlog.Entry) error {
+			require.Equal(t, "run-1", entry.ResourceID)
+			require.False(t, entry.Succeeded)
+			require.Equal(t, "job_error", entry.ErrorCode)
+			return nil
+		}},
+	}
+	manager.handlers.handlers["system.sample"] = HandlerDefinition{Key: "system.sample", handler: func(context.Context, json.RawMessage) error {
+		panic("secret-value")
+	}}
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE scheduled_job_runs SET status=`).WithArgs("error", sqlmock.AnyArg(), sqlmock.AnyArg(), "scheduled job execution failed", sqlmock.AnyArg(), "orders-service:scheduler:manual", "run-1", "lease-1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFinishManualRollsBackWhenOperationLogCannotBeQueued(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
