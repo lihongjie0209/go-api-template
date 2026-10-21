@@ -585,16 +585,8 @@ func (s *Service) mutate(ctx context.Context, operation, id, key string, request
 		return nil
 	}
 	if s.locker != nil {
-		var businessErr error
-		err := cache.WithLock(ctx, s.locker, "platform-config:"+key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, func(lockCtx context.Context) error {
-			businessErr = run(lockCtx)
-			return businessErr
-		})
-		if businessErr != nil {
-			return fmt.Errorf("%s: %w", operation, businessErr)
-		}
-		if err != nil {
-			return ErrConflict
+		if err := cache.WithLock(ctx, s.locker, "platform-config:"+key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
+			return fmt.Errorf("%s: %w", operation, err)
 		}
 	} else if err := run(ctx); err != nil {
 		return fmt.Errorf("%s: %w", operation, err)

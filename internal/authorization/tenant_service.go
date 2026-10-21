@@ -1641,18 +1641,7 @@ func (s *TenantAuthorizationService) withLock(ctx context.Context, key string, f
 	if s.locker == nil {
 		return fn(ctx)
 	}
-	var businessErr error
-	err := cache.WithLock(ctx, s.locker, key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, func(lockCtx context.Context) error {
-		businessErr = fn(lockCtx)
-		return businessErr
-	})
-	if businessErr != nil {
-		return businessErr
-	}
-	if err != nil {
-		return ErrTenantAuthorizationConflict
-	}
-	return nil
+	return cache.WithLock(ctx, s.locker, key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, fn)
 }
 
 func (s *TenantAuthorizationService) mutate(ctx context.Context, operation, resourceID string, request any, tenantID string, options *sql.TxOptions, fn func(*sqlx.Tx) error) error {

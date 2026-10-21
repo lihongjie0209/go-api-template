@@ -17,9 +17,36 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTenantAuthorizationLockPreservesInfrastructureAndLeaseLossErrors(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		locker     testutil.LockStub
+		want       error
+		wantCalled bool
+	}{
+		{name: "acquisition failure", locker: testutil.LockStub{AcquireErr: context.DeadlineExceeded}, want: context.DeadlineExceeded},
+		{name: "lease lost on release", locker: testutil.LockStub{ReleaseErr: cache.ErrLockLost}, want: cache.ErrLockLost, wantCalled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service := &TenantAuthorizationService{locker: test.locker, cfg: config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: time.Millisecond}}}
+			called := false
+			err := service.withLock(t.Context(), "tenant:tenant-1:grant", func(context.Context) error {
+				called = true
+				return nil
+			})
+			require.ErrorIs(t, err, test.want)
+			require.NotErrorIs(t, err, ErrTenantAuthorizationConflict)
+			require.Equal(t, test.wantCalled, called)
+		})
+	}
+}
 
 func TestNormalizeIDs(t *testing.T) {
 	actual, err := normalizeIDs([]string{"b", "a", "b"})

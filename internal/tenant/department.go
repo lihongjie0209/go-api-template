@@ -761,16 +761,5 @@ func (s *DepartmentService) withDepartmentLock(ctx context.Context, tenantID, su
 	if s.locker == nil {
 		return fn(ctx)
 	}
-	var businessErr error
-	err := cache.WithLock(ctx, s.locker, "tenant:"+tenantID+":department:"+suffix, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, func(lockCtx context.Context) error {
-		businessErr = fn(lockCtx)
-		return businessErr
-	})
-	if businessErr != nil {
-		return businessErr
-	}
-	if err != nil {
-		return ErrConflict
-	}
-	return nil
+	return cache.WithLock(ctx, s.locker, "tenant:"+tenantID+":department:"+suffix, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, fn)
 }

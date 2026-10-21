@@ -272,13 +272,12 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		return Member{}, err
 	}
 	var created Member
-	var businessErr error
 	subjectName := strings.TrimSpace(user.DisplayName)
 	if subjectName == "" {
 		subjectName = strings.TrimSpace(user.Username)
 	}
 	run := func(runCtx context.Context) error {
-		businessErr = s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectName: subjectName, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
+		if err := s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectName: subjectName, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(runCtx, tx, actor.TenantID); err != nil {
 				return err
 			}
@@ -288,12 +287,12 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 				return ErrConflict
 			}
 			return err
-		})
-		if businessErr != nil {
-			return businessErr
+		}); err != nil {
+			return err
 		}
-		created, businessErr = s.repository.GetMember(runCtx, actor.TenantID, id, unrestrictedMemberScope())
-		return businessErr
+		var err error
+		created, err = s.repository.GetMember(runCtx, actor.TenantID, id, unrestrictedMemberScope())
+		return err
 	}
 	if s.locker == nil {
 		if err := run(ctx); err != nil {
@@ -301,12 +300,8 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		}
 		return s.presentMember(ctx, created)
 	}
-	lockErr := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run)
-	if businessErr != nil {
-		return Member{}, businessErr
-	}
-	if lockErr != nil {
-		return Member{}, ErrConflict
+	if err := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
+		return Member{}, err
 	}
 	return s.presentMember(ctx, created)
 }

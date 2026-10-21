@@ -1,6 +1,7 @@
 package tenant
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,11 +11,40 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDepartmentLockPreservesInfrastructureAndLeaseLossErrors(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		locker     testutil.LockStub
+		want       error
+		wantCalled bool
+	}{
+		{name: "acquisition failure", locker: testutil.LockStub{AcquireErr: context.DeadlineExceeded}, want: context.DeadlineExceeded},
+		{name: "lease lost on release", locker: testutil.LockStub{ReleaseErr: cache.ErrLockLost}, want: cache.ErrLockLost, wantCalled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service := &DepartmentService{locker: test.locker, cfg: config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: time.Millisecond}}}
+			called := false
+			err := service.withDepartmentLock(t.Context(), "tenant-1", "root-1", func(context.Context) error {
+				called = true
+				return nil
+			})
+			require.ErrorIs(t, err, test.want)
+			require.NotErrorIs(t, err, ErrConflict)
+			require.Equal(t, test.wantCalled, called)
+		})
+	}
+}
 
 func TestValidateDepartmentMove(t *testing.T) {
 	root, child := "root", "child"

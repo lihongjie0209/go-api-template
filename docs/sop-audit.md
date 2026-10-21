@@ -70,6 +70,10 @@ invalid domain data map to invalid-credential, forbidden, or invalid-input
 errors. Permission registration fallback queries now use the caller Context.
 Focused unit regressions and the local package suites pass; the earlier
 dictionary parent/ancestor correction is in the same pending batch.
+Distributed-lock callers now preserve acquisition, renewal, callback, and
+release error chains instead of converting every infrastructure or ownership
+failure into a business conflict; local unit tests cover acquisition failure
+and post-callback lock loss. This change also awaits the next CI batch.
 
 ## Configuration profile audit decisions
 

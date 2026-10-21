@@ -21,11 +21,49 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
+	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/lihongjie0209/microservice-platform-go/stableid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPlatformConfigLockPreservesAcquisitionFailure(t *testing.T) {
+	t.Parallel()
+	service := &Service{locker: testutil.LockStub{AcquireErr: context.DeadlineExceeded}, cfg: config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: time.Millisecond}}}
+	called := false
+	err := service.mutate(t.Context(), "platform-config.update", "config-1", "ui.theme", nil, func(context.Context, *sqlx.Tx) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrConflict)
+	require.False(t, called)
+}
+
+func TestPlatformConfigLockPreservesReleaseFailureAfterCommit(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &Service{
+		tx:     database.NewTransactor(db),
+		locker: testutil.LockStub{ReleaseErr: cache.ErrLockLost},
+		cfg:    config.Config{DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: time.Millisecond}},
+	}
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+	called := false
+	err = service.mutate(platformprincipal.SystemContext(t.Context(), "system"), "platform-config.update", "config-1", "ui.theme", nil, func(context.Context, *sqlx.Tx) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, cache.ErrLockLost)
+	require.NotErrorIs(t, err, ErrConflict)
+	require.True(t, called)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 type failingPublicConfigCache struct{ cache.Store }
 
