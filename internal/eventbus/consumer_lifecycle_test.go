@@ -6,11 +6,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"go.uber.org/fx"
 )
 
@@ -27,7 +32,7 @@ func TestRegisterConsumerStartsAsynchronouslyAndJoinsOnStop(t *testing.T) {
 	started := make(chan struct{})
 	returned := make(chan struct{})
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	RegisterConsumer(lifecycle, "test", logger, func(ctx context.Context) error {
+	RegisterConsumer(lifecycle, "test", logger, nil, func(ctx context.Context) error {
 		close(started)
 		<-ctx.Done()
 		close(returned)
@@ -71,7 +76,8 @@ func TestRegisterConsumerRetriesTransientSubscriptionFailure(t *testing.T) {
 		var attempts atomic.Int32
 		var output bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&output, nil))
-		RegisterConsumer(lifecycle, "test", logger, func(ctx context.Context) error {
+		metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+		RegisterConsumer(lifecycle, "test", logger, metrics, func(ctx context.Context) error {
 			if attempts.Add(1) == 1 {
 				return errors.New("queue credential=secret-value")
 			}
@@ -85,6 +91,11 @@ func TestRegisterConsumerRetriesTransientSubscriptionFailure(t *testing.T) {
 		synctest.Wait()
 		if got := attempts.Load(); got != 2 {
 			t.Fatalf("consumer attempts = %d, want retry after transient failure", got)
+		}
+		recorder := httptest.NewRecorder()
+		metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `event_consumer_restarts_total{consumer="test"} 1`) {
+			t.Fatalf("consumer restart metric missing: status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
 		if err := lifecycle.hook.OnStop(context.Background()); err != nil {
 			t.Fatal(err)
@@ -101,7 +112,7 @@ func TestRegisterConsumerStopsWithoutRetryingAfterShutdown(t *testing.T) {
 		lifecycle := new(captureLifecycle)
 		var attempts atomic.Int32
 		called := make(chan struct{})
-		RegisterConsumer(lifecycle, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) error {
+		RegisterConsumer(lifecycle, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func(context.Context) error {
 			attempts.Add(1)
 			close(called)
 			return errors.New("subscription unavailable")

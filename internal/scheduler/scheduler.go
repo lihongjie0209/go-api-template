@@ -403,11 +403,11 @@ func logSchedulerConsumerFailure(logger *slog.Logger, err error) {
 	logger.Error("manual scheduled job consumer failed", "error", observability.SafeError(err, errSchedulerConsumerFailed))
 }
 
-func startManualConsumer(lc fx.Lifecycle, cfg config.Config, manager *Manager, bus *eventbus.Bus, logger *slog.Logger) {
+func startManualConsumer(lc fx.Lifecycle, cfg config.Config, manager *Manager, bus *eventbus.Bus, logger *slog.Logger, metrics *observability.Metrics) {
 	if bus == nil || !cfg.Database.Enabled {
 		return
 	}
-	eventbus.RegisterConsumer(lc, "scheduled-job-manual", logger, func(ctx context.Context) error {
+	eventbus.RegisterConsumer(lc, "scheduled-job-manual", logger, metrics, func(ctx context.Context) error {
 		return bus.ConsumeWithOptions(ctx, platformeventbus.ConsumerOptions{Durable: "scheduled-job-manual", FilterSubject: manualDispatchEventType, Handler: manager.consumeManual, OnError: func(err error) { logSchedulerConsumerFailure(logger, err) }})
 	})
 }

@@ -26,7 +26,9 @@ type Metrics struct {
 	OutboundDuration         *prometheus.HistogramVec
 	InfrastructureOperations *prometheus.CounterVec
 	InfrastructureDuration   *prometheus.HistogramVec
-	BuildInfo                prometheus.Gauge
+	// Alert example: increase(event_consumer_restarts_total[5m]) > 3
+	EventConsumerRestarts *prometheus.CounterVec
+	BuildInfo             prometheus.Gauge
 }
 
 func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
@@ -42,6 +44,7 @@ func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
 		OutboundDuration:         prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "outbound_request_duration_seconds", Help: "Outbound request latency.", Buckets: prometheus.DefBuckets}, []string{"protocol", "client"}),
 		InfrastructureOperations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "infrastructure_operations_total", Help: "Total cache, lock, idempotency, and object storage operations."}, []string{"component", "backend", "operation", "status"}),
 		InfrastructureDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "infrastructure_operation_duration_seconds", Help: "Cache, lock, idempotency, and object storage operation latency.", Buckets: prometheus.DefBuckets}, []string{"component", "backend", "operation"}),
+		EventConsumerRestarts:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "event_consumer_restarts_total", Help: "Consumer subscription restart attempts after unexpected exits."}, []string{"consumer"}),
 		BuildInfo: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "service_build_info",
 			Help: "Static service build and deployment information.",
@@ -55,7 +58,7 @@ func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
 		}),
 	}
 	metrics.BuildInfo.Set(1)
-	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), metrics.HTTPRequests, metrics.HTTPDuration, metrics.CronRuns, metrics.CronDuration, metrics.GRPCRequests, metrics.GRPCDuration, metrics.OutboundRequests, metrics.OutboundDuration, metrics.InfrastructureOperations, metrics.InfrastructureDuration, metrics.BuildInfo)
+	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), metrics.HTTPRequests, metrics.HTTPDuration, metrics.CronRuns, metrics.CronDuration, metrics.GRPCRequests, metrics.GRPCDuration, metrics.OutboundRequests, metrics.OutboundDuration, metrics.InfrastructureOperations, metrics.InfrastructureDuration, metrics.EventConsumerRestarts, metrics.BuildInfo)
 	if db != nil {
 		registry.MustRegister(collectors.NewDBStatsCollector(db.DB, "primary"))
 	}
@@ -71,6 +74,13 @@ func (m *Metrics) ObserveInfrastructure(component, backend, operation, status st
 	}
 	m.InfrastructureOperations.WithLabelValues(component, backend, operation, status).Inc()
 	m.InfrastructureDuration.WithLabelValues(component, backend, operation).Observe(time.Since(started).Seconds())
+}
+
+func (m *Metrics) ObserveEventConsumerRestart(consumer string) {
+	if m == nil || !m.enabled {
+		return
+	}
+	m.EventConsumerRestarts.WithLabelValues(consumer).Inc()
 }
 
 func (m *Metrics) Enabled() bool { return m.enabled }

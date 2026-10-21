@@ -229,7 +229,9 @@ otherwise unsuitable for dictionary use.
 - Long-running queue consumers must retry unexpected subscription exits with
   bounded jittered backoff and stop promptly when their lifecycle Context is
   canceled. A transient broker or subscription failure must not permanently
-  disable operation, security, or scheduled-job event consumption.
+  disable operation, security, or scheduled-job event consumption. Count actual
+  restart attempts with code-owned, bounded consumer names; do not turn an
+  unproven subscription attempt into a healthy readiness signal.
 - Never record passwords, secrets, bearer tokens, refresh tokens, cookies, or
   raw credentials. Use the shared sanitization and keyed digest facilities.
 - Persisted failure fields such as outbox `last_error`, dead-letter metadata,

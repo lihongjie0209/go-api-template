@@ -19,10 +19,11 @@ const consumerRetryMin = time.Second
 const consumerRetryMax = 30 * time.Second
 
 // RegisterConsumer owns a blocking consumer function through the Fx
-// lifecycle. Start never waits for the consume loop; Stop cancels and joins it.
-func RegisterConsumer(lifecycle fx.Lifecycle, name string, logger *slog.Logger, consume func(context.Context) error) {
+// lifecycle. Name must be a bounded code-owned constant because it labels the
+// restart metric. Start never waits for the consume loop; Stop cancels and joins it.
+func RegisterConsumer(lifecycle fx.Lifecycle, name string, logger *slog.Logger, metrics *observability.Metrics, consume func(context.Context) error) {
 	worker := background.New(func(ctx context.Context) {
-		runConsumer(ctx, name, logger, consume)
+		runConsumer(ctx, name, logger, metrics, consume)
 	})
 	lifecycle.Append(fx.Hook{
 		OnStart: func(context.Context) error {
@@ -33,7 +34,7 @@ func RegisterConsumer(lifecycle fx.Lifecycle, name string, logger *slog.Logger, 
 	})
 }
 
-func runConsumer(ctx context.Context, name string, logger *slog.Logger, consume func(context.Context) error) {
+func runConsumer(ctx context.Context, name string, logger *slog.Logger, metrics *observability.Metrics, consume func(context.Context) error) {
 	backoff := consumerRetryMin
 	for ctx.Err() == nil {
 		started := time.Now()
@@ -55,6 +56,7 @@ func runConsumer(ctx context.Context, name string, logger *slog.Logger, consume 
 			return
 		case <-timer.C:
 		}
+		metrics.ObserveEventConsumerRestart(name)
 		backoff = min(backoff*2, consumerRetryMax)
 	}
 }
