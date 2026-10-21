@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
@@ -22,10 +23,11 @@ import (
 )
 
 var (
-	ErrPolicyNotFound  = errors.New("data permission: policy not found")
-	ErrPolicyConflict  = errors.New("data permission: policy conflict")
-	ErrVersionNotDraft = errors.New("data permission: version is not draft")
-	ErrPolicyScope     = errors.New("data permission: policy scope denied")
+	ErrPolicyNotFound        = errors.New("data permission: policy not found")
+	ErrPolicyConflict        = errors.New("data permission: policy conflict")
+	ErrVersionNotDraft       = errors.New("data permission: version is not draft")
+	ErrPolicyScope           = errors.New("data permission: policy scope denied")
+	errActorResolutionFailed = errors.New("data_permission_actor_resolution_failed")
 )
 
 const (
@@ -581,7 +583,7 @@ func (s *LifecycleService) actorNames(ctx context.Context, ids []string) map[str
 	if err == nil {
 		return names
 	}
-	slog.WarnContext(ctx, "resolve data permission actor names", "error", err)
+	slog.WarnContext(ctx, "resolve data permission actor names", "error", observability.SafeError(err, errActorResolutionFailed))
 	names = make(map[string]string, len(ids))
 	for _, id := range ids {
 		if trimmed := strings.TrimSpace(id); trimmed != "" {

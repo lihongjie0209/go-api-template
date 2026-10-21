@@ -276,8 +276,10 @@ func HTTPMetrics(metrics *observability.Metrics) gin.HandlerFunc {
 }
 
 func Recovery(logger *slog.Logger) gin.HandlerFunc {
-	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		logger.ErrorContext(c.Request.Context(), "http panic recovered", "request_id", requestID(c), "panic", recovered)
+	// Gin's default recovery writer dumps the panic value and request headers.
+	// Keep the unified response, but never export either through that side channel.
+	return gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) {
+		logger.ErrorContext(c.Request.Context(), "http panic recovered", "request_id", requestID(c), "reason", "http_handler_panic")
 		c.AbortWithStatusJSON(http.StatusInternalServerError, Response{Code: apperror.CodeInternal, Message: "internal server error", Body: nil, RequestID: requestID(c)})
 	})
 }

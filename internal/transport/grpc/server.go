@@ -51,6 +51,8 @@ type Server struct {
 	logger          *slog.Logger
 }
 
+var errGRPCServerStopped = errors.New("grpc_server_stopped")
+
 func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, healthService *apphealth.Service, identityService *identity.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	definitions := grpcEndpointDefinitions()
 	for _, endpoint := range definitions {
@@ -140,13 +142,15 @@ func (s *Server) start(enabled bool) func(context.Context) error {
 		if err != nil {
 			return fmt.Errorf("listen grpc: %w", err)
 		}
-		go func() {
-			if err := s.server.Serve(listener); err != nil {
-				s.logger.Error("grpc server stopped unexpectedly", "error", err)
-			}
-		}()
+		go s.serve(listener)
 		s.logger.Info("grpc server started", "address", s.address)
 		return nil
+	}
+}
+
+func (s *Server) serve(listener net.Listener) {
+	if err := s.server.Serve(listener); err != nil {
+		s.logger.Error("grpc server stopped unexpectedly", "error", observability.SafeError(err, errGRPCServerStopped))
 	}
 }
 func (s *Server) stop(ctx context.Context) error {
@@ -425,7 +429,7 @@ func recoveryStreamInterceptor(logger *slog.Logger) grpc.StreamServerInterceptor
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				logger.ErrorContext(stream.Context(), "grpc stream panic recovered", "method", info.FullMethod, "panic", recovered)
+				logger.ErrorContext(stream.Context(), "grpc stream panic recovered", "method", info.FullMethod, "reason", "grpc_handler_panic")
 				err = status.Error(codes.Internal, "internal server error")
 			}
 		}()
@@ -453,7 +457,7 @@ func recoveryInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (response any, err error) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				logger.ErrorContext(ctx, "grpc panic recovered", "method", info.FullMethod, "panic", recovered)
+				logger.ErrorContext(ctx, "grpc panic recovered", "method", info.FullMethod, "reason", "grpc_handler_panic")
 				err = status.Error(codes.Internal, "internal server error")
 			}
 		}()

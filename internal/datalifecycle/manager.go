@@ -25,6 +25,7 @@ var partitionNamePattern = regexp.MustCompile(`^(operation_logs|security_logs)_y
 var platformLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 var ErrDefaultPartitionOccupied = errors.New("default partition contains rows for a partition that must be created")
+var errDataLifecycleMaintenanceFailed = errors.New("data_lifecycle_maintenance_failed")
 
 type Manager struct {
 	db              *sqlx.DB
@@ -300,7 +301,7 @@ func (m *Manager) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := m.Maintain(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				m.logger.ErrorContext(ctx, "data lifecycle maintenance failed", "error", err)
+				m.logger.ErrorContext(ctx, "data lifecycle maintenance failed", "error", observability.SafeError(err, errDataLifecycleMaintenanceFailed))
 			}
 		}
 	}

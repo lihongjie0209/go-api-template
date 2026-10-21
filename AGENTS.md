@@ -258,6 +258,10 @@ otherwise unsuitable for dictionary use.
   component-owned failure reason. A failed cache read may fall back to the
   authoritative repository as designed, but neither the warning nor the
   fallback response may expose raw Redis errors.
+- Panic recovery must never log the recovered value, request headers, body, or
+  framework-generated stack/request dump. Emit a fixed panic reason with
+  request/trace or bounded RPC method correlation; keep the public response
+  generic.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.

@@ -1,11 +1,13 @@
 package datalifecycle
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,41 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
+
+type cancelOnLogWriter struct {
+	output *bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w cancelOnLogWriter) Write(data []byte) (int, error) {
+	n, err := w.output.Write(data)
+	w.cancel()
+	return n, err
+}
+
+func TestLifecycleWorkerDoesNotLogLockErrorDetails(t *testing.T) {
+	t.Parallel()
+	raw, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var output bytes.Buffer
+	manager := &Manager{
+		db: sqlx.NewDb(raw, "mysql"), dialect: "mysql", appName: "orders", lockTTL: time.Second,
+		cfg:    config.DataLifecycle{Enabled: true, Interval: time.Millisecond, Timeout: time.Second},
+		logger: slog.New(slog.NewJSONHandler(cancelOnLogWriter{output: &output, cancel: cancel}, nil)),
+		locker: lifecycleLockerStub{try: func(context.Context, string, time.Duration) (cache.Lock, bool, error) {
+			return nil, false, errors.New("redis password=secret-value")
+		}},
+	}
+	manager.run(ctx)
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "data_lifecycle_maintenance_failed") {
+		t.Fatalf("lifecycle worker log leaked lock details or omitted safe code: %s", output.String())
+	}
+}
 
 type lifecycleLockerStub struct {
 	try func(context.Context, string, time.Duration) (cache.Lock, bool, error)

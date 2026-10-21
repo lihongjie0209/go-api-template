@@ -33,6 +33,8 @@ import (
 	"go.uber.org/fx"
 )
 
+var errHTTPServerStopped = errors.New("http_server_stopped")
+
 func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, scheduledJobHandler *ScheduledJobHandler, dictionaryHandler *DictionaryHandler, resourceCatalogHandler *ResourceCatalogHandler, platformGrantHandler *PlatformGrantHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -348,15 +350,17 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		if err != nil {
 			return fmt.Errorf("listen http: %w", err)
 		}
-		go func() {
-			if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				logger.Error("http server stopped unexpectedly", "error", serveErr)
-			}
-		}()
+		go serveHTTP(server, listener, logger)
 		logger.Info("http server started", "address", server.Addr)
 		return nil
 	}, OnStop: server.Shutdown})
 	return server, nil
+}
+
+func serveHTTP(server *http.Server, listener net.Listener, logger *slog.Logger) {
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("http server stopped unexpectedly", "error", observability.SafeError(err, errHTTPServerStopped))
+	}
 }
 
 func httpBusinessOperations(router *gin.Engine) []accesscontrol.Operation {

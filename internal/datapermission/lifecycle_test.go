@@ -1,10 +1,13 @@
 package datapermission
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +18,19 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDataPermissionActorFallbackDoesNotLogResolverDetails(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	service := &LifecycleService{actors: &policyActorResolverStub{err: errors.New("identity token=secret-value")}}
+	names := service.actorNames(t.Context(), []string{"user-1"})
+	require.Equal(t, "user-1", names["user-1"])
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "data_permission_actor_resolution_failed") {
+		t.Fatalf("actor resolution log leaked dependency details or omitted safe code: %s", output.String())
+	}
+}
 
 type policyActorResolverStub struct {
 	called int
