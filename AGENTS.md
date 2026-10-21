@@ -270,8 +270,10 @@ fields before building SQL or calling the provider.
   permission. Provider results must be a subset of requested IDs and each
   trusted `id` attribute must equal its map key. Never send policy expressions or
   accept client-supplied resource/subject attributes. Capability results are UI
-  hints with a policy revision and short expiry; every business endpoint must
-  repeat authoritative authorization.
+  hints with a principal-bound revision covering effective operation grants and
+  the published data-permission snapshot, plus a short expiry. The operation
+  decision and revision must use the same grant snapshot; a failed authoritative
+  grant read fails closed. Every business endpoint must repeat authorization.
 - Row capability registration fails startup and CI unless the provider's
   resource exists in the canonical Resource/Action registry, has tenant scope,
   and owns a registered data-permission Schema. A provider must not silently

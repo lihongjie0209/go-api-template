@@ -16,6 +16,15 @@ import (
 
 type capabilityAuthorizerFunc func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error
 
+type capabilityRevisionStub struct {
+	revision string
+	err      error
+}
+
+func (s capabilityRevisionStub) ForRequest(ctx context.Context, _ platformprincipal.Principal) (context.Context, string, error) {
+	return ctx, s.revision, s.err
+}
+
 type staticRowCapabilityProvider struct {
 	resource string
 	rows     map[string]datapermission.ResourceAttributes
@@ -141,6 +150,24 @@ func TestCapabilityServiceFailsClosedWhenDecisionIsUnavailable(t *testing.T) {
 
 	_, err = service.Evaluate(ctx, []CapabilityRequest{{Key: "user.update", Resource: "identity.user", Action: "update"}})
 	require.True(t, errors.Is(err, ErrCapabilityUnavailable))
+}
+
+func TestCapabilityServiceReturnsCombinedRevisionAndFailsClosedOnSnapshotError(t *testing.T) {
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/update", Authentication: accesscontrol.AuthenticationJWT, Resource: "identity.user", Action: "update", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform resource"}})
+	require.NoError(t, err)
+	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }), nil, resources, nil, capabilityRevisionStub{revision: "combined-1"}, time.Now)
+	service.SetEndpointRegistry(endpoints)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	requests := []CapabilityRequest{{Key: "user.update", Resource: "identity.user", Action: "update"}}
+	result, err := service.Evaluate(ctx, requests)
+	require.NoError(t, err)
+	require.Equal(t, "combined-1", result.Revision)
+
+	service.revisions = capabilityRevisionStub{err: errors.New("database unavailable")}
+	_, err = service.Evaluate(ctx, requests)
+	require.ErrorIs(t, err, ErrCapabilityUnavailable)
 }
 
 func TestCapabilityServiceRejectsDuplicateRowIDs(t *testing.T) {

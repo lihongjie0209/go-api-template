@@ -1491,6 +1491,18 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil {
 		t.Fatal(err)
 	}
+	principal := platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser}
+	authorizer := authorization.New(db, registry)
+	snapshotter, ok := authorizer.(interface {
+		Snapshot(context.Context, platformprincipal.Principal) (context.Context, string, error)
+	})
+	if !ok {
+		t.Fatal("authorizer does not support grant snapshots")
+	}
+	_, revisionBeforeGrant, err := snapshotter.Snapshot(ctx, principal)
+	if err != nil {
+		t.Fatal(err)
+	}
 	grants := authorization.NewPlatformGrantService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
 	platformOptions, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.platform.catalog.read"}})
 	if err != nil || platformOptions.Total != 1 || len(platformOptions.Items) != 1 || platformOptions.Items[0].ID != grantPermission.ID {
@@ -1513,8 +1525,13 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil || grant.PrincipalName != "Grant Test" || grant.PrincipalIdentifier != "grant.integration" {
 		t.Fatalf("platform grant=%+v err=%v", grant, err)
 	}
-	principal := platformprincipal.Principal{ID: user.ID, Type: platformprincipal.TypeUser}
-	authorizer := authorization.New(db, registry)
+	snapshotCtx, revisionAfterGrant, err := snapshotter.Snapshot(ctx, principal)
+	if err != nil || revisionAfterGrant == revisionBeforeGrant {
+		t.Fatalf("grant revision did not change: before=%q after=%q err=%v", revisionBeforeGrant, revisionAfterGrant, err)
+	}
+	if err := authorizer.Authorize(snapshotCtx, principal, platformauthz.Requirement{Resource: "authorization.resource", Action: "read", Scope: platformauthz.ScopePlatform}); err != nil {
+		t.Fatalf("snapshot did not permit granted action: %v", err)
+	}
 	if err := authorizer.Authorize(ctx, principal, platformauthz.Requirement{Resource: "authorization.resource", Action: "read", Scope: platformauthz.ScopePlatform}); err != nil {
 		t.Fatalf("platform grant denied: %v", err)
 	}
@@ -1536,6 +1553,10 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	}
 	if err := grants.Delete(actorCtx, grant.ID, grant.Version); err != nil {
 		t.Fatal(err)
+	}
+	_, revisionAfterDelete, err := snapshotter.Snapshot(ctx, principal)
+	if err != nil || revisionAfterDelete != revisionBeforeGrant {
+		t.Fatalf("grant revision did not recover after delete: before=%q after=%q err=%v", revisionBeforeGrant, revisionAfterDelete, err)
 	}
 	if _, err := grants.UpdateTarget(actorCtx, grant.ID); !errors.Is(err, authorization.ErrPlatformGrantNotFound) {
 		t.Fatalf("deleted platform grant update target err=%v", err)

@@ -16,17 +16,6 @@ type Authorizer struct {
 	registry *resourceaction.Registry
 }
 
-type authorizationMemoKey struct{}
-type authorizationMemo struct {
-	grantsLoaded bool
-	grants       map[string]struct{}
-	grantsErr    error
-}
-
-func withAuthorizationMemo(ctx context.Context) context.Context {
-	return context.WithValue(ctx, authorizationMemoKey{}, &authorizationMemo{})
-}
-
 func New(db *sqlx.DB, registry *resourceaction.Registry) platformauthz.Authorizer {
 	return &Authorizer{db: db, registry: registry}
 }
@@ -42,6 +31,9 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 	if principal.ID == "" {
 		return platformauthz.ErrDenied
 	}
+	if snapshot, ok := ctx.Value(grantSnapshotKey{}).(grantSnapshot); ok && !snapshot.matches(principal) {
+		return platformauthz.ErrDecisionUnavailable
+	}
 	if principal.Type == platformprincipal.TypeSystem {
 		return nil
 	}
@@ -49,6 +41,12 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 	case resourceaction.ResourceScopePrincipal:
 		return nil // The owning service checks current-principal object ownership.
 	case resourceaction.ResourceScopePlatform:
+		if snapshot, ok := ctx.Value(grantSnapshotKey{}).(grantSnapshot); ok {
+			if snapshot.allowed(resourceaction.ResourceScopePlatform, requirement.Resource, requirement.Action) {
+				return nil
+			}
+			return platformauthz.ErrDenied
+		}
 		allowed, err := a.hasPlatformGrant(ctx, principal, requirement)
 		if err != nil {
 			return platformauthz.ErrDecisionUnavailable
@@ -57,6 +55,12 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 			return nil
 		}
 	case resourceaction.ResourceScopeTenant:
+		if snapshot, ok := ctx.Value(grantSnapshotKey{}).(grantSnapshot); ok {
+			if snapshot.allowed(resourceaction.ResourceScopeTenant, requirement.Resource, requirement.Action) {
+				return nil
+			}
+			return platformauthz.ErrDenied
+		}
 		allowed, err := a.hasManagedTenantGrant(ctx, principal, requirement)
 		if err != nil {
 			return platformauthz.ErrDecisionUnavailable
@@ -91,17 +95,6 @@ func (a *Authorizer) hasPlatformGrant(ctx context.Context, principal platformpri
 func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) (bool, error) {
 	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
 		return false, nil
-	}
-	if memo, ok := ctx.Value(authorizationMemoKey{}).(*authorizationMemo); ok {
-		if !memo.grantsLoaded {
-			memo.grants, memo.grantsErr = a.managedTenantGrants(ctx, principal)
-			memo.grantsLoaded = true
-		}
-		if memo.grantsErr != nil {
-			return false, memo.grantsErr
-		}
-		_, allowed := memo.grants[requirement.Resource+"\x00"+requirement.Action]
-		return allowed, nil
 	}
 	grants, err := a.managedTenantGrants(ctx, principal)
 	if err != nil {

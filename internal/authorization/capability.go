@@ -70,7 +70,7 @@ type CapabilityService struct {
 }
 
 type policyRevisions interface {
-	Revision() string
+	ForRequest(context.Context, platformprincipal.Principal) (context.Context, string, error)
 }
 
 func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) *CapabilityService {
@@ -97,8 +97,10 @@ func (s *CapabilityService) Evaluate(ctx context.Context, requests []CapabilityR
 	if err != nil {
 		return CapabilityResult{}, err
 	}
-	ctx = withAuthorizationMemo(ctx)
-	result := s.resultMetadata()
+	ctx, result, err := s.resultMetadata(ctx, principal)
+	if err != nil {
+		return CapabilityResult{}, err
+	}
 	result.Items = make([]CapabilityDecision, len(requests))
 	seen := make(map[string]struct{}, len(requests))
 	for index, request := range requests {
@@ -122,7 +124,6 @@ func (s *CapabilityService) EvaluateRows(ctx context.Context, resource string, a
 	if err != nil {
 		return RowCapabilityResult{}, err
 	}
-	ctx = withAuthorizationMemo(ctx)
 	actions, err = normalizeCapabilityValues(actions, MaxCapabilityActions)
 	if err != nil {
 		return RowCapabilityResult{}, err
@@ -144,7 +145,10 @@ func (s *CapabilityService) EvaluateRows(ctx context.Context, resource string, a
 			return RowCapabilityResult{}, ErrCapabilityInvalid
 		}
 	}
-	metadata := s.resultMetadata()
+	ctx, metadata, err := s.resultMetadata(ctx, principal)
+	if err != nil {
+		return RowCapabilityResult{}, err
+	}
 	result := RowCapabilityResult{Revision: metadata.Revision, ExpiresAt: metadata.ExpiresAt, Resource: resource, Items: make([]RowCapabilityDecision, len(resourceIDs))}
 	for index, id := range resourceIDs {
 		result.Items[index] = RowCapabilityDecision{ResourceID: id, Actions: make(map[string]bool, len(actions))}
@@ -196,16 +200,20 @@ func (s *CapabilityService) EvaluateRows(ctx context.Context, resource string, a
 	return result, nil
 }
 
-func (s *CapabilityService) resultMetadata() CapabilityResult {
+func (s *CapabilityService) resultMetadata(ctx context.Context, principal platformprincipal.Principal) (context.Context, CapabilityResult, error) {
 	now := time.Now
 	if s != nil && s.now != nil {
 		now = s.now
 	}
 	revision := ""
 	if s != nil && s.revisions != nil {
-		revision = s.revisions.Revision()
+		var err error
+		ctx, revision, err = s.revisions.ForRequest(ctx, principal)
+		if err != nil {
+			return ctx, CapabilityResult{}, fmt.Errorf("%w: %v", ErrCapabilityUnavailable, err)
+		}
 	}
-	return CapabilityResult{Revision: revision, ExpiresAt: now().In(operationLocation).Add(30 * time.Second)}
+	return ctx, CapabilityResult{Revision: revision, ExpiresAt: now().In(operationLocation).Add(30 * time.Second)}, nil
 }
 
 func validateCapabilityRows(rows map[string]datapermission.ResourceAttributes, requestedIDs []string) error {
