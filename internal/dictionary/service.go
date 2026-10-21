@@ -729,7 +729,11 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	}
 	cacheKey := ""
 	if d.Source == SourceStatic && s.cache != nil {
-		requestJSON, _ := json.Marshal(q)
+		cacheQuery := q
+		// Static dictionaries never inspect the provider-only extension. Keeping
+		// it in the key would let public callers create unbounded equivalent keys.
+		cacheQuery.Extension = nil
+		requestJSON, _ := json.Marshal(cacheQuery)
 		cacheKey = fmt.Sprintf("dictionary:query:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
 		if cached, cacheErr := cache.GetJSON[Result](ctx, s.cache, cacheKey); cacheErr == nil {
 			return cached, nil

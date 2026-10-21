@@ -11,6 +11,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
@@ -418,6 +419,62 @@ func TestProviderQueryDoesNotShareCacheAcrossPrincipals(t *testing.T) {
 		require.Equal(t, principalID, result.Name)
 		require.Equal(t, []string{" CONTEXT.SAMPLE "}, codes)
 	}
+}
+
+type recordingStaticCache struct {
+	cache.Store
+	values map[string][]byte
+	writes int
+}
+
+func (c *recordingStaticCache) Get(_ context.Context, key string) ([]byte, error) {
+	value, ok := c.values[key]
+	if !ok {
+		return nil, cache.ErrMiss
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (c *recordingStaticCache) Set(_ context.Context, key string, value []byte, _ time.Duration) error {
+	c.values[key] = append([]byte(nil), value...)
+	c.writes++
+	return nil
+}
+
+func TestStaticDictionaryCacheIgnoresUnusedQueryExtension(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	id := uuidString(1)
+	definition := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "dictionary_code", "name", "dictionary_type", "source_type", "version", "extension"}).
+			AddRow(id, "public.sample", "Sample", KindEnum, SourceStatic, 1, []byte(`{}`))
+	}
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active' AND deleted_at IS NULL`).
+		WithArgs("public.sample").WillReturnRows(definition())
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items`).WithArgs(id, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active' AND deleted_at IS NULL`).
+		WithArgs("public.sample").WillReturnRows(definition())
+	mock.ExpectClose()
+	store := &recordingStaticCache{values: make(map[string][]byte)}
+	service := &Service{
+		db: sqlx.NewDb(raw, "sqlmock"), cache: store,
+		cfg: config.Config{Dictionary: config.Dictionary{CacheTTL: time.Minute, MaxTreeNodes: 100}},
+	}
+	first, err := service.Query(t.Context(), Query{Code: "public.sample", Extension: json.RawMessage(`{"a":1}`)})
+	require.NoError(t, err)
+	second, err := service.Query(t.Context(), Query{Code: "public.sample", Extension: json.RawMessage(`{"a":2}`)})
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+	require.Equal(t, 1, store.writes)
+	require.Len(t, store.values, 1)
 }
 
 func TestValidProviderResultRejectsDuplicateAndOversizedTrees(t *testing.T) {

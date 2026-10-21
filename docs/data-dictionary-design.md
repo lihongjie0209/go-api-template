@@ -9,12 +9,12 @@
 | Authorization | Public query has the database expression `anonymous || authenticated`. Definition/item management uses `platform.dictionary.manage` with platform scope. Provider implementations must only expose data suitable for this public endpoint. |
 | Operation log | Successful definition/item mutations enqueue `dictionary.*` events in the same transaction; failed mutations enqueue a sanitized failure event. Reads are not logged because dictionary values are public presentation data. |
 | Security log | No security event is emitted: dictionary configuration is auditable business configuration, not an authentication/session event. Every mutation emits an operation log. |
-| Cache | Public results use Redis keys containing dictionary ID/version and a SHA-256 request fingerprint. Definition/item changes increment the definition version; bounded TTL removes unreachable keys. Redis failure degrades to the authoritative database/provider path. |
+| Cache | Only static results use Redis keys containing dictionary ID/version and a SHA-256 fingerprint of result-affecting query fields. Static queries ignore provider-only `extension`, so it is excluded from the fingerprint to prevent equivalent anonymous requests from creating distinct keys. Definition/item changes increment the definition version; bounded TTL removes unreachable keys. Dynamic provider results bypass the shared cache because freshness and caller context are not represented by that key. Redis failure degrades to the authoritative database path. |
 | Distributed lock | No distributed lock. Definition-row locking, same-dictionary foreign keys, unique constraints and optimistic versions own correctness; provider calls are read-only. |
 | Optimistic lock | Definition and item update/delete require a positive expected version. Item mutations also increment the parent definition version for cache invalidation. |
 | Audit | Every table has created/updated actor and time, version, and logical-delete fields. PostgreSQL/Kingbase enable the common audit trigger; all writes use the shared transactor and principal context. |
 | Presentation | Management responses include persisted audit fields. Public values include ID, code, name, value, disabled state, sort order, parent/tree structure and JSON extension, but omit actor and audit metadata. Timestamps follow the platform Asia/Shanghai presentation convention. |
-| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, provider filter/sort enforcement, ancestor retention, filtered tree totals, cycle rejection, and rejection of unregistered in-process providers before database access. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search and enum paging without another service. |
+| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, static cache-key equivalence for unused `extension`, provider cache bypass and filter/sort enforcement, ancestor retention, filtered tree totals, cycle rejection, and rejection of unregistered in-process providers before database access. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search and enum paging without another service. |
 | Shared capability | Reuses pagination, cache store, transactions, operation outbox recorder, Resource/Action registry, common envelope and error codes. The Go provider interface and query/result types are the future SDK extraction boundary. |
 
 ## Dictionary-item management target
@@ -64,7 +64,8 @@ unrelated descendants and branches are omitted. Siblings follow the requested
 sort, or `sort_order`, `code`, then `id` ascending by default; `id` ascending
 breaks ties for a requested sort. Tree `total` includes all returned nodes,
 including retained ancestors. The public service validates this contract
-before caching or returning a provider result.
+before returning a provider result; provider results are not cached by the
+dictionary module.
 
 ## Module checklist addition
 
