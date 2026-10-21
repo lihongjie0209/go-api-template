@@ -275,6 +275,9 @@ func TestUserRefreshAndLogoutDistinguishStoreOutageFromInvalidToken(t *testing.T
 					query.WillReturnError(errors.New("database connection lost"))
 				} else {
 					query.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+					if operation == "refresh" {
+						mock.ExpectQuery(`SELECT session_id FROM identity_refresh_token_history`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"session_id"}))
+					}
 				}
 				mock.ExpectRollback()
 				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"refresh_token":"present-token"}`))

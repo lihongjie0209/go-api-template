@@ -47,6 +47,12 @@ The next domain work must keep identity and tenancy separate:
   Infrastructure failures fail closed with dependency-unavailable, never an
   invalid-credentials response; no issued token is returned before the
   successful-use write and security event commit together.
+- Refresh-token rotation must retain server-side digest lineage for the full
+  live session, not only the immediately previous token. Any recorded older
+  token is a replay that revokes its session and records one transactional
+  security event; an unknown token must not revoke an unrelated session.
+  Rotation, lineage insert, versioned session update and success audit commit
+  atomically, and expired lineage is cleaned in bounded audited batches.
 - Failed-login counters are an explicit high-concurrency exception to an
   expected-version predicate: use one atomic SQL increment guarded by the
   observed credential hash and current active/unlocked state. This lets

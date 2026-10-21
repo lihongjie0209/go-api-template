@@ -1231,11 +1231,19 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || rotated.RefreshToken == tokens.RefreshToken || !rotated.MustChangePassword {
 		t.Fatalf("refresh tokens=%+v err=%v", rotated, err)
 	}
-	if err := authenticationService.Logout(ctx, rotated.RefreshToken); err != nil {
-		t.Fatal(err)
+	secondRotation, err := authenticationService.Refresh(ctx, rotated.RefreshToken)
+	if err != nil || secondRotation.RefreshToken == rotated.RefreshToken || !secondRotation.MustChangePassword {
+		t.Fatalf("second refresh tokens=%+v err=%v", secondRotation, err)
+	}
+	var historyCount int
+	if err := db.GetContext(ctx, &historyCount, db.Rebind(`SELECT count(*) FROM identity_refresh_token_history WHERE session_id=? AND created_by='identity-service:refresh' AND updated_by='identity-service:refresh' AND version=1 AND deleted_at IS NULL`), tokens.SessionID); err != nil || historyCount != 2 {
+		t.Fatalf("audited refresh history count=%d err=%v", historyCount, err)
 	}
 	if _, err := authenticationService.Refresh(ctx, tokens.RefreshToken); !errors.Is(err, userauthentication.ErrRefreshReused) {
-		t.Fatalf("replayed refresh error=%v", err)
+		t.Fatalf("two-generation-old refresh replay error=%v", err)
+	}
+	if _, err := authenticationService.Refresh(ctx, secondRotation.RefreshToken); !errors.Is(err, userauthentication.ErrRefreshInvalid) {
+		t.Fatalf("revoked session accepted latest refresh token: %v", err)
 	}
 	if err := authenticationService.ChangePassword(creatorCtx, "correct horse battery staple", "a different correct horse battery staple"); err != nil {
 		t.Fatalf("change temporary password: %v", err)
@@ -1250,6 +1258,12 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	verified, tokenState, err = jwtVerifier.VerifyWithState(ctx, unrestricted.AccessToken)
 	if err != nil || verified.ID != created.ID || tokenState.MustChangePassword {
 		t.Fatalf("changed-password token verification principal=%+v state=%+v err=%v", verified, tokenState, err)
+	}
+	if _, err := authenticationService.Refresh(ctx, "never-issued-refresh-token"); !errors.Is(err, userauthentication.ErrRefreshInvalid) {
+		t.Fatalf("unknown refresh token error=%v", err)
+	}
+	if _, err := jwtVerifier.Verify(ctx, unrestricted.AccessToken); err != nil {
+		t.Fatalf("unknown token revoked another session: %v", err)
 	}
 	revokeTokens, err := authenticationService.Login(ctx, "alice.smith", "a different correct horse battery staple", "203.0.113.1", "integration-revoke-target")
 	if err != nil {

@@ -130,6 +130,7 @@ type Service struct {
 }
 
 const identitySessionInsertSQL = `INSERT INTO identity_sessions (id,user_id,refresh_token_hash,previous_refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?, '',?,?, '',?,?,?,?,?,?,1)`
+const refreshSessionSelect = `SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,c.must_change_password,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL`
 
 var presentationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
@@ -603,18 +604,44 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 	reused := false
 	access := ""
 	err = s.tx.Within(systemCtx, nil, func(tx *sqlx.Tx) error {
-		q := tx.Rebind(`SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,c.must_change_password,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL WHERE (s.refresh_token_hash=? OR s.previous_refresh_token_hash=?) AND s.deleted_at IS NULL FOR UPDATE`)
+		q := tx.Rebind(refreshSessionSelect + ` WHERE (s.refresh_token_hash=? OR s.previous_refresh_token_hash=?) AND s.deleted_at IS NULL FOR UPDATE`)
 		if e := tx.GetContext(systemCtx, &current, q, oldHash, oldHash); e != nil {
-			if errors.Is(e, sql.ErrNoRows) {
+			if !errors.Is(e, sql.ErrNoRows) {
+				return fmt.Errorf("load refresh session: %w", e)
+			}
+			var sessionID string
+			history := tx.Rebind(`SELECT session_id FROM identity_refresh_token_history WHERE token_hash=? AND expires_at>? AND deleted_at IS NULL FOR UPDATE`)
+			if e = tx.GetContext(systemCtx, &sessionID, history, oldHash, time.Now()); e != nil {
+				if errors.Is(e, sql.ErrNoRows) {
+					return ErrRefreshInvalid
+				}
+				return fmt.Errorf("load rotated refresh token: %w", e)
+			}
+			byID := tx.Rebind(refreshSessionSelect + ` WHERE s.id=? AND s.deleted_at IS NULL FOR UPDATE`)
+			if e = tx.GetContext(systemCtx, &current, byID, sessionID); e != nil {
+				if errors.Is(e, sql.ErrNoRows) {
+					return ErrRefreshInvalid
+				}
+				return fmt.Errorf("load replayed refresh session: %w", e)
+			}
+			reused = true
+		}
+		if reused || current.PreviousRefreshTokenHash == oldHash {
+			reused = true
+			if current.RevokedAt != nil || !current.ExpiresAt.After(time.Now()) {
 				return ErrRefreshInvalid
 			}
-			return fmt.Errorf("load refresh session: %w", e)
-		}
-		if current.PreviousRefreshTokenHash == oldHash {
-			reused = true
-			revoke := tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='refresh_token_reuse',updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=?`)
-			if _, e := tx.ExecContext(systemCtx, revoke, time.Now(), time.Now(), current.UserID, current.ID, current.Version); e != nil {
+			revoke := tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='refresh_token_reuse',updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND revoked_at IS NULL AND deleted_at IS NULL`)
+			result, e := tx.ExecContext(systemCtx, revoke, time.Now(), time.Now(), current.UserID, current.ID, current.Version)
+			if e != nil {
 				return e
+			}
+			rows, e := result.RowsAffected()
+			if e != nil {
+				return fmt.Errorf("revoke replayed session affected rows: %w", e)
+			}
+			if rows != 1 {
+				return ErrRefreshInvalid
 			}
 			return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventTokenRefresh, SubjectID: current.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: current.ID, TokenID: raw, Succeeded: false, Reason: "refresh_token_reuse"})
 		}
@@ -632,6 +659,10 @@ func (s *Service) Refresh(ctx context.Context, raw string) (Tokens, error) {
 		}
 		if rows != 1 {
 			return ErrRefreshInvalid
+		}
+		historyInsert := tx.Rebind(`INSERT INTO identity_refresh_token_history(token_hash,session_id,expires_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,1)`)
+		if _, e = tx.ExecContext(systemCtx, historyInsert, oldHash, current.ID, current.ExpiresAt, time.Now(), current.UserID, time.Now(), current.UserID); e != nil {
+			return fmt.Errorf("record rotated refresh token: %w", e)
 		}
 		var issueErr error
 		access, issueErr = s.jwt.IssuePrincipalWithState(

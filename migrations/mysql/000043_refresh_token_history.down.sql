@@ -1,0 +1,4 @@
+DROP TRIGGER IF EXISTS identity_refresh_token_history_audit_bd;
+DROP TRIGGER IF EXISTS identity_refresh_token_history_audit_bu;
+DROP TRIGGER IF EXISTS identity_refresh_token_history_audit_bi;
+DROP TABLE IF EXISTS identity_refresh_token_history;

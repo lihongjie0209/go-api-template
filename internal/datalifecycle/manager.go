@@ -98,7 +98,10 @@ func (m *Manager) maintainMySQL(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	return m.cleanupOutboxMySQL(ctx, now)
+	if err := m.cleanupOutboxMySQL(ctx, now); err != nil {
+		return err
+	}
+	return m.cleanupRefreshHistoryMySQL(ctx, now)
 }
 
 func (m *Manager) maintain(ctx context.Context, now time.Time) error {
@@ -128,8 +131,64 @@ func (m *Manager) maintain(ctx context.Context, now time.Time) error {
 				return err
 			}
 		}
-		return m.cleanupOutboxPostgres(ctx, tx, now)
+		if err := m.cleanupOutboxPostgres(ctx, tx, now); err != nil {
+			return err
+		}
+		return m.cleanupRefreshHistoryPostgres(ctx, tx, now)
 	})
+}
+
+func (m *Manager) cleanupRefreshHistoryMySQL(ctx context.Context, now time.Time) error {
+	if m.cfg.PurgeBatchSize <= 0 || m.cfg.PurgeMaxBatches <= 0 {
+		return nil
+	}
+	actor := m.appName + ":data-lifecycle"
+	query := `UPDATE identity_refresh_token_history SET deleted_at=?,deleted_by=? WHERE deleted_at IS NULL AND expires_at<? ORDER BY expires_at,token_hash LIMIT ?`
+	for range m.cfg.PurgeMaxBatches {
+		var rows int64
+		err := database.NewTransactor(m.db).Within(ctx, nil, func(tx *sqlx.Tx) error {
+			result, err := tx.ExecContext(ctx, query, now, actor, now, m.cfg.PurgeBatchSize)
+			if err != nil {
+				return err
+			}
+			rows, err = result.RowsAffected()
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("expire rotated refresh token history: %w", err)
+		}
+		if rows < int64(m.cfg.PurgeBatchSize) {
+			break
+		}
+	}
+	return nil
+}
+
+func (m *Manager) cleanupRefreshHistoryPostgres(ctx context.Context, tx *sqlx.Tx, now time.Time) error {
+	if m.cfg.PurgeBatchSize <= 0 || m.cfg.PurgeMaxBatches <= 0 {
+		return nil
+	}
+	query := `WITH expired AS (
+		SELECT token_hash FROM identity_refresh_token_history
+		WHERE deleted_at IS NULL AND expires_at<$1
+		ORDER BY expires_at,token_hash LIMIT $2 FOR UPDATE SKIP LOCKED
+	)
+	UPDATE identity_refresh_token_history target SET deleted_at=$3,deleted_by=$4
+	FROM expired WHERE target.token_hash=expired.token_hash`
+	for range m.cfg.PurgeMaxBatches {
+		result, err := tx.ExecContext(ctx, query, now, m.cfg.PurgeBatchSize, now, m.appName+":data-lifecycle")
+		if err != nil {
+			return fmt.Errorf("expire rotated refresh token history: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read expired refresh token history count: %w", err)
+		}
+		if rows < int64(m.cfg.PurgeBatchSize) {
+			break
+		}
+	}
+	return nil
 }
 
 func (m *Manager) cleanupOutboxMySQL(ctx context.Context, now time.Time) error {

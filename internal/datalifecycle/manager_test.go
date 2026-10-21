@@ -95,10 +95,70 @@ func TestMaintainMySQLPurgesBoundedBatches(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM `security_logs` WHERE occurred_at < ? ORDER BY occurred_at,id LIMIT ?")).
 		WithArgs(time.Date(2024, time.September, 1, 0, 0, 0, 0, platformLocation), 250).
 		WillReturnResult(sqlmock.NewResult(0, 10))
-	manager := &Manager{db: db, dialect: "mysql", cfg: config.DataLifecycle{
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\?").WithArgs("orders:data-lifecycle").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE identity_refresh_token_history SET deleted_at=`).WithArgs(now, "orders:data-lifecycle", now, 250).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	manager := &Manager{db: db, dialect: "mysql", appName: "orders", cfg: config.DataLifecycle{
 		PurgeBatchSize: 250, PurgeMaxBatches: 2, OperationLogRetentionMonths: 12, SecurityLogRetentionMonths: 24,
 	}}
-	if err := manager.maintainMySQL(t.Context(), now); err != nil {
+	if err := manager.maintainMySQL(platformprincipal.SystemContext(t.Context(), "orders:data-lifecycle"), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanupRefreshHistoryPostgresUsesBoundedAuditedBatches(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, platformLocation)
+	mock.ExpectExec(`WITH expired AS`).WithArgs(now, 100, now, "orders:data-lifecycle").WillReturnResult(sqlmock.NewResult(0, 100))
+	mock.ExpectExec(`WITH expired AS`).WithArgs(now, 100, now, "orders:data-lifecycle").WillReturnResult(sqlmock.NewResult(0, 0))
+	manager := &Manager{appName: "orders", cfg: config.DataLifecycle{PurgeBatchSize: 100, PurgeMaxBatches: 2}}
+	if err := manager.cleanupRefreshHistoryPostgres(t.Context(), tx, now); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanupRefreshHistoryMySQLUsesBoundedAuditedBatches(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, platformLocation)
+	actor := "orders:data-lifecycle"
+	for _, rows := range []int64{100, 0} {
+		mock.ExpectBegin()
+		mock.ExpectExec("SET @app_actor_id = \\?").WithArgs(actor).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`UPDATE identity_refresh_token_history SET deleted_at=`).WithArgs(now, actor, now, 100).WillReturnResult(sqlmock.NewResult(0, rows))
+		mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectCommit()
+	}
+	manager := &Manager{db: db, dialect: "mysql", appName: "orders", cfg: config.DataLifecycle{PurgeBatchSize: 100, PurgeMaxBatches: 2}}
+	if err := manager.cleanupRefreshHistoryMySQL(platformprincipal.SystemContext(t.Context(), actor), now); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

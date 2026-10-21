@@ -618,6 +618,7 @@ func TestService_RefreshRollsBackRotationWhenAccessTokenSigningFails(t *testing.
 	mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", "session-1", int64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO identity_refresh_token_history`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
 	_, err = service.Refresh(t.Context(), raw)
 	require.ErrorContains(t, err, "signing is not configured")
@@ -643,6 +644,7 @@ func TestService_RefreshPreservesPasswordChangeRequirement(t *testing.T) {
 			AddRow("session-1", "user-1", hash, "", now.Add(time.Hour), nil, true, 2),
 	)
 	mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO identity_refresh_token_history`).WithArgs(hash, "session-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), "user-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	tokens, err := service.Refresh(t.Context(), raw)
@@ -704,6 +706,128 @@ func TestService_RefreshPreservesDatabaseFailure(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestService_RefreshRevokesSessionForOlderRotatedToken(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "sqlmock")
+	recorder := &transactionalSecurityRecorder{}
+	service := NewWithSecurity(db, database.NewTransactor(db), nil, nil, config.Config{}, recorder)
+	raw := "two-generations-old"
+	hash := tokenHash(raw)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(
+		sqlmock.NewRows([]string{"id"}),
+	)
+	mock.ExpectQuery(`SELECT session_id FROM identity_refresh_token_history`).WithArgs(hash, sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"session_id"}).AddRow("session-1"),
+	)
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs("session-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+			AddRow("session-1", "user-1", "current-hash", "newer-history-hash", time.Now().Add(time.Hour), nil, false, 4),
+	)
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	tokens, err := service.Refresh(t.Context(), raw)
+	require.ErrorIs(t, err, ErrRefreshReused)
+	require.Empty(t, tokens.AccessToken)
+	require.Empty(t, tokens.RefreshToken)
+	require.Len(t, recorder.entries, 1)
+	require.Equal(t, "refresh_token_reuse", recorder.entries[0].Reason)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshDoesNotReportReuseWhenRevocationCASMisses(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "sqlmock")
+	recorder := &transactionalSecurityRecorder{}
+	service := NewWithSecurity(db, database.NewTransactor(db), nil, nil, config.Config{}, recorder)
+	raw := "two-generations-old"
+	hash := tokenHash(raw)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`SELECT session_id FROM identity_refresh_token_history`).WithArgs(hash, sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"session_id"}).AddRow("session-1"),
+	)
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs("session-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+			AddRow("session-1", "user-1", "current-hash", "newer-history-hash", time.Now().Add(time.Hour), nil, false, 4),
+	)
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	tokens, err := service.Refresh(t.Context(), raw)
+	require.ErrorIs(t, err, ErrRefreshInvalid)
+	require.NotErrorIs(t, err, ErrRefreshReused)
+	require.Empty(t, tokens.AccessToken)
+	require.Empty(t, recorder.entries)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshFailsClosedWhenTokenHistoryUnavailable(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "sqlmock")
+	service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+	raw := "unknown-token"
+	hash := tokenHash(raw)
+	historyErr := errors.New("history store unavailable")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(
+		sqlmock.NewRows([]string{"id"}),
+	)
+	mock.ExpectQuery(`SELECT session_id FROM identity_refresh_token_history`).WithArgs(hash, sqlmock.AnyArg()).WillReturnError(historyErr)
+	mock.ExpectRollback()
+	_, err = service.Refresh(t.Context(), raw)
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+	require.ErrorIs(t, err, historyErr)
+	require.NotErrorIs(t, err, ErrRefreshInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshStopsWhenRequestIsCanceled(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "sqlmock")
+	service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	tokens, err := service.Refresh(ctx, "present-token")
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, tokens.AccessToken)
+	require.Empty(t, tokens.RefreshToken)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestService_RefreshRollsBackWhenTokenHistoryCannotBeStored(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "sqlmock")
+	service := New(db, database.NewTransactor(db), nil, nil, config.Config{})
+	raw := "current-token"
+	hash := tokenHash(raw)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+			AddRow("session-1", "user-1", hash, "", time.Now().Add(time.Hour), nil, false, 4),
+	)
+	mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).WillReturnResult(sqlmock.NewResult(0, 1))
+	storeErr := errors.New("history write unavailable")
+	mock.ExpectExec(`INSERT INTO identity_refresh_token_history`).WillReturnError(storeErr)
+	mock.ExpectRollback()
+	tokens, err := service.Refresh(t.Context(), raw)
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+	require.ErrorIs(t, err, storeErr)
+	require.Empty(t, tokens.AccessToken)
+	require.Empty(t, tokens.RefreshToken)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestService_LogoutPreservesDatabaseFailure(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -737,6 +861,9 @@ func TestService_RefreshAndLogoutRejectMissingTokenWithoutUnavailable(t *testing
 			if operation == "refresh" {
 				mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(tokenHash("refresh-token"), tokenHash("refresh-token")).WillReturnRows(
 					sqlmock.NewRows([]string{"id"}),
+				)
+				mock.ExpectQuery(`SELECT session_id FROM identity_refresh_token_history`).WithArgs(tokenHash("refresh-token"), sqlmock.AnyArg()).WillReturnRows(
+					sqlmock.NewRows([]string{"session_id"}),
 				)
 				mock.ExpectRollback()
 				_, err = service.Refresh(t.Context(), "refresh-token")
@@ -774,6 +901,7 @@ func TestService_RefreshAndLogoutRollBackWhenSecurityAuditFails(t *testing.T) {
 						AddRow("session-1", "user-1", hash, "", time.Now().Add(time.Hour), nil, false, 2),
 				)
 				mock.ExpectExec(`UPDATE identity_sessions SET previous_refresh_token_hash`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(`INSERT INTO identity_refresh_token_history`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectRollback()
 				tokens, refreshErr := service.Refresh(t.Context(), raw)
 				require.ErrorIs(t, refreshErr, ErrSecurityUnavailable)
