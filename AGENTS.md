@@ -306,6 +306,11 @@ otherwise unsuitable for dictionary use.
   a version-scoped cache key; an invalidation failure must not expose a value
   after it becomes private, disabled, or deleted. If the database check fails,
   fail closed instead of serving a cached value.
+- Identity profile caches may contain personal data. Before returning a cached
+  user by ID or username, verify its current version and non-deleted state in
+  the Identity database and ensure the cached identity matches the lookup.
+  Failed invalidation or database unavailability must not expose a deleted or
+  older profile, including email and phone.
 - Never put IDs, cache keys, or unbounded values into metric labels.
 
 ## Redis and message queue decision SOP

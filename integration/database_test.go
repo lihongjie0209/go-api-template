@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
@@ -50,6 +51,7 @@ import (
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
+	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -1275,6 +1277,22 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
+	}
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	store := cache.NewRedisStore(redisClient)
+	for _, key := range []string{"identity:user:v1:id:" + created.ID, "identity:user:v1:username:" + created.Username} {
+		if err := cache.SetJSON(ctx, store, key, updated, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cachedService := identity.New(identity.NewRepository(db), nil, store, nil, nil, slog.Default(), config.Config{User: config.User{CacheTTL: time.Minute}})
+	if _, err := cachedService.Get(actorCtx, created.ID); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("deleted user must not be returned by stale ID cache: %v", err)
+	}
+	if _, err := cachedService.ResolveUsername(ctx, created.Username); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("deleted user must not be returned by stale username cache: %v", err)
 	}
 	if _, err := service.SecurityTarget(actorCtx, created.ID); !errors.Is(err, identity.ErrNotFound) {
 		t.Fatalf("deleted user must not be an actionable security target: %v", err)

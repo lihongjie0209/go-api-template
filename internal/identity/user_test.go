@@ -109,6 +109,143 @@ func TestUserCacheMaintainsIDAndUsernameKeys(t *testing.T) {
 	}
 }
 
+func TestGetDoesNotReturnDeletedUserFromStaleCache(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	store := &memoryStore{values: map[string][]byte{}}
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Email: "alice@example.com", Version: 1})
+	mock.ExpectQuery(`SELECT version FROM identity_users WHERE id=\? AND deleted_at IS NULL`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}))
+	ctx := platformprincipal.SystemContext(t.Context(), "reader")
+	_, err = service.Get(ctx, "user-1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted user lookup error=%v, want not found", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveUsernameDoesNotReturnDeletedUserFromStaleCache(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	store := &memoryStore{values: map[string][]byte{}}
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Version: 1})
+	mock.ExpectQuery(`SELECT version FROM identity_users WHERE LOWER\(username\)=\? AND deleted_at IS NULL`).WithArgs("alice").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}))
+	_, err = service.ResolveUsername(t.Context(), "Alice")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted username lookup error=%v, want not found", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetRefreshesStaleCachedUserVersion(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	store := &memoryStore{values: map[string][]byte{}}
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Email: "old@example.com", Version: 1})
+	mock.ExpectQuery(`SELECT version FROM identity_users WHERE id=\? AND deleted_at IS NULL`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(2))
+	mock.ExpectQuery(`SELECT .* FROM identity_users u WHERE id = \? AND deleted_at IS NULL`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "email", "version"}).AddRow("user-1", "alice", "new@example.com", 2))
+	ctx := platformprincipal.SystemContext(t.Context(), "reader")
+	user, err := service.Get(ctx, "user-1")
+	if err != nil || user.Email != "new@example.com" || user.Version != 2 {
+		t.Fatalf("refreshed user=%+v err=%v", user, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetUsesCacheOnlyAfterAuthoritativeVersionCheck(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	store := &memoryStore{values: map[string][]byte{}}
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Email: "alice@example.com", Version: 2})
+	mock.ExpectQuery(`SELECT version FROM identity_users WHERE id=\? AND deleted_at IS NULL`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(2))
+	ctx := platformprincipal.SystemContext(t.Context(), "reader")
+	user, err := service.Get(ctx, "user-1")
+	if err != nil || user.Email != "alice@example.com" {
+		t.Fatalf("cached user=%+v err=%v", user, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetRejectsCachedProfileForAnotherIdentity(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	store := &memoryStore{values: map[string][]byte{}}
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
+	if err := cache.SetJSON(t.Context(), store, "identity:user:v1:id:user-1", User{ID: "user-2", Username: "bob", Email: "bob@example.com", Version: 2}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT version FROM identity_users WHERE id=\? AND deleted_at IS NULL`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(2))
+	mock.ExpectQuery(`SELECT .* FROM identity_users u WHERE id = \? AND deleted_at IS NULL`).WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "email", "version"}).AddRow("user-1", "alice", "alice@example.com", 2))
+	ctx := platformprincipal.SystemContext(t.Context(), "reader")
+	user, err := service.Get(ctx, "user-1")
+	if err != nil || user.ID != "user-1" || user.Email != "alice@example.com" {
+		t.Fatalf("identity-matched user=%+v err=%v", user, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetFailsClosedWhenVersionCheckFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	store := &memoryStore{values: map[string][]byte{}}
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Email: "alice@example.com", Version: 1})
+	dbFailure := errors.New("database unavailable")
+	mock.ExpectQuery(`SELECT version FROM identity_users WHERE id=\? AND deleted_at IS NULL`).WithArgs("user-1").WillReturnError(dbFailure)
+	ctx := platformprincipal.SystemContext(t.Context(), "reader")
+	_, err = service.Get(ctx, "user-1")
+	if !errors.Is(err, dbFailure) {
+		t.Fatalf("database failure error=%v, want original error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPageRejectsReversedTimeRangeBeforeDatabase(t *testing.T) {
 	t.Parallel()
 	from, to := time.Now(), time.Now().Add(-time.Hour)

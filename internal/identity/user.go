@@ -169,6 +169,24 @@ func (r *Repository) ResolveUsername(ctx context.Context, username string) (User
 	return r.get(ctx, "LOWER(username) = ?", normalizeUsername(username))
 }
 
+func (r *Repository) versionByID(ctx context.Context, id string) (int64, error) {
+	var version int64
+	err := r.db.GetContext(ctx, &version, r.db.Rebind(`SELECT version FROM identity_users WHERE id=? AND deleted_at IS NULL`), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return version, err
+}
+
+func (r *Repository) versionByUsername(ctx context.Context, username string) (int64, error) {
+	var version int64
+	err := r.db.GetContext(ctx, &version, r.db.Rebind(`SELECT version FROM identity_users WHERE LOWER(username)=? AND deleted_at IS NULL`), username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return version, err
+}
+
 func (r *Repository) get(ctx context.Context, predicate string, args ...any) (User, error) {
 	var user User
 	query := r.db.Rebind(`SELECT ` + userColumns + ` FROM identity_users u WHERE ` + predicate + ` AND deleted_at IS NULL`)
@@ -242,7 +260,10 @@ func (s *Service) Get(ctx context.Context, id string) (User, error) {
 	if strings.TrimSpace(id) == "" || len(id) > maxUserIDLength {
 		return User{}, ErrInvalid
 	}
-	return s.cached(ctx, "id:"+id, func() (User, error) { return s.repository.Get(ctx, id) })
+	return s.cached(ctx, "id:"+id,
+		func() (int64, error) { return s.repository.versionByID(ctx, id) },
+		func() (User, error) { return s.repository.Get(ctx, id) },
+		func(user User) bool { return user.ID == id })
 }
 func (s *Service) SecurityTarget(ctx context.Context, id string) (SecurityTarget, error) {
 	if _, err := actor(ctx); err != nil {
@@ -290,7 +311,10 @@ func (s *Service) ResolveUsername(ctx context.Context, username string) (User, e
 	if !usernamePattern.MatchString(username) {
 		return User{}, ErrInvalid
 	}
-	return s.cached(ctx, "username:"+username, func() (User, error) { return s.repository.ResolveUsername(ctx, username) })
+	return s.cached(ctx, "username:"+username,
+		func() (int64, error) { return s.repository.versionByUsername(ctx, username) },
+		func() (User, error) { return s.repository.ResolveUsername(ctx, username) },
+		func(user User) bool { return normalizeUsername(user.Username) == username })
 }
 
 // ResolveUsernameAuthoritative bypasses the disposable cache for security
@@ -501,13 +525,18 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	return e
 }
 
-func (s *Service) cached(ctx context.Context, key string, loader func() (User, error)) (User, error) {
+func (s *Service) cached(ctx context.Context, key string, currentVersion func() (int64, error), loader func() (User, error), matches func(User) bool) (User, error) {
 	if s.cache != nil {
+		// Deletion and version are authoritative even when Redis invalidation fails.
+		version, err := currentVersion()
+		if err != nil {
+			return User{}, err
+		}
 		value, err := cache.GetJSON[User](ctx, s.cache, "identity:user:v1:"+key)
-		if err == nil {
+		if err == nil && value.Version == version && matches(value) {
 			return value, nil
 		}
-		if !errors.Is(err, cache.ErrMiss) {
+		if err != nil && !errors.Is(err, cache.ErrMiss) && s.logger != nil {
 			s.logger.WarnContext(ctx, "read identity user cache", "error", observability.SafeError(err, errIdentityUserCacheFailed))
 		}
 	}
@@ -523,7 +552,7 @@ func (s *Service) cacheUser(ctx context.Context, user User) {
 		return
 	}
 	for _, key := range []string{"identity:user:v1:id:" + user.ID, "identity:user:v1:username:" + normalizeUsername(user.Username)} {
-		if err := cache.SetJSON(ctx, s.cache, key, user, s.cacheTTL); err != nil {
+		if err := cache.SetJSON(ctx, s.cache, key, user, s.cacheTTL); err != nil && s.logger != nil {
 			s.logger.WarnContext(ctx, "write identity user cache", "user_id", user.ID, "error", observability.SafeError(err, errIdentityUserCacheFailed))
 		}
 	}
@@ -534,7 +563,7 @@ func (s *Service) invalidate(ctx context.Context, user User) {
 	}
 	cacheCtx, cancel := cache.AfterCommitContext(ctx)
 	defer cancel()
-	if err := s.cache.Delete(cacheCtx, "identity:user:v1:id:"+user.ID, "identity:user:v1:username:"+normalizeUsername(user.Username)); err != nil {
+	if err := s.cache.Delete(cacheCtx, "identity:user:v1:id:"+user.ID, "identity:user:v1:username:"+normalizeUsername(user.Username)); err != nil && s.logger != nil {
 		s.logger.WarnContext(cacheCtx, "invalidate identity user cache", "user_id", user.ID, "error", observability.SafeError(err, errIdentityUserCacheFailed))
 	}
 }
