@@ -1,6 +1,7 @@
 package datapermission
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -10,6 +11,25 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSubjectProjectionRequiresLiveTenantDepartment(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil)
+	mock.ExpectQuery(`SELECT DISTINCT r.code`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"code"}))
+	mock.ExpectQuery(regexp.QuoteMeta(`JOIN tenant_departments d ON d.id=dm.department_id AND d.tenant_id=dm.tenant_id AND d.deleted_at IS NULL`)).
+		WithArgs("user-1", "tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"department_id"}).AddRow("department-1"))
+
+	roles, departments, err := service.projections(t.Context(), platformprincipal.Principal{
+		ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1",
+	})
+	require.NoError(t, err)
+	require.Empty(t, roles)
+	require.Equal(t, []string{"department-1"}, departments)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestServiceAuthorizesTrustedProposedObject(t *testing.T) {
 	raw, mock, err := sqlmock.New()

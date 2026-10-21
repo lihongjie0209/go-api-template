@@ -166,6 +166,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testScheduledJobLifecycle(t, ctx, db)
 			testDictionaryLifecycle(t, ctx, db)
 			testDataPermissionLifecycle(t, ctx, db)
+			testDeletedDepartmentExcludedFromDataPermission(t, ctx, db)
 			assertFileQueryIndexes(t, ctx, db, databaseType)
 			testFileLifecycle(t, ctx, db)
 			if err := db.Close(); err != nil {
@@ -513,6 +514,66 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || denied.Clause != "(1 = 0)" {
 		t.Fatalf("disabled data permission predicate=%+v err=%v", denied, err)
+	}
+}
+
+func testDeletedDepartmentExcludedFromDataPermission(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	tenantID, departmentID, membershipID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	actorCtx := platformprincipal.SystemContext(ctx, "data-permission-department-fixture")
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenants(id,code,name,description,status,owner_user_id,owner_name,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), tenantID, tenantID, "Department Scope Fixture", "", "active", "user-1", "User One", now, "system", now, "system"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenant_departments(id,tenant_id,code,name,sort_order,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,1)`), departmentID, tenantID, "scope", "Scope", 0, now, "system", now, "system"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenant_memberships(id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`), membershipID, tenantID, "user-1", "scope-user", "Scope User", "active", now, now, "system", now, "system"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenant_department_members(id,tenant_id,department_id,membership_id,is_primary,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), tenantID, departmentID, membershipID, false, now, "system", now, "system")
+		return err
+	}); err != nil {
+		t.Fatalf("seed department projection fixture: %v", err)
+	}
+	schema, err := datapermission.NewSchema("tenant.member", map[string]datapermission.Field{"department_id": {Column: "tm.department_id", Type: datapermission.ValueTypeText}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemas, err := datapermission.NewSchemaRegistry(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := datapermission.NewEngine(schemas, resources, []datapermission.Policy{{
+		APIVersion: datapermission.PolicyAPIVersion, Kind: datapermission.PolicyKind,
+		Metadata: datapermission.PolicyMetadata{Code: "department-scope", Name: "Department scope"},
+		Scope:    datapermission.PolicyBoundary{Type: datapermission.PolicyScopeTenant, TenantID: tenantID},
+		Spec:     datapermission.PolicySpec{Resource: "tenant.member", Actions: []string{"read"}, Condition: "resource.department_id in subject.department_ids", Effect: datapermission.EffectAllow},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := datapermission.NewService(db, engine)
+	requestCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: membershipID})
+	requestCtx = accesscontrol.WithEndpoint(requestCtx, accesscontrol.Endpoint{Resource: "tenant.member", Action: "read", DataPermission: accesscontrol.DataPermissionRequired})
+	activeScope, err := service.Compile(requestCtx, "tenant.member")
+	if err != nil || len(activeScope.Args) != 1 || activeScope.Args[0] != departmentID {
+		t.Fatalf("active department scope=%+v err=%v", activeScope, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE tenant_departments SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), time.Now(), "system", time.Now(), "system", tenantID, departmentID)
+		return err
+	}); err != nil {
+		t.Fatalf("soft-delete department fixture: %v", err)
+	}
+	deletedScope, err := service.Compile(requestCtx, "tenant.member")
+	if err != nil || deletedScope.Clause != "(1 = 0)" || len(deletedScope.Args) != 0 {
+		t.Fatalf("deleted department scope=%+v err=%v", deletedScope, err)
 	}
 }
 

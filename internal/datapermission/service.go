@@ -134,7 +134,7 @@ func (s *Service) projections(ctx context.Context, principal platformprincipal.P
 	if err := s.db.SelectContext(ctx, &roles, roleQuery, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, nil, err
 	}
-	departmentQuery := s.db.Rebind(`SELECT DISTINCT dm.department_id FROM tenant_department_members dm JOIN tenant_memberships m ON m.id=dm.membership_id AND m.tenant_id=dm.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL WHERE dm.tenant_id=? AND dm.membership_id=? AND dm.deleted_at IS NULL ORDER BY dm.department_id`)
+	departmentQuery := s.db.Rebind(`SELECT DISTINCT dm.department_id FROM tenant_department_members dm JOIN tenant_memberships m ON m.id=dm.membership_id AND m.tenant_id=dm.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_departments d ON d.id=dm.department_id AND d.tenant_id=dm.tenant_id AND d.deleted_at IS NULL WHERE dm.tenant_id=? AND dm.membership_id=? AND dm.deleted_at IS NULL ORDER BY dm.department_id`)
 	if err := s.db.SelectContext(ctx, &departments, departmentQuery, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, nil, err
 	}
