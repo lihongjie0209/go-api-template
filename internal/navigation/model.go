@@ -27,7 +27,7 @@ var (
 type Record struct {
 	ID            string          `db:"id" json:"id"`
 	ApplicationID string          `db:"application_id" json:"application_id"`
-	ParentID      *string         `db:"parent_id" json:"parent_id"`
+	ParentID      *string         `db:"parent_id" json:"parent_id" binding:"required" extensions:"x-nullable"`
 	ParentName    string          `db:"parent_name" json:"parent_name"`
 	Key           string          `db:"navigation_key" json:"navigation_key"`
 	Name          string          `db:"name" json:"name"`
@@ -52,7 +52,7 @@ type Record struct {
 
 type Node struct {
 	Record
-	Children []*Node `json:"children"`
+	Children []*Node `json:"children" binding:"required"`
 }
 
 type Input struct {

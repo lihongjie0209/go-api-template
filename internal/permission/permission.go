@@ -36,7 +36,7 @@ const permissionSeedNamespace = "ec62a525-a494-4f0f-bf19-0e982c1a6f6f"
 
 type Record struct {
 	ID            string    `db:"id" json:"id"`
-	ParentID      *string   `db:"parent_id" json:"parent_id"`
+	ParentID      *string   `db:"parent_id" json:"parent_id" binding:"required" extensions:"x-nullable"`
 	ParentName    string    `db:"parent_name" json:"parent_name"`
 	Key           string    `db:"permission_key" json:"permission_key"`
 	Name          string    `db:"name" json:"name"`
@@ -57,7 +57,7 @@ type Record struct {
 }
 type TreeNode struct {
 	Record
-	Children []*TreeNode `json:"children"`
+	Children []*TreeNode `json:"children" binding:"required"`
 }
 type Input struct {
 	ParentID                                                   *string

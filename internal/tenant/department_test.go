@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"testing"
@@ -195,6 +196,19 @@ func TestDepartmentTreePresentsParentFromVisibleNodes(t *testing.T) {
 	require.Len(t, tree, 1)
 	require.Len(t, tree[0].Children, 1)
 	require.Equal(t, "Parent", tree[0].Children[0].ParentName)
+	encoded, err := json.Marshal(tree)
+	require.NoError(t, err)
+	var response []struct {
+		ParentID json.RawMessage `json:"parent_id"`
+		Children []struct {
+			ParentID json.RawMessage `json:"parent_id"`
+			Children []any           `json:"children"`
+		} `json:"children"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &response))
+	require.JSONEq(t, `null`, string(response[0].ParentID))
+	require.JSONEq(t, `"parent-a"`, string(response[0].Children[0].ParentID))
+	require.NotNil(t, response[0].Children[0].Children)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

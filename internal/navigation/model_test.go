@@ -1,6 +1,7 @@
 package navigation
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
@@ -91,6 +92,7 @@ func TestBuildRejectsHistoricalParameterRoutes(t *testing.T) {
 }
 
 func TestBuildNavigationTree(t *testing.T) {
+	t.Parallel()
 	parent := "root"
 	tree, err := Build([]Record{{ID: "root", ApplicationID: "app-1", Key: "root", Name: "System", Type: "directory"}, {ID: "members", ApplicationID: "app-1", ParentID: &parent, Key: "members", Name: "Members", Type: "menu", RoutePath: "/members"}})
 	require.NoError(t, err)
@@ -99,6 +101,19 @@ func TestBuildNavigationTree(t *testing.T) {
 	require.Equal(t, "System", tree[0].Children[0].ParentName)
 	require.Empty(t, tree[0].ParentName)
 	require.Empty(t, tree[0].Children[0].Children)
+	encoded, err := json.Marshal(tree)
+	require.NoError(t, err)
+	var response []struct {
+		ParentID json.RawMessage `json:"parent_id"`
+		Children []struct {
+			ParentID json.RawMessage `json:"parent_id"`
+			Children []any           `json:"children"`
+		} `json:"children"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &response))
+	require.JSONEq(t, `null`, string(response[0].ParentID))
+	require.JSONEq(t, `"root"`, string(response[0].Children[0].ParentID))
+	require.NotNil(t, response[0].Children[0].Children)
 }
 
 func TestBuildRejectsCrossApplicationAndMenuParent(t *testing.T) {

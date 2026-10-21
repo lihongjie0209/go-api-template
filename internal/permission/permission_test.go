@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,8 +17,35 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	platformtree "github.com/lihongjie0209/microservice-platform-go/tree"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPermissionTreeJSONIncludesNullableParentAndChildren(t *testing.T) {
+	t.Parallel()
+	rootID := "root"
+	nodes := mapTree([]*platformtree.Node[Record]{{
+		Value: Record{ID: rootID},
+		Children: []*platformtree.Node[Record]{{
+			Value: Record{ID: "child", ParentID: &rootID},
+		}},
+	}})
+	encoded, err := json.Marshal(nodes)
+	require.NoError(t, err)
+	var response []struct {
+		ParentID json.RawMessage `json:"parent_id"`
+		Children []struct {
+			ParentID json.RawMessage `json:"parent_id"`
+			Children []any           `json:"children"`
+		} `json:"children"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &response))
+	require.Len(t, response, 1)
+	require.JSONEq(t, `null`, string(response[0].ParentID))
+	require.Len(t, response[0].Children, 1)
+	require.JSONEq(t, `"root"`, string(response[0].Children[0].ParentID))
+	require.NotNil(t, response[0].Children[0].Children)
+}
 
 func TestValidate(t *testing.T) {
 	t.Parallel()

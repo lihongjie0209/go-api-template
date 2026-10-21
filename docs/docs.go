@@ -18025,6 +18025,10 @@ const docTemplate = `{
         },
         "navigation.Node": {
             "type": "object",
+            "required": [
+                "children",
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18069,7 +18073,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -18105,6 +18110,9 @@ const docTemplate = `{
         },
         "navigation.Record": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18143,7 +18151,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -18512,6 +18521,9 @@ const docTemplate = `{
         },
         "permission.Record": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18541,7 +18553,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -18574,6 +18587,10 @@ const docTemplate = `{
         },
         "permission.TreeNode": {
             "type": "object",
+            "required": [
+                "children",
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18609,7 +18626,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -19601,6 +19619,9 @@ const docTemplate = `{
         },
         "tenant.Department": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "code": {
                     "type": "string"
@@ -19621,7 +19642,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -19705,6 +19727,10 @@ const docTemplate = `{
         },
         "tenant.DepartmentNode": {
             "type": "object",
+            "required": [
+                "children",
+                "parent_id"
+            ],
             "properties": {
                 "children": {
                     "type": "array",
@@ -19731,7 +19757,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"

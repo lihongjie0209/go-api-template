@@ -18022,6 +18022,10 @@
         },
         "navigation.Node": {
             "type": "object",
+            "required": [
+                "children",
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18066,7 +18070,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -18102,6 +18107,9 @@
         },
         "navigation.Record": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18140,7 +18148,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -18509,6 +18518,9 @@
         },
         "permission.Record": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18538,7 +18550,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -18571,6 +18584,10 @@
         },
         "permission.TreeNode": {
             "type": "object",
+            "required": [
+                "children",
+                "parent_id"
+            ],
             "properties": {
                 "action": {
                     "type": "string"
@@ -18606,7 +18623,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -19598,6 +19616,9 @@
         },
         "tenant.Department": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "code": {
                     "type": "string"
@@ -19618,7 +19639,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -19702,6 +19724,10 @@
         },
         "tenant.DepartmentNode": {
             "type": "object",
+            "required": [
+                "children",
+                "parent_id"
+            ],
             "properties": {
                 "children": {
                     "type": "array",
@@ -19728,7 +19754,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"

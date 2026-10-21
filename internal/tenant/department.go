@@ -33,7 +33,7 @@ const (
 type Department struct {
 	ID            string    `db:"id" json:"id"`
 	TenantID      string    `db:"tenant_id" json:"tenant_id"`
-	ParentID      *string   `db:"parent_id" json:"parent_id"`
+	ParentID      *string   `db:"parent_id" json:"parent_id" binding:"required" extensions:"x-nullable"`
 	ParentName    string    `db:"-" json:"parent_name"`
 	Code          string    `db:"code" json:"code"`
 	Name          string    `db:"name" json:"name"`
@@ -48,7 +48,7 @@ type Department struct {
 }
 type DepartmentNode struct {
 	Department
-	Children []*DepartmentNode `json:"children"`
+	Children []*DepartmentNode `json:"children" binding:"required"`
 }
 type DepartmentUpdateTarget struct {
 	ID         string  `json:"id"`
