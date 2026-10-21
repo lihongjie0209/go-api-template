@@ -1987,6 +1987,12 @@
                                 }
                             ]
                         }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
                     }
                 }
             }
@@ -2337,6 +2343,12 @@
                                 }
                             ]
                         }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
                     }
                 }
             }
@@ -2675,6 +2687,12 @@
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -3064,6 +3082,12 @@
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }

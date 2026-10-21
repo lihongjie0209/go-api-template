@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -21,11 +22,12 @@ import (
 type DataPermissionHandler struct {
 	service   *datapermission.LifecycleService
 	simulator *datapermission.Simulator
+	recorder  operationlog.Recorder
 	logger    *slog.Logger
 }
 
-func NewDataPermissionHandler(service *datapermission.LifecycleService, simulator *datapermission.Simulator, logger *slog.Logger) *DataPermissionHandler {
-	return &DataPermissionHandler{service: service, simulator: simulator, logger: logger}
+func NewDataPermissionHandler(service *datapermission.LifecycleService, simulator *datapermission.Simulator, recorder operationlog.Recorder, logger *slog.Logger) *DataPermissionHandler {
+	return &DataPermissionHandler{service: service, simulator: simulator, recorder: recorder, logger: logger}
 }
 
 type DataPermissionPolicyCreateRequest struct {
@@ -136,6 +138,7 @@ type DataPermissionSimulationContext struct {
 // @Security Bearer
 // @Param request body DataPermissionSimulationRequest true "Simulation"
 // @Success 200 {object} Response{body=datapermission.SimulationResult}
+// @Failure 503 {object} Response "Diagnostic log enqueue unavailable"
 // @Router /api/v1/data-permissions/global-policies/simulate [post]
 // @Router /api/v1/data-permissions/tenant-policies/simulate [post]
 func (h *DataPermissionHandler) Simulate(c *gin.Context) {
@@ -143,11 +146,20 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 	if !h.bind(c, &request) {
 		return
 	}
-	if request.Policy.Scope.Type != expectedDataPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Subject.TenantID, request.Resource.TenantID) {
-		h.respond(c, nil, datapermission.ErrPolicyScope)
+	var result datapermission.SimulationResult
+	var simulationErr error
+	err := operationlog.Do(c.Request.Context(), h.recorder, h.simulationEntry(c, "data-permission.policy.simulate", "", map[string]any{"scope": expectedDataPolicyScope(c), "action": request.Action}), func() error {
+		if request.Policy.Scope.Type != expectedDataPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Subject.TenantID, request.Resource.TenantID) {
+			simulationErr = datapermission.ErrPolicyScope
+			return simulationErr
+		}
+		result, simulationErr = h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, Resource: request.Resource, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
+		return simulationErr
+	})
+	if simulationErr == nil && err != nil {
+		Fail(c, h.logger, apperror.Unavailable("enqueue simulation diagnostic", err))
 		return
 	}
-	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, Resource: request.Resource, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
 	h.respond(c, result, err)
 }
 
@@ -159,6 +171,7 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 // @Security Bearer
 // @Param request body DataPermissionSavedSimulationRequest true "Saved version simulation"
 // @Success 200 {object} Response{body=datapermission.SimulationResult}
+// @Failure 503 {object} Response "Diagnostic log enqueue unavailable"
 // @Router /api/v1/data-permissions/global-policies/versions/simulate [post]
 // @Router /api/v1/data-permissions/tenant-policies/versions/simulate [post]
 func (h *DataPermissionHandler) SimulateVersion(c *gin.Context) {
@@ -171,22 +184,43 @@ func (h *DataPermissionHandler) SimulateVersion(c *gin.Context) {
 		h.respond(c, nil, err)
 		return
 	}
-	parent, ok := h.policyForRoute(c, request.PolicyID)
-	if !ok {
-		return
-	}
-	version, err := h.service.GetVersion(c.Request.Context(), request.PolicyID, request.VersionNumber)
-	if err != nil {
-		h.respond(c, nil, err)
-		return
-	}
-	result, err := h.simulator.SimulateVersion(c.Request.Context(), version, datapermission.SavedSimulationInput{
-		ExpectedScope: expectedDataPolicyScope(c), ActorTenantID: principal.TenantID, PolicyCode: parent.Code,
-		Action: request.Action, Subject: request.Subject, Resource: request.Resource,
-		SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes,
-		ProposedAttributes: request.ProposedAttributes,
+	var result datapermission.SimulationResult
+	var simulationErr error
+	err = operationlog.Do(c.Request.Context(), h.recorder, h.simulationEntry(c, "data-permission.policy.simulate-version", request.PolicyID, map[string]any{"scope": expectedDataPolicyScope(c), "version_number": request.VersionNumber, "action": request.Action}), func() error {
+		parent, getErr := h.service.Get(c.Request.Context(), request.PolicyID)
+		if getErr == nil && parent.Scope != expectedDataPolicyScope(c) {
+			getErr = datapermission.ErrPolicyNotFound
+		}
+		if getErr != nil {
+			simulationErr = getErr
+			return simulationErr
+		}
+		version, getErr := h.service.GetVersion(c.Request.Context(), request.PolicyID, request.VersionNumber)
+		if getErr != nil {
+			simulationErr = getErr
+			return simulationErr
+		}
+		result, simulationErr = h.simulator.SimulateVersion(c.Request.Context(), version, datapermission.SavedSimulationInput{
+			ExpectedScope: expectedDataPolicyScope(c), ActorTenantID: principal.TenantID, PolicyCode: parent.Code,
+			Action: request.Action, Subject: request.Subject, Resource: request.Resource,
+			SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes,
+			ProposedAttributes: request.ProposedAttributes,
+		})
+		return simulationErr
 	})
+	if simulationErr == nil && err != nil {
+		Fail(c, h.logger, apperror.Unavailable("enqueue simulation diagnostic", err))
+		return
+	}
 	h.respond(c, result, err)
+}
+
+func (h *DataPermissionHandler) simulationEntry(c *gin.Context, operation, policyID string, summary map[string]any) operationlog.Entry {
+	return operationlog.Entry{
+		Operation: operation, ResourceType: "data_permission_policy", ResourceID: policyID,
+		Source: "backend", Protocol: "http", Method: c.Request.Method, Route: c.FullPath(),
+		Request: summary, ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent(),
+	}
 }
 
 // GetDataPermissionSimulationContext godoc

@@ -6407,6 +6407,10 @@ paths:
                 body:
                   $ref: '#/definitions/datapermission.SimulationResult'
               type: object
+        "503":
+          description: Diagnostic log enqueue unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: Validate and simulate one unpersisted data-permission policy
@@ -6603,6 +6607,10 @@ paths:
                 body:
                   $ref: '#/definitions/datapermission.SimulationResult'
               type: object
+        "503":
+          description: Diagnostic log enqueue unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: Simulate one saved data-permission policy version against the published
@@ -6793,6 +6801,10 @@ paths:
                 body:
                   $ref: '#/definitions/datapermission.SimulationResult'
               type: object
+        "503":
+          description: Diagnostic log enqueue unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: Validate and simulate one unpersisted data-permission policy
@@ -7010,6 +7022,10 @@ paths:
                 body:
                   $ref: '#/definitions/datapermission.SimulationResult'
               type: object
+        "503":
+          description: Diagnostic log enqueue unavailable
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: Simulate one saved data-permission policy version against the published

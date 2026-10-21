@@ -1990,6 +1990,12 @@ const docTemplate = `{
                                 }
                             ]
                         }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
                     }
                 }
             }
@@ -2340,6 +2346,12 @@ const docTemplate = `{
                                 }
                             ]
                         }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
+                        }
                     }
                 }
             }
@@ -2678,6 +2690,12 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
@@ -3067,6 +3085,12 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "503": {
+                        "description": "Diagnostic log enqueue unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.Response"
                         }
                     }
                 }
