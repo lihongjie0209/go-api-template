@@ -12,11 +12,14 @@ import (
 type contextKey struct{}
 
 func WithContext(ctx context.Context, id string) context.Context {
+	if !Valid(id) {
+		id = Generate()
+	}
 	return context.WithValue(ctx, contextKey{}, id)
 }
 func FromContext(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(contextKey{}).(string)
-	return id, ok && id != ""
+	return id, ok && Valid(id)
 }
 func Valid(value string) bool {
 	if value == "" || len(value) > 128 {
