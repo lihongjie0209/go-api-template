@@ -76,13 +76,14 @@ func TestTenantRoleCapabilityProviderLoadsTenantScopedRows(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	provider := NewTenantRoleCapabilityProvider(sqlx.NewDb(raw, "sqlmock"))
-	mock.ExpectQuery(`SELECT id,code,name,status,created_by FROM tenant_roles WHERE tenant_id=\? AND id IN \(\?, \?\) AND deleted_at IS NULL`).
+	mock.ExpectQuery(`SELECT id,tenant_id,code,name,status,created_by FROM tenant_roles WHERE tenant_id=\? AND id IN \(\?, \?\) AND deleted_at IS NULL`).
 		WithArgs("tenant-1", "role-1", "missing-role").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "status", "created_by"}).AddRow("role-1", "manager", "Manager", "active", "user-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "status", "created_by"}).AddRow("role-1", "tenant-1", "manager", "Manager", "active", "user-1"))
 
 	rows, err := provider.Load(t.Context(), "tenant-1", []string{"role-1", "missing-role"})
 	require.NoError(t, err)
 	require.Equal(t, "manager", rows["role-1"]["code"])
+	require.Equal(t, "tenant-1", rows["role-1"]["tenant_id"])
 	require.NotContains(t, rows, "missing-role")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -19,6 +19,8 @@ var (
 
 // RowCapabilityProvider is implemented by the module that owns a tenant
 // resource. It loads trusted current-row attributes in one bounded query.
+// Every returned row must include its id and tenant_id for independent
+// verification at the shared capability boundary.
 type RowCapabilityProvider interface {
 	Resource() string
 	Load(context.Context, string, []string) (map[string]datapermission.ResourceAttributes, error)
@@ -85,12 +87,13 @@ func (p *tenantRoleCapabilityProvider) Load(ctx context.Context, tenantID string
 	if p == nil || p.db == nil || tenantID == "" || len(ids) == 0 {
 		return nil, ErrRowCapabilityProviderInvalid
 	}
-	query, args, err := sqlx.In(`SELECT id,code,name,status,created_by FROM tenant_roles WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, tenantID, ids)
+	query, args, err := sqlx.In(`SELECT id,tenant_id,code,name,status,created_by FROM tenant_roles WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, tenantID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("build tenant role capability query: %w", err)
 	}
 	rows := []struct {
 		ID        string `db:"id"`
+		TenantID  string `db:"tenant_id"`
 		Code      string `db:"code"`
 		Name      string `db:"name"`
 		Status    string `db:"status"`
@@ -101,7 +104,7 @@ func (p *tenantRoleCapabilityProvider) Load(ctx context.Context, tenantID string
 	}
 	result := make(map[string]datapermission.ResourceAttributes, len(rows))
 	for _, row := range rows {
-		result[row.ID] = datapermission.ResourceAttributes{"id": row.ID, "code": row.Code, "name": row.Name, "status": row.Status, "created_by": row.CreatedBy}
+		result[row.ID] = datapermission.ResourceAttributes{"id": row.ID, "tenant_id": row.TenantID, "code": row.Code, "name": row.Name, "status": row.Status, "created_by": row.CreatedBy}
 	}
 	return result, nil
 }

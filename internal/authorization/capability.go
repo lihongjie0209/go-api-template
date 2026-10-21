@@ -183,7 +183,7 @@ func (s *CapabilityService) EvaluateRows(ctx context.Context, resource string, a
 	if err != nil {
 		return RowCapabilityResult{}, err
 	}
-	if err := validateCapabilityRows(rows, resourceIDs); err != nil {
+	if err := validateCapabilityRows(rows, resourceIDs, principal.TenantID); err != nil {
 		return RowCapabilityResult{}, err
 	}
 	attributes := make([]datapermission.ResourceAttributes, 0, len(resourceIDs))
@@ -225,7 +225,7 @@ func (s *CapabilityService) resultMetadata(ctx context.Context, principal platfo
 	return ctx, CapabilityResult{Revision: revision, ExpiresAt: now().In(operationLocation).Add(30 * time.Second)}, nil
 }
 
-func validateCapabilityRows(rows map[string]datapermission.ResourceAttributes, requestedIDs []string) error {
+func validateCapabilityRows(rows map[string]datapermission.ResourceAttributes, requestedIDs []string, tenantID string) error {
 	requested := make(map[string]struct{}, len(requestedIDs))
 	for _, id := range requestedIDs {
 		requested[id] = struct{}{}
@@ -236,6 +236,10 @@ func validateCapabilityRows(rows map[string]datapermission.ResourceAttributes, r
 		}
 		attributeID, ok := attributes["id"].(string)
 		if !ok || attributeID != id {
+			return ErrCapabilityUnavailable
+		}
+		attributeTenantID, ok := attributes["tenant_id"].(string)
+		if !ok || attributeTenantID != tenantID {
 			return ErrCapabilityUnavailable
 		}
 	}

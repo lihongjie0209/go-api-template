@@ -24,12 +24,13 @@ func (p *memberCapabilityProvider) Load(ctx context.Context, tenantID string, id
 	if p == nil || p.db == nil || tenantID == "" || len(ids) == 0 {
 		return nil, ErrCapabilityProviderInvalid
 	}
-	query, args, err := sqlx.In(`SELECT id,user_id,status,created_by FROM tenant_memberships WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, tenantID, ids)
+	query, args, err := sqlx.In(`SELECT id,tenant_id,user_id,status,created_by FROM tenant_memberships WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, tenantID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("build tenant member capability query: %w", err)
 	}
 	rows := []struct {
 		ID        string `db:"id"`
+		TenantID  string `db:"tenant_id"`
 		UserID    string `db:"user_id"`
 		Status    Status `db:"status"`
 		CreatedBy string `db:"created_by"`
@@ -39,7 +40,7 @@ func (p *memberCapabilityProvider) Load(ctx context.Context, tenantID string, id
 	}
 	result := make(map[string]datapermission.ResourceAttributes, len(rows))
 	for _, row := range rows {
-		result[row.ID] = datapermission.ResourceAttributes{"id": row.ID, "owner_id": row.UserID, "status": string(row.Status), "created_by": row.CreatedBy}
+		result[row.ID] = datapermission.ResourceAttributes{"id": row.ID, "tenant_id": row.TenantID, "owner_id": row.UserID, "status": string(row.Status), "created_by": row.CreatedBy}
 	}
 	return result, nil
 }
@@ -56,12 +57,13 @@ func (p *departmentCapabilityProvider) Load(ctx context.Context, tenantID string
 	if p == nil || p.db == nil || tenantID == "" || len(ids) == 0 {
 		return nil, ErrCapabilityProviderInvalid
 	}
-	query, args, err := sqlx.In(`SELECT id,parent_id,code,name,created_by FROM tenant_departments WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, tenantID, ids)
+	query, args, err := sqlx.In(`SELECT id,tenant_id,parent_id,code,name,created_by FROM tenant_departments WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, tenantID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("build tenant department capability query: %w", err)
 	}
 	rows := []struct {
 		ID        string  `db:"id"`
+		TenantID  string  `db:"tenant_id"`
 		ParentID  *string `db:"parent_id"`
 		Code      string  `db:"code"`
 		Name      string  `db:"name"`
@@ -76,7 +78,7 @@ func (p *departmentCapabilityProvider) Load(ctx context.Context, tenantID string
 		if row.ParentID != nil {
 			parentID = *row.ParentID
 		}
-		result[row.ID] = datapermission.ResourceAttributes{"id": row.ID, "parent_id": parentID, "code": row.Code, "name": row.Name, "created_by": row.CreatedBy}
+		result[row.ID] = datapermission.ResourceAttributes{"id": row.ID, "tenant_id": row.TenantID, "parent_id": parentID, "code": row.Code, "name": row.Name, "created_by": row.CreatedBy}
 	}
 	return result, nil
 }

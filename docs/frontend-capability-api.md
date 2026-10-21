@@ -28,7 +28,7 @@ Two POST + JSON operations are supported:
 | Optimistic lock | Not applicable; no state is changed. |
 | Audit | No table is written. Principal, tenant, endpoint context, subject roles, and department projections are all server-derived. |
 | Presentation | Results expose only boolean decisions keyed by the caller correlation key or resource ID. Policy IDs, expressions, internal attributes, and deny reasons are not returned. |
-| Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation before dependency access, one tenant-scoped batch row query, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. Snapshot regressions replace the published data policies between batch actions and verify that pinned row decisions and the data revision remain paired. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
+| Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation before dependency access, one tenant-scoped batch row query, provider ID and tenant-ID validation, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. Snapshot regressions replace the published data policies between batch actions and verify that pinned row decisions and the data revision remain paired. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
 | Shared capability | Reuses the Resource/Action registry, grant authorizer and data-permission evaluator. A missing revision service fails construction at startup; test compositions supply an explicit grant-snapshot fake instead of a nil revision dependency. Endpoint lookup and bounded row evaluation are shared infrastructure rather than handler-local logic. |
 | Dictionary | Not exposed as a dictionary: capability results are principal-, tenant-, policy-, and time-dependent security decisions. |
 
@@ -68,7 +68,9 @@ in one bounded, parameterized query
 containing the authenticated `tenant_id` and `deleted_at IS NULL`. It resolves
 subject projections once and evaluates the immutable data-policy snapshot in
 memory. The shared evaluator rejects provider output outside the requested ID
-set or whose trusted `id` differs from its map key. Missing, deleted, and
+set, whose trusted `id` differs from its map key, or whose trusted `tenant_id`
+differs from the authenticated tenant. Every provider must return both fields.
+Missing, deleted, and
 cross-tenant IDs are indistinguishable and return `false` for every requested
 action.
 

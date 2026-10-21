@@ -90,7 +90,7 @@ func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {
 	require.NoError(t, err)
 	dataScopes := datapermission.NewService(nil, engine)
 	providers, err := NewRowCapabilityRegistry([]RowCapabilityProvider{staticRowCapabilityProvider{resource: "tenant.member", rows: map[string]datapermission.ResourceAttributes{
-		"member-1": {"id": "member-1", "owner_id": "user-1", "status": "active", "created_by": "admin-1"},
+		"member-1": {"id": "member-1", "tenant_id": "tenant-1", "owner_id": "user-1", "status": "active", "created_by": "admin-1"},
 	}}}, resources, schemas)
 	require.NoError(t, err)
 	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }), dataScopes, resources, providers, nil, func() time.Time { return time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC) })
@@ -139,6 +139,25 @@ func TestCapabilityServiceRejectsProviderRowsOutsideRequestedSet(t *testing.T) {
 
 	_, err = service.EvaluateRows(ctx, "tenant.member", []string{"read"}, []string{"member-1"})
 	require.ErrorIs(t, err, ErrCapabilityUnavailable)
+}
+
+func TestValidateCapabilityRowsRejectsCrossTenantAndUnscopedRows(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		row  datapermission.ResourceAttributes
+	}{
+		{name: "cross tenant", row: datapermission.ResourceAttributes{"id": "member-1", "tenant_id": "tenant-2"}},
+		{name: "missing tenant", row: datapermission.ResourceAttributes{"id": "member-1"}},
+		{name: "wrong id", row: datapermission.ResourceAttributes{"id": "member-2", "tenant_id": "tenant-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateCapabilityRows(map[string]datapermission.ResourceAttributes{"member-1": test.row}, []string{"member-1"}, "tenant-1")
+			require.ErrorIs(t, err, ErrCapabilityUnavailable)
+		})
+	}
+	require.NoError(t, validateCapabilityRows(map[string]datapermission.ResourceAttributes{
+		"member-1": {"id": "member-1", "tenant_id": "tenant-1"},
+	}, []string{"member-1"}, "tenant-1"))
 }
 
 func TestCapabilityServiceFailsClosedWhenDecisionIsUnavailable(t *testing.T) {
