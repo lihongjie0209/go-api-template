@@ -1069,7 +1069,7 @@ func filterTreeItems(items []Item, query Query) []Item {
 	return filtered
 }
 
-func buildTree(items []Item, rules []Sort) ([]Item, error) {
+func buildItemForest(items []Item, rules []Sort) ([]*platformtree.Node[Item], error) {
 	for _, v := range items {
 		if v.ID == "" {
 			return nil, ErrInvalid
@@ -1085,6 +1085,14 @@ func buildTree(items []Item, rules []Sort) ([]Item, error) {
 	})
 	if err != nil {
 		return nil, ErrInvalid
+	}
+	return forest, nil
+}
+
+func buildTree(items []Item, rules []Sort) ([]Item, error) {
+	forest, err := buildItemForest(items, rules)
+	if err != nil {
+		return nil, err
 	}
 	result := make([]Item, len(forest))
 	type pending struct {
@@ -1138,27 +1146,27 @@ func toResultItem(item Item) ResultItem {
 	return ResultItem{ID: item.ID, ParentID: item.ParentID, Code: item.Code, Name: item.Name, Value: item.Value, Disabled: item.Disabled, SortOrder: item.SortOrder, Extension: item.Extension}
 }
 func buildResultTree(items []Item, rules []Sort) ([]ResultItem, error) {
-	tree, err := buildTree(items, rules)
+	forest, err := buildItemForest(items, rules)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]ResultItem, len(tree))
+	result := make([]ResultItem, len(forest))
 	type pending struct {
-		source *Item
+		source *platformtree.Node[Item]
 		target *ResultItem
 	}
 	stack := make([]pending, 0, len(items))
-	for i := range tree {
-		stack = append(stack, pending{source: &tree[i], target: &result[i]})
+	for i, node := range forest {
+		stack = append(stack, pending{source: node, target: &result[i]})
 	}
 	for len(stack) > 0 {
 		last := len(stack) - 1
 		current := stack[last]
 		stack = stack[:last]
-		*current.target = toResultItem(*current.source)
+		*current.target = toResultItem(current.source.Value)
 		current.target.Children = make([]ResultItem, len(current.source.Children))
-		for i := range current.source.Children {
-			stack = append(stack, pending{source: &current.source.Children[i], target: &current.target.Children[i]})
+		for i, child := range current.source.Children {
+			stack = append(stack, pending{source: child, target: &current.target.Children[i]})
 		}
 	}
 	return result, nil

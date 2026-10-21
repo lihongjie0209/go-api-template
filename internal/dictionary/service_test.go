@@ -856,6 +856,35 @@ func TestBuildResultTreeKeepsDeepAncestryWithoutMutatingInput(t *testing.T) {
 	}
 }
 
+func BenchmarkBuildResultTree(b *testing.B) {
+	for _, test := range []struct {
+		name   string
+		size   int
+		nested bool
+	}{
+		{name: "wide_1024", size: 1024},
+		{name: "depth_128", size: 128, nested: true},
+		{name: "depth_512", size: 512, nested: true},
+		{name: "depth_1024", size: 1024, nested: true},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			items := make([]Item, test.size)
+			for i := range items {
+				items[i].ID = fmt.Sprintf("node-%d", i)
+				if test.nested && i > 0 {
+					items[i].ParentID = &items[i-1].ID
+				}
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := buildResultTree(items, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestValidProviderResultEnforcesPublicContract(t *testing.T) {
 	t.Parallel()
 	id := uuidString(1)
