@@ -41,8 +41,22 @@ type storageStub struct {
 }
 type operationStub struct{}
 
+type cancelingWriter struct {
+	writer io.Writer
+	cancel context.CancelFunc
+}
+
+func (w cancelingWriter) Write(data []byte) (int, error) {
+	n, err := w.writer.Write(data)
+	w.cancel()
+	return n, err
+}
+
 type failingTransactionalOperationStub struct{ records []operationlog.Entry }
-type failingReadOperationStub struct{ records []operationlog.Entry }
+type failingReadOperationStub struct {
+	records   []operationlog.Entry
+	recordErr error
+}
 
 func (operationStub) Enabled() bool                                    { return true }
 func (operationStub) Record(context.Context, operationlog.Entry) error { return nil }
@@ -60,6 +74,9 @@ func (*failingTransactionalOperationStub) RecordTx(context.Context, *sqlx.Tx, op
 func (*failingReadOperationStub) Enabled() bool { return true }
 func (s *failingReadOperationStub) Record(_ context.Context, entry operationlog.Entry) error {
 	s.records = append(s.records, entry)
+	if s.recordErr != nil {
+		return s.recordErr
+	}
 	return errors.New("operation outbox unavailable")
 }
 func (*failingReadOperationStub) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
@@ -82,6 +99,50 @@ func (s *storageStub) Stat(context.Context, string) (objectstorage.Info, error) 
 func (s *storageStub) Delete(_ context.Context, key string) error {
 	s.deleted = append(s.deleted, key)
 	return s.deleteErr
+}
+
+func TestRecordFailureDoesNotLogRecorderErrorDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	service := &Service{
+		operations: &failingReadOperationStub{recordErr: errors.New("outbox password=secret-value")},
+		logger:     slog.New(slog.NewJSONHandler(&output, nil)),
+	}
+	service.recordFailure(t.Context(), operationlog.Entry{Operation: "file.upload", ResourceID: "file-1"}, time.Now())
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "file_operation_log_failed") {
+		t.Fatalf("file failure log leaked recorder detail or omitted safe code: %s", output.String())
+	}
+}
+
+func TestDeletionWorkerDoesNotLogDatabaseErrorDetails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).
+		WithArgs(sqlmock.AnyArg(), 1).
+		WillReturnError(errors.New("database password=secret-value"))
+	mock.ExpectQuery(`SELECT id,object_key,object_delete_attempts FROM files`).
+		WithArgs(sqlmock.AnyArg(), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "object_key", "object_delete_attempts"}))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var output bytes.Buffer
+	service := &Service{
+		enabled: true,
+		db:      sqlx.NewDb(raw, "pgx"),
+		cfg:     config.Files{DeletionBatchSize: 1, DeletionInterval: time.Hour},
+		logger:  slog.New(slog.NewJSONHandler(cancelingWriter{writer: &output, cancel: cancel}, nil)),
+	}
+	service.RunDeletionWorker(ctx)
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "file_repair_failed") {
+		t.Fatalf("file repair log leaked database detail or omitted safe code: %s", output.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestServiceUploadRejectsDeclaredSizeMismatchBeforeStorage(t *testing.T) {

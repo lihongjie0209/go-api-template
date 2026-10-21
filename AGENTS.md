@@ -243,6 +243,9 @@ otherwise unsuitable for dictionary use.
   component reason. Only known cancellation/deadline classes may retain their
   original error text; do not record raw Redis, object-storage, queue, or
   handler errors as OpenTelemetry exception events.
+- File upload/delete repair and failed-operation logs must use
+  `observability.SafeError` with fixed component reasons; database, object
+  storage, and queue errors may contain credentials or sensitive object keys.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.

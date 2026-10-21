@@ -24,6 +24,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
@@ -31,14 +32,16 @@ import (
 )
 
 var (
-	ErrDisabled            = errors.New("file service is disabled")
-	ErrNotFound            = errors.New("file not found")
-	ErrForbidden           = errors.New("file access denied")
-	ErrVersionConflict     = errors.New("file version conflict")
-	ErrInvalidInput        = errors.New("invalid file input")
-	errObjectUploadFailed  = errors.New("object_upload_failed")
-	errObjectDeleteFailed  = errors.New("object_delete_failed")
-	errObjectPresignFailed = errors.New("object_presign_failed")
+	ErrDisabled               = errors.New("file service is disabled")
+	ErrNotFound               = errors.New("file not found")
+	ErrForbidden              = errors.New("file access denied")
+	ErrVersionConflict        = errors.New("file version conflict")
+	ErrInvalidInput           = errors.New("invalid file input")
+	errObjectUploadFailed     = errors.New("object_upload_failed")
+	errObjectDeleteFailed     = errors.New("object_delete_failed")
+	errObjectPresignFailed    = errors.New("object_presign_failed")
+	errFileRepairFailed       = errors.New("file_repair_failed")
+	errFileOperationLogFailed = errors.New("file_operation_log_failed")
 )
 
 var safeObjectSegment = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -430,7 +433,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		return fmt.Errorf("soft delete file: %w", err)
 	}
 	if err := s.withDeletionLock(ctx, record.ID, func(lockCtx context.Context) error { return s.processDeletion(lockCtx, record.ID, record.ObjectKey, 0) }); err != nil && s.logger != nil {
-		s.logger.WarnContext(ctx, "file object deletion queued for retry", "file_id", record.ID, "error", err)
+		s.logger.WarnContext(ctx, "file object deletion queued for retry", "file_id", record.ID, "error", observability.SafeError(err, errFileRepairFailed))
 	}
 	return nil
 }
@@ -441,7 +444,7 @@ func (s *Service) recordFailure(ctx context.Context, entry operationlog.Entry, s
 	entry.ErrorCode = "operation_failed"
 	entry.ErrorMessage = "operation failed"
 	if err := s.operations.Record(ctx, entry); err != nil && s.logger != nil {
-		s.logger.ErrorContext(ctx, "record failed file operation", "operation", entry.Operation, "file_id", entry.ResourceID, "error", err)
+		s.logger.ErrorContext(ctx, "record failed file operation", "operation", entry.Operation, "file_id", entry.ResourceID, "error", observability.SafeError(err, errFileOperationLogFailed))
 	}
 }
 
@@ -511,7 +514,7 @@ func (s *Service) RunDeletionWorker(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if err := errors.Join(s.ProcessPendingUploads(ctx), s.ProcessPendingDeletions(ctx)); err != nil && !errors.Is(err, context.Canceled) && s.logger != nil {
-			s.logger.WarnContext(ctx, "process pending file repairs", "error", err)
+			s.logger.WarnContext(ctx, "process pending file repairs", "error", observability.SafeError(err, errFileRepairFailed))
 		}
 		select {
 		case <-ctx.Done():
@@ -528,7 +531,7 @@ func (s *Service) repairUploadAfterFailure(ctx context.Context, id string) {
 	if err := s.withUploadLock(repairCtx, id, func(lockCtx context.Context) error {
 		return s.processUploadIntent(lockCtx, id, 0)
 	}); err != nil && s.logger != nil {
-		s.logger.WarnContext(repairCtx, "file upload cleanup queued for retry", "file_id", id, "error", err)
+		s.logger.WarnContext(repairCtx, "file upload cleanup queued for retry", "file_id", id, "error", observability.SafeError(err, errFileRepairFailed))
 	}
 }
 
