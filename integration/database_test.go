@@ -28,6 +28,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/datalifecycle"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/dictionary"
+	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/files"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
@@ -38,6 +39,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/permission"
 	"github.com/lihongjie0209/go-api-template/internal/platformconfig"
+	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/resourcecatalog"
 	"github.com/lihongjie0209/go-api-template/internal/scheduler"
@@ -1846,6 +1848,7 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || run.ScheduledJobID != updated.ID || run.JobName != updated.Name || run.Version != 1 {
 		t.Fatalf("get scheduled job run = %+v err=%v", run, err)
 	}
+	testManualScheduledJobOutboxTransaction(t, ctx, db, transactor, updated.ID)
 
 	if err := service.Delete(actorCtx, updated.ID, updated.Version); err != nil {
 		t.Fatalf("delete scheduled job: %v", err)
@@ -1855,6 +1858,40 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if _, err := service.UpdateTarget(actorCtx, updated.ID); !errors.Is(err, scheduler.ErrDefinitionNotFound) {
 		t.Fatalf("get deleted scheduled job update target error = %v", err)
+	}
+}
+
+func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, db *sqlx.DB, transactor *appdb.Transactor, jobID string) {
+	t.Helper()
+	actorCtx := requestid.WithContext(platformprincipal.SystemContext(ctx, "scheduler-admin"), "integration-manual-request")
+	cfg := config.Config{App: config.App{Name: "scheduler-integration"}, EventBus: config.EventBus{Enabled: true}}
+	outbox := eventbus.NewOutbox(cfg, &eventbus.Bus{}, transactor, nil, nil)
+	service := scheduler.NewDefinitionService(db, transactor, nil, nil, nil, nil, outbox)
+
+	result, err := service.Trigger(actorCtx, jobID)
+	if err != nil || result.Status != "queued" || result.RunID == "" {
+		t.Fatalf("submit manual scheduled job = %+v err=%v", result, err)
+	}
+	var persisted struct {
+		Status    string `db:"status"`
+		RequestID string `db:"request_id"`
+	}
+	if err := db.GetContext(ctx, &persisted, db.Rebind(`SELECT status,request_id FROM scheduled_job_runs WHERE id=? AND deleted_at IS NULL`), result.RunID); err != nil || persisted.Status != "queued" || persisted.RequestID != "integration-manual-request" {
+		t.Fatalf("persisted manual run = %+v err=%v", persisted, err)
+	}
+	var events int
+	if err := db.GetContext(ctx, &events, db.Rebind(`SELECT count(*) FROM event_outbox WHERE id=? AND subject=? AND deleted_at IS NULL`), result.RunID, "platform.scheduled-job.triggered.v1"); err != nil || events != 1 {
+		t.Fatalf("manual run outbox events = %d err=%v", events, err)
+	}
+
+	unavailable := eventbus.NewOutbox(config.Config{App: cfg.App}, &eventbus.Bus{}, transactor, nil, nil)
+	service = scheduler.NewDefinitionService(db, transactor, nil, nil, nil, nil, unavailable)
+	if _, err := service.Trigger(actorCtx, jobID); err == nil {
+		t.Fatal("manual dispatch without an available outbox succeeded")
+	}
+	var queuedRuns int
+	if err := db.GetContext(ctx, &queuedRuns, db.Rebind(`SELECT count(*) FROM scheduled_job_runs WHERE scheduled_job_id=? AND status='queued' AND trigger_source='manual' AND deleted_at IS NULL`), jobID); err != nil || queuedRuns != 1 {
+		t.Fatalf("manual runs after rejected dispatch = %d, want 1 committed run, err=%v", queuedRuns, err)
 	}
 }
 

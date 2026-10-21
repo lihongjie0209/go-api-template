@@ -38,5 +38,5 @@
 | 缓存/分布式锁 | 不缓存日志；执行锁仍为 `cron:<job-code>`，不扩大锁粒度。 |
 | 乐观锁与审计 | cron 创建运行记录；手动运行以 owner token 和未过期租约更新。日志 outbox 写入与运行状态写入同一事务，数据库触发器维护审计字段。 |
 | 展示 | `resource_id` 是运行 ID，`resource_name` 是任务名称；时间仍为 RFC 3339/Asia/Shanghai，Request ID 与执行记录一致。 |
-| 测试 | 单测覆盖 cron 事务成功/回滚，手动完成成功/回滚、丢失租约不写日志及上下文关联；Testcontainers 事务与 outbox 一致性由后续 CI 集成测试覆盖。 |
+| 测试 | 单测覆盖 cron 事务成功/回滚，手动完成成功/回滚、丢失租约不写日志及上下文关联；PostgreSQL/MySQL Testcontainers 集成测试覆盖手动触发时运行记录与 outbox 同事务提交，以及 outbox 不可用时回滚运行记录。完成日志与运行终态的跨表原子性仍需补充集成验证。 |
 | 共享能力与字典 | 复用 `operationlog.TransactionalRecorder`；运行日志高基数且敏感，不作为数据字典提供者。 |
