@@ -42,6 +42,11 @@ The next domain work must keep identity and tenancy separate:
 - Login can occur without an authenticated principal. Security logging for
   login must accept an explicit target/identifier digest and must never require
   user context before authentication succeeds.
+- Both locally signed and remotely verified bearer principals must have a
+  supported type and non-empty subject. User principals require a session ID;
+  tenant and membership IDs must be present together. Service accounts must
+  not carry user session, tenant, or membership context. Validate this before
+  attaching any principal to an HTTP or gRPC request.
 - Login implementations must distinguish invalid credentials or concurrent
   credential revocation from database, signer, or security-audit failures.
   Infrastructure failures fail closed with dependency-unavailable, never an

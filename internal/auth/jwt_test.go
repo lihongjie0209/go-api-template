@@ -291,6 +291,40 @@ func TestService_RejectsRemoteServiceAccountTenantContext(t *testing.T) {
 	}
 }
 
+func TestService_ValidatesRemotePrincipalShape(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		principal platformprincipal.Principal
+		wantError bool
+	}{
+		{name: "valid user", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}},
+		{name: "valid tenant user", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1", MembershipID: "member-1"}},
+		{name: "missing user session", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}, wantError: true},
+		{name: "unpaired tenant", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1"}, wantError: true},
+		{name: "unpaired membership", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", MembershipID: "member-1"}, wantError: true},
+		{name: "empty subject", principal: platformprincipal.Principal{Type: platformprincipal.TypeUser, SessionID: "session-1"}, wantError: true},
+		{name: "unsupported type", principal: platformprincipal.Principal{ID: "system-1", Type: platformprincipal.TypeSystem}, wantError: true},
+		{name: "valid service account", principal: platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := New(config.Config{})
+			service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
+				return test.principal, nil
+			})
+			got, _, err := service.VerifyWithState(t.Context(), "remote-token")
+			if test.wantError {
+				if err == nil || errors.Is(err, ErrStateUnavailable) {
+					t.Fatalf("VerifyWithState() principal=%+v error=%v, want invalid claims", got, err)
+				}
+				return
+			}
+			if err != nil || got != test.principal {
+				t.Fatalf("VerifyWithState() principal=%+v error=%v, want %+v", got, err, test.principal)
+			}
+		})
+	}
+}
+
 func TestService_RemoteVerificationRespectsCallerDeadline(t *testing.T) {
 	service := New(config.Config{Auth: config.Auth{JWKSTimeout: time.Second}})
 	service.verifier = verifierFunc(func(ctx context.Context, _ string) (platformprincipal.Principal, error) {

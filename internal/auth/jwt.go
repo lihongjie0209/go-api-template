@@ -205,10 +205,28 @@ func (s *Service) verifyRemote(ctx context.Context, raw string) (platformprincip
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, err)
 	}
-	if err == nil && identity.Type == platformprincipal.TypeServiceAccount && (identity.SessionID != "" || identity.TenantID != "" || identity.MembershipID != "") {
-		return platformprincipal.Principal{}, errors.New("service account jwt cannot carry user session or tenant context")
+	if err != nil {
+		return platformprincipal.Principal{}, err
 	}
-	return identity, err
+	if strings.TrimSpace(identity.ID) == "" {
+		return platformprincipal.Principal{}, errors.New("remote jwt subject is required")
+	}
+	switch identity.Type {
+	case platformprincipal.TypeUser:
+		if strings.TrimSpace(identity.SessionID) == "" {
+			return platformprincipal.Principal{}, errors.New("remote user jwt requires a session id")
+		}
+		if (strings.TrimSpace(identity.TenantID) == "") != (strings.TrimSpace(identity.MembershipID) == "") {
+			return platformprincipal.Principal{}, errors.New("remote user jwt tenant and membership context must be paired")
+		}
+	case platformprincipal.TypeServiceAccount:
+		if identity.SessionID != "" || identity.TenantID != "" || identity.MembershipID != "" {
+			return platformprincipal.Principal{}, errors.New("service account jwt cannot carry user session or tenant context")
+		}
+	default:
+		return platformprincipal.Principal{}, errors.New("invalid remote jwt principal type")
+	}
+	return identity, nil
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
 func (s *Service) Issue(subject string) (string, error) {
