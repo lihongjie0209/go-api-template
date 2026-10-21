@@ -25,6 +25,13 @@ shared Conflict code with a message to reduce page size, narrow the dictionary,
 or correct oversized data; an in-process provider violating the contract
 remains provider-unavailable.
 
+MySQL migration `000044` widens `dictionary_items.value` to `MEDIUMTEXT` so its
+storage can honor the API's 1 MiB value limit. PostgreSQL and Kingbase already
+use `text`. Rolling MySQL back to the former `TEXT` column requires shrinking
+values above 64 KiB first; the down migration fails rather than truncating
+business data. The storage distinction follows the [MySQL 8.4 string type
+reference](https://dev.mysql.com/doc/refman/8.4/en/string-type-syntax.html).
+
 ## Dictionary-item management target
 
 | Concern | Decision and rationale |

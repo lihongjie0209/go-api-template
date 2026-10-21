@@ -65,9 +65,12 @@ Status values:
 The later dictionary ancestry optimization, poisoned-cache validation, row
 capability tenant check, menu snapshot/retirement handling, and endpoint index
 passed both verify and PostgreSQL/MySQL Testcontainers in run `39579942392` at
-commit `6d80267`. The subsequent 8 MiB aggregate dictionary item budget is
-locally unit-tested and has a PostgreSQL/MySQL integration regression queued
-for the next substantial CI batch; it is not yet CI-verified.
+commit `6d80267`. The subsequent 8 MiB dictionary result batch reached CI run
+`39583829319`: verify exposed unchecked row-close errors and MySQL integration
+exposed a `TEXT` column too narrow for the already-documented 1 MiB item value.
+Both defects now have local fixes and unit coverage; migration `000044` widens
+the MySQL column, and the new PostgreSQL/MySQL integration assertions await
+the next batched CI run. This batch is not yet CI-verified.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,

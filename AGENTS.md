@@ -563,6 +563,11 @@ deleted_by text
 ```
 
 - Prefer PostgreSQL `text` unless a length constraint is a real domain rule.
+- Before raising a field's API size limit, verify every supported database
+  column can store that many encoded bytes. MySQL `TEXT` is limited to 65,535
+  bytes; use an appropriate wider type when the contract exceeds it. Add an
+  upgrade migration for existing databases, and make narrowing down-migrations
+  fail instead of silently truncating oversized data.
 - PostgreSQL/Kingbase tables must call `app_enable_audit('<table>')`.
 - Writes must use `database.Transactor.Within`, which injects the actor ID
   from context into transaction-local `app.actor_id`.

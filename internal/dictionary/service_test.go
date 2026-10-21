@@ -67,6 +67,7 @@ func TestQueryRejectsOversizedPageBeforeDatabase(t *testing.T) {
 func TestInputBounds(t *testing.T) {
 	t.Parallel()
 	require.False(t, validDefinition(DefinitionInput{Code: "valid", Name: "name", Description: string(make([]byte, maxDescriptionLength+1)), Kind: KindEnum, Source: SourceStatic, Status: "active"}))
+	require.True(t, validItem(ItemInput{DictionaryID: uuidString(1), Code: "valid", Name: "name", Value: strings.Repeat("v", maxValueLength)}))
 	require.False(t, validItem(ItemInput{DictionaryID: uuidString(1), Code: "valid", Name: "name", Value: string(make([]byte, maxValueLength+1))}))
 }
 
@@ -1452,6 +1453,28 @@ func TestSelectQueryItemsRejectsOversizedStoredFields(t *testing.T) {
 	}
 }
 
+func TestSelectQueryItemsPreservesScanAndCloseErrors(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	closeErr := errors.New("rows close failed")
+	now := time.Now()
+	rows := sqlmock.NewRows(strings.Split(itemColumns, ",")).
+		AddRow(uuidString(1), uuidString(4), nil, "item", "Item", strings.Repeat("v", maxValueLength+1), false, 1, []byte(`{}`), now, "system", now, "system", 1).
+		CloseError(closeErr)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items`).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	items, err := service.selectQueryItems(t.Context(), `SELECT `+itemColumns+` FROM dictionary_items`)
+	require.Nil(t, items)
+	require.ErrorIs(t, err, ErrResultTooLarge)
+	require.ErrorIs(t, err, closeErr)
+}
+
 func TestQueryRejectsOversizedStoredDefinition(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
@@ -1489,6 +1512,27 @@ func TestPageDefinitionsRejectsOversizedStoredDefinition(t *testing.T) {
 	page, err := service.PageDefinitions(platformprincipal.SystemContext(t.Context(), "test"), DefinitionPageInput{})
 	require.ErrorIs(t, err, ErrResultTooLarge)
 	require.Equal(t, Page{}, page)
+}
+
+func TestSelectDefinitionsPreservesScanAndCloseErrors(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	closeErr := errors.New("rows close failed")
+	rows := sqlmock.NewRows([]string{"id", "dictionary_code", "name", "description", "extension"}).
+		AddRow(uuidString(1), "public.sample", "Sample", strings.Repeat("d", maxDescriptionLength+1), []byte(`{}`)).
+		CloseError(closeErr)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions`).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	items, err := service.selectDefinitions(t.Context(), `SELECT `+definitionColumns+` FROM dictionary_definitions`)
+	require.Nil(t, items)
+	require.ErrorIs(t, err, ErrResultTooLarge)
+	require.ErrorIs(t, err, closeErr)
 }
 
 func TestStoredDefinitionSizeBounds(t *testing.T) {

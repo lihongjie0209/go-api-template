@@ -542,6 +542,14 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("concurrent duplicate values successes=%d conflicts=%d", successes, conflicts)
 	}
+	// Migration 000044 rolls MySQL MEDIUMTEXT back to TEXT. Restore this
+	// fixture's values so the full down-migration remains reversible.
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE dictionary_items SET value='' WHERE dictionary_id=?`), largeDefinition.ID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("restore dictionary values before migration down: %v", err)
+	}
 }
 
 func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {

@@ -283,13 +283,18 @@ func (s *Service) PageDefinitions(ctx context.Context, in DefinitionPageInput) (
 	return Page{Items: items, Page: page.Page, PageSize: page.PageSize, Total: total}, nil
 }
 
-func (s *Service) selectDefinitions(ctx context.Context, query string, args ...any) ([]Definition, error) {
+func (s *Service) selectDefinitions(ctx context.Context, query string, args ...any) (items []Definition, err error) {
 	rows, err := s.db.QueryxContext(ctx, s.db.Rebind(query), args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	items := make([]Definition, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			items = nil
+			err = errors.Join(err, fmt.Errorf("close dictionary definition rows: %w", closeErr))
+		}
+	}()
+	items = make([]Definition, 0)
 	for rows.Next() {
 		var item Definition
 		if err := rows.StructScan(&item); err != nil {
@@ -1028,13 +1033,18 @@ func storedItemBytes(item Item) (int, error) {
 	return encodedBytes, nil
 }
 
-func (s *Service) selectQueryItems(ctx context.Context, query string, args ...any) ([]Item, error) {
+func (s *Service) selectQueryItems(ctx context.Context, query string, args ...any) (items []Item, err error) {
 	rows, err := s.db.QueryxContext(ctx, s.db.Rebind(query), args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	items := make([]Item, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			items = nil
+			err = errors.Join(err, fmt.Errorf("close dictionary item rows: %w", closeErr))
+		}
+	}()
+	items = make([]Item, 0)
 	itemBytes := 0
 	for rows.Next() {
 		var item Item
