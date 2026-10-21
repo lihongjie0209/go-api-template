@@ -174,6 +174,9 @@ func TestDataLifecycleCreatePersistsDraftAndActionsAtomically(t *testing.T) {
 	service, mock := dataLifecycleFixture(t, false)
 	now := time.Now()
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM tenants WHERE id=\\? AND status='active' AND deleted_at IS NULL FOR UPDATE").
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("tenant-1"))
 	mock.ExpectExec("INSERT INTO data_permission_policies").
 		WithArgs(sqlmock.AnyArg(), "member-own-records", "Member own records", PolicyScopeTenant, "tenant-1", StatusActive, sqlmock.AnyArg(), "admin-1", sqlmock.AnyArg(), "admin-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -199,6 +202,38 @@ func TestDataLifecycleCreatePersistsDraftAndActionsAtomically(t *testing.T) {
 	require.Equal(t, "policy-1", policy.ID)
 	require.Equal(t, VersionDraft, version.Status)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDataLifecycleCreateRequiresActiveTenant(t *testing.T) {
+	databaseFailure := errors.New("tenant lookup unavailable")
+	for _, test := range []struct {
+		name     string
+		rows     *sqlmock.Rows
+		queryErr error
+		wantErr  error
+	}{
+		{name: "missing or inactive", rows: sqlmock.NewRows([]string{"id"}), wantErr: ErrInvalidPolicy},
+		{name: "database failure", queryErr: databaseFailure, wantErr: databaseFailure},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service, mock := dataLifecycleFixture(t, false)
+			mock.ExpectBegin()
+			query := mock.ExpectQuery("SELECT id FROM tenants WHERE id=\\? AND status='active' AND deleted_at IS NULL FOR UPDATE").
+				WithArgs("tenant-1")
+			if test.queryErr != nil {
+				query.WillReturnError(test.queryErr)
+			} else {
+				query.WillReturnRows(test.rows)
+			}
+			mock.ExpectRollback()
+
+			ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
+			_, _, err := service.Create(ctx, dataPolicyFixture())
+			require.ErrorIs(t, err, test.wantErr)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestDataLifecycleSetStatusRefreshesRuntimeAfterCommit(t *testing.T) {

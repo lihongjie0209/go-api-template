@@ -433,6 +433,12 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 			Effect:    datapermission.EffectAllow,
 		},
 	}
+	missingTenantDocument := document
+	missingTenantDocument.Scope.TenantID = uuid.NewString()
+	missingTenantCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "data-admin", Type: platformprincipal.TypeUser, TenantID: missingTenantDocument.Scope.TenantID})
+	if _, _, err := service.Create(missingTenantCtx, missingTenantDocument); !errors.Is(err, datapermission.ErrInvalidPolicy) {
+		t.Fatalf("create policy for missing tenant error=%v", err)
+	}
 	actorCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "data-admin", Type: platformprincipal.TypeUser, TenantID: tenantID})
 	created, version, err := service.Create(actorCtx, document)
 	if err != nil || created.Version != 1 || version.Status != datapermission.VersionDraft {

@@ -323,6 +323,14 @@ func (s *LifecycleService) Create(ctx context.Context, policy Policy) (PolicyRec
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var tenant any
 		if policy.Scope.Type == PolicyScopeTenant {
+			var activeTenantID string
+			err := tx.GetContext(ctx, &activeTenantID, tx.Rebind(`SELECT id FROM tenants WHERE id=? AND status='active' AND deleted_at IS NULL FOR UPDATE`), policy.Scope.TenantID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: tenant is not active", ErrInvalidPolicy)
+			}
+			if err != nil {
+				return fmt.Errorf("check policy tenant: %w", err)
+			}
 			tenant = policy.Scope.TenantID
 		}
 		q := tx.Rebind(`INSERT INTO data_permission_policies(id,code,name,scope,tenant_id,published_version_number,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,NULL,?,?,?,?,?,1)`)
