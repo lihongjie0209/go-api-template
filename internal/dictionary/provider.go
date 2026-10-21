@@ -23,11 +23,14 @@ func NewProviderRegistry() *ProviderRegistry {
 	return &ProviderRegistry{providers: map[string]Provider{}}
 }
 func (r *ProviderRegistry) Register(code string, provider Provider) error {
-	if !codePattern.MatchString(code) || dependency.IsNil(provider) {
+	if r == nil || !codePattern.MatchString(code) || dependency.IsNil(provider) {
 		return ErrInvalid
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.providers == nil {
+		r.providers = make(map[string]Provider)
+	}
 	if _, ok := r.providers[code]; ok {
 		return ErrConflict
 	}
@@ -45,14 +48,17 @@ func (r *ProviderRegistry) Has(code string) bool {
 }
 
 func (r *ProviderRegistry) Query(ctx context.Context, query Query) (Result, error) {
+	if r == nil {
+		return Result{}, ErrProviderUnavailable
+	}
+	if err := validateQuery(query); err != nil {
+		return Result{}, err
+	}
 	r.mu.RLock()
 	provider := r.providers[query.Code]
 	r.mu.RUnlock()
 	if provider == nil {
 		return Result{}, ErrNotFound
-	}
-	if err := validateQuery(query); err != nil {
-		return Result{}, err
 	}
 	return provider.Query(ctx, query)
 }

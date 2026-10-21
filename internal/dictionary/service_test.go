@@ -319,6 +319,25 @@ func TestProviderRegistryRejectsTypedNilProvider(t *testing.T) {
 	require.False(t, registry.Has("identity.user"))
 }
 
+func TestProviderRegistryNilAndZeroValue(t *testing.T) {
+	t.Parallel()
+	var missing *ProviderRegistry
+	require.ErrorIs(t, missing.Register("identity.user", testProvider{}), ErrInvalid)
+	result, err := missing.Query(t.Context(), Query{Code: "identity.user"})
+	require.ErrorIs(t, err, ErrProviderUnavailable)
+	require.Equal(t, Result{}, result)
+	require.False(t, missing.Has("identity.user"))
+
+	var registry ProviderRegistry
+	require.NoError(t, registry.Register("identity.user", testProvider{}))
+	require.True(t, registry.Has("identity.user"))
+	result, err = registry.Query(t.Context(), Query{Code: "identity.user"})
+	require.NoError(t, err)
+	require.Equal(t, "identity.user", result.Code)
+	_, err = registry.Query(t.Context(), Query{Code: "missing", Page: -1})
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
 func TestCreateDefinitionRejectsUnregisteredProvider(t *testing.T) {
 	t.Parallel()
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})
