@@ -47,6 +47,10 @@ The next domain work must keep identity and tenancy separate:
   tenant and membership IDs must be present together. Service accounts must
   not carry user session, tenant, or membership context. Validate this before
   attaching any principal to an HTTP or gRPC request.
+- Tokens issued by the template must verify with the versioned platform SDK
+  JWKS verifier for both RS256 and ES256. Remote JWKS initialization must fail
+  startup when its first fetch fails or exceeds the configured bounded timeout;
+  the verifier's long-lived refresh context must remain active until shutdown.
 - Login implementations must distinguish invalid credentials or concurrent
   credential revocation from database, signer, or security-audit failures.
   Infrastructure failures fail closed with dependency-unavailable, never an

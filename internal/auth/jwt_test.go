@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	"github.com/lihongjie0209/microservice-platform-go/authn"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"go.uber.org/fx/fxtest"
 )
 
 type verifierFunc func(context.Context, string) (platformprincipal.Principal, error)
@@ -57,6 +61,52 @@ func TestService_ES256IssueParseAndJWKS(t *testing.T) {
 	}
 	if keys[0].X != base64.RawURLEncoding.EncodeToString(point[1:33]) || keys[0].Y != base64.RawURLEncoding.EncodeToString(point[33:]) {
 		t.Fatalf("jwks coordinates do not match signing key")
+	}
+}
+
+func TestService_SignedTokenVerifiesThroughSharedJWKSVerifier(t *testing.T) {
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := New(config.Config{JWT: jwtConfig})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(issuer.JWKS()); err != nil {
+			t.Errorf("encode JWKS: %v", err)
+		}
+	}))
+	defer server.Close()
+	verifier, err := authn.NewJWKSVerifier(t.Context(), authn.JWKSConfig{URL: server.URL, Issuer: jwtConfig.Issuer, Audience: jwtConfig.Audience, HTTPTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verifier.Close()
+	want := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1", MembershipID: "member-1"}
+	raw, err := issuer.IssuePrincipal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := verifier.VerifyBearer(t.Context(), raw)
+	if err != nil || got != want {
+		t.Fatalf("VerifyBearer() principal=%+v error=%v, want %+v", got, err, want)
+	}
+}
+
+func TestNewRuntime_FailsWithinConfiguredJWKSStartupTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	start := time.Now()
+	service, err := NewRuntime(fxtest.NewLifecycle(t), config.Config{Auth: config.Auth{
+		JWKSURL: server.URL, Issuer: "identity-service", Audience: "consumer", JWKSTimeout: 100 * time.Millisecond,
+	}}, nil)
+	if service != nil || err == nil {
+		t.Fatalf("NewRuntime() service=%v error=%v, want JWKS startup failure", service, err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("JWKS initialization ignored configured timeout")
 	}
 }
 

@@ -84,7 +84,7 @@ func NewRuntime(lifecycle fx.Lifecycle, cfg config.Config, db *sqlx.DB) (*Servic
 	if cfg.Auth.JWKSURL == "" {
 		return service, nil
 	}
-	verifier, err := authn.NewJWKSVerifier(context.Background(), authn.JWKSConfig{URL: cfg.Auth.JWKSURL, Issuer: cfg.Auth.Issuer, Audience: cfg.Auth.Audience})
+	verifier, err := authn.NewJWKSVerifier(context.Background(), authn.JWKSConfig{URL: cfg.Auth.JWKSURL, Issuer: cfg.Auth.Issuer, Audience: cfg.Auth.Audience, HTTPTimeout: service.remoteTimeout})
 	if err != nil {
 		return nil, fmt.Errorf("configure identity token verifier: %w", err)
 	}
