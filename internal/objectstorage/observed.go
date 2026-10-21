@@ -16,6 +16,8 @@ import (
 
 var storageTracer = otel.Tracer("go-api-template/infrastructure/objectstorage")
 
+var errObjectStorageOperationFailed = errors.New("object storage operation failed")
+
 type observedStore struct {
 	next    Store
 	metrics *observability.Metrics
@@ -73,10 +75,7 @@ func (s *observedStore) Presign(ctx context.Context, input PresignInput) (Signed
 }
 
 func telemetryError(err error) error {
-	if err == nil {
-		return nil
-	}
-	return errors.New("object storage operation failed")
+	return observability.SafeError(err, errObjectStorageOperationFailed)
 }
 func (s *observedStore) start(ctx context.Context, operation string) (context.Context, func(error)) {
 	started := time.Now()

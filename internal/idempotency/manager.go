@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 )
 
 var tracer = otel.Tracer("go-api-template/infrastructure/idempotency")
+
+var errIdempotencyOperationFailed = errors.New("idempotency_operation_failed")
 
 type State = platformidempotency.State
 type Failure = platformidempotency.Failure
@@ -140,7 +143,7 @@ func (m *Manager) StartLease(ctx context.Context, key, owner string) (context.Co
 func finishSpan(span trace.Span, status string, err error) {
 	span.SetAttributes(attribute.String("idempotency.status", status))
 	if err != nil {
-		span.RecordError(err)
+		observability.RecordSafeError(span, err, errIdempotencyOperationFailed)
 		span.SetStatus(codes.Error, "operation failed")
 	}
 	span.End()

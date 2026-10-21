@@ -224,6 +224,10 @@ otherwise unsuitable for dictionary use.
   upstream `error.Error()` into them; dependency errors can contain credentials,
   connection strings, payload fragments, or personal data. Keep event IDs,
   attempts, and bounded component names for correlation instead.
+- Infrastructure spans use `observability.RecordSafeError` with a fixed
+  component reason. Only known cancellation/deadline classes may retain their
+  original error text; do not record raw Redis, object-storage, queue, or
+  handler errors as OpenTelemetry exception events.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.

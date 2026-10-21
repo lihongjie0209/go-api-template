@@ -9,14 +9,21 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var cacheTracer = otel.Tracer("go-api-template/infrastructure/cache")
+
+var (
+	errCacheOperationFailed = errors.New("cache_operation_failed")
+	errLockOperationFailed  = errors.New("lock_operation_failed")
+)
 
 type observedStore struct {
 	next    Store
 	metrics *observability.Metrics
 	backend string
+	tracer  trace.Tracer
 }
 
 func ObserveStore(next Store, metrics *observability.Metrics, backend string) Store {
@@ -26,7 +33,7 @@ func ObserveStore(next Store, metrics *observability.Metrics, backend string) St
 	if metrics == nil {
 		return next
 	}
-	return &observedStore{next: next, metrics: metrics, backend: backend}
+	return &observedStore{next: next, metrics: metrics, backend: backend, tracer: cacheTracer}
 }
 
 func (s *observedStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -71,11 +78,11 @@ func (s *observedStore) Exists(ctx context.Context, key string) (bool, error) {
 }
 func (s *observedStore) start(ctx context.Context, operation string) (context.Context, func(string, error)) {
 	started := time.Now()
-	ctx, span := cacheTracer.Start(ctx, "cache."+operation)
+	ctx, span := s.tracer.Start(ctx, "cache."+operation)
 	span.SetAttributes(attribute.String("cache.backend", s.backend), attribute.String("cache.operation", operation))
 	return ctx, func(status string, err error) {
 		if err != nil && !errors.Is(err, ErrMiss) {
-			span.RecordError(err)
+			observability.RecordSafeError(span, err, errCacheOperationFailed)
 			span.SetStatus(codes.Error, "operation failed")
 		}
 		span.SetAttributes(attribute.String("cache.status", status))
@@ -88,6 +95,7 @@ type observedLocker struct {
 	next    Locker
 	metrics *observability.Metrics
 	backend string
+	tracer  trace.Tracer
 }
 
 func ObserveLocker(next Locker, metrics *observability.Metrics, backend string) Locker {
@@ -97,7 +105,7 @@ func ObserveLocker(next Locker, metrics *observability.Metrics, backend string) 
 	if metrics == nil {
 		return next
 	}
-	return &observedLocker{next: next, metrics: metrics, backend: backend}
+	return &observedLocker{next: next, metrics: metrics, backend: backend, tracer: cacheTracer}
 }
 func (l *observedLocker) TryLock(ctx context.Context, key string, ttl time.Duration) (Lock, bool, error) {
 	ctx, done := l.start(ctx, "try_lock")
@@ -123,11 +131,11 @@ func (l *observedLocker) Lock(ctx context.Context, key string, ttl, retryDelay t
 }
 func (l *observedLocker) start(ctx context.Context, operation string) (context.Context, func(string, error)) {
 	started := time.Now()
-	ctx, span := cacheTracer.Start(ctx, "lock."+operation)
+	ctx, span := l.tracer.Start(ctx, "lock."+operation)
 	span.SetAttributes(attribute.String("lock.backend", l.backend), attribute.String("lock.operation", operation))
 	return ctx, func(status string, err error) {
 		if err != nil {
-			span.RecordError(err)
+			observability.RecordSafeError(span, err, errLockOperationFailed)
 			span.SetStatus(codes.Error, "operation failed")
 		}
 		span.SetAttributes(attribute.String("lock.status", status))

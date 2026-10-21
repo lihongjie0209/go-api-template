@@ -32,6 +32,10 @@ func TestTelemetryErrorDoesNotExposeProviderDetails(t *testing.T) {
 	if err == nil || err.Error() != "object storage operation failed" {
 		t.Fatalf("telemetryError() = %v", err)
 	}
+	canceled := telemetryError(errors.Join(context.Canceled, errors.New("secret-value")))
+	if !errors.Is(canceled, context.Canceled) || strings.Contains(canceled.Error(), "secret-value") {
+		t.Fatalf("telemetryError() = %v, want safe cancellation", canceled)
+	}
 }
 
 func TestObservedGetMeasuresBodyLifecycle(t *testing.T) {

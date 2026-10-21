@@ -3,13 +3,42 @@ package idempotency
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+func TestFinishSpanDoesNotExposeRedisErrorDetails(t *testing.T) {
+	t.Parallel()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	_, span := provider.Tracer("idempotency-test").Start(t.Context(), "idempotency.begin")
+	finishSpan(span, "error", errors.New("redis URL with secret-value"))
+	spans := recorder.Ended()
+	if len(spans) != 1 || len(spans[0].Events()) != 1 {
+		t.Fatalf("spans=%d events=%v", len(spans), spans)
+	}
+	foundSafeCode := false
+	for _, attribute := range spans[0].Events()[0].Attributes {
+		message := attribute.Value.AsString()
+		if strings.Contains(message, "secret-value") {
+			t.Fatalf("trace event leaked Redis detail: %v", attribute)
+		}
+		if attribute.Key == "exception.message" && message == "idempotency_operation_failed" {
+			foundSafeCode = true
+		}
+	}
+	if !foundSafeCode {
+		t.Fatalf("trace event lacks safe failure code: %v", spans[0].Events()[0].Attributes)
+	}
+}
 
 func TestManagerSeparatesEnvironmentNamespaces(t *testing.T) {
 	t.Parallel()

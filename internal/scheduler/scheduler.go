@@ -302,16 +302,10 @@ func recordJobFailure(span trace.Span, err error) {
 }
 
 func safeJobFailure(err error) error {
-	switch {
-	case errors.Is(err, ErrSkipped):
+	if errors.Is(err, ErrSkipped) {
 		return ErrSkipped
-	case errors.Is(err, context.Canceled):
-		return context.Canceled
-	case errors.Is(err, context.DeadlineExceeded):
-		return context.DeadlineExceeded
-	default:
-		return errJobExecutionFailed
 	}
+	return observability.SafeError(err, errJobExecutionFailed)
 }
 
 func startJobContext(parent context.Context, serviceName, job string, timeout time.Duration) (context.Context, context.CancelFunc, trace.Span) {
