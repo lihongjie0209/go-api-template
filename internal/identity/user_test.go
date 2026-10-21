@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
@@ -26,6 +27,44 @@ func TestUsernameNormalization(t *testing.T) {
 	t.Parallel()
 	if got := normalizeUsername("  Alice.Smith "); got != "alice.smith" {
 		t.Fatalf("normalizeUsername()=%q", got)
+	}
+}
+
+func TestCreateDuplicateUsernameReturnsConflict(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "postgres", err: &pgconn.PgError{Code: "23505", ConstraintName: "identity_users_username_key"}},
+		{name: "mysql", err: &mysqlDriver.MySQLError{Number: 1062, Message: "Duplicate entry"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			service := &Service{
+				transactor: database.NewTransactor(db),
+				operations: operationStub{}, security: securityStub{},
+			}
+			mock.ExpectBegin()
+			mock.ExpectExec(`INSERT INTO identity_users`).WillReturnError(test.err)
+			mock.ExpectRollback()
+			ctx := platformprincipal.SystemContext(t.Context(), "platform-admin")
+			_, err = service.Create(ctx, CreateInput{Username: "Alice.Smith", DisplayName: "Alice"})
+			if !errors.Is(err, ErrConflict) {
+				t.Fatalf("Create() error = %v, want conflict", err)
+			}
+			if errors.Is(err, ErrStaleVersion) {
+				t.Fatalf("Create() misclassified duplicate username as stale version: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

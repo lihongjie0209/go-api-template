@@ -319,7 +319,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 		q := tx.Rebind(`INSERT INTO identity_users (id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`)
 		_, err := tx.ExecContext(ctx, q, id, input.Username, input.DisplayName, input.Email, input.Phone, StatusActive, now, a, now, a)
 		if uniqueViolation(err) {
-			return ErrStaleVersion
+			return ErrConflict
 		}
 		return err
 	})
