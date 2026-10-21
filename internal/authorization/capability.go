@@ -24,9 +24,13 @@ var (
 var operationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 const (
-	MaxCapabilityItems   = 100
-	MaxCapabilityRows    = 200
-	MaxCapabilityActions = 20
+	MaxCapabilityItems = 100
+	// MaxNavigationCapabilityItems matches the bounded navigation tree size.
+	// Internal menu evaluation uses one pinned grant/policy snapshot even when
+	// the tree contains more than the public capability API's 100-item limit.
+	MaxNavigationCapabilityItems = 5000
+	MaxCapabilityRows            = 200
+	MaxCapabilityActions         = 20
 )
 
 type CapabilityRequest struct {
@@ -94,7 +98,18 @@ func (s *CapabilityService) SetEndpointRegistry(registry *accesscontrol.Endpoint
 }
 
 func (s *CapabilityService) Evaluate(ctx context.Context, requests []CapabilityRequest) (CapabilityResult, error) {
-	if s == nil || s.authorizer == nil || s.resources == nil || len(requests) == 0 || len(requests) > MaxCapabilityItems {
+	return s.evaluate(ctx, requests, MaxCapabilityItems)
+}
+
+// EvaluateNavigation evaluates one complete, bounded navigation tree against
+// one pinned authorization snapshot. It is for server-constructed menu requests,
+// not for the public capability endpoint.
+func (s *CapabilityService) EvaluateNavigation(ctx context.Context, requests []CapabilityRequest) (CapabilityResult, error) {
+	return s.evaluate(ctx, requests, MaxNavigationCapabilityItems)
+}
+
+func (s *CapabilityService) evaluate(ctx context.Context, requests []CapabilityRequest, maximum int) (CapabilityResult, error) {
+	if s == nil || s.authorizer == nil || s.resources == nil || len(requests) == 0 || len(requests) > maximum {
 		return CapabilityResult{}, ErrCapabilityInvalid
 	}
 	principal, err := platformprincipal.Require(ctx)

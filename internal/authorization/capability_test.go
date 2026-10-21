@@ -3,6 +3,7 @@ package authorization
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -69,6 +70,40 @@ func TestCapabilityServiceEvaluatesAnyRegisteredTargetOperation(t *testing.T) {
 	require.Equal(t, []CapabilityDecision{{Key: "user.update", Allowed: true}}, result.Items)
 	require.Equal(t, time.Date(2026, 9, 17, 18, 0, 30, 0, operationLocation), result.ExpiresAt)
 	require.Equal(t, []string{"POST /api/v1/users/status/update"}, seen)
+}
+
+func TestCapabilityServiceEvaluatesNavigationBatchAgainstOneSnapshot(t *testing.T) {
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{
+		Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/get", Authentication: accesscontrol.AuthenticationJWT,
+		Resource: "identity.user", Action: "read", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform resource",
+	}})
+	require.NoError(t, err)
+	calls := 0
+	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
+		return nil
+	}), nil, resources, nil, capabilityRevisionStub{revision: "one-snapshot", calls: &calls}, time.Now)
+	service.SetEndpointRegistry(endpoints)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	requests := make([]CapabilityRequest, MaxCapabilityItems+1)
+	for index := range requests {
+		requests[index] = CapabilityRequest{Key: fmt.Sprintf("menu-%d", index), Resource: "identity.user", Action: "read"}
+	}
+
+	_, err = service.Evaluate(ctx, requests)
+	require.ErrorIs(t, err, ErrCapabilityInvalid)
+	result, err := service.EvaluateNavigation(ctx, requests)
+	require.NoError(t, err)
+	require.Equal(t, "one-snapshot", result.Revision)
+	require.Len(t, result.Items, len(requests))
+	require.Equal(t, 1, calls)
+	for _, decision := range result.Items {
+		require.True(t, decision.Allowed)
+	}
+	_, err = service.EvaluateNavigation(ctx, make([]CapabilityRequest, MaxNavigationCapabilityItems+1))
+	require.ErrorIs(t, err, ErrCapabilityInvalid)
+	require.Equal(t, 1, calls)
 }
 
 func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {

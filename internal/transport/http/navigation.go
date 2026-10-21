@@ -19,7 +19,7 @@ type NavigationHandler struct {
 }
 
 type navigationCapabilityEvaluator interface {
-	Evaluate(context.Context, []authorization.CapabilityRequest) (authorization.CapabilityResult, error)
+	EvaluateNavigation(context.Context, []authorization.CapabilityRequest) (authorization.CapabilityResult, error)
 }
 
 func NewNavigationHandler(service *navigation.Service, capabilities *authorization.CapabilityService, logger *slog.Logger) *NavigationHandler {
@@ -179,9 +179,8 @@ func (h *NavigationHandler) Current(c *gin.Context) {
 	requests := make([]authorization.CapabilityRequest, 0)
 	collectNavigationCapabilities(tree, &requests)
 	allowed := make(map[string]struct{}, len(requests))
-	for start := 0; start < len(requests); start += authorization.MaxCapabilityItems {
-		end := min(start+authorization.MaxCapabilityItems, len(requests))
-		result, evaluateErr := h.capabilities.Evaluate(c.Request.Context(), requests[start:end])
+	if len(requests) > 0 {
+		result, evaluateErr := h.capabilities.EvaluateNavigation(c.Request.Context(), requests)
 		if evaluateErr != nil {
 			Fail(c, h.logger, apperror.AuthorizationUnavailable(evaluateErr))
 			return
