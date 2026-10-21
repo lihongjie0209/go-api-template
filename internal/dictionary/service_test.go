@@ -1452,6 +1452,64 @@ func TestSelectQueryItemsRejectsOversizedStoredFields(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsOversizedStoredDefinition(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active' AND deleted_at IS NULL`).
+		WithArgs("public.sample").WillReturnRows(sqlmock.NewRows([]string{"id", "dictionary_code", "name", "dictionary_type", "source_type", "description", "status", "extension", "version"}).
+		AddRow(uuidString(1), "public.sample", strings.Repeat("n", 257), KindEnum, SourceStatic, "", "active", []byte(`{}`), 1))
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	result, err := service.Query(t.Context(), Query{Code: "public.sample"})
+	require.ErrorIs(t, err, ErrResultTooLarge)
+	require.Equal(t, Result{}, result)
+}
+
+func TestPageDefinitionsRejectsOversizedStoredDefinition(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_definitions WHERE deleted_at IS NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	rows := sqlmock.NewRows([]string{"id", "dictionary_code", "name", "description", "extension"}).
+		AddRow(uuidString(1), "public.sample", "Sample", strings.Repeat("d", maxDescriptionLength+1), []byte(`{}`))
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE deleted_at IS NULL ORDER BY dictionary_code LIMIT \? OFFSET \?`).
+		WithArgs(20, 0).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	page, err := service.PageDefinitions(platformprincipal.SystemContext(t.Context(), "test"), DefinitionPageInput{})
+	require.ErrorIs(t, err, ErrResultTooLarge)
+	require.Equal(t, Page{}, page)
+}
+
+func TestStoredDefinitionSizeBounds(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name       string
+		definition Definition
+	}{
+		{name: "code", definition: Definition{Code: strings.Repeat("c", 129), Name: "Name", Extension: json.RawMessage(`{}`)}},
+		{name: "name", definition: Definition{Code: "code", Name: strings.Repeat("n", 257), Extension: json.RawMessage(`{}`)}},
+		{name: "description", definition: Definition{Code: "code", Name: "Name", Description: strings.Repeat("d", maxDescriptionLength+1), Extension: json.RawMessage(`{}`)}},
+		{name: "extension", definition: Definition{Code: "code", Name: "Name", Extension: json.RawMessage(`{"data":"` + strings.Repeat("x", 16<<10) + `"}`)}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, storedDefinitionSize(tt.definition), ErrResultTooLarge)
+		})
+	}
+	require.NoError(t, storedDefinitionSize(Definition{Code: "code", Name: "Name", Extension: json.RawMessage(`{}`)}))
+}
+
 func TestGetItemRejectsOversizedStoredValue(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()

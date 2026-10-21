@@ -488,6 +488,21 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if _, err := service.GetItem(actorCtx, largeItemIDs[0]); !errors.Is(err, dictionary.ErrResultTooLarge) {
 		t.Fatalf("oversized stored item must be rejected by management get: %v", err)
 	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE dictionary_definitions SET description=? WHERE id=?`), strings.Repeat("d", 4097), largeDefinition.ID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("prepare oversized stored dictionary definition: %v", err)
+	}
+	if _, err := service.Query(ctx, dictionary.Query{Code: "test.large", Page: 1, PageSize: 1}); !errors.Is(err, dictionary.ErrResultTooLarge) {
+		t.Fatalf("oversized stored definition must be rejected by public query: %v", err)
+	}
+	if _, err := service.GetDefinition(actorCtx, largeDefinition.ID); !errors.Is(err, dictionary.ErrResultTooLarge) {
+		t.Fatalf("oversized stored definition must be rejected by management get: %v", err)
+	}
+	if _, err := service.PageDefinitions(actorCtx, dictionary.DefinitionPageInput{Keyword: "test.large"}); !errors.Is(err, dictionary.ErrResultTooLarge) {
+		t.Fatalf("oversized stored definition must be rejected by management page: %v", err)
+	}
 	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "duplicate-value", Name: "Duplicate", Value: "guangdong-value"}); !errors.Is(err, dictionary.ErrConflict) {
 		t.Fatalf("duplicate selectable value create error=%v", err)
 	}

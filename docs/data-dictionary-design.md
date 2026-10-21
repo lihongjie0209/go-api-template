@@ -18,10 +18,12 @@
 | Shared capability | Reuses pagination, cache store, transactions, operation outbox recorder, Resource/Action registry, common envelope and error codes. The Go provider interface and query/result types are the future SDK extraction boundary. Static tree construction uses bounded windows of the shared SDK tree builder to avoid repeated ancestor-path work while retaining SDK cycle/orphan validation. |
 
 The 8 MiB serialized-item budget is a fixed safety ceiling, not a profile or
-environment override. A static result above it returns the shared Conflict
-code with a message to reduce page size, narrow the dictionary, or correct
-oversized stored item data; an
-in-process provider violating the contract remains provider-unavailable.
+environment override. Static item reads also enforce write-side field bounds,
+while definition reads enforce code/name/description/extension bounds before
+building a response or using cache. An oversized stored result returns the
+shared Conflict code with a message to reduce page size, narrow the dictionary,
+or correct oversized data; an in-process provider violating the contract
+remains provider-unavailable.
 
 ## Dictionary-item management target
 

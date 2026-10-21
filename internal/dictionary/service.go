@@ -29,7 +29,7 @@ var (
 	ErrInvalid               = errors.New("invalid data dictionary")
 	ErrNotFound              = errors.New("data dictionary not found")
 	ErrConflict              = errors.New("data dictionary conflict")
-	ErrResultTooLarge        = fmt.Errorf("%w: query result exceeds item size limit", ErrConflict)
+	ErrResultTooLarge        = fmt.Errorf("%w: query result exceeds size limit", ErrConflict)
 	ErrStaleVersion          = errors.New("data dictionary stale version")
 	ErrProviderNotRegistered = errors.New("data dictionary provider not registered")
 	ErrProviderUnavailable   = errors.New("data dictionary provider unavailable")
@@ -93,6 +93,13 @@ func validDefinition(in DefinitionInput) bool {
 	return codePattern.MatchString(in.Code) && strings.TrimSpace(in.Name) != "" && len(in.Name) <= 256 && len(in.Description) <= maxDescriptionLength && (in.Kind == KindEnum || in.Kind == KindTree) && (in.Source == SourceStatic || in.Source == SourceProvider) && (in.Status == "active" || in.Status == "disabled") && validJSON(in.Extension)
 }
 
+func storedDefinitionSize(d Definition) error {
+	if len(d.Code) > 128 || len(d.Name) > 256 || len(d.Description) > maxDescriptionLength || len(d.Extension) > 16<<10 {
+		return ErrResultTooLarge
+	}
+	return nil
+}
+
 func (s *Service) CreateDefinition(ctx context.Context, in DefinitionInput) (Definition, error) {
 	actor, err := platformprincipal.Require(ctx)
 	if err != nil {
@@ -133,11 +140,17 @@ func (s *Service) getDefinition(ctx context.Context, id string) (Definition, err
 		err = ErrNotFound
 	}
 	if err == nil {
+		err = storedDefinitionSize(d)
+	}
+	if err == nil {
 		records := []Definition{d}
 		err = s.presentDefinitions(ctx, records)
 		d = records[0]
 	}
-	return d, err
+	if err != nil {
+		return Definition{}, err
+	}
+	return d, nil
 }
 func (s *Service) presentDefinitions(ctx context.Context, records []Definition) error {
 	ids := make([]string, 0, len(records)*2)
@@ -260,14 +273,37 @@ func (s *Service) PageDefinitions(ctx context.Context, in DefinitionPageInput) (
 		return Page{}, err
 	}
 	queryArgs := append(append([]any{}, args...), page.PageSize, pagination.Offset(page))
-	items := []Definition{}
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+definitionColumns+` FROM dictionary_definitions WHERE `+where+` ORDER BY dictionary_code LIMIT ? OFFSET ?`), queryArgs...); err != nil {
+	items, err := s.selectDefinitions(ctx, `SELECT `+definitionColumns+` FROM dictionary_definitions WHERE `+where+` ORDER BY dictionary_code LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
 		return Page{}, err
 	}
 	if err := s.presentDefinitions(ctx, items); err != nil {
 		return Page{}, err
 	}
 	return Page{Items: items, Page: page.Page, PageSize: page.PageSize, Total: total}, nil
+}
+
+func (s *Service) selectDefinitions(ctx context.Context, query string, args ...any) ([]Definition, error) {
+	rows, err := s.db.QueryxContext(ctx, s.db.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Definition, 0)
+	for rows.Next() {
+		var item Definition
+		if err := rows.StructScan(&item); err != nil {
+			return nil, err
+		}
+		if err := storedDefinitionSize(item); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 func (s *Service) GetItem(ctx context.Context, id string) (Item, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
@@ -786,6 +822,9 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 		return Result{}, ErrNotFound
 	}
 	if err != nil {
+		return Result{}, err
+	}
+	if err := storedDefinitionSize(d); err != nil {
 		return Result{}, err
 	}
 	if d.Kind == KindTree && (q.Page != 0 || q.PageSize != 0) {
