@@ -49,10 +49,12 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"go.uber.org/fx"
+	"google.golang.org/protobuf/proto"
 )
 
 type integrationLifecycleLocker struct{}
@@ -1848,6 +1850,7 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || run.ScheduledJobID != updated.ID || run.JobName != updated.Name || run.Version != 1 {
 		t.Fatalf("get scheduled job run = %+v err=%v", run, err)
 	}
+	testScheduledJobCompletionOutboxTransaction(t, ctx, db, transactor, handlers, updated)
 	testManualScheduledJobOutboxTransaction(t, ctx, db, transactor, updated.ID)
 
 	if err := service.Delete(actorCtx, updated.ID, updated.Version); err != nil {
@@ -1858,6 +1861,79 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if _, err := service.UpdateTarget(actorCtx, updated.ID); !errors.Is(err, scheduler.ErrDefinitionNotFound) {
 		t.Fatalf("get deleted scheduled job update target error = %v", err)
+	}
+}
+
+func testScheduledJobCompletionOutboxTransaction(t *testing.T, ctx context.Context, db *sqlx.DB, transactor *appdb.Transactor, handlers *scheduler.HandlerRegistry, definition scheduler.Definition) {
+	t.Helper()
+	const subject = "platform.operation-log.v1"
+	cfg := config.Config{
+		App:          config.App{Name: "scheduler-integration"},
+		Cron:         config.Cron{Timezone: "Asia/Shanghai"},
+		EventBus:     config.EventBus{Enabled: true},
+		OperationLog: config.OperationLog{Enabled: true, Subject: subject, MaxPayloadBytes: 4096},
+	}
+	bus := &eventbus.Bus{}
+	outbox := eventbus.NewOutbox(cfg, bus, transactor, nil, nil)
+	operations := operationlog.New(cfg, bus, db, transactor, nil, outbox, nil)
+	manager, err := scheduler.NewManager(integrationLifecycle{}, cfg, db, transactor, integrationLifecycleLocker{}, observability.NewMetrics(cfg, nil, nil), slog.New(slog.NewTextHandler(io.Discard, nil)), handlers, operations)
+	if err != nil {
+		t.Fatalf("create logged scheduler runtime: %v", err)
+	}
+	actorCtx := platformprincipal.SystemContext(ctx, "scheduler-admin")
+	countRuns := func() int {
+		t.Helper()
+		var count int
+		if err := db.GetContext(ctx, &count, db.Rebind(`SELECT count(*) FROM scheduled_job_runs WHERE scheduled_job_id=? AND trigger_source='manual' AND status='success' AND deleted_at IS NULL`), definition.ID); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	countEvents := func() int {
+		t.Helper()
+		var count int
+		if err := db.GetContext(ctx, &count, db.Rebind(`SELECT count(*) FROM event_outbox WHERE subject=? AND deleted_at IS NULL`), subject); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	runsBefore, eventsBefore := countRuns(), countEvents()
+	if err := manager.Trigger(actorCtx, definition); err != nil {
+		t.Fatalf("execute logged scheduled job: %v", err)
+	}
+	if got := countRuns(); got != runsBefore+1 {
+		t.Fatalf("completed scheduled job runs = %d, want %d", got, runsBefore+1)
+	}
+	if got := countEvents(); got != eventsBefore+1 {
+		t.Fatalf("completion outbox events = %d, want %d", got, eventsBefore+1)
+	}
+	var rawEnvelope []byte
+	if err := db.GetContext(ctx, &rawEnvelope, db.Rebind(`SELECT envelope FROM event_outbox WHERE subject=? AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 1`), subject); err != nil {
+		t.Fatal(err)
+	}
+	var envelope commonv1.EventEnvelope
+	if err := proto.Unmarshal(rawEnvelope, &envelope); err != nil || envelope.AggregateId == "" || envelope.EventType != "platform.operation-log.recorded.v1" {
+		t.Fatalf("completion event = %+v, err=%v", envelope, err)
+	}
+	var linkedRuns int
+	if err := db.GetContext(ctx, &linkedRuns, db.Rebind(`SELECT count(*) FROM scheduled_job_runs WHERE id=? AND scheduled_job_id=? AND trigger_source='manual' AND status='success' AND deleted_at IS NULL`), envelope.AggregateId, definition.ID); err != nil || linkedRuns != 1 {
+		t.Fatalf("completion event linked runs = %d, run_id=%q, err=%v", linkedRuns, envelope.AggregateId, err)
+	}
+
+	unavailable := eventbus.NewOutbox(config.Config{App: cfg.App}, bus, transactor, nil, nil)
+	operations = operationlog.New(cfg, bus, db, transactor, nil, unavailable, nil)
+	manager, err = scheduler.NewManager(integrationLifecycle{}, cfg, db, transactor, integrationLifecycleLocker{}, observability.NewMetrics(cfg, nil, nil), slog.New(slog.NewTextHandler(io.Discard, nil)), handlers, operations)
+	if err != nil {
+		t.Fatalf("create scheduler with unavailable log outbox: %v", err)
+	}
+	if err := manager.Trigger(actorCtx, definition); err == nil {
+		t.Fatal("scheduled job completion succeeded without durable operation log")
+	}
+	if got := countRuns(); got != runsBefore+1 {
+		t.Fatalf("failed log enqueue persisted a completed run: count=%d", got)
+	}
+	if got := countEvents(); got != eventsBefore+1 {
+		t.Fatalf("failed log enqueue persisted an event: count=%d", got)
 	}
 }
 
