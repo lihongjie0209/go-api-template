@@ -185,21 +185,21 @@ func (m *Manager) Trigger(ctx context.Context, definition Definition) error {
 
 func (m *Manager) execute(parent context.Context, definition Definition, source string) error {
 	started, status := time.Now(), "success"
+	ctx, cancel, span := startJobContext(parent, m.cfg.App.Name, definition.Code, time.Duration(definition.TimeoutSeconds)*time.Second)
 	handler, err := m.handlers.Resolve(definition.Handler)
 	if err == nil {
-		ctx, cancel, span := startJobContext(parent, m.cfg.App.Name, definition.Code, time.Duration(definition.TimeoutSeconds)*time.Second)
 		err = runJobContext(ctx, definition.Code, time.Duration(definition.LockTTLSeconds)*time.Second, m.locker, func(ctx context.Context) error { return handler(ctx, definition.Payload) }, m.logger)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "job failed")
-		}
-		finished := time.Now()
-		if recordErr := m.recordRun(ctx, definition, source, statusForRun(err), started, finished); recordErr != nil {
-			err = errors.Join(err, recordErr)
-		}
-		span.End()
-		cancel()
 	}
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "job failed")
+	}
+	finished := time.Now()
+	if recordErr := m.recordRun(ctx, definition, source, statusForRun(err), started, finished); recordErr != nil {
+		err = errors.Join(err, recordErr)
+	}
+	span.End()
+	cancel()
 	if err != nil {
 		status = "error"
 		if errors.Is(err, ErrSkipped) {

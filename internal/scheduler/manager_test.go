@@ -94,6 +94,38 @@ func TestManagerExecuteRecordsBoundedHistory(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestManagerExecuteRecordsMissingHandlerFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := &Manager{
+		cfg:      config.Config{App: config.App{Name: "orders-service"}},
+		tx:       database.NewTransactor(db),
+		metrics:  &observability.Metrics{},
+		logger:   logger,
+		handlers: NewHandlerRegistry(logger),
+		operations: runLogRecorderStub{recordTx: func(_ context.Context, tx *sqlx.Tx, entry operationlog.Entry) error {
+			require.NotNil(t, tx)
+			require.Equal(t, "platform.scheduled-job.run.completed", entry.Operation)
+			require.False(t, entry.Succeeded)
+			require.Equal(t, "job_error", entry.ErrorCode)
+			require.Equal(t, "scheduled job did not complete successfully", entry.ErrorMessage)
+			return nil
+		}},
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO scheduled_job_runs`).
+		WithArgs(sqlmock.AnyArg(), "job-1", "orphaned-job", "Orphaned", "removed.handler", "cron", "error", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "scheduled job execution failed", sqlmock.AnyArg(), "orders-service:scheduler:orphaned-job", sqlmock.AnyArg(), "orders-service:scheduler:orphaned-job").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	err = manager.execute(t.Context(), Definition{ID: "job-1", Code: "orphaned-job", Name: "Orphaned", Handler: "removed.handler", TimeoutSeconds: 30, LockTTLSeconds: 60}, "cron")
+	require.ErrorIs(t, err, ErrHandlerNotRegistered)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestManagerRunRecordRollsBackWhenOperationLogCannotBeQueued(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
