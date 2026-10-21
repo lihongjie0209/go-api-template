@@ -300,6 +300,14 @@ func TestProviderRegistry(t *testing.T) {
 	require.Equal(t, "identity.user", result.Code)
 }
 
+func TestProviderRegistryRejectsTypedNilProvider(t *testing.T) {
+	t.Parallel()
+	registry := NewProviderRegistry()
+	var provider *testProvider
+	require.ErrorIs(t, registry.Register("identity.user", provider), ErrInvalid)
+	require.False(t, registry.Has("identity.user"))
+}
+
 func TestCreateDefinitionRejectsUnregisteredProvider(t *testing.T) {
 	t.Parallel()
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeUser})

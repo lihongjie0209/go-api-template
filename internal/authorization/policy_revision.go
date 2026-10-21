@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/dependency"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -23,7 +24,7 @@ type grantSnapshotter interface {
 
 func NewPolicyRevisions(data *datapermission.RuntimeLoader, authorizer platformauthz.Authorizer) (*PolicyRevisions, error) {
 	grants, ok := authorizer.(grantSnapshotter)
-	if !ok || nilDependency(grants) {
+	if !ok || dependency.IsNil(grants) {
 		return nil, errors.New("authorization grant snapshot provider is required")
 	}
 	return &PolicyRevisions{data: data, grants: grants}, nil

@@ -670,6 +670,12 @@ For every implementation:
 5. If an existing shared component is insufficient, strengthen it centrally
    and migrate callers rather than creating a parallel implementation.
 
+At dependency-injection and provider-registration boundaries, an interface
+holding a typed nil pointer is still non-nil. Validate required interface
+dependencies with the shared `internal/dependency.IsNil` helper before calling
+their methods or publishing a registry. Add a unit regression for each new
+interface registry so miswiring fails at startup instead of during a request.
+
 ## Definition of Done
 
 An interface is not complete until:

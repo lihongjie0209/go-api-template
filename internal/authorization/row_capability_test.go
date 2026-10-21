@@ -18,6 +18,14 @@ func TestRowCapabilityRegistryRejectsDuplicateResources(t *testing.T) {
 	require.ErrorIs(t, err, ErrRowCapabilityProviderDuplicate)
 }
 
+func TestRowCapabilityRegistryRejectsTypedNilProvider(t *testing.T) {
+	t.Parallel()
+	resources, schemas := rowCapabilityContracts(t, "tenant.role", resourceaction.ResourceScopeTenant)
+	var provider *tenantRoleCapabilityProvider
+	_, err := NewRowCapabilityRegistry([]RowCapabilityProvider{provider}, resources, schemas)
+	require.ErrorIs(t, err, ErrRowCapabilityProviderInvalid)
+}
+
 func TestRowCapabilityRegistryRejectsMissingOrNonTenantContracts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

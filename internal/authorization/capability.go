@@ -10,6 +10,7 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/dependency"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -74,7 +75,7 @@ type policyRevisions interface {
 }
 
 func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) (*CapabilityService, error) {
-	if nilDependency(authorizer) || resources == nil || revisions == nil {
+	if dependency.IsNil(authorizer) || resources == nil || revisions == nil {
 		return nil, ErrCapabilityUnavailable
 	}
 	return newCapabilityService(authorizer, dataScopes, resources, providers, revisions, time.Now), nil

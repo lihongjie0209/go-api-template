@@ -3,6 +3,8 @@ package dictionary
 import (
 	"context"
 	"sync"
+
+	"github.com/lihongjie0209/go-api-template/internal/dependency"
 )
 
 // Provider is the contract implemented by business modules that expose a
@@ -21,7 +23,7 @@ func NewProviderRegistry() *ProviderRegistry {
 	return &ProviderRegistry{providers: map[string]Provider{}}
 }
 func (r *ProviderRegistry) Register(code string, provider Provider) error {
-	if !codePattern.MatchString(code) || provider == nil {
+	if !codePattern.MatchString(code) || dependency.IsNil(provider) {
 		return ErrInvalid
 	}
 	r.mu.Lock()

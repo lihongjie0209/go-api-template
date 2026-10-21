@@ -559,3 +559,11 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Authorization and tenant boundary | Department IDs used by data policies must come from an active, non-deleted membership and a non-deleted department in the same tenant. The department join enforces that boundary in the projection query even if an inconsistent soft-deleted association survives outside the normal leaf-only delete workflow. Policy evaluation remains fail-closed on query failure. |
 | Logs, cache, lock, version and audit | This read-only projection writes no operation/security event, cache entry, lock, version or audit field. It reuses the established SQL data-permission service and transaction/audit infrastructure; no parallel permission implementation is introduced. |
 | Presentation and tests | No response fields or time formatting change. A unit regression pins the required tenant/live-department SQL join. Service-contained PostgreSQL/MySQL Testcontainers verify that a logically deleted department no longer contributes a subject department ID; this intentionally simulates a stale association that normal service deletion disallows. |
+
+## Provider wiring safety
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract and authorization | Row-capability and in-process dictionary provider contracts are unchanged. Both registries reject interface values containing typed nil pointers during registration; a miswired provider must not enter an authorization or public dictionary request path. |
+| Side effects and presentation | Registration does not perform database writes, emit operation/security logs, cache values, acquire locks or alter audit/version fields. No API response or presentation format changes. |
+| Tests and shared capability | Unit regressions demonstrate that each registry previously accepted a typed-nil provider and now rejects it. Both reuse one tested internal dependency check instead of duplicating reflection logic. The platform SDK `v0.15.13` has no existing typed-nil helper; extraction into the public SDK remains a candidate if another service needs this general-purpose composition guard. |

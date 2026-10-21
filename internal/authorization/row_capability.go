@@ -8,6 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/dependency"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 )
 
@@ -33,7 +34,7 @@ func NewRowCapabilityRegistry(providers []RowCapabilityProvider, resources *reso
 	}
 	registry := &RowCapabilityRegistry{providers: make(map[string]RowCapabilityProvider, len(providers))}
 	for _, provider := range providers {
-		if provider == nil || provider.Resource() == "" {
+		if dependency.IsNil(provider) || provider.Resource() == "" {
 			return nil, ErrRowCapabilityProviderInvalid
 		}
 		resource := provider.Resource()
