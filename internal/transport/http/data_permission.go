@@ -148,7 +148,7 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 	}
 	var result datapermission.SimulationResult
 	var simulationErr error
-	err := operationlog.Do(c.Request.Context(), h.recorder, h.simulationEntry(c, "data-permission.policy.simulate", "", map[string]any{"scope": expectedDataPolicyScope(c), "action": request.Action}), func() error {
+	err := operationlog.Do(c.Request.Context(), h.recorder, h.simulationEntry(c, "data-permission.policy.simulate", "", map[string]any{"scope": expectedDataPolicyScope(c)}), func() error {
 		if request.Policy.Scope.Type != expectedDataPolicyScope(c) || !simulationTenantAllowed(c, request.Policy.Scope.TenantID, request.Subject.TenantID, request.Resource.TenantID) {
 			simulationErr = datapermission.ErrPolicyScope
 			return simulationErr
@@ -186,7 +186,7 @@ func (h *DataPermissionHandler) SimulateVersion(c *gin.Context) {
 	}
 	var result datapermission.SimulationResult
 	var simulationErr error
-	err = operationlog.Do(c.Request.Context(), h.recorder, h.simulationEntry(c, "data-permission.policy.simulate-version", request.PolicyID, map[string]any{"scope": expectedDataPolicyScope(c), "version_number": request.VersionNumber, "action": request.Action}), func() error {
+	err = operationlog.Do(c.Request.Context(), h.recorder, h.simulationEntry(c, "data-permission.policy.simulate-version", request.PolicyID, map[string]any{"scope": expectedDataPolicyScope(c), "version_number": request.VersionNumber}), func() error {
 		parent, getErr := h.service.Get(c.Request.Context(), request.PolicyID)
 		if getErr == nil && parent.Scope != expectedDataPolicyScope(c) {
 			getErr = datapermission.ErrPolicyNotFound

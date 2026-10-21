@@ -652,7 +652,7 @@ func testDataPermissionSimulationOutbox(t *testing.T, ctx context.Context, db *s
 		if err := json.Unmarshal([]byte(event.RequestPayload), &summary); err != nil {
 			t.Fatal(err)
 		}
-		if summary["scope"] != "tenant" || summary["action"] != "read" {
+		if summary["scope"] != "tenant" || summary["action"] != nil {
 			t.Fatalf("simulation diagnostic summary=%v", summary)
 		}
 	}

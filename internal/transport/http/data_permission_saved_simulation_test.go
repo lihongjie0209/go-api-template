@@ -40,6 +40,7 @@ func TestSavedDataPermissionSimulationUsesStoredVersionAndRouteScope(t *testing.
 		name           string
 		path           string
 		policyScope    datapermission.PolicyScopeType
+		action         string
 		resourceTenant string
 		version        bool
 		logError       bool
@@ -50,6 +51,7 @@ func TestSavedDataPermissionSimulationUsesStoredVersionAndRouteScope(t *testing.
 		{name: "global policy on tenant route", policyScope: datapermission.PolicyScopeGlobal, wantStatus: http.StatusNotFound},
 		{name: "missing saved version", policyScope: datapermission.PolicyScopeTenant, wantStatus: http.StatusNotFound},
 		{name: "foreign tenant resource", policyScope: datapermission.PolicyScopeTenant, resourceTenant: "tenant-2", version: true, wantStatus: http.StatusForbidden},
+		{name: "untrusted action is not logged", policyScope: datapermission.PolicyScopeTenant, action: "sensitive-bearer-like-value", version: true, wantStatus: http.StatusBadRequest},
 		{name: "failed simulation keeps its error when diagnostic enqueue fails", policyScope: datapermission.PolicyScopeTenant, resourceTenant: "tenant-2", version: true, logError: true, wantStatus: http.StatusForbidden},
 		{name: "diagnostic enqueue failure", policyScope: datapermission.PolicyScopeTenant, version: true, logError: true, wantStatus: http.StatusServiceUnavailable},
 	} {
@@ -108,7 +110,11 @@ func TestSavedDataPermissionSimulationUsesStoredVersionAndRouteScope(t *testing.
 			if resourceTenant == "" {
 				resourceTenant = "tenant-1"
 			}
-			body := `{"policy_id":"` + policyID + `","version_number":2,"action":"update","subject":{"id":"user-1","type":"user","authenticated":true,"tenant_id":"tenant-1"},"resource":{"type":"tenant.member","tenant_id":"` + resourceTenant + `"},"subject_attributes":{"id":"user-1"},"resource_attributes":{"owner_id":"user-1"}}`
+			action := test.action
+			if action == "" {
+				action = "update"
+			}
+			body := `{"policy_id":"` + policyID + `","version_number":2,"action":"` + action + `","subject":{"id":"user-1","type":"user","authenticated":true,"tenant_id":"tenant-1"},"resource":{"type":"tenant.member","tenant_id":"` + resourceTenant + `"},"subject_attributes":{"id":"user-1"},"resource_attributes":{"owner_id":"user-1"}}`
 			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			request = request.WithContext(platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"}))
@@ -119,7 +125,10 @@ func TestSavedDataPermissionSimulationUsesStoredVersionAndRouteScope(t *testing.
 			require.Equal(t, "data-permission.policy.simulate-version", logs.entries[0].Operation)
 			require.Equal(t, policyID, logs.entries[0].ResourceID)
 			require.Equal(t, test.wantStatus == http.StatusOK || (test.logError && test.resourceTenant == ""), logs.entries[0].Succeeded)
-			require.Equal(t, map[string]any{"scope": expectedScope(test.path), "version_number": int64(2), "action": "update"}, logs.entries[0].Request)
+			require.Equal(t, map[string]any{"scope": expectedScope(test.path), "version_number": int64(2)}, logs.entries[0].Request)
+			encodedEntry, err := json.Marshal(logs.entries[0])
+			require.NoError(t, err)
+			require.NotContains(t, string(encodedEntry), "sensitive-bearer-like-value")
 			if test.wantStatus == http.StatusOK {
 				var response struct {
 					Body datapermission.SimulationResult `json:"body"`
@@ -200,7 +209,7 @@ func TestUnpersistedDataPermissionSimulationRecordsSafeDiagnostic(t *testing.T) 
 			entry := logs.entries[len(logs.entries)-1]
 			require.Equal(t, "data-permission.policy.simulate", entry.Operation)
 			require.Equal(t, test.wantStatus == http.StatusOK, entry.Succeeded)
-			require.Equal(t, map[string]any{"scope": datapermission.PolicyScopeTenant, "action": "update"}, entry.Request)
+			require.Equal(t, map[string]any{"scope": datapermission.PolicyScopeTenant}, entry.Request)
 			encoded, err := json.Marshal(entry)
 			require.NoError(t, err)
 			require.NotContains(t, string(encoded), "owner_id")
