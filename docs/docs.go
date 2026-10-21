@@ -13569,6 +13569,9 @@ const docTemplate = `{
         },
         "dictionary.Item": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "children": {
                     "type": "array",
@@ -13604,7 +13607,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -13820,7 +13824,8 @@ const docTemplate = `{
         "dictionary.ResultItem": {
             "type": "object",
             "required": [
-                "children"
+                "children",
+                "parent_id"
             ],
             "properties": {
                 "children": {
@@ -13845,7 +13850,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "sort_order": {
                     "type": "integer"

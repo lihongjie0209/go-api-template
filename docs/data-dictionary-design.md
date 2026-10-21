@@ -14,7 +14,7 @@
 | Optimistic lock | Definition and item update/delete require a positive expected version. Item mutations also increment the parent definition version for cache invalidation. |
 | Audit | Every table has created/updated actor and time, version, and logical-delete fields. PostgreSQL/Kingbase enable the common audit trigger; all writes use the shared transactor and principal context. |
 | Presentation | Management responses include persisted audit fields. Public values include ID, code, name, value, disabled state, sort order, parent/tree structure and JSON extension, but omit actor and audit metadata. Timestamps follow the platform Asia/Shanghai presentation convention. |
-| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, static cache-key equivalence, provider cache bypass and filter/sort enforcement, ancestor retention, filtered tree totals, leaf `children: []` serialization, cycle rejection, and rejection of unregistered in-process providers before database access. A parsed Swagger contract test requires the public dictionary result to reference an item schema with mandatory array-valued `children`. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search and serialized leaf shape, and enum paging without another service. |
+| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, static cache-key equivalence, provider cache bypass and filter/sort enforcement, ancestor retention, filtered tree totals, leaf `children: []` and nullable `parent_id` serialization, cycle rejection, and rejection of unregistered in-process providers before database access. A parsed Swagger contract test requires the public dictionary result to reference an item schema with mandatory array-valued `children` and mandatory nullable `parent_id`. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search and serialized tree shape, and enum paging without another service. |
 | Shared capability | Reuses pagination, cache store, transactions, operation outbox recorder, Resource/Action registry, common envelope and error codes. The Go provider interface and query/result types are the future SDK extraction boundary. |
 
 ## Dictionary-item management target
@@ -53,10 +53,11 @@ Requests support:
 - at most three distinct allowlisted sort fields from `sort_order`, `code`, or `name`;
 - a bounded JSON `extension` object passed through without interpretation.
 
-Responses use stable string IDs, code, name, value, optional parent ID,
+Responses use stable string IDs, code, name, value, nullable parent ID,
 disabled flag, sort order, nested children for tree dictionaries, and a bounded
-JSON extension object. Every serialized node includes `children: []` when it
-has no children, including provider-supplied tree leaves. Providers must return
+JSON extension object. Every serialized node includes `parent_id` (`null` for
+roots) and `children: []` when it has no children, including provider-supplied
+tree leaves. Providers must return
 no more than 200 enum items per
 page or 10,000 total tree nodes, use deterministic ordering, honor context
 cancellation, and must not return credentials or authorization-sensitive data.

@@ -732,7 +732,7 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	if d.Source == SourceStatic && s.cache != nil {
 		cacheQuery := canonicalStaticCacheQuery(q, d.Kind)
 		requestJSON, _ := json.Marshal(cacheQuery)
-		cacheKey = fmt.Sprintf("dictionary:query:v2:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
+		cacheKey = fmt.Sprintf("dictionary:query:v3:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
 		if cached, cacheErr := cache.GetJSON[Result](ctx, s.cache, cacheKey); cacheErr == nil {
 			return cached, nil
 		}

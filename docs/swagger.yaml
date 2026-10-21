@@ -972,6 +972,7 @@ definitions:
         type: string
       parent_id:
         type: string
+        x-nullable: true
       parent_name:
         type: string
       sort_order:
@@ -986,6 +987,8 @@ definitions:
         type: string
       version:
         type: integer
+    required:
+    - parent_id
     type: object
   dictionary.ItemDeleteTarget:
     properties:
@@ -1129,12 +1132,14 @@ definitions:
         type: string
       parent_id:
         type: string
+        x-nullable: true
       sort_order:
         type: integer
       value:
         type: string
     required:
     - children
+    - parent_id
     type: object
   dictionary.Sort:
     properties:

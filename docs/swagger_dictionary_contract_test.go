@@ -9,15 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDictionarySwaggerRequiresChildrenArray(t *testing.T) {
+func TestDictionarySwaggerRequiresTreeNodeShape(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("swagger.json")
 	require.NoError(t, err)
 	var document struct {
 		Definitions map[string]struct {
 			Properties map[string]struct {
-				Type  string `json:"type"`
-				Items *struct {
+				Type     string `json:"type"`
+				Nullable bool   `json:"x-nullable"`
+				Items    *struct {
 					Ref string `json:"$ref"`
 				} `json:"items"`
 			} `json:"properties"`
@@ -39,9 +40,15 @@ func TestDictionarySwaggerRequiresChildrenArray(t *testing.T) {
 
 	item := document.Definitions["dictionary.ResultItem"]
 	require.True(t, slices.Contains(item.Required, "children"))
+	require.True(t, slices.Contains(item.Required, "parent_id"))
+	require.True(t, item.Properties["parent_id"].Nullable)
 	require.Equal(t, "array", item.Properties["children"].Type)
 	require.NotNil(t, item.Properties["children"].Items)
 	require.Equal(t, "#/definitions/dictionary.ResultItem", item.Properties["children"].Items.Ref)
+
+	managementItem := document.Definitions["dictionary.Item"]
+	require.True(t, slices.Contains(managementItem.Required, "parent_id"))
+	require.True(t, managementItem.Properties["parent_id"].Nullable)
 
 	response := document.Paths["/api/v1/public/dictionaries/query"]["post"].Responses["200"].Schema
 	require.Condition(t, func() bool {

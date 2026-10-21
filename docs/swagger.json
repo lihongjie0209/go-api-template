@@ -13566,6 +13566,9 @@
         },
         "dictionary.Item": {
             "type": "object",
+            "required": [
+                "parent_id"
+            ],
             "properties": {
                 "children": {
                     "type": "array",
@@ -13601,7 +13604,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "parent_name": {
                     "type": "string"
@@ -13817,7 +13821,8 @@
         "dictionary.ResultItem": {
             "type": "object",
             "required": [
-                "children"
+                "children",
+                "parent_id"
             ],
             "properties": {
                 "children": {
@@ -13842,7 +13847,8 @@
                     "type": "string"
                 },
                 "parent_id": {
-                    "type": "string"
+                    "type": "string",
+                    "x-nullable": true
                 },
                 "sort_order": {
                     "type": "integer"

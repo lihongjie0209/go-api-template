@@ -321,7 +321,9 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	var treeResponse struct {
 		Items []struct {
+			ParentID json.RawMessage `json:"parent_id"`
 			Children []struct {
+				ParentID json.RawMessage   `json:"parent_id"`
 				Children []json.RawMessage `json:"children"`
 			} `json:"children"`
 		} `json:"items"`
@@ -331,6 +333,9 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if len(treeResponse.Items) != 1 || len(treeResponse.Items[0].Children) != 1 || treeResponse.Items[0].Children[0].Children == nil {
 		t.Fatalf("dictionary leaf must encode children as an array: %s", encodedTree)
+	}
+	if string(treeResponse.Items[0].ParentID) != "null" || string(treeResponse.Items[0].Children[0].ParentID) != `"`+root.ID+`"` {
+		t.Fatalf("dictionary tree must encode root parent_id as null and child parent_id as its parent: %s", encodedTree)
 	}
 	filtered, err := service.Query(ctx, dictionary.Query{Code: "test.region", Keyword: "guang"})
 	if err != nil || len(filtered.Items) != 1 || len(filtered.Items[0].Children) != 1 {

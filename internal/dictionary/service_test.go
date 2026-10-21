@@ -319,16 +319,44 @@ func TestTreeDictionaryJSONAlwaysIncludesChildrenArray(t *testing.T) {
 			require.NoError(t, err)
 			var result struct {
 				Items []struct {
+					ParentID json.RawMessage `json:"parent_id"`
 					Children []struct {
-						Children []any `json:"children"`
+						ParentID json.RawMessage `json:"parent_id"`
+						Children []any           `json:"children"`
 					} `json:"children"`
 				} `json:"items"`
 			}
 			require.NoError(t, json.Unmarshal(encoded, &result))
 			require.Len(t, result.Items, 1)
+			require.JSONEq(t, `null`, string(result.Items[0].ParentID))
 			require.Len(t, result.Items[0].Children, 1)
+			require.JSONEq(t, `"`+rootID+`"`, string(result.Items[0].Children[0].ParentID))
 			require.NotNil(t, result.Items[0].Children[0].Children)
 			require.Empty(t, result.Items[0].Children[0].Children)
+		})
+	}
+}
+
+func TestDictionaryItemJSONIncludesNullableParentID(t *testing.T) {
+	t.Parallel()
+	rootID := uuidString(1)
+	tests := []struct {
+		name     string
+		parentID *string
+		want     string
+	}{
+		{name: "root", want: `null`},
+		{name: "child", parentID: &rootID, want: `"` + rootID + `"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			encoded, err := json.Marshal(Item{ID: uuidString(2), ParentID: test.parentID})
+			require.NoError(t, err)
+			var response map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(encoded, &response))
+			require.Contains(t, response, "parent_id")
+			require.JSONEq(t, test.want, string(response["parent_id"]))
 		})
 	}
 }
@@ -518,7 +546,7 @@ func TestStaticDictionaryCacheIgnoresUnusedQueryExtension(t *testing.T) {
 	require.Equal(t, 1, store.writes)
 	require.Len(t, store.values, 1)
 	for key := range store.values {
-		require.True(t, strings.HasPrefix(key, "dictionary:query:v2:"), "cache key = %q", key)
+		require.True(t, strings.HasPrefix(key, "dictionary:query:v3:"), "cache key = %q", key)
 	}
 }
 

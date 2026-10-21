@@ -38,7 +38,7 @@ type Definition struct {
 type Item struct {
 	ID            string          `db:"id" json:"id"`
 	DictionaryID  string          `db:"dictionary_id" json:"dictionary_id"`
-	ParentID      *string         `db:"parent_id" json:"parent_id,omitempty"`
+	ParentID      *string         `db:"parent_id" json:"parent_id" binding:"required" extensions:"x-nullable"`
 	ParentName    string          `db:"-" json:"parent_name"`
 	Code          string          `db:"code" json:"code"`
 	Name          string          `db:"name" json:"name"`
@@ -86,7 +86,7 @@ type ProviderQueryRequest = Query
 type ProviderQueryResponse = Result
 type ResultItem struct {
 	ID        string          `json:"id"`
-	ParentID  *string         `json:"parent_id,omitempty"`
+	ParentID  *string         `json:"parent_id" binding:"required" extensions:"x-nullable"`
 	Code      string          `json:"code"`
 	Name      string          `json:"name"`
 	Value     string          `json:"value"`
