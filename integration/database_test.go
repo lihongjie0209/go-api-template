@@ -500,7 +500,7 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if _, err := service.GetDefinition(actorCtx, largeDefinition.ID); !errors.Is(err, dictionary.ErrResultTooLarge) {
 		t.Fatalf("oversized stored definition must be rejected by management get: %v", err)
 	}
-	if _, err := service.PageDefinitions(actorCtx, dictionary.DefinitionPageInput{Keyword: "test.large"}); !errors.Is(err, dictionary.ErrResultTooLarge) {
+	if _, err := service.PageDefinitions(actorCtx, dictionary.DefinitionPageInput{Request: pagination.Request{Keyword: "test.large"}}); !errors.Is(err, dictionary.ErrResultTooLarge) {
 		t.Fatalf("oversized stored definition must be rejected by management page: %v", err)
 	}
 	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "duplicate-value", Name: "Duplicate", Value: "guangdong-value"}); !errors.Is(err, dictionary.ErrConflict) {
