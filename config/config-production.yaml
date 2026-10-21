@@ -37,6 +37,7 @@ observability:
   tracing_enabled: false
 auth:
   jwks_url: ""
+  jwks_timeout: 2s
   issuer: identity-service
   audience: go-api-template
 event_bus:

@@ -191,10 +191,11 @@ type JWTVerificationKey struct {
 	PublicKeyFile string `mapstructure:"public_key_file"`
 }
 type Auth struct {
-	JWKSURL  string `mapstructure:"jwks_url"`
-	Issuer   string `mapstructure:"issuer"`
-	Audience string `mapstructure:"audience"`
-	PSK      PSK    `mapstructure:"psk"`
+	JWKSURL     string        `mapstructure:"jwks_url"`
+	JWKSTimeout time.Duration `mapstructure:"jwks_timeout"`
+	Issuer      string        `mapstructure:"issuer"`
+	Audience    string        `mapstructure:"audience"`
+	PSK         PSK           `mapstructure:"psk"`
 }
 type Authentication struct {
 	RefreshTTL        time.Duration `mapstructure:"refresh_ttl"`
@@ -607,6 +608,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("jwt.public_keys", []JWTVerificationKey{})
 	v.SetDefault("jwt.ttl", "2h")
 	v.SetDefault("auth.jwks_url", "")
+	v.SetDefault("auth.jwks_timeout", "2s")
 	v.SetDefault("auth.issuer", "identity-service")
 	v.SetDefault("auth.audience", "go-api-template")
 	v.SetDefault("auth.psk.enabled", false)
@@ -782,6 +784,9 @@ func (c Config) Validate() error {
 	}
 	if c.App.Env == "production" && (c.Auth.JWKSURL == "" || c.Auth.Issuer == "" || c.Auth.Audience == "") {
 		return errors.New("production authentication requires identity JWKS URL, issuer, and service audience")
+	}
+	if c.Auth.JWKSTimeout < 100*time.Millisecond || c.Auth.JWKSTimeout > 10*time.Second {
+		return errors.New("auth.jwks_timeout must be between 100ms and 10s")
 	}
 	hasSigningKey := c.JWT.PrivateKey != "" || c.JWT.PrivateKeyFile != ""
 	if (c.JWT.KeyID != "") != hasSigningKey {

@@ -45,12 +45,19 @@ type signingKey struct {
 	id, algorithm   string
 	private, public any
 }
+
+type bearerVerifier interface {
+	VerifyBearer(context.Context, string) (platformprincipal.Principal, error)
+	Close()
+}
+
 type Service struct {
 	issuer, audience string
 	ttl              time.Duration
+	remoteTimeout    time.Duration
 	active           *signingKey
 	verification     map[string]signingKey
-	verifier         *authn.JWKSVerifier
+	verifier         bearerVerifier
 	initErr          error
 	db               *sqlx.DB
 }
@@ -90,7 +97,11 @@ func New(cfg config.Config) *Service {
 }
 
 func NewWithDatabase(cfg config.Config, db *sqlx.DB) *Service {
-	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, verification: map[string]signingKey{}, db: db}
+	remoteTimeout := cfg.Auth.JWKSTimeout
+	if remoteTimeout <= 0 {
+		remoteTimeout = 2 * time.Second
+	}
+	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, remoteTimeout: remoteTimeout, verification: map[string]signingKey{}, db: db}
 	if cfg.JWT.KeyID == "" || (cfg.JWT.PrivateKey == "" && cfg.JWT.PrivateKeyFile == "") {
 		return s
 	}
@@ -135,13 +146,13 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		if s.verifier == nil {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("jwt verification keys are not configured")
 		}
-		principal, err := s.verifier.VerifyBearer(ctx, raw)
+		principal, err := s.verifyRemote(ctx, raw)
 		return principal, TokenState{}, err
 	}
 	claims, parseErr := s.Parse(raw)
 	if parseErr != nil {
 		if s.verifier != nil && !s.referencesLocalKey(raw) {
-			principal, err := s.verifier.VerifyBearer(ctx, raw)
+			principal, err := s.verifyRemote(ctx, raw)
 			return principal, TokenState{}, err
 		}
 		return platformprincipal.Principal{}, TokenState{}, parseErr
@@ -182,6 +193,19 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		}
 	}
 	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, state, nil
+}
+
+func (s *Service) verifyRemote(ctx context.Context, raw string) (platformprincipal.Principal, error) {
+	verificationCtx, cancel := context.WithTimeout(ctx, s.remoteTimeout)
+	defer cancel()
+	identity, err := s.verifier.VerifyBearer(verificationCtx, raw)
+	if deadlineErr := verificationCtx.Err(); deadlineErr != nil {
+		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, deadlineErr)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, err)
+	}
+	return identity, err
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
 func (s *Service) Issue(subject string) (string, error) {

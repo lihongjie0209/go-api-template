@@ -99,6 +99,43 @@ func TestConfig_ValidateJWTAsymmetricKey(t *testing.T) {
 	}
 }
 
+func TestConfig_ValidateJWKSVerificationTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout time.Duration
+		valid   bool
+	}{
+		{name: "disabled", valid: false},
+		{name: "too short", timeout: 99 * time.Millisecond},
+		{name: "minimum", timeout: 100 * time.Millisecond, valid: true},
+		{name: "maximum", timeout: 10 * time.Second, valid: true},
+		{name: "too long", timeout: 11 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.Auth.JWKSTimeout = test.timeout
+			err := cfg.Validate()
+			if test.valid && err != nil {
+				t.Fatal(err)
+			}
+			if !test.valid && (err == nil || !strings.Contains(err.Error(), "auth.jwks_timeout")) {
+				t.Fatalf("Validate error = %v, want timeout validation", err)
+			}
+		})
+	}
+}
+
+func TestLoad_JWKSTimeoutEnvironmentOverride(t *testing.T) {
+	t.Setenv("APP_AUTH_JWKS_TIMEOUT", "750ms")
+	cfg, err := LoadWithProfile("../../config/config.yaml", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.JWKSTimeout != 750*time.Millisecond {
+		t.Fatalf("Auth.JWKSTimeout = %v, want 750ms", cfg.Auth.JWKSTimeout)
+	}
+}
+
 func TestValidateClientPolicy_PlaintextCredentialsRequireExplicitNonProductionOptIn(t *testing.T) {
 	retry := Retry{MaxAttempts: 1, InitialBackoff: 10 * time.Millisecond, MaxBackoff: 10 * time.Millisecond}
 	auth := ClientAuth{Type: "psk", Token: strings.Repeat("p", 32)}

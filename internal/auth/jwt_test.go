@@ -21,6 +21,14 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
+type verifierFunc func(context.Context, string) (platformprincipal.Principal, error)
+
+func (f verifierFunc) VerifyBearer(ctx context.Context, raw string) (platformprincipal.Principal, error) {
+	return f(ctx, raw)
+}
+
+func (verifierFunc) Close() {}
+
 func TestService_ES256IssueParseAndJWKS(t *testing.T) {
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -218,6 +226,76 @@ func TestService_VerifyDistinguishesStateStoreFailureFromInactiveToken(t *testin
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestService_RemoteVerificationHasBoundedDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		localKeys bool
+	}{
+		{name: "remote only"},
+		{name: "unrecognized local key", localKeys: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Config{Auth: config.Auth{JWKSTimeout: 20 * time.Millisecond}}
+			raw := "remote-token"
+			if test.localKeys {
+				jwtConfig, err := testutil.JWTConfig()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.JWT = jwtConfig
+				foreign := New(config.Config{JWT: jwtConfig})
+				foreign.active.id = "foreign-key"
+				raw, err = foreign.Issue("account-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			service := New(cfg)
+			service.verifier = verifierFunc(func(ctx context.Context, _ string) (platformprincipal.Principal, error) {
+				<-ctx.Done()
+				return platformprincipal.Principal{}, ctx.Err()
+			})
+			start := time.Now()
+			_, err := service.Verify(t.Context(), raw)
+			if !errors.Is(err, ErrStateUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Verify error = %v, want bounded dependency timeout", err)
+			}
+			if time.Since(start) > time.Second {
+				t.Fatal("remote verification exceeded the bounded deadline")
+			}
+		})
+	}
+}
+
+func TestService_RemoteInvalidTokenIsNotDependencyFailure(t *testing.T) {
+	service := New(config.Config{})
+	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
+		return platformprincipal.Principal{}, errors.New("invalid signature")
+	})
+	_, err := service.Verify(t.Context(), "invalid-token")
+	if err == nil || errors.Is(err, ErrStateUnavailable) {
+		t.Fatalf("Verify error = %v, want invalid-token classification", err)
+	}
+}
+
+func TestService_RemoteVerificationRespectsCallerDeadline(t *testing.T) {
+	service := New(config.Config{Auth: config.Auth{JWKSTimeout: time.Second}})
+	service.verifier = verifierFunc(func(ctx context.Context, _ string) (platformprincipal.Principal, error) {
+		<-ctx.Done()
+		return platformprincipal.Principal{}, ctx.Err()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := service.Verify(ctx, "remote-token")
+	if !errors.Is(err, ErrStateUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Verify error = %v, want caller deadline", err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatal("verification ignored the shorter caller deadline")
 	}
 }
 

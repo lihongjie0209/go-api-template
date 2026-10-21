@@ -46,6 +46,9 @@ The next domain work must keep identity and tenancy separate:
   session/account from an unavailable authoritative store. An infrastructure
   outage returns dependency-unavailable (HTTP 503 / gRPC Unavailable), not an
   invalid-token response that could make clients discard valid credentials.
+- Remote JWKS verification must have an explicit bounded per-request deadline;
+  timeout/cancellation must not be classified as an invalid signature. The
+  caller's shorter deadline always wins.
 - A signed access-token claim is not authoritative for mutable credential
   state. User-token verification must recheck the active session, user, and
   credential; every password reset path must revoke existing sessions in the

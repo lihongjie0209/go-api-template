@@ -117,6 +117,7 @@ jwt:
   ttl: 2h
 auth:
   jwks_url: ""
+  jwks_timeout: 2s
   issuer: identity-service
   audience: go-api-template
   psk:
