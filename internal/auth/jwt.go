@@ -202,6 +202,9 @@ func (s *Service) verifyRemote(ctx context.Context, raw string) (platformprincip
 	if deadlineErr := verificationCtx.Err(); deadlineErr != nil {
 		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, deadlineErr)
 	}
+	if errors.Is(err, authn.ErrJWKSUnavailable) {
+		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, err)
+	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, err)
 	}

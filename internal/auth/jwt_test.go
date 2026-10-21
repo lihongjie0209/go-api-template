@@ -331,6 +331,17 @@ func TestService_RemoteInvalidTokenIsNotDependencyFailure(t *testing.T) {
 	}
 }
 
+func TestService_RemoteJWKSOutageIsDependencyFailure(t *testing.T) {
+	service := New(config.Config{})
+	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
+		return platformprincipal.Principal{}, authn.ErrJWKSUnavailable
+	})
+	_, err := service.Verify(t.Context(), "signed-with-new-key")
+	if !errors.Is(err, ErrStateUnavailable) || !errors.Is(err, authn.ErrJWKSUnavailable) {
+		t.Fatalf("Verify() error=%v, want dependency-unavailable JWKS failure", err)
+	}
+}
+
 func TestService_RejectsRemoteServiceAccountTenantContext(t *testing.T) {
 	service := New(config.Config{})
 	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {

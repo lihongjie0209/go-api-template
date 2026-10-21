@@ -51,6 +51,10 @@ The next domain work must keep identity and tenancy separate:
   JWKS verifier for both RS256 and ES256. Remote JWKS initialization must fail
   startup when its first fetch fails or exceeds the configured bounded timeout;
   the verifier's long-lived refresh context must remain active until shutdown.
+- During key rotation, an unknown `kid` with a healthy JWKS endpoint is an
+  invalid token. A failed remote refresh is an authentication-dependency
+  outage (HTTP 503 / gRPC Unavailable), not an invalid token (401); preserve
+  this distinction without exposing token or endpoint details to clients.
 - Login implementations must distinguish invalid credentials or concurrent
   credential revocation from database, signer, or security-audit failures.
   Infrastructure failures fail closed with dependency-unavailable, never an
