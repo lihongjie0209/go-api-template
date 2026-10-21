@@ -4,7 +4,7 @@
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Dictionaries are `enum` or `tree`, and are backed by `static` items or one registered `provider`. Management uses POST+JSON create/get/page/update/delete operations. Creating a provider-backed definition requires its code to have been registered in-process first; otherwise the global invalid-request code is returned with a provider-specific message before any write. Public `POST /api/v1/public/dictionaries/query` returns one normalized result contract for both sources. Enum results are paged; tree results are complete bounded forests because paging would break ancestry. Optional exact `values` filtering matches the selectable value (`item.value`, or `item.id` when value is empty) and combines with IDs, codes, and keyword using AND; trees retain ancestors of matching items. Empty `values` means no filter; at most 200 nonblank values with a 16 KiB combined payload are accepted. |
+| Contract | Dictionaries are `enum` or `tree`, and are backed by `static` items or one registered `provider`. Management uses POST+JSON create/get/page/update/delete operations. Creating a provider-backed definition requires its code to have been registered in-process first; otherwise the global invalid-request code is returned with a provider-specific message before any write. Public `POST /api/v1/public/dictionaries/query` returns one normalized result contract for both sources. Enum results are paged; tree results are complete bounded forests because paging would break ancestry. Optional exact `values` filtering matches the selectable value (`item.value`, or `item.id` when value is empty) and combines with IDs, codes, and keyword using AND; trees retain only ancestors of matching items and report the returned node count. Empty `values` means no filter; at most 200 nonblank values with a 16 KiB combined payload are accepted. Provider results are rejected if they violate any requested filter, sibling sort order, or tree ancestry rule. |
 | Authentication | Public query allows anonymous and authenticated callers. Management routes use the shared Resource/Action authorization interceptor. Providers are in-process Go implementations and have no separate transport/authentication surface. |
 | Authorization | Public query has the database expression `anonymous || authenticated`. Definition/item management uses `platform.dictionary.manage` with platform scope. Provider implementations must only expose data suitable for this public endpoint. |
 | Operation log | Successful definition/item mutations enqueue `dictionary.*` events in the same transaction; failed mutations enqueue a sanitized failure event. Reads are not logged because dictionary values are public presentation data. |
@@ -14,7 +14,7 @@
 | Optimistic lock | Definition and item update/delete require a positive expected version. Item mutations also increment the parent definition version for cache invalidation. |
 | Audit | Every table has created/updated actor and time, version, and logical-delete fields. PostgreSQL/Kingbase enable the common audit trigger; all writes use the shared transactor and principal context. |
 | Presentation | Management responses include persisted audit fields. Public values include ID, code, name, value, disabled state, sort order, parent/tree structure and JSON extension, but omit actor and audit metadata. Timestamps follow the platform Asia/Shanghai presentation convention. |
-| Tests | Unit tests cover value-filter bounds, parameterized queries, sorting, ancestor retention, cycle rejection, and rejection of unregistered in-process providers before database access. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search and enum paging without another service. |
+| Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, provider filter/sort enforcement, ancestor retention, filtered tree totals, cycle rejection, and rejection of unregistered in-process providers before database access. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search and enum paging without another service. |
 | Shared capability | Reuses pagination, cache store, transactions, operation outbox recorder, Resource/Action registry, common envelope and error codes. The Go provider interface and query/result types are the future SDK extraction boundary. |
 
 ## Dictionary-item management target
@@ -58,6 +58,13 @@ disabled flag, sort order, nested children for tree dictionaries, and a bounded
 JSON extension object. Providers must return no more than 200 enum items per
 page or 10,000 total tree nodes, use deterministic ordering, honor context
 cancellation, and must not return credentials or authorization-sensitive data.
+Enum rows must each match every requested filter. Tree nodes may be returned
+only when they match every filter or are ancestors of a matching descendant;
+unrelated descendants and branches are omitted. Siblings follow the requested
+sort, or `sort_order`, `code`, then `id` ascending by default; `id` ascending
+breaks ties for a requested sort. Tree `total` includes all returned nodes,
+including retained ancestors. The public service validates this contract
+before caching or returning a provider result.
 
 ## Module checklist addition
 

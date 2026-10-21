@@ -203,6 +203,11 @@ in-process Go implementation registered by code. Do not add a remote provider
 transport until cross-service dictionaries are explicitly required. Record
 an explicit reason when the data is transactional, sensitive, unbounded, or
 otherwise unsuitable for dictionary use.
+Provider results must honor every requested keyword, ID, code, value, disabled,
+and sort filter. A tree may additionally include only ancestors of matching
+nodes; its total is the number of returned nodes, including those ancestors.
+Validate these invariants at the public dictionary boundary, even for an
+in-process provider.
 
 ### Permission design is mandatory
 

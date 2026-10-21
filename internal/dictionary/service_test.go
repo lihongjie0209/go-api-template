@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -433,6 +436,102 @@ func TestValidProviderResultEnforcesPublicContract(t *testing.T) {
 	require.True(t, validProviderResult(result, Query{IncludeDisabled: true}, 100))
 	require.True(t, validProviderResult(result, Query{IncludeDisabled: true, Values: []string{"m"}}, 100))
 	require.False(t, validProviderResult(result, Query{IncludeDisabled: true, Values: []string{"other"}}, 100))
+}
+
+func TestValidProviderResultEnforcesEveryEnumFilter(t *testing.T) {
+	t.Parallel()
+	item := ResultItem{ID: uuidString(1), Code: "north", Name: "North Region", Value: "n", Extension: json.RawMessage(`{}`)}
+	result := Result{Code: "regions", Name: "Regions", Type: KindEnum, Page: 1, PageSize: 20, Total: 1, Extension: json.RawMessage(`{}`), Items: []ResultItem{item}}
+	for _, test := range []struct {
+		name  string
+		query Query
+		valid bool
+	}{
+		{name: "all matching", query: Query{Keyword: "REGION", IDs: []string{item.ID}, Codes: []string{"north"}, Values: []string{"n"}}, valid: true},
+		{name: "wrong keyword", query: Query{Keyword: "south"}},
+		{name: "wrong ID", query: Query{IDs: []string{uuidString(2)}}},
+		{name: "wrong code", query: Query{Codes: []string{"south"}}},
+		{name: "wrong value", query: Query{Values: []string{"s"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.valid, validProviderResult(result, test.query, 10))
+		})
+	}
+}
+
+func TestValidProviderResultTreeAllowsOnlyMatchingNodesAndAncestors(t *testing.T) {
+	t.Parallel()
+	rootID := uuidString(1)
+	child := ResultItem{ID: uuidString(2), ParentID: &rootID, Code: "target", Name: "Target", Extension: json.RawMessage(`{}`)}
+	result := Result{Code: "regions", Name: "Regions", Type: KindTree, Total: 2, Extension: json.RawMessage(`{}`), Items: []ResultItem{{ID: rootID, Code: "root", Name: "Root", Extension: json.RawMessage(`{}`), Children: []ResultItem{child}}}}
+	require.True(t, validProviderResult(result, Query{Keyword: "target", IDs: []string{child.ID}, Codes: []string{"target"}}, 10))
+	result.Items[0].Children = append(result.Items[0].Children, ResultItem{ID: uuidString(3), ParentID: &rootID, Code: "other", Name: "Other", Extension: json.RawMessage(`{}`)})
+	result.Total = 3
+	require.False(t, validProviderResult(result, Query{Keyword: "target"}, 10))
+}
+
+func TestValidProviderResultRequiresStableRequestedOrder(t *testing.T) {
+	t.Parallel()
+	result := Result{Code: "regions", Name: "Regions", Type: KindEnum, Page: 1, PageSize: 20, Total: 2, Extension: json.RawMessage(`{}`), Items: []ResultItem{
+		{ID: uuidString(2), Code: "b", Name: "Beta", SortOrder: 1, Extension: json.RawMessage(`{}`)},
+		{ID: uuidString(1), Code: "a", Name: "Alpha", SortOrder: 1, Extension: json.RawMessage(`{}`)},
+	}}
+	require.False(t, validProviderResult(result, Query{}, 10))
+	require.True(t, validProviderResult(result, Query{Sort: []Sort{{Field: "name", Direction: "desc"}}}, 10))
+	result.Items[0], result.Items[1] = result.Items[1], result.Items[0]
+	require.True(t, validProviderResult(result, Query{}, 10))
+	require.False(t, validProviderResult(result, Query{Sort: []Sort{{Field: "name", Direction: "desc"}}}, 10))
+}
+
+func TestQueryStaticEnumAddsStableIDSortTieBreaker(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		sort  []Sort
+		order string
+	}{
+		{name: "default order", order: `sort_order ASC,code ASC,id ASC`},
+		{name: "requested order", sort: []Sort{{Field: "name", Direction: "desc"}}, order: `name DESC,id ASC`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, raw.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+			mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items`).WithArgs("dictionary-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			mock.ExpectQuery(`ORDER BY `+test.order+` LIMIT \? OFFSET \?`).WithArgs("dictionary-1", 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			mock.ExpectClose()
+			service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+			_, err = service.queryStatic(t.Context(), Definition{ID: "dictionary-1", Kind: KindEnum}, Query{Sort: test.sort})
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestQueryStaticTreeTotalCountsFilteredNodes(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	dictionaryID, rootID := uuidString(4), uuidString(1)
+	now := time.Now()
+	rows := sqlmock.NewRows(strings.Split(itemColumns, ","))
+	rows.AddRow(rootID, dictionaryID, nil, "root", "Root", "", false, 1, []byte(`{}`), now, "system", now, "system", 1)
+	rows.AddRow(uuidString(2), dictionaryID, rootID, "target", "Target", "", false, 1, []byte(`{}`), now, "system", now, "system", 1)
+	rows.AddRow(uuidString(3), dictionaryID, nil, "other", "Other", "", false, 2, []byte(`{}`), now, "system", now, "system", 1)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL ORDER BY .* LIMIT \?`).WithArgs(dictionaryID, 11).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 10}}}
+	result, err := service.queryStatic(t.Context(), Definition{ID: dictionaryID, Code: "regions", Name: "Regions", Kind: KindTree}, Query{Keyword: "target"})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), result.Total)
+	require.Len(t, result.Items, 1)
+	require.Len(t, result.Items[0].Children, 1)
 }
 
 func uuidString(last byte) string {

@@ -752,18 +752,50 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	count := 0
 	seen := map[string]struct{}{}
 	seenValues := map[string]struct{}{}
-	var walk func([]ResultItem, *string) bool
-	walk = func(items []ResultItem, expectedParent *string) bool {
-		for _, item := range items {
+	allowedIDs := make(map[string]struct{}, len(query.IDs))
+	for _, id := range query.IDs {
+		allowedIDs[id] = struct{}{}
+	}
+	allowedCodes := make(map[string]struct{}, len(query.Codes))
+	for _, code := range query.Codes {
+		allowedCodes[code] = struct{}{}
+	}
+	allowedValues := make(map[string]struct{}, len(query.Values))
+	for _, value := range query.Values {
+		allowedValues[value] = struct{}{}
+	}
+	keyword := strings.ToLower(query.Keyword)
+	matches := func(item ResultItem, value string) bool {
+		if keyword != "" && !strings.Contains(strings.ToLower(item.Code), keyword) && !strings.Contains(strings.ToLower(item.Name), keyword) {
+			return false
+		}
+		if _, ok := allowedIDs[item.ID]; len(allowedIDs) != 0 && !ok {
+			return false
+		}
+		if _, ok := allowedCodes[item.Code]; len(allowedCodes) != 0 && !ok {
+			return false
+		}
+		if _, ok := allowedValues[value]; len(allowedValues) != 0 && !ok {
+			return false
+		}
+		return true
+	}
+	var walk func([]ResultItem, *string) (bool, bool)
+	walk = func(items []ResultItem, expectedParent *string) (bool, bool) {
+		anyMatch := false
+		for index, item := range items {
 			count++
 			if count > maxNodes || uuid.Validate(item.ID) != nil || !codePattern.MatchString(item.Code) || strings.TrimSpace(item.Name) == "" || len(item.Name) > 256 || len(item.Value) > maxValueLength || (!query.IncludeDisabled && item.Disabled) {
-				return false
+				return false, false
 			}
 			if (expectedParent == nil) != (item.ParentID == nil) || (expectedParent != nil && *expectedParent != *item.ParentID) {
-				return false
+				return false, false
+			}
+			if index > 0 && resultItemLess(item, items[index-1], query.Sort) {
+				return false, false
 			}
 			if _, exists := seen[item.ID]; exists {
-				return false
+				return false, false
 			}
 			seen[item.ID] = struct{}{}
 			selectableValue := item.Value
@@ -771,17 +803,22 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 				selectableValue = item.ID
 			}
 			if _, exists := seenValues[selectableValue]; exists {
-				return false
+				return false, false
 			}
 			seenValues[selectableValue] = struct{}{}
 			if result.Type == KindEnum && len(item.Children) != 0 {
-				return false
+				return false, false
 			}
-			if len(item.Extension) == 0 || !validJSON(item.Extension) || !walk(item.Children, &item.ID) {
-				return false
+			if len(item.Extension) == 0 || !validJSON(item.Extension) {
+				return false, false
 			}
+			childMatch, valid := walk(item.Children, &item.ID)
+			if !valid || (!matches(item, selectableValue) && !childMatch) {
+				return false, false
+			}
+			anyMatch = true
 		}
-		return true
+		return anyMatch, true
 	}
 	if result.Type == KindEnum {
 		page, err := normalizePage(query.Page, query.PageSize)
@@ -791,22 +828,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	} else if result.Page != 0 || result.PageSize != 0 {
 		return false
 	}
-	if result.Type == KindEnum && len(query.Values) > 0 {
-		allowedValues := make(map[string]struct{}, len(query.Values))
-		for _, value := range query.Values {
-			allowedValues[value] = struct{}{}
-		}
-		for _, item := range result.Items {
-			selectedValue := item.Value
-			if selectedValue == "" {
-				selectedValue = item.ID
-			}
-			if _, ok := allowedValues[selectedValue]; !ok {
-				return false
-			}
-		}
-	}
-	if !walk(result.Items, nil) {
+	if _, valid := walk(result.Items, nil); !valid {
 		return false
 	}
 	if result.Type == KindTree && result.Total != int64(count) {
@@ -814,16 +836,23 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	}
 	return true
 }
+func resultItemLess(left, right ResultItem, rules []Sort) bool {
+	return itemLess(
+		Item{ID: left.ID, Code: left.Code, Name: left.Name, SortOrder: left.SortOrder},
+		Item{ID: right.ID, Code: right.Code, Name: right.Name, SortOrder: right.SortOrder},
+		rules,
+	)
+}
 func (s *Service) queryStatic(ctx context.Context, d Definition, q Query) (Result, error) {
 	args := []any{d.ID}
 	where := `dictionary_id=? AND deleted_at IS NULL`
-	order := `sort_order ASC,code ASC`
+	order := `sort_order ASC,code ASC,id ASC`
 	if len(q.Sort) > 0 {
 		parts := make([]string, 0, len(q.Sort))
 		for _, v := range q.Sort {
 			parts = append(parts, v.Field+" "+strings.ToUpper(v.Direction))
 		}
-		order = strings.Join(parts, ",")
+		order = strings.Join(parts, ",") + `,id ASC`
 	}
 	if d.Kind == KindEnum {
 		if !q.IncludeDisabled {
