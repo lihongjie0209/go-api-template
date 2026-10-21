@@ -429,7 +429,7 @@ func TestValidProviderResultRejectsDuplicateEffectiveValues(t *testing.T) {
 	}
 }
 
-func TestValidProviderResultRejectsDuplicateCodesAndImpossiblePage(t *testing.T) {
+func TestValidProviderResultRejectsDuplicateCodesAndAcceptsConcurrentPageChanges(t *testing.T) {
 	t.Parallel()
 	items := []ResultItem{
 		{ID: uuidString(1), Code: "first", Name: "First", Value: "value-one", Extension: json.RawMessage(`{}`)},
@@ -445,9 +445,15 @@ func TestValidProviderResultRejectsDuplicateCodesAndImpossiblePage(t *testing.T)
 	pageTwo.Items = items[:1]
 	pageTwo.Page = 2
 	pageTwo.Total = 1
-	require.False(t, validProviderResult(pageTwo, Query{Page: 2, PageSize: 20}, 100))
+	// Count and page queries can observe adjacent snapshots during a write.
+	require.True(t, validProviderResult(pageTwo, Query{Page: 2, PageSize: 20}, 100))
 	pageTwo.Total = 21
 	require.True(t, validProviderResult(pageTwo, Query{Page: 2, PageSize: 20}, 100))
+	pageOne := result
+	pageOne.Total = 0
+	require.True(t, validProviderResult(pageOne, Query{}, 100))
+	pageOne.Total = -1
+	require.False(t, validProviderResult(pageOne, Query{}, 100))
 }
 
 func TestFilterTreeItemsRetainsAncestorsAndRejectsDisabledSubtrees(t *testing.T) {

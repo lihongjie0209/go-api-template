@@ -837,10 +837,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	}
 	if result.Type == KindEnum {
 		page, err := normalizePage(query.Page, query.PageSize)
-		if err != nil || result.Page != page[0] || result.PageSize != page[1] || len(result.Items) > page[1] || result.Total < int64(len(result.Items)) {
-			return false
-		}
-		if len(result.Items) > 0 && result.Total < int64(pagination.Offset(pagination.Request{Page: page[0], PageSize: page[1]})+len(result.Items)) {
+		if err != nil || result.Page != page[0] || result.PageSize != page[1] || len(result.Items) > page[1] || result.Total < 0 {
 			return false
 		}
 	} else if result.Page != 0 || result.PageSize != 0 {

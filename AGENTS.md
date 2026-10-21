@@ -218,8 +218,10 @@ Validate these invariants at the public dictionary boundary, even for an
 in-process provider. Bound the number of sort fields and reject duplicate
 fields before building SQL or calling the provider. Provider item codes are
 unique within the dictionary, just like static item codes. Enum page metadata
-must use the platform pagination limits and be consistent with the returned
-items and total; reject an invalid page before invoking a provider.
+must use the platform pagination limits; reject an invalid page before
+invoking a provider. Do not require `total` to cover the page offset unless
+count and page are read from the same snapshot, because concurrent writes may
+change the rows between those queries.
 The dictionary module may cache static entries by definition revision. It must
 not place dynamic-provider results in that shared cache: the provider owns its
 data freshness and may depend on request context that is absent from the
