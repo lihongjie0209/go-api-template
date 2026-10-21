@@ -246,6 +246,10 @@ otherwise unsuitable for dictionary use.
 - File upload/delete repair and failed-operation logs must use
   `observability.SafeError` with fixed component reasons; database, object
   storage, and queue errors may contain credentials or sensitive object keys.
+- HTTP error boundaries, authentication/security-log failures, idempotency,
+  and rate-limit middleware must also classify errors before logging. Preserve
+  request/trace IDs and bounded operation names for correlation, never the raw
+  dependency error or request payload.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.

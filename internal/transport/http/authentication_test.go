@@ -25,13 +25,16 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 )
 
-type securityRecorderStub struct{ entry securitylog.Entry }
+type securityRecorderStub struct {
+	entry     securitylog.Entry
+	recordErr error
+}
 
 func (s *securityRecorderStub) Enabled() bool    { return true }
 func (s *securityRecorderStub) FailClosed() bool { return true }
 func (s *securityRecorderStub) Record(_ context.Context, entry securitylog.Entry) error {
 	s.entry = entry
-	return nil
+	return s.recordErr
 }
 func (s *securityRecorderStub) RecordTx(_ context.Context, _ *sqlx.Tx, entry securitylog.Entry) error {
 	s.entry = entry
@@ -45,6 +48,28 @@ func TestAuthenticationFailureCodeDoesNotExposeTechnicalErrors(t *testing.T) {
 	}
 	if got := authenticationFailureCode(authentication.ErrAccountLocked); got != "account_locked" {
 		t.Fatalf("authenticationFailureCode(account locked) = %q", got)
+	}
+}
+
+func TestUserAuthenticationRecordFailureDoesNotLogSecurityQueueDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	recorder := &securityRecorderStub{recordErr: errors.New("queue password=secret-value")}
+	handler := NewUserAuthenticationHandler(nil, recorder, logger)
+	router := gin.New()
+	router.Use(RequestID())
+	router.POST("/test", func(c *gin.Context) {
+		handler.recordFailure(c, authentication.ErrInvalidCredentials, securitylog.Entry{EventType: securitylog.EventLogin}, "login")
+		c.Status(http.StatusNoContent)
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "security_event_enqueue_failed") {
+		t.Fatalf("security record failure log leaked queue detail or omitted safe code: %s", output.String())
 	}
 }
 

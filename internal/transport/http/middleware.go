@@ -33,6 +33,11 @@ import (
 
 const requestIDKey = "request_id"
 
+var (
+	errIdempotencyStateFailed = errors.New("idempotency_state_failed")
+	errRateLimitCheckFailed   = errors.New("rate_limit_check_failed")
+)
+
 func SecurityClientContext() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := securitylog.WithClient(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
@@ -173,20 +178,20 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		c.Writer = capture
 		c.Next()
 		if leaseErr := stopLease(); leaseErr != nil {
-			logger.ErrorContext(c.Request.Context(), "idempotency lease lost", "error", leaseErr, "request_id", requestID(c))
+			logger.ErrorContext(c.Request.Context(), "idempotency lease lost", "error", observability.SafeError(leaseErr, errIdempotencyStateFailed), "request_id", requestID(c))
 			return
 		}
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
 		defer cancel()
 		if capture.overflow {
 			if err := manager.Abort(persistCtx, key, decision.Owner); err != nil {
-				logger.ErrorContext(c.Request.Context(), "release oversized idempotency response", "error", err, "request_id", requestID(c))
+				logger.ErrorContext(c.Request.Context(), "release oversized idempotency response", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
 			}
 			return
 		}
 		var response Response
 		if err := json.Unmarshal(capture.body.Bytes(), &response); err != nil {
-			logger.ErrorContext(c.Request.Context(), "idempotency response was not unified JSON", "error", err, "request_id", requestID(c))
+			logger.ErrorContext(c.Request.Context(), "idempotency response was not unified JSON", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
 			return
 		}
 		response.RequestID = ""
@@ -198,7 +203,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			err = manager.Complete(persistCtx, key, decision.Owner, response)
 		}
 		if err != nil {
-			logger.ErrorContext(c.Request.Context(), "persist idempotency result", "error", err, "request_id", requestID(c))
+			logger.ErrorContext(c.Request.Context(), "persist idempotency result", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
 		}
 	}
 }
@@ -381,7 +386,7 @@ func RateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension s
 			// Login throttling is an account-protection boundary and must never
 			// inherit the availability-oriented fail-open policy.
 			if limiter.FailOpen() && dimension != "login" {
-				logger.WarnContext(c.Request.Context(), "rate limit check failed open", "request_id", requestID(c), "dimension", dimension, "error", err)
+				logger.WarnContext(c.Request.Context(), "rate limit check failed open", "request_id", requestID(c), "dimension", dimension, "error", observability.SafeError(err, errRateLimitCheckFailed))
 				c.Next()
 				return
 			}

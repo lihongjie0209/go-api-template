@@ -9,10 +9,13 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
+
+var errSecurityEventEnqueueFailed = errors.New("security_event_enqueue_failed")
 
 type UserAuthenticationHandler struct {
 	service  *authentication.Service
@@ -80,7 +83,7 @@ func (h *UserAuthenticationHandler) Login(c *gin.Context) {
 		entry.Reason = loginFailureReason(e)
 		if !errors.Is(e, authentication.ErrAttemptAudited) && !errors.Is(e, authentication.ErrSecurityUnavailable) {
 			if logErr := h.record(c, entry); logErr != nil {
-				h.logger.ErrorContext(c.Request.Context(), "record failed user login", "error", logErr, "request_id", requestID(c))
+				h.logger.ErrorContext(c.Request.Context(), "record failed user login", "error", observability.SafeError(logErr, errSecurityEventEnqueueFailed), "request_id", requestID(c))
 			}
 		}
 		h.fail(c, e)
@@ -110,7 +113,7 @@ func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 	if e != nil {
 		if !errors.Is(e, authentication.ErrRefreshReused) {
 			if logErr := h.record(c, entry); logErr != nil {
-				h.logger.ErrorContext(c.Request.Context(), "record failed token refresh", "error", logErr, "request_id", requestID(c))
+				h.logger.ErrorContext(c.Request.Context(), "record failed token refresh", "error", observability.SafeError(logErr, errSecurityEventEnqueueFailed), "request_id", requestID(c))
 			}
 		}
 		h.fail(c, e)
@@ -316,7 +319,7 @@ func (h *UserAuthenticationHandler) recordFailure(c *gin.Context, operationErr e
 	entry.ErrorCode = authenticationFailureCode(operationErr)
 	entry.ErrorMessage = operation + " failed"
 	if err := h.record(c, entry); err != nil {
-		h.logger.ErrorContext(c.Request.Context(), "record failed authentication operation", "operation", operation, "error", err, "request_id", requestID(c))
+		h.logger.ErrorContext(c.Request.Context(), "record failed authentication operation", "operation", operation, "error", observability.SafeError(err, errSecurityEventEnqueueFailed), "request_id", requestID(c))
 	}
 }
 func authenticationFailureCode(err error) string {

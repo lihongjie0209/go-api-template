@@ -1,8 +1,10 @@
 package httptransport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +30,7 @@ type fakeIdempotencyManager struct {
 	beginKey     string
 	fingerprint  string
 	completed    *Response
+	completeErr  error
 	failed       *idempotency.Failure
 	leaseStarted bool
 	aborted      bool
@@ -107,7 +110,34 @@ func (m *fakeIdempotencyManager) Complete(_ context.Context, _, _ string, respon
 	if ok {
 		m.completed = &value
 	}
-	return nil
+	return m.completeErr
+}
+
+func TestIdempotencyExecutionDoesNotLogRedisErrorDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	manager := &fakeIdempotencyManager{
+		decision:    idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"},
+		completeErr: errors.New("redis password=secret-value"),
+	}
+	router := gin.New()
+	router.Use(RequestID(), func(c *gin.Context) {
+		ctx := platformprincipal.WithContext(c.Request.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+		c.Request = c.Request.WithContext(idempotency.WithContext(ctx, "operation-1"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, logger))
+	router.POST("/test", func(c *gin.Context) { OK(c, gin.H{}) })
+	request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`))
+	request.Header.Set("Idempotency-Key", "key-1")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || manager.completed == nil {
+		t.Fatalf("status = %d, completed = %v", response.Code, manager.completed)
+	}
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "idempotency_state_failed") {
+		t.Fatalf("idempotency failure log leaked Redis detail or omitted safe code: %s", output.String())
+	}
 }
 func (m *fakeIdempotencyManager) Fail(_ context.Context, _, _ string, failure idempotency.Failure) error {
 	m.failed = &failure
