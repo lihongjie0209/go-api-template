@@ -29,6 +29,7 @@ var (
 	ErrInvalid               = errors.New("invalid data dictionary")
 	ErrNotFound              = errors.New("data dictionary not found")
 	ErrConflict              = errors.New("data dictionary conflict")
+	ErrResultTooLarge        = fmt.Errorf("%w: query result exceeds item size limit", ErrConflict)
 	ErrStaleVersion          = errors.New("data dictionary stale version")
 	ErrProviderNotRegistered = errors.New("data dictionary provider not registered")
 	ErrProviderUnavailable   = errors.New("data dictionary provider unavailable")
@@ -987,7 +988,7 @@ func (s *Service) selectQueryItems(ctx context.Context, query string, args ...an
 			return nil, fmt.Errorf("encode dictionary item size: %w", err)
 		}
 		if encodedBytes > maxDictionaryItemsBytes-itemBytes {
-			return nil, ErrConflict
+			return nil, ErrResultTooLarge
 		}
 		itemBytes += encodedBytes
 		items = append(items, item)

@@ -503,6 +503,8 @@ func (h *DictionaryHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.Invalid("dictionary provider is not registered", e))
 	case errors.Is(e, dictionary.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("dictionary not found"))
+	case errors.Is(e, dictionary.ErrResultTooLarge):
+		Fail(c, h.logger, apperror.Conflict("dictionary query exceeds result size limit; reduce page size or narrow the dictionary", e))
 	case errors.Is(e, dictionary.ErrConflict):
 		Fail(c, h.logger, apperror.Conflict("dictionary conflict", e))
 	case errors.Is(e, dictionary.ErrStaleVersion):

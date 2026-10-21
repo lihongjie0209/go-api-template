@@ -1393,6 +1393,7 @@ func TestQueryStaticEnumRejectsOversizedItemPage(t *testing.T) {
 	mock.ExpectClose()
 	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
 	_, err = service.queryStatic(t.Context(), Definition{ID: dictionaryID, Kind: KindEnum}, Query{})
+	require.ErrorIs(t, err, ErrResultTooLarge)
 	require.ErrorIs(t, err, ErrConflict)
 }
 

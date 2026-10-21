@@ -463,7 +463,7 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 			t.Fatalf("create large dictionary item: %v", err)
 		}
 	}
-	if _, err := service.Query(ctx, dictionary.Query{Code: "test.large"}); !errors.Is(err, dictionary.ErrConflict) {
+	if _, err := service.Query(ctx, dictionary.Query{Code: "test.large"}); !errors.Is(err, dictionary.ErrResultTooLarge) {
 		t.Fatalf("oversized enum page must be rejected: %v", err)
 	}
 	boundedPage, err := service.Query(ctx, dictionary.Query{Code: "test.large", Page: 1, PageSize: 1})

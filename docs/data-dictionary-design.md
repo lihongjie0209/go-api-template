@@ -17,6 +17,11 @@
 | Tests | Unit tests cover value-filter bounds, parameterized queries, stable ID tie-breaking, static cache-key equivalence, provider cache bypass and filter/sort enforcement, aggregate static page size, JSON-escaped provider payload size, ancestor retention regardless of source order, filtered tree totals, disabled SQL pushdown, cycle/orphan rejection, leaf `children: []` and nullable `parent_id` serialization, and rejection of unregistered in-process providers before database access. A deep-match benchmark guards the bounded tree filter against quadratic parent-chain traversal. A parsed Swagger contract test requires the public dictionary result to reference an item schema with mandatory array-valued `children` and mandatory nullable `parent_id`. Testcontainers covers PostgreSQL/MySQL migration, audit fields, optimistic locking, tree search, disabled-row node-limit behavior, serialized tree shape, and enum paging without another service. |
 | Shared capability | Reuses pagination, cache store, transactions, operation outbox recorder, Resource/Action registry, common envelope and error codes. The Go provider interface and query/result types are the future SDK extraction boundary. Static tree construction uses bounded windows of the shared SDK tree builder to avoid repeated ancestor-path work while retaining SDK cycle/orphan validation. |
 
+The 8 MiB serialized-item budget is a fixed safety ceiling, not a profile or
+environment override. A static result above it returns the shared Conflict
+code with a message to reduce page size or narrow the dictionary; an
+in-process provider violating the contract remains provider-unavailable.
+
 ## Dictionary-item management target
 
 | Concern | Decision and rationale |
