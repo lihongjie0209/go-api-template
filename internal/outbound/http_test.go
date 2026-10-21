@@ -154,7 +154,11 @@ func TestHTTPClient_PropagatesCorrelationHeaders(t *testing.T) {
 	}
 	ctx := requestid.WithContext(context.Background(), "request-1")
 	ctx = idempotency.WithContext(ctx, "operation-1")
-	response, err := client.Do(ctx, http.MethodPost, "/test", []byte(`{}`), nil)
+	headers := http.Header{
+		"Idempotency-Key": []string{"caller-operation"},
+		"X-Request-Id":    []string{"caller-request"},
+	}
+	response, err := client.Do(ctx, http.MethodPost, "/test", []byte(`{}`), headers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +176,9 @@ func TestHTTPClient_InvalidIdempotencyKeyDoesNotPropagateOrEnableRetry(t *testin
 		if key := request.Header.Get("Idempotency-Key"); key != "" {
 			t.Errorf("unexpected idempotency key %q", key)
 		}
+		if id := request.Header.Get("X-Request-ID"); id != "" {
+			t.Errorf("unexpected request ID %q", id)
+		}
 		writer.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
@@ -183,7 +190,11 @@ func TestHTTPClient_InvalidIdempotencyKeyDoesNotPropagateOrEnableRetry(t *testin
 	}
 	ctx := idempotency.WithContext(t.Context(), "valid-key")
 	ctx = idempotency.WithContext(ctx, "invalid\nkey")
-	response, err := client.Do(ctx, http.MethodPost, "/mutation", []byte(`{}`), nil)
+	headers := http.Header{
+		"Idempotency-Key": []string{"forged-operation"},
+		"X-Request-Id":    []string{"forged-request"},
+	}
+	response, err := client.Do(ctx, http.MethodPost, "/mutation", []byte(`{}`), headers)
 	if err != nil {
 		t.Fatal(err)
 	}

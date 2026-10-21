@@ -103,6 +103,46 @@ func TestMetadataInterceptorReplacesCallerAuthentication(t *testing.T) {
 	require.Equal(t, []string{"preserved"}, captured.Get("x-custom"))
 }
 
+func TestOutgoingCorrelationMetadataComesOnlyFromValidatedContext(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		requestID     string
+		idempotencyID string
+		invalidKey    bool
+	}{
+		{name: "caller metadata without context"},
+		{name: "invalid context key does not restore caller metadata", invalidKey: true},
+		{name: "validated context overrides caller metadata", requestID: "trusted-request", idempotencyID: "trusted-operation"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs(
+				"x-request-id", "forged-request",
+				"idempotency-key", "forged-operation",
+				"x-custom", "preserved",
+			))
+			if test.requestID != "" {
+				ctx = WithRequestID(ctx, test.requestID)
+				ctx = WithIdempotencyKey(ctx, test.idempotencyID)
+			} else if test.invalidKey {
+				ctx = WithIdempotencyKey(ctx, "invalid\nkey")
+			}
+			outgoing, ok := metadata.FromOutgoingContext(withOutgoingMetadata(ctx, "", ""))
+			require.True(t, ok)
+			require.Equal(t, []string{"preserved"}, outgoing.Get("x-custom"))
+			if test.requestID == "" {
+				require.Empty(t, outgoing.Get("x-request-id"))
+				require.Empty(t, outgoing.Get("idempotency-key"))
+			} else {
+				require.Equal(t, []string{test.requestID}, outgoing.Get("x-request-id"))
+				require.Equal(t, []string{test.idempotencyID}, outgoing.Get("idempotency-key"))
+			}
+		})
+	}
+}
+
 func TestTimeoutInterceptorCapsLongerCallerDeadline(t *testing.T) {
 	t.Parallel()
 	caller, cancel := context.WithTimeout(t.Context(), time.Second)

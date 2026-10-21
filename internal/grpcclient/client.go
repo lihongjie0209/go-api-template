@@ -216,6 +216,8 @@ func metadataStreamInterceptor(token, psk string) grpc.StreamClientInterceptor {
 func withOutgoingMetadata(ctx context.Context, token, psk string) context.Context {
 	values, _ := metadata.FromOutgoingContext(ctx)
 	values = values.Copy()
+	values.Delete("x-request-id")
+	values.Delete("idempotency-key")
 	if token != "" {
 		values.Set("authorization", "Bearer "+token)
 	} else if psk != "" {

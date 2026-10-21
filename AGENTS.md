@@ -535,7 +535,9 @@ message queue with an outbox.
   registry, not embedded in business services.
 - Metrics use only bounded client names, protocol, result, and duration. Trace,
   Request ID, and idempotency metadata propagate from the caller Context;
-  credentials, targets, request bodies, and tenant/user IDs are not labels.
+  caller-supplied HTTP headers or gRPC outgoing metadata must not override these
+  validated Context values or introduce them when Context has none. Credentials,
+  targets, request bodies, and tenant/user IDs are not labels.
 - Tests cover deadline precedence, cancellation, response-body lifecycle,
   retry eligibility/exhaustion, jitter-compatible bounds, breaker opening,
   authentication replacement, correlation metadata, unsafe TLS/URL rejection,
