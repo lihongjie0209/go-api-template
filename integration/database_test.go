@@ -5,10 +5,13 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
@@ -48,6 +52,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	"github.com/lihongjie0209/go-api-template/internal/tenant"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
+	httptransport "github.com/lihongjie0209/go-api-template/internal/transport/http"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
@@ -473,6 +478,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil {
 		t.Fatalf("load saved data permission draft: %v", err)
 	}
+	testDataPermissionSimulationOutbox(t, actorCtx, db, service, datapermission.NewSimulator(schemas, resources, engine), document, created.ID, version.VersionNumber)
 	draftSimulation, err := datapermission.NewSimulator(schemas, resources, engine).SimulateVersion(ctx, storedDraft, datapermission.SavedSimulationInput{
 		ExpectedScope: datapermission.PolicyScopeTenant, ActorTenantID: tenantID, PolicyCode: created.Code,
 		Action: "read", Subject: resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID},
@@ -548,6 +554,113 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || denied.Clause != "(1 = 0)" {
 		t.Fatalf("disabled data permission predicate=%+v err=%v", denied, err)
+	}
+}
+
+func testDataPermissionSimulationOutbox(t *testing.T, ctx context.Context, db *sqlx.DB, service *datapermission.LifecycleService, simulator *datapermission.Simulator, policy datapermission.Policy, policyID string, versionNumber int64) {
+	t.Helper()
+	const subject = "platform.operation-log.simulation-integration.v1"
+	cfg := config.Config{
+		App:          config.App{Name: "data-permission-integration"},
+		EventBus:     config.EventBus{Enabled: true},
+		OperationLog: config.OperationLog{Enabled: true, Subject: subject, MaxPayloadBytes: 4096},
+	}
+	transactor := appdb.NewTransactor(db)
+	bus := &eventbus.Bus{}
+	outbox := eventbus.NewOutbox(cfg, bus, transactor, nil, nil)
+	recorder := operationlog.New(cfg, bus, db, transactor, nil, outbox, nil)
+	handler := httptransport.NewDataPermissionHandler(service, simulator, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	router := gin.New()
+	const candidatePath = "/api/v1/data-permissions/tenant-policies/simulate"
+	const savedPath = "/api/v1/data-permissions/tenant-policies/versions/simulate"
+	router.POST(candidatePath, handler.Simulate)
+	router.POST(savedPath, handler.SimulateVersion)
+	principal, ok := platformprincipal.FromContext(ctx)
+	if !ok {
+		t.Fatal("simulation diagnostic requires an actor")
+	}
+	userID := "sensitive-simulation-user"
+	subjectInput := resourceaction.Subject{ID: userID, Type: "user", Authenticated: true, TenantID: principal.TenantID}
+	resourceInput := resourceaction.Resource{Type: "tenant.member", TenantID: principal.TenantID}
+	subjectAttributes := datapermission.SubjectAttributes{"id": userID}
+	resourceAttributes := datapermission.ResourceAttributes{"owner_id": userID}
+	candidate := policy
+	candidate.Metadata.Name = "private-simulation-policy-name"
+	requests := []struct {
+		path string
+		body any
+	}{
+		{path: candidatePath, body: httptransport.DataPermissionSimulationRequest{
+			Policy: candidate, Action: "read", Subject: subjectInput, Resource: resourceInput,
+			SubjectAttributes: subjectAttributes, ResourceAttributes: resourceAttributes,
+		}},
+		{path: savedPath, body: httptransport.DataPermissionSavedSimulationRequest{
+			PolicyID: policyID, VersionNumber: versionNumber, Action: "read", Subject: subjectInput, Resource: resourceInput,
+			SubjectAttributes: subjectAttributes, ResourceAttributes: resourceAttributes,
+		}},
+	}
+	for _, test := range requests {
+		body, err := json.Marshal(test.body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, test.path, bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request = request.WithContext(requestid.WithContext(ctx, "simulation-diagnostic-request"))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("simulate %s status=%d body=%s", test.path, response.Code, response.Body.String())
+		}
+	}
+	rows, err := db.QueryxContext(ctx, db.Rebind(`SELECT envelope FROM event_outbox WHERE subject=? AND deleted_at IS NULL`), subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var envelope commonv1.EventEnvelope
+		if err := proto.Unmarshal(raw, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.EventType != "platform.operation-log.recorded.v1" || envelope.Context.GetRequestId() != "simulation-diagnostic-request" {
+			t.Fatalf("invalid simulation diagnostic envelope: %+v", envelope)
+		}
+		var event struct {
+			Operation      string `json:"operation"`
+			RequestPayload string `json:"request_payload"`
+			Succeeded      bool   `json:"succeeded"`
+		}
+		if err := json.Unmarshal(envelope.Payload, &event); err != nil {
+			t.Fatal(err)
+		}
+		if !event.Succeeded || seen[event.Operation] {
+			t.Fatalf("duplicate or failed simulation diagnostic: %+v", event)
+		}
+		seen[event.Operation] = true
+		for _, forbidden := range []string{userID, "private-simulation-policy-name", "resource.owner_id", "subject_attributes", "resource_attributes"} {
+			if strings.Contains(string(envelope.Payload), forbidden) {
+				t.Fatalf("simulation diagnostic contains %q: %s", forbidden, envelope.Payload)
+			}
+		}
+		var summary map[string]any
+		if err := json.Unmarshal([]byte(event.RequestPayload), &summary); err != nil {
+			t.Fatal(err)
+		}
+		if summary["scope"] != "tenant" || summary["action"] != "read" {
+			t.Fatalf("simulation diagnostic summary=%v", summary)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || !seen["data-permission.policy.simulate"] || !seen["data-permission.policy.simulate-version"] {
+		t.Fatalf("simulation diagnostic operations=%v", seen)
 	}
 }
 
