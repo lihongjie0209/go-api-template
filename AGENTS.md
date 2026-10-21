@@ -283,11 +283,18 @@ otherwise unsuitable for dictionary use.
   implementation. Business code must not depend directly on Redis.
 - Cache keys must include service namespace, tenant where applicable, resource
   type, ID, and a schema/version segment.
-- The service that owns the write owns invalidation. Successful commits happen
+- The service that owns the write owns invalidation or the authoritative
+  version change that makes old keys unreachable. Successful commits happen
   before cache invalidation or refresh.
 - Define TTL, negative-cache behavior, stampede protection, stale tolerance,
   and failure policy. Do not cache authorization-sensitive responses without
   including all relevant principal/tenant dimensions.
+- A cache hit must never bypass an authoritative database check that decides
+  whether anonymously accessible data is still public and active. For public
+  platform configuration, check visibility and version in SQL first, then use
+  a version-scoped cache key; an invalidation failure must not expose a value
+  after it becomes private, disabled, or deleted. If the database check fails,
+  fail closed instead of serving a cached value.
 - Never put IDs, cache keys, or unbounded values into metric labels.
 
 ## Redis and message queue decision SOP

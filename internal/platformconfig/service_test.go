@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -28,6 +29,11 @@ import (
 
 type failingPublicConfigCache struct{ cache.Store }
 
+const (
+	publicVisibilityQueryPattern = `SELECT version FROM platform_configs WHERE LOWER\(config_key\)=\? AND is_public=true AND status='active' AND deleted_at IS NULL`
+	publicValueQueryPattern      = `SELECT config_key,name,category,value_type,value FROM platform_configs WHERE LOWER\(config_key\)=\? AND version=\? AND is_public=true AND status='active' AND deleted_at IS NULL`
+)
+
 func (failingPublicConfigCache) Get(context.Context, string) ([]byte, error) {
 	return nil, errors.New("redis password=secret-value")
 }
@@ -41,8 +47,10 @@ func TestPublicConfigCacheFailureFallsBackWithoutLeakingRedisDetails(t *testing.
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
-	mock.ExpectQuery(`SELECT config_key,name,category,value_type,value FROM platform_configs`).
-		WithArgs("ui.theme").
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(publicValueQueryPattern).
+		WithArgs("ui.theme", int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}).
 			AddRow("ui.theme", "Theme", "ui", "object", []byte(`{"color":"blue"}`)))
 	var output bytes.Buffer
@@ -162,9 +170,13 @@ func TestGetPublicUsesTypedDistributedCache(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	service := &Service{db: sqlx.NewDb(db, "sqlmock"), cache: cache.NewRedisStore(client), cfg: config.Config{PlatformConfig: config.PlatformConfig{CacheTTL: time.Minute}}}
-	mock.ExpectQuery(`SELECT config_key,name,category,value_type,value FROM platform_configs`).
-		WithArgs("ui.theme").
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(publicValueQueryPattern).
+		WithArgs("ui.theme", int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}).AddRow("ui.theme", "Theme", "ui", "object", []byte(`{"color":"blue"}`)))
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
 
 	first, err := service.GetPublic(context.Background(), "UI.THEME")
 	require.NoError(t, err)
@@ -172,6 +184,88 @@ func TestGetPublicUsesTypedDistributedCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "object", first.ValueType)
 	require.Equal(t, first, second)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetPublicDoesNotReturnCachedValueAfterPrivacyChange(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := &Service{db: sqlx.NewDb(db, "sqlmock"), cache: cache.NewRedisStore(client), cfg: config.Config{PlatformConfig: config.PlatformConfig{CacheTTL: time.Minute}}}
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(publicValueQueryPattern).
+		WithArgs("ui.theme", int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}).AddRow("ui.theme", "Theme", "ui", "object", []byte(`{"color":"blue"}`)))
+	first, err := service.GetPublic(t.Context(), "ui.theme")
+	require.NoError(t, err)
+	require.Equal(t, "ui.theme", first.Key)
+
+	// The authoritative row is now private while the old cache entry remains.
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}))
+	_, err = service.GetPublic(t.Context(), "ui.theme")
+	require.ErrorIs(t, err, ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetPublicFailsClosedWhenVisibilityQueryFails(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	store := cache.NewRedisStore(client)
+	require.NoError(t, store.Set(t.Context(), "platform-config:public:v2:ui.theme:1", []byte(`{"key":"ui.theme","value":true}`), time.Minute))
+	service := &Service{db: sqlx.NewDb(db, "sqlmock"), cache: store}
+	dbFailure := errors.New("database unavailable")
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").WillReturnError(dbFailure)
+	_, err = service.GetPublic(t.Context(), "ui.theme")
+	require.ErrorIs(t, err, dbFailure)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetPublicRetriesWhenVersionChangesBetweenReads(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	service := &Service{db: sqlx.NewDb(db, "sqlmock")}
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(publicValueQueryPattern).WithArgs("ui.theme", int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}))
+	mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(2))
+	mock.ExpectQuery(publicValueQueryPattern).WithArgs("ui.theme", int64(2)).
+		WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}).AddRow("ui.theme", "Theme", "ui", "boolean", []byte(`true`)))
+	view, err := service.GetPublic(t.Context(), "ui.theme")
+	require.NoError(t, err)
+	require.JSONEq(t, `true`, string(view.Value))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetPublicUsesNewVersionAfterUpdateDespiteOldCacheEntry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := &Service{db: sqlx.NewDb(db, "sqlmock"), cache: cache.NewRedisStore(client), cfg: config.Config{PlatformConfig: config.PlatformConfig{CacheTTL: time.Minute}}}
+	for _, version := range []int64{1, 2} {
+		mock.ExpectQuery(publicVisibilityQueryPattern).WithArgs("ui.theme").
+			WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(version))
+		mock.ExpectQuery(publicValueQueryPattern).
+			WithArgs("ui.theme", version).
+			WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}).AddRow("ui.theme", "Theme", "ui", "number", []byte(fmt.Sprint(version))))
+		view, getErr := service.GetPublic(t.Context(), "ui.theme")
+		require.NoError(t, getErr)
+		require.JSONEq(t, fmt.Sprint(version), string(view.Value))
+	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -1717,6 +1717,9 @@ func testPlatformConfigLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err := service.Delete(actorCtx, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := service.GetPublic(ctx, created.Key); !errors.Is(err, platformconfig.ErrNotFound) {
+		t.Fatalf("deleted config public lookup error=%v", err)
+	}
 	if _, err := service.DeleteTarget(actorCtx, created.ID); !errors.Is(err, platformconfig.ErrNotFound) {
 		t.Fatalf("deleted platform config action target error=%v", err)
 	}

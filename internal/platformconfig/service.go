@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -478,30 +479,47 @@ func (s *Service) GetPublic(ctx context.Context, key string) (PublicView, error)
 	if !keyPattern.MatchString(key) {
 		return PublicView{}, ErrInvalid
 	}
-	cacheKey := "platform-config:public:v1:" + key
-	if s.cache != nil {
-		if data, err := s.cache.Get(ctx, cacheKey); err == nil {
-			var view PublicView
-			if json.Unmarshal(data, &view) == nil {
-				return view, nil
+	visibilityQuery := s.db.Rebind(`SELECT version FROM platform_configs WHERE LOWER(config_key)=? AND is_public=true AND status='active' AND deleted_at IS NULL`)
+	valueQuery := s.db.Rebind(`SELECT config_key,name,category,value_type,value FROM platform_configs WHERE LOWER(config_key)=? AND version=? AND is_public=true AND status='active' AND deleted_at IS NULL`)
+	for attempt := 0; attempt < 2; attempt++ {
+		// Anonymous reads must consult the authoritative visibility state before a cache hit.
+		var version int64
+		if err := s.db.GetContext(ctx, &version, visibilityQuery, key); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return PublicView{}, ErrNotFound
 			}
-		} else if !errors.Is(err, cache.ErrMiss) && s.logger != nil {
-			s.logger.WarnContext(ctx, "read public platform config cache", "key", key, "error", observability.SafeError(err, errPlatformConfigCacheFailed))
+			return PublicView{}, err
 		}
-	}
-	var view PublicView
-	err := s.db.GetContext(ctx, &view, s.db.Rebind(`SELECT config_key,name,category,value_type,value FROM platform_configs WHERE LOWER(config_key)=? AND is_public=true AND status='active' AND deleted_at IS NULL`), key)
-	if errors.Is(err, sql.ErrNoRows) {
-		return view, ErrNotFound
-	}
-	if err == nil && s.cache != nil {
-		if data, e := json.Marshal(view); e == nil {
-			if cacheErr := s.cache.Set(ctx, cacheKey, data, s.cfg.PlatformConfig.CacheTTL); cacheErr != nil && s.logger != nil {
-				s.logger.WarnContext(ctx, "write public platform config cache", "key", key, "error", observability.SafeError(cacheErr, errPlatformConfigCacheFailed))
+		cacheKey := "platform-config:public:v2:" + key + ":" + strconv.FormatInt(version, 10)
+		if s.cache != nil {
+			if data, err := s.cache.Get(ctx, cacheKey); err == nil {
+				var view PublicView
+				if json.Unmarshal(data, &view) == nil {
+					return view, nil
+				}
+			} else if !errors.Is(err, cache.ErrMiss) && s.logger != nil {
+				s.logger.WarnContext(ctx, "read public platform config cache", "key", key, "error", observability.SafeError(err, errPlatformConfigCacheFailed))
 			}
 		}
+		var view PublicView
+		err := s.db.GetContext(ctx, &view, valueQuery, key, version)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A concurrent update changed the version or visibility between reads.
+			continue
+		}
+		if err != nil {
+			return PublicView{}, err
+		}
+		if s.cache != nil {
+			if data, e := json.Marshal(view); e == nil {
+				if cacheErr := s.cache.Set(ctx, cacheKey, data, s.cfg.PlatformConfig.CacheTTL); cacheErr != nil && s.logger != nil {
+					s.logger.WarnContext(ctx, "write public platform config cache", "key", key, "error", observability.SafeError(cacheErr, errPlatformConfigCacheFailed))
+				}
+			}
+		}
+		return view, nil
 	}
-	return view, err
+	return PublicView{}, ErrNotFound
 }
 func (s *Service) ListPublic(ctx context.Context, category string) ([]PublicView, error) {
 	category = strings.ToLower(strings.TrimSpace(category))
@@ -563,13 +581,6 @@ func (s *Service) mutate(ctx context.Context, operation, id, key string, request
 				_ = s.security.Record(runCtx, securityEntry)
 			}
 			return err
-		}
-		if s.cache != nil {
-			cacheCtx, cancel := cache.AfterCommitContext(runCtx)
-			defer cancel()
-			if cacheErr := s.cache.Delete(cacheCtx, "platform-config:public:v1:"+key); cacheErr != nil && s.logger != nil {
-				s.logger.WarnContext(cacheCtx, "invalidate public platform config cache", "key", key, "error", observability.SafeError(cacheErr, errPlatformConfigCacheFailed))
-			}
 		}
 		return nil
 	}
