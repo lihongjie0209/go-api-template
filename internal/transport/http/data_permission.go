@@ -113,6 +113,17 @@ type DataPermissionSimulationRequest struct {
 	ProposedAttributes datapermission.ResourceAttributes `json:"proposed_attributes"`
 }
 
+type DataPermissionSavedSimulationRequest struct {
+	PolicyID           string                            `json:"policy_id" binding:"required,uuid"`
+	VersionNumber      int64                             `json:"version_number" binding:"required,gt=0"`
+	Action             string                            `json:"action" binding:"required,max=128"`
+	Subject            resourceaction.Subject            `json:"subject" binding:"required"`
+	Resource           resourceaction.Resource           `json:"resource" binding:"required"`
+	SubjectAttributes  datapermission.SubjectAttributes  `json:"subject_attributes" binding:"required"`
+	ResourceAttributes datapermission.ResourceAttributes `json:"resource_attributes" binding:"required"`
+	ProposedAttributes datapermission.ResourceAttributes `json:"proposed_attributes"`
+}
+
 type DataPermissionSimulationContext struct {
 	TenantID string `json:"tenant_id"`
 }
@@ -137,6 +148,44 @@ func (h *DataPermissionHandler) Simulate(c *gin.Context) {
 		return
 	}
 	result, err := h.simulator.Simulate(c.Request.Context(), datapermission.SimulationInput{Policy: request.Policy, Action: request.Action, Subject: request.Subject, Resource: request.Resource, SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes, ProposedAttributes: request.ProposedAttributes})
+	h.respond(c, result, err)
+}
+
+// SimulateSavedDataPermissionVersion godoc
+// @Summary Simulate one saved data-permission policy version against the published baseline
+// @Tags data-permission
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body DataPermissionSavedSimulationRequest true "Saved version simulation"
+// @Success 200 {object} Response{body=datapermission.SimulationResult}
+// @Router /api/v1/data-permissions/global-policies/versions/simulate [post]
+// @Router /api/v1/data-permissions/tenant-policies/versions/simulate [post]
+func (h *DataPermissionHandler) SimulateVersion(c *gin.Context) {
+	var request DataPermissionSavedSimulationRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	principal, err := platformprincipal.Require(c.Request.Context())
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	parent, ok := h.policyForRoute(c, request.PolicyID)
+	if !ok {
+		return
+	}
+	version, err := h.service.GetVersion(c.Request.Context(), request.PolicyID, request.VersionNumber)
+	if err != nil {
+		h.respond(c, nil, err)
+		return
+	}
+	result, err := h.simulator.SimulateVersion(c.Request.Context(), version, datapermission.SavedSimulationInput{
+		ExpectedScope: expectedDataPolicyScope(c), ActorTenantID: principal.TenantID, PolicyCode: parent.Code,
+		Action: request.Action, Subject: request.Subject, Resource: request.Resource,
+		SubjectAttributes: request.SubjectAttributes, ResourceAttributes: request.ResourceAttributes,
+		ProposedAttributes: request.ProposedAttributes,
+	})
 	h.respond(c, result, err)
 }
 
@@ -510,15 +559,20 @@ func dataPermissionStatusTarget(policy datapermission.PolicyRecord, scope datape
 }
 
 func (h *DataPermissionHandler) policyMatches(c *gin.Context, id string) bool {
+	_, ok := h.policyForRoute(c, id)
+	return ok
+}
+
+func (h *DataPermissionHandler) policyForRoute(c *gin.Context, id string) (datapermission.PolicyRecord, bool) {
 	policy, err := h.service.Get(c.Request.Context(), id)
 	if err == nil && policy.Scope != expectedDataPolicyScope(c) {
 		err = datapermission.ErrPolicyNotFound
 	}
 	if err != nil {
 		h.respond(c, nil, err)
-		return false
+		return datapermission.PolicyRecord{}, false
 	}
-	return true
+	return policy, true
 }
 
 func expectedDataPolicyScope(c *gin.Context) datapermission.PolicyScopeType {

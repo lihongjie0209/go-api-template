@@ -1811,6 +1811,34 @@ definitions:
     - id
     - version_number
     type: object
+  httptransport.DataPermissionSavedSimulationRequest:
+    properties:
+      action:
+        maxLength: 128
+        type: string
+      policy_id:
+        type: string
+      proposed_attributes:
+        $ref: '#/definitions/datapermission.ResourceAttributes'
+      resource:
+        $ref: '#/definitions/resourceaction.Resource'
+      resource_attributes:
+        $ref: '#/definitions/datapermission.ResourceAttributes'
+      subject:
+        $ref: '#/definitions/resourceaction.Subject'
+      subject_attributes:
+        $ref: '#/definitions/datapermission.SubjectAttributes'
+      version_number:
+        type: integer
+    required:
+    - action
+    - policy_id
+    - resource
+    - resource_attributes
+    - subject
+    - subject_attributes
+    - version_number
+    type: object
   httptransport.DataPermissionSimulationContext:
     properties:
       tenant_id:
@@ -6552,6 +6580,35 @@ paths:
       summary: Page immutable data-permission policy versions
       tags:
       - data-permission
+  /api/v1/data-permissions/global-policies/versions/simulate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Saved version simulation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionSavedSimulationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.SimulationResult'
+              type: object
+      security:
+      - Bearer: []
+      summary: Simulate one saved data-permission policy version against the published
+        baseline
+      tags:
+      - data-permission
   /api/v1/data-permissions/tenant-policies/create:
     post:
       consumes:
@@ -6928,6 +6985,35 @@ paths:
       security:
       - Bearer: []
       summary: Page immutable data-permission policy versions
+      tags:
+      - data-permission
+  /api/v1/data-permissions/tenant-policies/versions/simulate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Saved version simulation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.DataPermissionSavedSimulationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/datapermission.SimulationResult'
+              type: object
+      security:
+      - Bearer: []
+      summary: Simulate one saved data-permission policy version against the published
+        baseline
       tags:
       - data-permission
   /api/v1/dictionaries/create:

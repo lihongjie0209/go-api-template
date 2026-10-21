@@ -251,6 +251,10 @@ fields before building SQL or calling the provider.
   request JSON is never a trusted proposed object. Create operations use the
   constructed new object as both current and proposed input. Read/list/delete
   actions must reject `proposed_condition` because no target state is evaluated.
+- Simulating an immutable saved policy version must load its document through
+  the scope-limited repository, verify its code and scope against the parent
+  policy, and bind tenant-owned subject/resource inputs to the authenticated
+  tenant. The request must not carry a replacement policy document.
 - Page/list/count/get/update/delete repositories must apply the compiled data
   scope together with tenant isolation and logical-delete predicates. Items
   and counts use the same scope; filtering after pagination is forbidden.

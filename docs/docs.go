@@ -2294,6 +2294,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data-permissions/global-policies/versions/simulate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Simulate one saved data-permission policy version against the published baseline",
+                "parameters": [
+                    {
+                        "description": "Saved version simulation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionSavedSimulationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/datapermission.SimulationResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data-permissions/tenant-policies/create": {
             "post": {
                 "security": [
@@ -2963,6 +3013,56 @@ const docTemplate = `{
                                     "properties": {
                                         "body": {
                                             "$ref": "#/definitions/httptransport.DataPermissionVersionSummaryPage"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data-permissions/tenant-policies/versions/simulate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-permission"
+                ],
+                "summary": "Simulate one saved data-permission policy version against the published baseline",
+                "parameters": [
+                    {
+                        "description": "Saved version simulation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httptransport.DataPermissionSavedSimulationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httptransport.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "body": {
+                                            "$ref": "#/definitions/datapermission.SimulationResult"
                                         }
                                     }
                                 }
@@ -14703,6 +14803,45 @@ const docTemplate = `{
             "properties": {
                 "id": {
                     "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "httptransport.DataPermissionSavedSimulationRequest": {
+            "type": "object",
+            "required": [
+                "action",
+                "policy_id",
+                "resource",
+                "resource_attributes",
+                "subject",
+                "subject_attributes",
+                "version_number"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "policy_id": {
+                    "type": "string"
+                },
+                "proposed_attributes": {
+                    "$ref": "#/definitions/datapermission.ResourceAttributes"
+                },
+                "resource": {
+                    "$ref": "#/definitions/resourceaction.Resource"
+                },
+                "resource_attributes": {
+                    "$ref": "#/definitions/datapermission.ResourceAttributes"
+                },
+                "subject": {
+                    "$ref": "#/definitions/resourceaction.Subject"
+                },
+                "subject_attributes": {
+                    "$ref": "#/definitions/datapermission.SubjectAttributes"
                 },
                 "version_number": {
                     "type": "integer"

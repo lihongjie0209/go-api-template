@@ -22,6 +22,18 @@ type SimulationInput struct {
 	ProposedAttributes ResourceAttributes      `json:"proposed_attributes"`
 }
 
+type SavedSimulationInput struct {
+	ExpectedScope      PolicyScopeType         `json:"-"`
+	ActorTenantID      string                  `json:"-"`
+	PolicyCode         string                  `json:"-"`
+	Action             string                  `json:"action"`
+	Subject            resourceaction.Subject  `json:"subject"`
+	Resource           resourceaction.Resource `json:"resource"`
+	SubjectAttributes  SubjectAttributes       `json:"subject_attributes"`
+	ResourceAttributes ResourceAttributes      `json:"resource_attributes"`
+	ProposedAttributes ResourceAttributes      `json:"proposed_attributes"`
+}
+
 type PredicatePreview struct {
 	Clause         string `json:"clause"`
 	ParameterCount int    `json:"parameter_count"`
@@ -47,6 +59,36 @@ type Simulator struct {
 
 func NewSimulator(schemas *SchemaRegistry, resources *resourceaction.Registry, runtime *Engine) *Simulator {
 	return &Simulator{schemas: schemas, resources: resources, runtime: runtime}
+}
+
+// SimulateVersion evaluates a repository-loaded immutable version against the
+// published baseline. The candidate document cannot come from the caller.
+func (s *Simulator) SimulateVersion(ctx context.Context, version VersionRecord, input SavedSimulationInput) (SimulationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SimulationResult{}, err
+	}
+	if version.PolicyID == "" || version.VersionNumber <= 0 {
+		return SimulationResult{}, ErrInvalidSimulation
+	}
+	policy, err := ParsePolicy([]byte(version.Document))
+	if err != nil {
+		return SimulationResult{}, err
+	}
+	if input.PolicyCode == "" || policy.Metadata.Code != input.PolicyCode {
+		return SimulationResult{}, ErrInvalidPolicy
+	}
+	if policy.Scope.Type != input.ExpectedScope {
+		return SimulationResult{}, ErrPolicyScope
+	}
+	if input.ExpectedScope == PolicyScopeTenant && (input.ActorTenantID == "" || policy.Scope.TenantID != input.ActorTenantID ||
+		input.Subject.TenantID != input.ActorTenantID || input.Resource.TenantID != input.ActorTenantID) {
+		return SimulationResult{}, ErrPolicyScope
+	}
+	return s.Simulate(ctx, SimulationInput{
+		Policy: policy, Action: input.Action, Subject: input.Subject, Resource: input.Resource,
+		SubjectAttributes: input.SubjectAttributes, ResourceAttributes: input.ResourceAttributes,
+		ProposedAttributes: input.ProposedAttributes,
+	})
 }
 
 func (s *Simulator) Simulate(ctx context.Context, input SimulationInput) (SimulationResult, error) {

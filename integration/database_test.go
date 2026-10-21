@@ -460,6 +460,19 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || created.Version != 1 || version.Status != datapermission.VersionDraft {
 		t.Fatalf("create data permission policy=%+v version=%+v err=%v", created, version, err)
 	}
+	storedDraft, err := service.GetVersion(actorCtx, created.ID, version.VersionNumber)
+	if err != nil {
+		t.Fatalf("load saved data permission draft: %v", err)
+	}
+	draftSimulation, err := datapermission.NewSimulator(schemas, resources, engine).SimulateVersion(ctx, storedDraft, datapermission.SavedSimulationInput{
+		ExpectedScope: datapermission.PolicyScopeTenant, ActorTenantID: tenantID, PolicyCode: created.Code,
+		Action: "read", Subject: resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID},
+		Resource:          resourceaction.Resource{Type: "tenant.member", TenantID: tenantID},
+		SubjectAttributes: datapermission.SubjectAttributes{"id": "member-1"}, ResourceAttributes: datapermission.ResourceAttributes{"owner_id": "member-1"},
+	})
+	if err != nil || draftSimulation.Baseline.CurrentAllowed || !draftSimulation.Candidate.CurrentAllowed || !draftSimulation.Changed {
+		t.Fatalf("saved draft simulation=%+v err=%v", draftSimulation, err)
+	}
 	published, err := service.Publish(actorCtx, created.ID, 1, created.Version)
 	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
 		t.Fatalf("publish data permission policy=%+v err=%v", published, err)

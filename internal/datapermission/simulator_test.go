@@ -117,6 +117,42 @@ func TestSimulatorReturnsCanceledContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestSimulatorEvaluatesSavedPolicyVersion(t *testing.T) {
+	simulator, policy := newDataPermissionSimulator(t)
+	document, err := MarshalPolicy(policy)
+	require.NoError(t, err)
+	input := SavedSimulationInput{
+		ExpectedScope: PolicyScopeTenant, ActorTenantID: "tenant-1", PolicyCode: "member-owner",
+		Action:             "update",
+		Subject:            resourceaction.Subject{ID: "user-1", Authenticated: true, TenantID: "tenant-1"},
+		Resource:           resourceaction.Resource{Type: "tenant.member", TenantID: "tenant-1"},
+		SubjectAttributes:  SubjectAttributes{"id": "user-1"},
+		ResourceAttributes: ResourceAttributes{"owner_id": "user-1"},
+	}
+	version := VersionRecord{PolicyID: "policy-1", VersionNumber: 2, Document: string(document)}
+	result, err := simulator.SimulateVersion(t.Context(), version, input)
+	require.NoError(t, err)
+	require.False(t, result.Baseline.CurrentAllowed)
+	require.True(t, result.Candidate.CurrentAllowed)
+	require.True(t, result.Changed)
+
+	version.Document = "not: [valid"
+	_, err = simulator.SimulateVersion(t.Context(), version, input)
+	require.ErrorIs(t, err, ErrInvalidPolicy)
+	version.Document = string(document)
+	input.Resource.TenantID = "tenant-2"
+	_, err = simulator.SimulateVersion(t.Context(), version, input)
+	require.ErrorIs(t, err, ErrPolicyScope)
+	input.Resource.TenantID = "tenant-1"
+	input.ExpectedScope = PolicyScopeGlobal
+	_, err = simulator.SimulateVersion(t.Context(), version, input)
+	require.ErrorIs(t, err, ErrPolicyScope)
+	input.ExpectedScope = PolicyScopeTenant
+	input.PolicyCode = "another-policy"
+	_, err = simulator.SimulateVersion(t.Context(), version, input)
+	require.ErrorIs(t, err, ErrInvalidPolicy)
+}
+
 func newDataPermissionSimulator(t *testing.T) (*Simulator, Policy) {
 	t.Helper()
 	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.ResourceDefinitions{
