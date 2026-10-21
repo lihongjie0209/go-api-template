@@ -418,7 +418,8 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 		t.Fatalf("create data permission engine: %v", err)
 	}
 	repository := datapermission.NewRepository(db)
-	service := datapermission.NewLifecycleService(repository, appdb.NewTransactor(db), schemas, resources, datapermission.NewRuntimeLoader(repository, engine), nil, nil, nil)
+	loader := datapermission.NewRuntimeLoader(repository, engine)
+	service := datapermission.NewLifecycleService(repository, appdb.NewTransactor(db), schemas, resources, loader, nil, nil, nil)
 	authenticated := true
 	document := datapermission.Policy{
 		APIVersion: datapermission.PolicyAPIVersion,
@@ -451,6 +452,49 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || predicate.Clause != "(tm.user_id = ?)" || len(predicate.Args) != 1 || predicate.Args[0] != "member-1" {
 		t.Fatalf("compiled data permission predicate=%+v err=%v", predicate, err)
+	}
+	beforeRevision, err := repository.Revision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTenantStatus := func(status tenant.Status) {
+		t.Helper()
+		if err := appdb.NewTransactor(db).Within(fixtureCtx, nil, func(tx *sqlx.Tx) error {
+			result, err := tx.ExecContext(fixtureCtx, tx.Rebind(`UPDATE tenants SET status=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NULL`), status, time.Now(), "data-permission-integration", tenantID)
+			if err != nil {
+				return err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows != 1 {
+				return errors.New("tenant fixture status update affected no rows")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("change data permission tenant status: %v", err)
+		}
+	}
+	setTenantStatus(tenant.StatusDisabled)
+	afterRevision, err := repository.Revision(ctx)
+	if err != nil || afterRevision == beforeRevision {
+		t.Fatalf("tenant status must advance data policy revision: before=%q after=%q err=%v", beforeRevision, afterRevision, err)
+	}
+	if err := loader.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inactivePredicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
+	if err != nil || inactivePredicate.Clause != "(1 = 0)" {
+		t.Fatalf("disabled tenant data permission predicate=%+v err=%v", inactivePredicate, err)
+	}
+	setTenantStatus(tenant.StatusActive)
+	if err := loader.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reactivatedPredicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
+	if err != nil || reactivatedPredicate.Clause != "(tm.user_id = ?)" {
+		t.Fatalf("reactivated tenant data permission predicate=%+v err=%v", reactivatedPredicate, err)
 	}
 	disabled, err := service.SetStatus(actorCtx, datapermission.SetPolicyStatusInput{PolicyID: created.ID, Status: datapermission.StatusDisabled, ExpectedPolicyVersion: published.Version})
 	if err != nil || disabled.Status != datapermission.StatusDisabled {
@@ -2004,7 +2048,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if target, err := departments.DeleteTarget(departmentCtx, root.ID); err != nil || target.ID != root.ID || target.Version != root.Version {
 		t.Fatalf("department delete target=%+v err=%v", target, err)
 	}
-	otherDepartmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeSystem, TenantID: "another-tenant"})
+	otherDepartmentCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other", Type: platformprincipal.TypeSystem, TenantID: "another-tenant", MembershipID: "other-member"})
 	if _, err := departments.UpdateTarget(otherDepartmentCtx, root.ID); !errors.Is(err, tenant.ErrNotFound) {
 		t.Fatalf("cross-tenant department update target error=%v", err)
 	}

@@ -27,7 +27,7 @@ func TestLoadPublishedPoliciesRequiresLiveTenantForTenantScope(t *testing.T) {
 		require.NoError(t, err)
 		return string(document)
 	}
-	mock.ExpectQuery(`(?s)FROM data_permission_policies p.*LEFT JOIN tenants t ON t.id=p.tenant_id AND t.deleted_at IS NULL.*p.scope='global' OR \(p.scope='tenant' AND t.id IS NOT NULL\)`).
+	mock.ExpectQuery(`(?s)FROM data_permission_policies p.*LEFT JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL.*p.scope='global' OR \(p.scope='tenant' AND t.id IS NOT NULL\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}).
 			AddRow("global-member", "global", nil, makeDocument("global-member", PolicyScopeGlobal, "")).
 			AddRow("tenant-member", "tenant", "tenant-1", makeDocument("tenant-member", PolicyScopeTenant, "tenant-1")))
@@ -37,6 +37,21 @@ func TestLoadPublishedPoliciesRequiresLiveTenantForTenantScope(t *testing.T) {
 	require.Len(t, policies, 2)
 	require.Equal(t, PolicyScopeGlobal, policies[0].Scope.Type)
 	require.Equal(t, PolicyScopeTenant, policies[1].Scope.Type)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRepositoryRevisionIncludesPolicyTenantChanges(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	updated := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`(?s)UNION ALL SELECT t.updated_at,t.version FROM tenants t WHERE EXISTS.*data_permission_policies p.*p.tenant_id=t.id`).
+		WillReturnRows(sqlmock.NewRows([]string{"updated_at", "row_count", "version_sum"}).AddRow(updated, 3, 8))
+
+	revision, err := NewRepository(sqlx.NewDb(raw, "sqlmock")).Revision(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "2026-10-21T01:00:00Z:3:8", revision)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

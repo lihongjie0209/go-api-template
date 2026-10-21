@@ -125,7 +125,7 @@ func TestTenantDeletePolicyRefreshFailureIsVisible(t *testing.T) {
 	want := errors.New("policy runtime unavailable")
 	service := &Service{}
 	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error { return want }})
-	if err := service.afterDelete(t.Context(), "tenant-1"); !errors.Is(err, want) {
+	if err := service.afterTenantMutation(t.Context(), "tenant-1"); !errors.Is(err, want) {
 		t.Fatalf("refresh failure = %v, want wrapped runtime error", err)
 	}
 }
@@ -143,8 +143,65 @@ func TestTenantDeletePolicyRefreshSurvivesClientCancellation(t *testing.T) {
 		}
 		return nil
 	}})
-	if err := service.afterDelete(requestCtx, "tenant-1"); err != nil {
+	if err := service.afterTenantMutation(requestCtx, "tenant-1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTenantAdminUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE tenants SET name").
+		WithArgs("Tenant One", "", StatusDisabled, sqlmock.AnyArg(), "platform-admin", "tenant-1", int64(2)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	want := errors.New("policy refresh unavailable")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil, config.Config{})
+	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			return err
+		}
+		return want
+	}})
+	_, err = service.AdminUpdate(platformprincipal.SystemContext(t.Context(), "platform-admin"), UpdateInput{
+		ID: "tenant-1", Name: "Tenant One", Status: StatusDisabled, Version: 2,
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("post-commit policy refresh error = %v, want %v", err, want)
+	}
+}
+
+func TestTenantScopedUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE tenants SET name").
+		WithArgs("Tenant One", "", StatusDisabled, sqlmock.AnyArg(), "tenant-admin", "tenant-1", int64(2)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	want := errors.New("policy refresh unavailable")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil, config.Config{})
+	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			return err
+		}
+		return want
+	}})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "tenant-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+	_, err = service.Update(ctx, UpdateInput{ID: "tenant-1", Name: "Tenant One", Status: StatusDisabled, Version: 2})
+	if !errors.Is(err, want) {
+		t.Fatalf("post-commit policy refresh error = %v, want %v", err, want)
 	}
 }
 

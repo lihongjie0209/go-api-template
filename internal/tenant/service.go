@@ -61,7 +61,7 @@ type Service struct {
 }
 
 // PolicyRuntime refreshes the published data-permission snapshot after a
-// tenant deletion commits. Its database revision poll recovers lost hints.
+// tenant update or deletion commits. Its database revision poll recovers lost hints.
 type PolicyRuntime interface {
 	Changed(context.Context) error
 }
@@ -327,7 +327,9 @@ func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, err
 	if err != nil {
 		return View{}, err
 	}
-	s.invalidate(ctx, input.ID)
+	if err := s.afterTenantMutation(ctx, input.ID); err != nil {
+		return View{}, err
+	}
 	return s.AdminGet(ctx, input.ID)
 }
 
@@ -348,7 +350,7 @@ func (s *Service) AdminDelete(ctx context.Context, id string, version int64) err
 		return deleteTenant(ctx, tx, id, version, actor.ID)
 	})
 	if err == nil {
-		return s.afterDelete(ctx, id)
+		return s.afterTenantMutation(ctx, id)
 	}
 	return err
 }
@@ -373,7 +375,9 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	s.invalidate(ctx, input.ID)
+	if err := s.afterTenantMutation(ctx, input.ID); err != nil {
+		return View{}, err
+	}
 	view, err := s.Get(ctx, input.ID)
 	return view, err
 }
@@ -396,12 +400,12 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	}
 	err = s.mutate(ctx, "tenant.delete", id, map[string]any{"name": current.Name, "version": version}, func(tx *sqlx.Tx) error { return deleteTenant(ctx, tx, id, version, actor.ID) })
 	if err == nil {
-		return s.afterDelete(ctx, id)
+		return s.afterTenantMutation(ctx, id)
 	}
 	return err
 }
 
-func (s *Service) afterDelete(ctx context.Context, id string) error {
+func (s *Service) afterTenantMutation(ctx context.Context, id string) error {
 	s.invalidate(ctx, id)
 	if s.policies != nil {
 		timeout := s.policyTimeout

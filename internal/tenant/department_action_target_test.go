@@ -81,17 +81,26 @@ func TestDepartmentActionTargetRejectsBadIDAndMissingScope(t *testing.T) {
 }
 
 func TestDepartmentActionTargetHidesOtherTenantRows(t *testing.T) {
-	raw, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = raw.Close() })
-	mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL AND \(1 = 1\)`).
-		WithArgs("tenant-a", departmentActionID).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	service := &DepartmentService{db: sqlx.NewDb(raw, "sqlmock")}
-	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
-		ID: "system", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "member-a",
-	})
-	_, err = service.DeleteTarget(ctx, departmentActionID)
-	require.ErrorIs(t, err, ErrNotFound)
-	require.NoError(t, mock.ExpectationsWereMet())
+	for _, name := range []string{"update", "delete"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL AND \(1 = 1\)`).
+				WithArgs("tenant-a", departmentActionID).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			service := &DepartmentService{db: sqlx.NewDb(raw, "sqlmock")}
+			ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+				ID: "system", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "member-a",
+			})
+			if name == "update" {
+				_, err = service.UpdateTarget(ctx, departmentActionID)
+			} else {
+				_, err = service.DeleteTarget(ctx, departmentActionID)
+			}
+			require.ErrorIs(t, err, ErrNotFound)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }

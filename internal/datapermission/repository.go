@@ -26,6 +26,8 @@ func (r *Repository) Revision(ctx context.Context) (string, error) {
 		SELECT updated_at,version FROM data_permission_policies
 		UNION ALL SELECT updated_at,version FROM data_permission_policy_versions
 		UNION ALL SELECT updated_at,version FROM data_permission_policy_actions
+		UNION ALL SELECT t.updated_at,t.version FROM tenants t WHERE EXISTS
+			(SELECT 1 FROM data_permission_policies p WHERE p.tenant_id=t.id AND p.scope='tenant' AND p.deleted_at IS NULL)
 	) data_permission_revisions`
 	if err := r.db.GetContext(ctx, &revision, query); err != nil {
 		return "", fmt.Errorf("read data permission policy revision: %w", err)

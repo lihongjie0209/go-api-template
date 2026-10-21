@@ -1,4 +1,4 @@
-FROM golang:1.26.9-alpine AS build
+FROM golang:1.26.10-alpine AS build
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 WORKDIR /src
