@@ -717,6 +717,42 @@ func (contextualProvider) Query(ctx context.Context, _ Query) (Result, error) {
 	return Result{Code: "context.sample", Name: principal.ID, Type: KindEnum, Items: []ResultItem{}, Page: 1, PageSize: 20, Extension: json.RawMessage(`{}`)}, nil
 }
 
+type fullPageProvider struct{}
+
+func (fullPageProvider) Query(context.Context, Query) (Result, error) {
+	items := make([]ResultItem, pagination.MaxPageSize)
+	for i := range items {
+		items[i] = ResultItem{
+			ID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1), Code: fmt.Sprintf("code.%03d", i+1),
+			Name: "Item", Extension: json.RawMessage(`{}`),
+		}
+	}
+	return Result{Code: "test.full", Name: "Full page", Type: KindEnum, Items: items,
+		Page: 1, PageSize: pagination.MaxPageSize, Total: int64(len(items)), Extension: json.RawMessage(`{}`)}, nil
+}
+
+func TestProviderEnumPageUsesPaginationLimitNotTreeNodeLimit(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active'`).
+		WithArgs("test.full").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "dictionary_code", "name", "dictionary_type", "source_type", "version", "extension"}).
+			AddRow(uuidString(1), "test.full", "Full page", KindEnum, SourceProvider, 1, []byte(`{}`)))
+	mock.ExpectClose()
+	registry := NewProviderRegistry()
+	require.NoError(t, registry.Register("test.full", fullPageProvider{}))
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), providers: registry,
+		cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 10}}}
+	result, err := service.Query(t.Context(), Query{Code: "test.full", Page: 1, PageSize: pagination.MaxPageSize})
+	require.NoError(t, err)
+	require.Len(t, result.Items, pagination.MaxPageSize)
+}
+
 type forbiddenProviderCache struct{ t *testing.T }
 
 func (c forbiddenProviderCache) Get(context.Context, string) ([]byte, error) {
@@ -831,6 +867,44 @@ func TestStaticDictionaryCacheIgnoresUnusedQueryExtension(t *testing.T) {
 	for key := range store.values {
 		require.True(t, strings.HasPrefix(key, "dictionary:query:v3:"), "cache key = %q", key)
 	}
+}
+
+func TestStaticDictionaryRejectsInvalidCachedResult(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	id := uuidString(1)
+	definition := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "dictionary_code", "name", "dictionary_type", "source_type", "version", "extension"}).
+			AddRow(id, "public.sample", "Sample", KindEnum, SourceStatic, 1, []byte(`{}`))
+	}
+	for range 2 {
+		mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active'`).
+			WithArgs("public.sample").WillReturnRows(definition())
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items`).WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		mock.ExpectQuery(`SELECT .* FROM dictionary_items`).WithArgs(id, 20, 0).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	}
+	mock.ExpectClose()
+	store := &recordingStaticCache{values: make(map[string][]byte)}
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), cache: store,
+		cfg: config.Config{Dictionary: config.Dictionary{CacheTTL: time.Minute, MaxTreeNodes: 10}}}
+	first, err := service.Query(t.Context(), Query{Code: "public.sample"})
+	require.NoError(t, err)
+	require.Equal(t, "public.sample", first.Code)
+	require.Len(t, store.values, 1)
+	for key := range store.values {
+		store.values[key] = []byte(`{"code":"other","name":"Poisoned","type":"enum","items":[],"page":1,"page_size":20,"total":0,"extension":{}}`)
+	}
+	second, err := service.Query(t.Context(), Query{Code: "public.sample"})
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+	require.Equal(t, 2, store.writes)
 }
 
 func TestCanonicalStaticCacheQueryPreservesCallerFilters(t *testing.T) {

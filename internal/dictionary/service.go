@@ -780,12 +780,16 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	if d.Kind == KindTree && (q.Page != 0 || q.PageSize != 0) {
 		return Result{}, ErrInvalid
 	}
+	maxResultNodes := s.cfg.Dictionary.MaxTreeNodes
+	if d.Kind == KindEnum {
+		maxResultNodes = pagination.MaxPageSize
+	}
 	cacheKey := ""
 	if d.Source == SourceStatic && s.cache != nil {
 		cacheQuery := canonicalStaticCacheQuery(q, d.Kind)
 		requestJSON, _ := json.Marshal(cacheQuery)
 		cacheKey = fmt.Sprintf("dictionary:query:v3:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
-		if cached, cacheErr := cache.GetJSON[Result](ctx, s.cache, cacheKey); cacheErr == nil {
+		if cached, cacheErr := cache.GetJSON[Result](ctx, s.cache, cacheKey); cacheErr == nil && cached.Code == d.Code && cached.Type == d.Kind && validProviderResult(cached, q, maxResultNodes) {
 			return cached, nil
 		}
 	}
@@ -798,7 +802,7 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 		if err != nil {
 			err = fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
 		}
-		if err == nil && (result.Code != d.Code || result.Type != d.Kind || !validProviderResult(result, q, s.cfg.Dictionary.MaxTreeNodes)) {
+		if err == nil && (result.Code != d.Code || result.Type != d.Kind || !validProviderResult(result, q, maxResultNodes)) {
 			err = ErrProviderUnavailable
 		}
 	} else {
