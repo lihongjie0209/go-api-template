@@ -81,12 +81,6 @@ func TestOutboxStoreRejectsInvalidIdentityAndSubject(t *testing.T) {
 	}
 }
 
-func TestBoundedErrorPreservesUTF8(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "错误", boundedError("错误消息", 2))
-	require.Equal(t, "a�b", boundedError("a\xffb", 3))
-}
-
 func TestOutboxReleaseMovesExhaustedEventToDeadState(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -94,7 +88,7 @@ func TestOutboxReleaseMovesExhaustedEventToDeadState(t *testing.T) {
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE event_outbox SET attempts=attempts\+1,dead_at=`).
-		WithArgs(sqlmock.AnyArg(), "publish failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "event-1", "worker-1").
+		WithArgs(sqlmock.AnyArg(), "publish_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "event-1", "worker-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -104,6 +98,26 @@ func TestOutboxReleaseMovesExhaustedEventToDeadState(t *testing.T) {
 		workerID:   "worker-1",
 		transactor: database.NewTransactor(sqlxDB),
 	}
-	require.NoError(t, outbox.release(t.Context(), "event-1", 1, errors.New("publish failed")))
+	require.NoError(t, outbox.release(t.Context(), "event-1", 1, errors.New("publish failed: bearer secret-value")))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOutboxReleaseStoresSafeDecodeReason(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE event_outbox SET attempts=attempts\+1,available_at=`).
+		WithArgs(sqlmock.AnyArg(), "decode_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "event-1", "worker-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	outbox := &Outbox{
+		cfg:     config.EventBus{ConsumerMaxDeliver: 3, DispatchRetryDelay: time.Second},
+		appName: "api", workerID: "worker-1",
+		transactor: database.NewTransactor(sqlx.NewDb(db, "sqlmock")),
+	}
+	cause := errors.Join(errDecodeEnvelope, errors.New("secret-value from malformed payload"))
+	require.NoError(t, outbox.release(t.Context(), "event-1", 0, cause))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

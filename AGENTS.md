@@ -219,6 +219,11 @@ otherwise unsuitable for dictionary use.
   must not write operation/security log tables directly.
 - Never record passwords, secrets, bearer tokens, refresh tokens, cookies, or
   raw credentials. Use the shared sanitization and keyed digest facilities.
+- Persisted failure fields such as outbox `last_error`, dead-letter metadata,
+  logs, and Trace attributes must use stable, safe reason codes. Never copy an
+  upstream `error.Error()` into them; dependency errors can contain credentials,
+  connection strings, payload fragments, or personal data. Keep event IDs,
+  attempts, and bounded component names for correlation instead.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.

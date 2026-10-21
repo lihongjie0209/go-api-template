@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,6 +50,8 @@ const maxOutboxEnvelopeBytes = 1 << 20
 
 var outboxTracer = otel.Tracer("go-api-template/infrastructure/eventbus")
 var publishSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
+var errDecodeEnvelope = errors.New("decode_failed")
+var errPublishEvent = errors.New("publish_failed")
 
 func NewOutbox(cfg config.Config, bus *Bus, transactor *database.Transactor, metrics *observability.Metrics, logger *slog.Logger) *Outbox {
 	return &Outbox{
@@ -126,12 +127,12 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		dispatchCtx, span := outboxTracer.Start(extractTraceContext(ctx, record.TraceParent, record.TraceState), "event_outbox.dispatch", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", record.Subject)))
 		var envelope commonv1.EventEnvelope
 		if err := proto.Unmarshal(record.Envelope, &envelope); err != nil {
-			span.RecordError(err)
+			span.RecordError(errDecodeEnvelope)
 			span.SetStatus(codes.Error, "decode envelope")
-			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, fmt.Errorf("decode envelope: %w", err)); releaseErr != nil {
+			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errDecodeEnvelope); releaseErr != nil {
 				span.RecordError(releaseErr)
 				span.End()
-				return errors.Join(err, releaseErr)
+				return fmt.Errorf("release undecodable outbox event: %w", releaseErr)
 			}
 			span.End()
 			continue
@@ -140,16 +141,16 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		status := "success"
 		if err != nil {
 			status = "error"
-			span.RecordError(err)
+			span.RecordError(errPublishEvent)
 			span.SetStatus(codes.Error, "publish failed")
 		}
 		o.metrics.ObserveInfrastructure("event_outbox", "jetstream", "dispatch", status, started)
 		if err != nil {
-			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "dead", record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver), "error", err)
-			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, err); releaseErr != nil {
+			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "dead", record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver), "reason", errPublishEvent.Error())
+			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errPublishEvent); releaseErr != nil {
 				span.RecordError(releaseErr)
 				span.End()
-				return errors.Join(err, releaseErr)
+				return fmt.Errorf("release unpublished outbox event: %w", releaseErr)
 			}
 			span.End()
 			continue
@@ -226,11 +227,10 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 			query = `UPDATE event_outbox SET published_at=?,locked_by='',locked_until=NULL,last_error='',updated_at=?,updated_by=?,version=version+1 WHERE id=? AND locked_by=? AND published_at IS NULL AND deleted_at IS NULL`
 			args = []any{now, now, actorID, id, o.workerID}
 		} else {
-			message := "unknown publish failure"
-			if cause != nil {
-				message = cause.Error()
+			message := errPublishEvent.Error()
+			if errors.Is(cause, errDecodeEnvelope) {
+				message = errDecodeEnvelope.Error()
 			}
-			message = boundedError(message, 2048)
 			if attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
 				query = `UPDATE event_outbox SET attempts=attempts+1,dead_at=?,locked_by='',locked_until=NULL,last_error=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND locked_by=? AND published_at IS NULL AND deleted_at IS NULL`
 				args = []any{now, message, now, actorID, id, o.workerID}
@@ -252,12 +252,4 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 		}
 		return nil
 	})
-}
-
-func boundedError(value string, limit int) string {
-	runes := []rune(strings.ToValidUTF8(value, "�"))
-	if len(runes) <= limit {
-		return string(runes)
-	}
-	return string(runes[:limit])
 }
