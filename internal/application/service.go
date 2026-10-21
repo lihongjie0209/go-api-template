@@ -32,7 +32,13 @@ type PageInput struct {
 	Sort                       []pagination.Sort
 }
 
-type Page = pagination.Result[Record]
+// Page is concrete so the generated OpenAPI schema includes pagination fields.
+type Page struct {
+	Items    []Record `json:"items"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"page_size"`
+	Total    int64    `json:"total"`
+}
 
 type NavigationTarget struct {
 	ID   string `db:"id" json:"id"`

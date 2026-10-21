@@ -12276,7 +12276,24 @@ const docTemplate = `{
             }
         },
         "application.GrantPage": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/application.Grant"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "application.GrantRevokeTarget": {
             "type": "object",
@@ -12319,7 +12336,24 @@ const docTemplate = `{
             }
         },
         "application.Page": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/application.Record"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "application.Record": {
             "type": "object",
@@ -12823,7 +12857,24 @@ const docTemplate = `{
             }
         },
         "authorization.PlatformGrantPage": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/authorization.PlatformGrant"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "authorization.PlatformGrantUpdateTarget": {
             "type": "object",
@@ -18979,7 +19030,24 @@ const docTemplate = `{
             }
         },
         "resourcecatalog.ActionPage": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/resourcecatalog.Action"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "resourcecatalog.ActionUpdateTarget": {
             "type": "object",
@@ -19075,7 +19143,24 @@ const docTemplate = `{
             }
         },
         "resourcecatalog.ResourcePage": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/resourcecatalog.Resource"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "resourcecatalog.ResourceUpdateTarget": {
             "type": "object",
@@ -19163,7 +19248,24 @@ const docTemplate = `{
             }
         },
         "scheduler.DefinitionPage": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/scheduler.Definition"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "scheduler.DeleteTarget": {
             "type": "object",
@@ -19265,7 +19367,24 @@ const docTemplate = `{
             }
         },
         "scheduler.RunPage": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/scheduler.Run"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
         },
         "scheduler.TriggerResult": {
             "type": "object",

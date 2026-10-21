@@ -99,6 +99,17 @@ definitions:
         type: integer
     type: object
   application.GrantPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/application.Grant'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   application.GrantRevokeTarget:
     properties:
@@ -127,6 +138,17 @@ definitions:
         type: string
     type: object
   application.Page:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/application.Record'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   application.Record:
     properties:
@@ -458,6 +480,17 @@ definitions:
         type: integer
     type: object
   authorization.PlatformGrantPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/authorization.PlatformGrant'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   authorization.PlatformGrantUpdateTarget:
     properties:
@@ -4627,6 +4660,17 @@ definitions:
         type: integer
     type: object
   resourcecatalog.ActionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/resourcecatalog.Action'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   resourcecatalog.ActionUpdateTarget:
     properties:
@@ -4690,6 +4734,17 @@ definitions:
         type: integer
     type: object
   resourcecatalog.ResourcePage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/resourcecatalog.Resource'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   resourcecatalog.ResourceUpdateTarget:
     properties:
@@ -4748,6 +4803,17 @@ definitions:
         type: integer
     type: object
   scheduler.DefinitionPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/scheduler.Definition'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   scheduler.DeleteTarget:
     properties:
@@ -4815,6 +4881,17 @@ definitions:
         type: integer
     type: object
   scheduler.RunPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/scheduler.Run'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
     type: object
   scheduler.TriggerResult:
     properties:

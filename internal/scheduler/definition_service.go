@@ -50,7 +50,12 @@ type DefinitionPageInput struct {
 	Sort          []pagination.Sort
 }
 
-type DefinitionPage = pagination.Result[Definition]
+type DefinitionPage struct {
+	Items    []Definition `json:"items"`
+	Page     int          `json:"page"`
+	PageSize int          `json:"page_size"`
+	Total    int64        `json:"total"`
+}
 type UpdateTarget struct {
 	ID             string          `json:"id"`
 	Code           string          `json:"code"`
@@ -72,7 +77,12 @@ type DeleteTarget struct {
 	Status  string `json:"status"`
 	Version int64  `json:"version"`
 }
-type RunPage = pagination.Result[Run]
+type RunPage struct {
+	Items    []Run `json:"items"`
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Total    int64 `json:"total"`
+}
 type RunPageInput struct {
 	pagination.Request
 	ScheduledJobID string

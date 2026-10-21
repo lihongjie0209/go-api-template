@@ -85,7 +85,13 @@ type GrantPageInput struct {
 	Sort                       []pagination.Sort
 }
 
-type GrantPage = pagination.Result[Grant]
+// GrantPage is concrete so the generated OpenAPI schema includes pagination fields.
+type GrantPage struct {
+	Items    []Grant `json:"items"`
+	Page     int     `json:"page"`
+	PageSize int     `json:"page_size"`
+	Total    int64   `json:"total"`
+}
 
 type TenantAccessService struct {
 	db         *sqlx.DB

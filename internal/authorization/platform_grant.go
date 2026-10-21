@@ -66,7 +66,12 @@ type PlatformGrantPageInput struct {
 	PrincipalType, PrincipalID string
 	PermissionIDs              []string
 }
-type PlatformGrantPage = pagination.Result[PlatformGrant]
+type PlatformGrantPage struct {
+	Items    []PlatformGrant `json:"items"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
+	Total    int64           `json:"total"`
+}
 type PlatformGrantablePermission struct {
 	ID   string `db:"id" json:"id"`
 	Key  string `db:"permission_key" json:"permission_key"`

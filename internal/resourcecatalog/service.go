@@ -73,8 +73,19 @@ type PageInput struct {
 	Scope                  resourceaction.ResourceScope
 	ActiveResourcesOnly    bool
 }
-type ResourcePage = pagination.Result[Resource]
-type ActionPage = pagination.Result[Action]
+type ResourcePage struct {
+	Items    []Resource `json:"items"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"page_size"`
+	Total    int64      `json:"total"`
+}
+
+type ActionPage struct {
+	Items    []Action `json:"items"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"page_size"`
+	Total    int64    `json:"total"`
+}
 
 type Service struct {
 	db         *sqlx.DB
