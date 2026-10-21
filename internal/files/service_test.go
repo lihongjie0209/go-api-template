@@ -36,6 +36,7 @@ type storageStub struct {
 	putPath      string
 	putSeeker    bool
 	deleteErr    error
+	presignErr   error
 	presignInput objectstorage.PresignInput
 }
 type operationStub struct{}
@@ -140,12 +141,12 @@ func TestProcessDeletionPersistsRetryAfterStorageFailure(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("file-deletion-worker").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE files SET object_delete_attempts=object_delete_attempts\+1`).
-		WithArgs("object storage unavailable", sqlmock.AnyArg(), sqlmock.AnyArg(), "file-deletion-worker", "file-1").
+		WithArgs("object_delete_failed", sqlmock.AnyArg(), sqlmock.AnyArg(), "file-deletion-worker", "file-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	err = service.processDeletion(t.Context(), "file-1", "files/tenant/file-1/report.txt", 0)
-	if err == nil || !strings.Contains(err.Error(), "object storage unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "object_delete_failed") || strings.Contains(err.Error(), "object storage unavailable") {
 		t.Fatalf("processDeletion() error=%v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -171,7 +172,7 @@ func TestServiceUploadPersistsCleanupRetryWhenObjectStoreFails(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("file-upload-repair-worker").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE file_upload_intents SET attempts=attempts\+1`).
-		WithArgs("object storage unavailable", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs("object_delete_failed", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	storage := &storageStub{putErr: errors.New("upload unavailable"), deleteErr: errors.New("object storage unavailable")}
@@ -179,7 +180,7 @@ func TestServiceUploadPersistsCleanupRetryWhenObjectStoreFails(t *testing.T) {
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
 
 	_, err = service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
-	if err == nil || !strings.Contains(err.Error(), "upload unavailable") || len(storage.deleted) != 1 || !storage.putSeeker {
+	if err == nil || !strings.Contains(err.Error(), "object_upload_failed") || strings.Contains(err.Error(), "upload unavailable") || len(storage.deleted) != 1 || !storage.putSeeker {
 		t.Fatalf("error=%v deleted=%v put_seeker=%v", err, storage.deleted, storage.putSeeker)
 	}
 	if _, statErr := os.Stat(storage.putPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -218,8 +219,84 @@ func TestProcessUploadIntentPreservesCompletedFileAfterAmbiguousCommit(t *testin
 		t.Fatal(err)
 	}
 }
+
+func TestProcessUploadIntentStoresSafeDeleteFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).WithArgs("file-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "object_key", "attempts"}).AddRow("file-1", "files/tenant-1/file-1/report.txt", 0),
+	)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM files`).WithArgs("file-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE file_upload_intents SET attempts=attempts\+1,last_error=`).
+		WithArgs("object_delete_failed", sqlmock.AnyArg(), "file-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	storage := &storageStub{deleteErr: errors.New("delete failed for signed URL with secret-value")}
+	service := &Service{enabled: true, db: db, transactor: database.NewTransactor(db), storage: storage, cfg: config.Files{DeletionRetryDelay: time.Second}}
+	err = service.processUploadIntent(t.Context(), "file-1", 0)
+	if err == nil || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("upload repair error exposed storage secret: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessDeletionStoresSafeDeleteFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE files SET object_delete_attempts=object_delete_attempts\+1,object_delete_error=`).
+		WithArgs("object_delete_failed", sqlmock.AnyArg(), sqlmock.AnyArg(), "file-deletion-worker", "file-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	storage := &storageStub{deleteErr: errors.New("delete failed for signed URL with secret-value")}
+	service := &Service{enabled: true, transactor: database.NewTransactor(db), storage: storage, cfg: config.Files{DeletionRetryDelay: time.Second}}
+	err = service.processDeletion(t.Context(), "file-1", "files/tenant-1/file-1/report.txt", 0)
+	if err == nil || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("file deletion error exposed storage secret: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSafeStorageFailurePreservesCancellationWithoutLeakingDetails(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  error
+	}{
+		{name: "cancelled", cause: errors.Join(context.Canceled, errors.New("secret-value")), want: context.Canceled},
+		{name: "deadline", cause: errors.Join(context.DeadlineExceeded, errors.New("secret-value")), want: context.DeadlineExceeded},
+		{name: "storage failure", cause: errors.New("secret-value"), want: errObjectDeleteFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := safeStorageFailure(test.cause, errObjectDeleteFailed)
+			if !errors.Is(got, test.want) || strings.Contains(got.Error(), "secret-value") {
+				t.Fatalf("safeStorageFailure() = %v, want %v without secret", got, test.want)
+			}
+		})
+	}
+}
 func (s *storageStub) Presign(_ context.Context, input objectstorage.PresignInput) (objectstorage.SignedURL, error) {
 	s.presignInput = input
+	if s.presignErr != nil {
+		return objectstorage.SignedURL{}, s.presignErr
+	}
 	return objectstorage.SignedURL{URL: "https://download.example/file", ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
@@ -367,6 +444,32 @@ func TestServiceDownloadFailsClosedWhenAccessLogCannotBeStored(t *testing.T) {
 	}
 	if storage.presignInput.DownloadName != "report.txt" || storage.presignInput.Operation != objectstorage.OperationGet {
 		t.Fatalf("presign input = %+v, want attachment named report.txt", storage.presignInput)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceDownloadDoesNotExposePresignFailureDetails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	columns := strings.Split(strings.ReplaceAll(recordColumns, " ", ""), ",")
+	mock.ExpectQuery(`SELECT id, tenant_id`).WithArgs("file-1", "tenant-1").WillReturnRows(sqlmock.NewRows(columns).AddRow(
+		"file-1", "tenant-1", "files/tenant-1/file-1/report.txt", "report.txt", "text/plain", int64(5), "etag", "checksum",
+		now, "user-1", now, "user-1", int64(1), nil, nil, nil, int64(0), "", nil,
+	))
+	storage := &storageStub{presignErr: errors.New("presign failed for signed URL with secret-value")}
+	service := New(db, database.NewTransactor(db), storage, nil, operationStub{}, nil, slog.Default(), config.Config{Files: config.Files{Enabled: true}})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+	_, err = service.Download(ctx, "file-1")
+	if err == nil || !strings.Contains(err.Error(), "object_presign_failed") || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("download error exposed presign secret: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

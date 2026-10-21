@@ -31,11 +31,14 @@ import (
 )
 
 var (
-	ErrDisabled        = errors.New("file service is disabled")
-	ErrNotFound        = errors.New("file not found")
-	ErrForbidden       = errors.New("file access denied")
-	ErrVersionConflict = errors.New("file version conflict")
-	ErrInvalidInput    = errors.New("invalid file input")
+	ErrDisabled            = errors.New("file service is disabled")
+	ErrNotFound            = errors.New("file not found")
+	ErrForbidden           = errors.New("file access denied")
+	ErrVersionConflict     = errors.New("file version conflict")
+	ErrInvalidInput        = errors.New("invalid file input")
+	errObjectUploadFailed  = errors.New("object_upload_failed")
+	errObjectDeleteFailed  = errors.New("object_delete_failed")
+	errObjectPresignFailed = errors.New("object_presign_failed")
 )
 
 var safeObjectSegment = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -218,7 +221,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 	if err != nil {
 		s.repairUploadAfterFailure(ctx, id)
 		s.recordFailure(ctx, entry, started)
-		return Record{}, fmt.Errorf("upload object: %w", err)
+		return Record{}, fmt.Errorf("upload object: %w", safeStorageFailure(err, errObjectUploadFailed))
 	}
 	record.ETag = stored.ETag
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
@@ -355,7 +358,7 @@ func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 	})
 	if err != nil {
 		s.recordFailure(ctx, entry, started)
-		return Download{}, fmt.Errorf("presign file download: %w", err)
+		return Download{}, fmt.Errorf("presign file download: %w", safeStorageFailure(err, errObjectPresignFailed))
 	}
 	entry.Duration = time.Since(started)
 	entry.Succeeded = true
@@ -555,7 +558,7 @@ func (s *Service) processUploadIntent(ctx context.Context, id string, attempts i
 	}
 	next := time.Now().Add(deletionBackoff(s.cfg.DeletionRetryDelay, attempts))
 	txErr := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE file_upload_intents SET attempts=attempts+1,last_error=?,next_attempt_at=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), boundedError(deleteErr), next, id)
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE file_upload_intents SET attempts=attempts+1,last_error=?,next_attempt_at=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), errObjectDeleteFailed.Error(), next, id)
 		if err != nil {
 			return err
 		}
@@ -568,7 +571,7 @@ func (s *Service) processUploadIntent(ctx context.Context, id string, attempts i
 		}
 		return nil
 	})
-	return errors.Join(deleteErr, txErr)
+	return errors.Join(safeStorageFailure(deleteErr, errObjectDeleteFailed), txErr)
 }
 
 func (s *Service) finishUploadIntent(ctx context.Context, id, status string) error {
@@ -610,8 +613,7 @@ func (s *Service) processDeletion(ctx context.Context, id, objectKey string, att
 			return nil
 		}
 		next := now.Add(deletionBackoff(s.cfg.DeletionRetryDelay, attempts))
-		message := boundedError(deleteErr)
-		result, updateErr := tx.ExecContext(workerCtx, tx.Rebind(`UPDATE files SET object_delete_attempts=object_delete_attempts+1,object_delete_error=?,object_delete_next_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL AND object_deleted_at IS NULL`), message, next, now, "file-deletion-worker", id)
+		result, updateErr := tx.ExecContext(workerCtx, tx.Rebind(`UPDATE files SET object_delete_attempts=object_delete_attempts+1,object_delete_error=?,object_delete_next_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL AND object_deleted_at IS NULL`), errObjectDeleteFailed.Error(), next, now, "file-deletion-worker", id)
 		if updateErr != nil {
 			return updateErr
 		}
@@ -624,7 +626,7 @@ func (s *Service) processDeletion(ctx context.Context, id, objectKey string, att
 		}
 		return nil
 	})
-	return errors.Join(deleteErr, txErr)
+	return errors.Join(safeStorageFailure(deleteErr, errObjectDeleteFailed), txErr)
 }
 
 func deletionBackoff(base time.Duration, attempts int64) time.Duration {
@@ -637,12 +639,14 @@ func deletionBackoff(base time.Duration, attempts int64) time.Duration {
 	return base * time.Duration(1<<attempts)
 }
 
-func boundedError(err error) string {
-	message := err.Error()
-	if len(message) > 2000 {
-		return message[:2000]
+func safeStorageFailure(err error, fallback error) error {
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
 	}
-	return message
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return fallback
 }
 
 func (s *Service) withDeletionLock(ctx context.Context, id string, fn func(context.Context) error) error {

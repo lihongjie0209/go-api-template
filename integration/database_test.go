@@ -1989,7 +1989,10 @@ func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, 
 	}
 }
 
-type integrationStorage struct{ deleted []string }
+type integrationStorage struct {
+	deleted   []string
+	deleteErr error
+}
 
 func (s *integrationStorage) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
 	_, err := io.Copy(io.Discard, input.Body)
@@ -2003,7 +2006,7 @@ func (*integrationStorage) Stat(context.Context, string) (objectstorage.Info, er
 }
 func (s *integrationStorage) Delete(_ context.Context, key string) error {
 	s.deleted = append(s.deleted, key)
-	return nil
+	return s.deleteErr
 }
 func (*integrationStorage) Presign(_ context.Context, input objectstorage.PresignInput) (objectstorage.SignedURL, error) {
 	return objectstorage.SignedURL{URL: "https://files.example/download", Method: "GET", ExpiresAt: time.Now().Add(input.TTL)}, nil
@@ -2059,6 +2062,33 @@ func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	if err := db.QueryRowxContext(ctx, db.Rebind(`SELECT status,deleted_at FROM file_upload_intents WHERE id=?`), orphanID).Scan(&uploadStatus, &uploadIntentDeletedAt); err != nil || uploadStatus != "abandoned" || uploadIntentDeletedAt == nil {
 		t.Fatalf("recovered upload intent status=%q deleted_at=%v err=%v", uploadStatus, uploadIntentDeletedAt, err)
+	}
+	storage.deleteErr = errors.New("object deletion failed for signed URL with secret-value")
+	failedOrphanID := "failed-orphan-" + created.ID
+	if err := appdb.NewTransactor(db).Within(ownerCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(ownerCtx, tx.Rebind(`INSERT INTO file_upload_intents (id,tenant_id,object_key,status,attempts,last_error,next_attempt_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`), failedOrphanID, "file-tenant", "files/file-tenant/"+failedOrphanID+"/orphan.txt", "pending", 0, "", now.Add(-time.Minute), now, "file-owner", now, "file-owner", 1)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessPendingUploads(ownerCtx); err == nil || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("failed upload repair exposed storage error: %v", err)
+	}
+	var uploadError string
+	if err := db.GetContext(ctx, &uploadError, db.Rebind(`SELECT last_error FROM file_upload_intents WHERE id=?`), failedOrphanID); err != nil || uploadError != "object_delete_failed" {
+		t.Fatalf("failed upload repair reason=%q err=%v", uploadError, err)
+	}
+	failedDeletion, err := service.Upload(ownerCtx, files.UploadInput{Name: "failed-deletion.txt", Size: 5, Body: bytes.NewBufferString("hello")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(ownerCtx, failedDeletion.ID, failedDeletion.Version); err != nil {
+		t.Fatal(err)
+	}
+	var objectDeleteError string
+	if err := db.GetContext(ctx, &objectDeleteError, db.Rebind(`SELECT object_delete_error FROM files WHERE id=?`), failedDeletion.ID); err != nil || objectDeleteError != "object_delete_failed" {
+		t.Fatalf("failed object deletion reason=%q err=%v", objectDeleteError, err)
 	}
 }
 
