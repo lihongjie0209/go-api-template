@@ -1,18 +1,40 @@
 package navigation
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+type failingNavigationCache struct{ cache.Store }
+
+func (failingNavigationCache) Get(context.Context, string) ([]byte, error) {
+	return nil, errors.New("redis password=secret-value")
+}
+
+func TestNavigationCacheFailureLogDoesNotExposeRedisDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	service := &Service{cache: failingNavigationCache{}, logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	if _, hit := service.cachedCurrentRecords(t.Context(), "navigation:current-source:v2:app-1:1:1"); hit {
+		t.Fatal("failed cache read must be treated as a miss")
+	}
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "navigation_cache_failed") {
+		t.Fatalf("navigation cache log leaked Redis details or omitted safe code: %s", output.String())
+	}
+}
 
 func TestGetNavigationResolvesOnlySameApplicationNonDeletedParent(t *testing.T) {
 	t.Parallel()

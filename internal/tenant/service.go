@@ -15,6 +15,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
@@ -23,6 +24,8 @@ import (
 )
 
 var validCode = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
+
+var errTenantCacheFailed = errors.New("tenant_cache_failed")
 
 const (
 	maxTenantIDLength          = 128
@@ -210,10 +213,10 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 				}
 				return views[0], nil
 			} else if s.logger != nil {
-				s.logger.WarnContext(ctx, "decode tenant cache", "tenant_id", id, "error", decodeErr)
+				s.logger.WarnContext(ctx, "decode tenant cache", "tenant_id", id, "error", observability.SafeError(decodeErr, errTenantCacheFailed))
 			}
 		} else if !errors.Is(cacheErr, cache.ErrMiss) && s.logger != nil {
-			s.logger.WarnContext(ctx, "read tenant cache", "tenant_id", id, "error", cacheErr)
+			s.logger.WarnContext(ctx, "read tenant cache", "tenant_id", id, "error", observability.SafeError(cacheErr, errTenantCacheFailed))
 		}
 	}
 	record, err := s.repository.Get(ctx, id, actor.TenantID)
@@ -226,7 +229,7 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 	if s.cache != nil {
 		if data, marshalErr := json.Marshal(record); marshalErr == nil {
 			if cacheErr := s.cache.Set(ctx, key, data, s.cacheTTL); cacheErr != nil && s.logger != nil {
-				s.logger.WarnContext(ctx, "write tenant cache", "tenant_id", id, "error", cacheErr)
+				s.logger.WarnContext(ctx, "write tenant cache", "tenant_id", id, "error", observability.SafeError(cacheErr, errTenantCacheFailed))
 			}
 		}
 	}
@@ -490,7 +493,7 @@ func (s *Service) invalidate(ctx context.Context, id string) {
 		cacheCtx, cancel := cache.AfterCommitContext(ctx)
 		defer cancel()
 		if err := s.cache.Delete(cacheCtx, "tenant:v1:"+id+":"+id); err != nil && s.logger != nil {
-			s.logger.WarnContext(cacheCtx, "invalidate tenant cache", "tenant_id", id, "error", err)
+			s.logger.WarnContext(cacheCtx, "invalidate tenant cache", "tenant_id", id, "error", observability.SafeError(err, errTenantCacheFailed))
 		}
 	}
 }

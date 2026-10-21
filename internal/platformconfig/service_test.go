@@ -1,11 +1,13 @@
 package platformconfig
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,36 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
+
+type failingPublicConfigCache struct{ cache.Store }
+
+func (failingPublicConfigCache) Get(context.Context, string) ([]byte, error) {
+	return nil, errors.New("redis password=secret-value")
+}
+
+func (failingPublicConfigCache) Set(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func TestPublicConfigCacheFailureFallsBackWithoutLeakingRedisDetails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectQuery(`SELECT config_key,name,category,value_type,value FROM platform_configs`).
+		WithArgs("ui.theme").
+		WillReturnRows(sqlmock.NewRows([]string{"config_key", "name", "category", "value_type", "value"}).
+			AddRow("ui.theme", "Theme", "ui", "object", []byte(`{"color":"blue"}`)))
+	var output bytes.Buffer
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), cache: failingPublicConfigCache{}, logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	view, err := service.GetPublic(t.Context(), "ui.theme")
+	require.NoError(t, err)
+	require.Equal(t, "ui.theme", view.Key)
+	require.NoError(t, mock.ExpectationsWereMet())
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "platform_config_cache_failed") {
+		t.Fatalf("platform config cache log leaked Redis details or omitted safe code: %s", output.String())
+	}
+}
 
 type actorResolverStub struct {
 	calls int

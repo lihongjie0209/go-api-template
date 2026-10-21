@@ -16,6 +16,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
@@ -37,12 +38,13 @@ const (
 )
 
 var (
-	ErrInvalid          = errors.New("invalid platform config")
-	ErrNotFound         = errors.New("platform config not found")
-	ErrConflict         = errors.New("platform config conflict")
-	ErrStaleVersion     = errors.New("platform config version is stale")
-	keyPattern          = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{1,127}$`)
-	sensitiveKeyPattern = regexp.MustCompile(`(?i)(password|passwd|secret|token|private[_-]?key|credential|access[_-]?key|dsn)`)
+	ErrInvalid                   = errors.New("invalid platform config")
+	ErrNotFound                  = errors.New("platform config not found")
+	ErrConflict                  = errors.New("platform config conflict")
+	ErrStaleVersion              = errors.New("platform config version is stale")
+	keyPattern                   = regexp.MustCompile(`^[a-z][a-z0-9_.:-]{1,127}$`)
+	sensitiveKeyPattern          = regexp.MustCompile(`(?i)(password|passwd|secret|token|private[_-]?key|credential|access[_-]?key|dsn)`)
+	errPlatformConfigCacheFailed = errors.New("platform_config_cache_failed")
 )
 
 type Record struct {
@@ -484,7 +486,7 @@ func (s *Service) GetPublic(ctx context.Context, key string) (PublicView, error)
 				return view, nil
 			}
 		} else if !errors.Is(err, cache.ErrMiss) && s.logger != nil {
-			s.logger.WarnContext(ctx, "read public platform config cache", "key", key, "error", err)
+			s.logger.WarnContext(ctx, "read public platform config cache", "key", key, "error", observability.SafeError(err, errPlatformConfigCacheFailed))
 		}
 	}
 	var view PublicView
@@ -495,7 +497,7 @@ func (s *Service) GetPublic(ctx context.Context, key string) (PublicView, error)
 	if err == nil && s.cache != nil {
 		if data, e := json.Marshal(view); e == nil {
 			if cacheErr := s.cache.Set(ctx, cacheKey, data, s.cfg.PlatformConfig.CacheTTL); cacheErr != nil && s.logger != nil {
-				s.logger.WarnContext(ctx, "write public platform config cache", "key", key, "error", cacheErr)
+				s.logger.WarnContext(ctx, "write public platform config cache", "key", key, "error", observability.SafeError(cacheErr, errPlatformConfigCacheFailed))
 			}
 		}
 	}
@@ -566,7 +568,7 @@ func (s *Service) mutate(ctx context.Context, operation, id, key string, request
 			cacheCtx, cancel := cache.AfterCommitContext(runCtx)
 			defer cancel()
 			if cacheErr := s.cache.Delete(cacheCtx, "platform-config:public:v1:"+key); cacheErr != nil && s.logger != nil {
-				s.logger.WarnContext(cacheCtx, "invalidate public platform config cache", "key", key, "error", cacheErr)
+				s.logger.WarnContext(cacheCtx, "invalidate public platform config cache", "key", key, "error", observability.SafeError(cacheErr, errPlatformConfigCacheFailed))
 			}
 		}
 		return nil

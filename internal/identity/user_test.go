@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"errors"
@@ -22,6 +23,22 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
+
+type failingUserCache struct{ cache.Store }
+
+func (failingUserCache) Set(context.Context, string, []byte, time.Duration) error {
+	return errors.New("redis password=secret-value")
+}
+
+func TestUserCacheFailureLogDoesNotExposeRedisDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	service := &Service{cache: failingUserCache{}, cacheTTL: time.Minute, logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice"})
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "identity_user_cache_failed") {
+		t.Fatalf("identity cache log leaked Redis details or omitted safe code: %s", output.String())
+	}
+}
 
 func TestUsernameNormalization(t *testing.T) {
 	t.Parallel()

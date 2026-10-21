@@ -15,6 +15,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
@@ -22,12 +23,13 @@ import (
 )
 
 var (
-	ErrInvalid      = errors.New("invalid user")
-	ErrNotFound     = errors.New("user not found")
-	ErrConflict     = errors.New("user conflict")
-	ErrStaleVersion = errors.New("user version is stale")
-	ErrInUse        = errors.New("user is in use")
-	ErrForbidden    = errors.New("user operation forbidden")
+	ErrInvalid                 = errors.New("invalid user")
+	ErrNotFound                = errors.New("user not found")
+	ErrConflict                = errors.New("user conflict")
+	ErrStaleVersion            = errors.New("user version is stale")
+	ErrInUse                   = errors.New("user is in use")
+	ErrForbidden               = errors.New("user operation forbidden")
+	errIdentityUserCacheFailed = errors.New("identity_user_cache_failed")
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{2,63}$`)
@@ -506,7 +508,7 @@ func (s *Service) cached(ctx context.Context, key string, loader func() (User, e
 			return value, nil
 		}
 		if !errors.Is(err, cache.ErrMiss) {
-			s.logger.WarnContext(ctx, "read identity user cache", "error", err)
+			s.logger.WarnContext(ctx, "read identity user cache", "error", observability.SafeError(err, errIdentityUserCacheFailed))
 		}
 	}
 	value, err := loader()
@@ -522,7 +524,7 @@ func (s *Service) cacheUser(ctx context.Context, user User) {
 	}
 	for _, key := range []string{"identity:user:v1:id:" + user.ID, "identity:user:v1:username:" + normalizeUsername(user.Username)} {
 		if err := cache.SetJSON(ctx, s.cache, key, user, s.cacheTTL); err != nil {
-			s.logger.WarnContext(ctx, "write identity user cache", "user_id", user.ID, "error", err)
+			s.logger.WarnContext(ctx, "write identity user cache", "user_id", user.ID, "error", observability.SafeError(err, errIdentityUserCacheFailed))
 		}
 	}
 }
@@ -533,7 +535,7 @@ func (s *Service) invalidate(ctx context.Context, user User) {
 	cacheCtx, cancel := cache.AfterCommitContext(ctx)
 	defer cancel()
 	if err := s.cache.Delete(cacheCtx, "identity:user:v1:id:"+user.ID, "identity:user:v1:username:"+normalizeUsername(user.Username)); err != nil {
-		s.logger.WarnContext(cacheCtx, "invalidate identity user cache", "user_id", user.ID, "error", err)
+		s.logger.WarnContext(cacheCtx, "invalidate identity user cache", "user_id", user.ID, "error", observability.SafeError(err, errIdentityUserCacheFailed))
 	}
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {

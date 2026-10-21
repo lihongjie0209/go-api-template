@@ -13,6 +13,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
@@ -21,6 +22,8 @@ import (
 
 const columns = `id,application_id,parent_id,navigation_key,name,navigation_type,route_path,component,icon,resource,action,visible,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version`
 const maxTreeNodes = 5000
+
+var errNavigationCacheFailed = errors.New("navigation_cache_failed")
 
 type UpdateInput struct {
 	ID, Name, Type, RoutePath, Component, Icon, Resource, Action, Status string
@@ -168,7 +171,7 @@ func (s *Service) CurrentTree(ctx context.Context, applicationID string) ([]*Nod
 		}
 		if len(records) <= maxTreeNodes && s.cache != nil {
 			if err := cache.SetJSON(ctx, s.cache, cacheKey, records, s.cacheTTL); err != nil && s.logger != nil {
-				s.logger.WarnContext(ctx, "write current navigation source cache", "application_id", applicationID, "error", err)
+				s.logger.WarnContext(ctx, "write current navigation source cache", "application_id", applicationID, "error", observability.SafeError(err, errNavigationCacheFailed))
 			}
 		}
 	}
@@ -194,7 +197,7 @@ func (s *Service) cachedCurrentRecords(ctx context.Context, key string) ([]Recor
 		return records, true
 	}
 	if !errors.Is(err, cache.ErrMiss) && s.logger != nil {
-		s.logger.WarnContext(ctx, "read current navigation source cache", "error", err)
+		s.logger.WarnContext(ctx, "read current navigation source cache", "error", observability.SafeError(err, errNavigationCacheFailed))
 	}
 	return nil, false
 }

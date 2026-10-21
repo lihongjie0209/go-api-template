@@ -1,14 +1,18 @@
 package tenant
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
@@ -16,6 +20,22 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
+
+type failingTenantCache struct{ cache.Store }
+
+func (failingTenantCache) Delete(context.Context, ...string) error {
+	return errors.New("redis password=secret-value")
+}
+
+func TestTenantCacheInvalidationLogDoesNotExposeRedisDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	service := &Service{cache: failingTenantCache{}, logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	service.invalidate(t.Context(), "tenant-1")
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "tenant_cache_failed") {
+		t.Fatalf("tenant cache log leaked Redis details or omitted safe code: %s", output.String())
+	}
+}
 
 func TestServiceGetEnforcesTenantBoundary(t *testing.T) {
 	t.Parallel()

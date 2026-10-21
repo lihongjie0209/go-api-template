@@ -254,6 +254,10 @@ otherwise unsuitable for dictionary use.
   retain a fixed failure reason and bounded component/channel identity, never
   raw database or Redis errors. Return the original error only to a caller that
   can handle it without exporting its text.
+- Cache fallback, write, and invalidation warnings must use a fixed
+  component-owned failure reason. A failed cache read may fall back to the
+  authoritative repository as designed, but neither the warning nor the
+  fallback response may expose raw Redis errors.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.
