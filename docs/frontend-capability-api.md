@@ -23,12 +23,12 @@ Two POST + JSON operations are supported:
 | Authorization | Both routes bind `authorization.capability:evaluate` at principal scope. Authenticated subjects may evaluate their own capabilities. Requested capabilities are evaluated independently against registered target operations. |
 | Operation log | None. These are high-frequency, read-only presentation queries with no sensitive data export. |
 | Security log | None. Authentication and authorization failures remain visible through normal request/security telemetry. |
-| Cache | No server response cache. Each capability request reads the current principal's effective operation grants from the authoritative database, pins that immutable grant set for its own decisions, and hashes it together with the published data-permission revision. Responses carry that opaque `revision` and an `expires_at` 30 seconds after evaluation; frontend caches must additionally be scoped to session and tenant. Business endpoints always recheck authoritative grants. |
+| Cache | No server response cache. Each capability request reads the current principal's effective operation grants from the authoritative database and pins that immutable set. It also pins the local published data-policy snapshot and hashes both snapshots into the opaque `revision`; row decisions use the same pinned data-policy snapshot even during refresh. Responses expire 30 seconds after evaluation; frontend caches must additionally be scoped to session and tenant. Business endpoints always recheck authoritative grants. |
 | Distributed lock | None; evaluation is read-only over immutable policy snapshots. |
 | Optimistic lock | Not applicable; no state is changed. |
 | Audit | No table is written. Principal, tenant, endpoint context, subject roles, and department projections are all server-derived. |
 | Presentation | Results expose only boolean decisions keyed by the caller correlation key or resource ID. Policy IDs, expressions, internal attributes, and deny reasons are not returned. |
-| Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation before dependency access, one tenant-scoped batch row query, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
+| Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation before dependency access, one tenant-scoped batch row query, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. Snapshot regressions replace the published data policies between batch actions and verify that pinned row decisions and the data revision remain paired. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
 | Shared capability | Reuses the Resource/Action registry, grant authorizer and data-permission evaluator. A missing revision service fails construction at startup; test compositions supply an explicit grant-snapshot fake instead of a nil revision dependency. Endpoint lookup and bounded row evaluation are shared infrastructure rather than handler-local logic. |
 | Dictionary | Not exposed as a dictionary: capability results are principal-, tenant-, policy-, and time-dependent security decisions. |
 
@@ -104,7 +104,7 @@ The frontend may retain a result only until `expires_at` and only within the
 same authenticated session and tenant. A changed `revision` invalidates all
 capability results immediately. The revision is an opaque digest of the current
 principal/session's effective platform/tenant operation grants and the published
-data-permission snapshot. Grant queries fail closed, so an unavailable database
+data-permission snapshot's content. Grant queries fail closed, so an unavailable database
 cannot emit a stale revision. Clients compare the digest for equality and must
 not parse it. Changes that do not alter the effective grant set need not change
 the digest; direct business requests remain authoritative.

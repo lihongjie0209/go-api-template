@@ -431,6 +431,10 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	repository := datapermission.NewRepository(db)
 	loader := datapermission.NewRuntimeLoader(repository, engine)
 	service := datapermission.NewLifecycleService(repository, appdb.NewTransactor(db), schemas, resources, loader, nil, nil, nil)
+	_, initialSnapshotRevision, err := engine.Pin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	authenticated := true
 	document := datapermission.Policy{
 		APIVersion: datapermission.PolicyAPIVersion,
@@ -459,6 +463,10 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	published, err := service.Publish(actorCtx, created.ID, 1, created.Version)
 	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
 		t.Fatalf("publish data permission policy=%+v err=%v", published, err)
+	}
+	_, publishedSnapshotRevision, err := engine.Pin(ctx)
+	if err != nil || publishedSnapshotRevision == initialSnapshotRevision {
+		t.Fatalf("published policy must advance snapshot revision: before=%q after=%q err=%v", initialSnapshotRevision, publishedSnapshotRevision, err)
 	}
 	predicate, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || predicate.Clause != "(tm.user_id = ?)" || len(predicate.Args) != 1 || predicate.Args[0] != "member-1" {
@@ -510,6 +518,10 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	disabled, err := service.SetStatus(actorCtx, datapermission.SetPolicyStatusInput{PolicyID: created.ID, Status: datapermission.StatusDisabled, ExpectedPolicyVersion: published.Version})
 	if err != nil || disabled.Status != datapermission.StatusDisabled {
 		t.Fatalf("disable data permission policy=%+v err=%v", disabled, err)
+	}
+	_, disabledSnapshotRevision, err := engine.Pin(ctx)
+	if err != nil || disabledSnapshotRevision == publishedSnapshotRevision {
+		t.Fatalf("disabled policy must advance snapshot revision: published=%q disabled=%q err=%v", publishedSnapshotRevision, disabledSnapshotRevision, err)
 	}
 	denied, err := engine.CompileSQL(ctx, "tenant.member", "read", resourceaction.Subject{ID: "member-1", Type: "user", Authenticated: true, TenantID: tenantID}, datapermission.SubjectAttributes{"id": "member-1"})
 	if err != nil || denied.Clause != "(1 = 0)" {

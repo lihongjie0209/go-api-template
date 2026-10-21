@@ -66,6 +66,91 @@ func TestEngineNoMatchingAllowIsFalse(t *testing.T) {
 	require.Equal(t, "(1 = 0)", sql.Clause)
 }
 
+func TestEnginePinnedSnapshotKeepsRevisionAndDecisionsTogether(t *testing.T) {
+	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
+	require.NoError(t, err)
+	schemas, err := NewSchemaRegistry(schema)
+	require.NoError(t, err)
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	engine, err := NewRuntimeEngine(schemas, resources)
+	require.NoError(t, err)
+	pinnedCtx, before, err := engine.Pin(t.Context())
+	require.NoError(t, err)
+	subject := resourceaction.Subject{ID: "user-1", Type: "user", Authenticated: true, TenantID: "tenant-1"}
+	attributes := SubjectAttributes{"id": "user-1"}
+	row := ResourceAttributes{"owner_id": "user-1"}
+	firstAllowed, err := engine.EvaluateCurrent(pinnedCtx, "tenant.member", "read", subject, attributes, row)
+	require.NoError(t, err)
+	require.False(t, firstAllowed)
+	policy := Policy{
+		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+		Metadata: PolicyMetadata{Code: "member-owner", Name: "Member owner"},
+		Scope:    PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec:     PolicySpec{Resource: "tenant.member", Actions: []string{"read", "update"}, Condition: "resource.owner_id == subject.id", Effect: EffectAllow},
+	}
+	require.NoError(t, engine.Replace([]Policy{policy}))
+	currentCtx, after, err := engine.Pin(t.Context())
+	require.NoError(t, err)
+	require.NotEqual(t, before, after)
+	for _, action := range []string{"read", "update"} {
+		oldAllowed, oldErr := engine.EvaluateCurrent(pinnedCtx, "tenant.member", action, subject, attributes, row)
+		require.NoError(t, oldErr)
+		require.False(t, oldAllowed)
+		newAllowed, newErr := engine.EvaluateCurrent(currentCtx, "tenant.member", action, subject, attributes, row)
+		require.NoError(t, newErr)
+		require.True(t, newAllowed)
+	}
+	oldSQL, err := engine.CompileSQL(pinnedCtx, "tenant.member", "read", subject, attributes)
+	require.NoError(t, err)
+	require.Equal(t, "(1 = 0)", oldSQL.Clause)
+	newSQL, err := engine.CompileSQL(currentCtx, "tenant.member", "read", subject, attributes)
+	require.NoError(t, err)
+	require.Equal(t, "(tm.user_id = ?)", newSQL.Clause)
+	second := policy
+	second.Metadata = PolicyMetadata{Code: "member-owner-update", Name: "Member owner update"}
+	second.Spec.Actions = []string{"update"}
+	require.NoError(t, engine.Replace([]Policy{policy, second}))
+	_, forwardRevision, err := engine.Pin(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, engine.Replace([]Policy{second, policy}))
+	_, reversedRevision, err := engine.Pin(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, forwardRevision, reversedRevision)
+}
+
+func TestEngineReplaceDoesNotRetainCallerPolicyMemory(t *testing.T) {
+	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
+	require.NoError(t, err)
+	schemas, err := NewSchemaRegistry(schema)
+	require.NoError(t, err)
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	authenticated := true
+	policy := Policy{
+		APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+		Metadata: PolicyMetadata{Code: "member-own", Name: "Member own"},
+		Scope:    PolicyBoundary{Type: PolicyScopeTenant, TenantID: "tenant-1"},
+		Spec: PolicySpec{Subject: resourceaction.SubjectMatcher{Authenticated: &authenticated, Roles: resourceaction.RolesMatcher{AnyOf: []string{"manager"}}},
+			Resource: "tenant.member", Actions: []string{"read"}, Condition: "resource.owner_id == subject.id", Effect: EffectAllow},
+	}
+	engine, err := NewEngine(schemas, resources, []Policy{policy})
+	require.NoError(t, err)
+	_, revision, err := engine.Pin(t.Context())
+	require.NoError(t, err)
+	authenticated = false
+	policy.Spec.Subject.Roles.AnyOf[0] = "other"
+	policy.Spec.Actions[0] = "update"
+
+	subject := resourceaction.Subject{ID: "user-1", Type: "user", Authenticated: true, TenantID: "tenant-1", Roles: []string{"manager"}}
+	allowed, err := engine.EvaluateCurrent(t.Context(), "tenant.member", "read", subject, SubjectAttributes{"id": "user-1"}, ResourceAttributes{"owner_id": "user-1"})
+	require.NoError(t, err)
+	require.True(t, allowed)
+	_, after, err := engine.Pin(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, revision, after)
+}
+
 func TestEngineEvaluatesProposedObjectWithDenyOverrides(t *testing.T) {
 	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
 	require.NoError(t, err)

@@ -273,7 +273,9 @@ fields before building SQL or calling the provider.
   hints with a principal-, session-, and tenant-bound revision covering
   effective operation grants and the published data-permission snapshot, plus
   a short expiry. The operation decision and revision must use the same grant
-  snapshot; a failed authoritative grant read fails closed. A missing
+  snapshot. The data-policy revision and every row-action decision in a batch
+  must likewise use one pinned immutable policy snapshot, even during a
+  concurrent refresh; a failed authoritative grant read fails closed. A missing
   grant-snapshot provider must fail startup,
   including in generated services and test compositions; do not pass a typed
   nil revision provider through an interface. Every business endpoint must

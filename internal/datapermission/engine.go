@@ -2,8 +2,13 @@ package datapermission
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
@@ -15,6 +20,14 @@ var ErrObjectDenied = errors.New("data permission: object denied")
 type snapshot struct {
 	policies map[string][]CompiledPolicy
 	sources  []Policy
+	revision string
+}
+
+type pinnedSnapshotKey struct{}
+
+type pinnedSnapshot struct {
+	engine   *Engine
+	snapshot *snapshot
 }
 
 type Engine struct {
@@ -40,7 +53,8 @@ func (e *Engine) Replace(policies []Policy) error {
 		return ErrSnapshotUnavailable
 	}
 	next := &snapshot{policies: make(map[string][]CompiledPolicy), sources: make([]Policy, 0, len(policies))}
-	for _, policy := range policies {
+	for _, input := range policies {
+		policy := clonePolicy(input)
 		compiled, err := policy.Compile(e.schemas, e.resources)
 		if err != nil {
 			return fmt.Errorf("compile policy %q: %w", policy.Metadata.Code, err)
@@ -49,10 +63,38 @@ func (e *Engine) Replace(policies []Policy) error {
 			key := policy.Spec.Resource + "\x00" + action
 			next.policies[key] = append(next.policies[key], compiled)
 		}
-		next.sources = append(next.sources, clonePolicy(policy))
+		next.sources = append(next.sources, policy)
 	}
+	documents := make([]string, 0, len(next.sources))
+	for _, policy := range next.sources {
+		encoded, err := json.Marshal(policy)
+		if err != nil {
+			return fmt.Errorf("serialize policy revision: %w", err)
+		}
+		documents = append(documents, string(encoded))
+	}
+	slices.Sort(documents)
+	digest := sha256.Sum256([]byte("data-policies/v1\x00" + strings.Join(documents, "\x00")))
+	next.revision = hex.EncodeToString(digest[:16])
 	e.snapshot.Store(next)
 	return nil
+}
+
+// Pin binds one immutable policy snapshot and its revision to a request. All
+// subsequent evaluations using this Engine and Context observe that snapshot,
+// even if a refresh publishes a new one concurrently.
+func (e *Engine) Pin(ctx context.Context) (context.Context, string, error) {
+	if err := ctx.Err(); err != nil {
+		return ctx, "", err
+	}
+	if e == nil || e.schemas == nil || e.resources == nil {
+		return ctx, "", ErrSnapshotUnavailable
+	}
+	current := e.snapshot.Load()
+	if current == nil {
+		return ctx, "", ErrSnapshotUnavailable
+	}
+	return context.WithValue(ctx, pinnedSnapshotKey{}, pinnedSnapshot{engine: e, snapshot: current}), current.revision, nil
 }
 
 // Policies returns an immutable copy of the currently active source policies.
@@ -84,7 +126,7 @@ func (e *Engine) CompileSQL(ctx context.Context, resource, action string, subjec
 	if !ok {
 		return SQLPredicate{}, ErrInvalidSchema
 	}
-	matched, err := e.matchedScopes(resource, action, subject)
+	matched, err := e.matchedScopes(ctx, resource, action, subject)
 	if err != nil {
 		return SQLPredicate{}, err
 	}
@@ -112,7 +154,7 @@ func (e *Engine) EvaluateCurrent(ctx context.Context, resource, action string, s
 	if !ok {
 		return false, ErrInvalidSchema
 	}
-	matched, err := e.matchedScopes(resource, action, subject)
+	matched, err := e.matchedScopes(ctx, resource, action, subject)
 	if err != nil {
 		return false, err
 	}
@@ -133,18 +175,24 @@ func (e *Engine) EvaluateTransition(ctx context.Context, resource, action string
 	if !ok {
 		return false, ErrInvalidSchema
 	}
-	matched, err := e.matchedScopes(resource, action, subject)
+	matched, err := e.matchedScopes(ctx, resource, action, subject)
 	if err != nil {
 		return false, err
 	}
 	return NewEvaluator(schema).EvaluateTransition(matched, subjectAttributes, resourceAttributes, proposedAttributes)
 }
 
-func (e *Engine) matchedScopes(resource, action string, subject resourceaction.Subject) ([]PolicyScope, error) {
+func (e *Engine) matchedScopes(ctx context.Context, resource, action string, subject resourceaction.Subject) ([]PolicyScope, error) {
 	if e == nil || e.schemas == nil || e.resources == nil {
 		return nil, ErrSnapshotUnavailable
 	}
 	current := e.snapshot.Load()
+	if pinned, ok := ctx.Value(pinnedSnapshotKey{}).(pinnedSnapshot); ok {
+		if pinned.engine != e {
+			return nil, ErrSnapshotUnavailable
+		}
+		current = pinned.snapshot
+	}
 	if current == nil {
 		return nil, ErrSnapshotUnavailable
 	}

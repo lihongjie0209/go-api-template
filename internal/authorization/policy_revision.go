@@ -42,7 +42,10 @@ func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprin
 	}
 	dataRevision := ""
 	if r.data != nil {
-		dataRevision = r.data.Revision()
+		snapshotCtx, dataRevision, err = r.data.Pin(snapshotCtx)
+		if err != nil {
+			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+		}
 	}
 	digest := sha256.Sum256([]byte("capability/v2\x00" + grantRevision + "\x00" + dataRevision))
 	return snapshotCtx, hex.EncodeToString(digest[:16]), nil

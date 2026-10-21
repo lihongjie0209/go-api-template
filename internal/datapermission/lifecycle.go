@@ -224,6 +224,12 @@ func (l *RuntimeLoader) Revision() string {
 	}
 	return ""
 }
+func (l *RuntimeLoader) Pin(ctx context.Context) (context.Context, string, error) {
+	if l == nil || l.engine == nil {
+		return ctx, "", ErrSnapshotUnavailable
+	}
+	return l.engine.Pin(ctx)
+}
 func (l *RuntimeLoader) Refresh(ctx context.Context) error {
 	policies, err := l.repository.LoadAllPublished(ctx)
 	if err != nil {
