@@ -119,9 +119,7 @@ func (h *UserAuthenticationHandler) Refresh(c *gin.Context) {
 	entry := securitylog.Entry{EventType: securitylog.EventTokenRefresh, SubjectID: tokens.UserID, SubjectType: string(platformprincipal.TypeUser), SessionID: tokens.SessionID, TokenID: r.RefreshToken, Succeeded: e == nil}
 	if e != nil {
 		if !errors.Is(e, authentication.ErrRefreshReused) {
-			if logErr := h.record(c, entry); logErr != nil {
-				h.logger.ErrorContext(c.Request.Context(), "record failed token refresh", "error", observability.SafeError(logErr, errSecurityEventEnqueueFailed), "request_id", requestID(c))
-			}
+			h.recordFailure(c, e, entry, "token refresh")
 		}
 		h.fail(c, e)
 		return
@@ -327,6 +325,9 @@ func (h *UserAuthenticationHandler) recordFailure(c *gin.Context, operationErr e
 	}
 	entry.Succeeded = false
 	entry.ErrorCode = authenticationFailureCode(operationErr)
+	if entry.Reason == "" {
+		entry.Reason = entry.ErrorCode
+	}
 	entry.ErrorMessage = operation + " failed"
 	if err := h.record(c, entry); err != nil {
 		h.logger.ErrorContext(c.Request.Context(), "record failed authentication operation", "operation", operation, "error", observability.SafeError(err, errSecurityEventEnqueueFailed), "request_id", requestID(c))

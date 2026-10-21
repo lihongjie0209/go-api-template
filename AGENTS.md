@@ -257,6 +257,11 @@ otherwise unsuitable for dictionary use.
   MFA, service-account key changes, privilege changes, membership revocation,
   and suspicious authentication activity must emit security logs through the
   independent `securitylog.Recorder`.
+- Rejected authentication, token and session operations must emit a bounded,
+  stable failure `reason` and `error_code` plus request/client metadata where
+  available; never copy raw dependency errors or tokens into those fields.
+  If the service has already committed a transactional security event (for
+  example refresh-token reuse), the transport must not enqueue a duplicate.
 - Log persistence is asynchronous through the configured queue. Business code
   must not write operation/security log tables directly.
 - Queue consumer error callbacks must use the shared safe-error logger; SDK

@@ -3,6 +3,8 @@ package httptransport
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,16 +32,19 @@ import (
 type securityRecorderStub struct {
 	entry     securitylog.Entry
 	recordErr error
+	count     int
 }
 
 func (s *securityRecorderStub) Enabled() bool    { return true }
 func (s *securityRecorderStub) FailClosed() bool { return true }
 func (s *securityRecorderStub) Record(_ context.Context, entry securitylog.Entry) error {
 	s.entry = entry
+	s.count++
 	return s.recordErr
 }
 func (s *securityRecorderStub) RecordTx(_ context.Context, _ *sqlx.Tx, entry securitylog.Entry) error {
 	s.entry = entry
+	s.count++
 	return nil
 }
 
@@ -232,13 +237,14 @@ func TestUserRefreshAndLogoutDistinguishStoreOutageFromInvalidToken(t *testing.T
 	gin.SetMode(gin.TestMode)
 	for _, operation := range []string{"refresh", "logout"} {
 		for _, failure := range []struct {
-			name   string
-			outage bool
-			status int
-			code   int
+			name      string
+			outage    bool
+			status    int
+			code      int
+			logReason string
 		}{
-			{name: "database unavailable", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
-			{name: "unknown token", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized},
+			{name: "database unavailable", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable, logReason: "authentication_unavailable"},
+			{name: "unknown token", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized, logReason: "invalid_credentials"},
 		} {
 			t.Run(operation+"/"+failure.name, func(t *testing.T) {
 				rawDB, mock, err := sqlmock.New()
@@ -273,19 +279,64 @@ func TestUserRefreshAndLogoutDistinguishStoreOutageFromInvalidToken(t *testing.T
 				mock.ExpectRollback()
 				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"refresh_token":"present-token"}`))
 				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("User-Agent", "session-client")
+				request.RemoteAddr = "203.0.113.17:54321"
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)
 				var body Response
 				if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 					t.Fatal(err)
 				}
-				if response.Code != failure.status || body.Code != failure.code || body.RequestID == "" || strings.Contains(response.Body.String(), "database connection lost") {
+				if response.Code != failure.status || body.Code != failure.code || body.RequestID == "" || strings.Contains(response.Body.String(), "database connection lost") || strings.Contains(response.Body.String(), "present-token") {
 					t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+				}
+				wantMessage := operation + " failed"
+				if operation == "refresh" {
+					wantMessage = "token refresh failed"
+				}
+				if security.count != 1 || security.entry.EventType == "" || security.entry.Reason != failure.logReason || security.entry.ErrorCode != failure.logReason || security.entry.ErrorMessage != wantMessage || security.entry.ClientIP != "203.0.113.17" || security.entry.UserAgent != "session-client" {
+					t.Fatalf("security event = %+v", security.entry)
 				}
 				if err := mock.ExpectationsWereMet(); err != nil {
 					t.Fatal(err)
 				}
 			})
 		}
+	}
+}
+
+func TestUserRefreshReuseRecordsOnlyTransactionalSecurityEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	db := sqlx.NewDb(rawDB, "sqlmock")
+	security := &securityRecorderStub{}
+	service := authentication.NewWithSecurity(db, database.NewTransactor(db), nil, nil, config.Config{}, security)
+	handler := NewUserAuthenticationHandler(service, security, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	router := gin.New()
+	router.Use(RequestID(), SecurityClientContext())
+	router.POST("/api/v1/auth/refresh", handler.Refresh)
+	raw := "reused-token"
+	digest := sha256.Sum256([]byte(raw))
+	hash := hex.EncodeToString(digest[:])
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT s.id,s.user_id,s.refresh_token_hash`).WithArgs(hash, hash).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "refresh_token_hash", "previous_refresh_token_hash", "expires_at", "revoked_at", "must_change_password", "version"}).
+			AddRow("session-1", "user-1", "newer-token-hash", hash, time.Now().Add(time.Hour), nil, false, 3),
+	)
+	mock.ExpectExec(`UPDATE identity_sessions SET revoked_at=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{"refresh_token":"reused-token"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || security.count != 1 || security.entry.Reason != "refresh_token_reuse" {
+		t.Fatalf("status=%d security count=%d entry=%+v", response.Code, security.count, security.entry)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
