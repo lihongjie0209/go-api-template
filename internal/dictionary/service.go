@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -729,10 +730,7 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	}
 	cacheKey := ""
 	if d.Source == SourceStatic && s.cache != nil {
-		cacheQuery := q
-		// Static dictionaries never inspect the provider-only extension. Keeping
-		// it in the key would let public callers create unbounded equivalent keys.
-		cacheQuery.Extension = nil
+		cacheQuery := canonicalStaticCacheQuery(q, d.Kind)
 		requestJSON, _ := json.Marshal(cacheQuery)
 		cacheKey = fmt.Sprintf("dictionary:query:%s:%d:%x", d.ID, d.Version, sha256.Sum256(requestJSON))
 		if cached, cacheErr := cache.GetJSON[Result](ctx, s.cache, cacheKey); cacheErr == nil {
@@ -759,6 +757,38 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 	}
 	return result, err
 }
+
+func canonicalStaticCacheQuery(query Query, kind Kind) Query {
+	// Static dictionaries ignore provider-only extensions, and these filters
+	// have set semantics. Canonicalize only the cache copy, not the SQL input.
+	query.Extension = nil
+	query.Keyword = strings.ToLower(query.Keyword)
+	query.IDs = canonicalFilterSet(query.IDs)
+	query.Codes = canonicalFilterSet(query.Codes)
+	query.Values = canonicalFilterSet(query.Values)
+	if len(query.Sort) == 0 {
+		query.Sort = nil
+	}
+	if kind == KindEnum {
+		if query.Page == 0 {
+			query.Page = 1
+		}
+		if query.PageSize == 0 {
+			query.PageSize = pagination.DefaultPageSize
+		}
+	}
+	return query
+}
+
+func canonicalFilterSet(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	ordered := slices.Clone(values)
+	slices.Sort(ordered)
+	return slices.Compact(ordered)
+}
+
 func validProviderResult(result Result, query Query, maxNodes int) bool {
 	if result.Items == nil || len(result.Extension) == 0 || strings.TrimSpace(result.Name) == "" || len(result.Name) > 256 || !validJSON(result.Extension) {
 		return false

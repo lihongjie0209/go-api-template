@@ -456,9 +456,9 @@ func TestStaticDictionaryCacheIgnoresUnusedQueryExtension(t *testing.T) {
 	}
 	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active' AND deleted_at IS NULL`).
 		WithArgs("public.sample").WillReturnRows(definition())
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items`).WithArgs(id).
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items`).WithArgs(id, "%sa%", "%sa%", "beta", "alpha", "beta").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`SELECT .* FROM dictionary_items`).WithArgs(id, 20, 0).
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items`).WithArgs(id, "%sa%", "%sa%", "beta", "alpha", "beta", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active' AND deleted_at IS NULL`).
 		WithArgs("public.sample").WillReturnRows(definition())
@@ -468,13 +468,40 @@ func TestStaticDictionaryCacheIgnoresUnusedQueryExtension(t *testing.T) {
 		db: sqlx.NewDb(raw, "sqlmock"), cache: store,
 		cfg: config.Config{Dictionary: config.Dictionary{CacheTTL: time.Minute, MaxTreeNodes: 100}},
 	}
-	first, err := service.Query(t.Context(), Query{Code: "public.sample", Extension: json.RawMessage(`{"a":1}`)})
+	first, err := service.Query(t.Context(), Query{
+		Code: "public.sample", Keyword: " SA ", Codes: []string{"BETA", "alpha", "beta"},
+		Extension: json.RawMessage(`{"a":1}`),
+	})
 	require.NoError(t, err)
-	second, err := service.Query(t.Context(), Query{Code: "public.sample", Extension: json.RawMessage(`{"a":2}`)})
+	second, err := service.Query(t.Context(), Query{
+		Code: " PUBLIC.SAMPLE ", Keyword: "sa", Codes: []string{"alpha", "beta"},
+		Page: 1, PageSize: 20, Extension: json.RawMessage(`{"a":2}`),
+	})
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	require.Equal(t, 1, store.writes)
 	require.Len(t, store.values, 1)
+}
+
+func TestCanonicalStaticCacheQueryPreservesCallerFilters(t *testing.T) {
+	t.Parallel()
+	first := Query{
+		Keyword: "Search", IDs: []string{uuidString(2), uuidString(1), uuidString(2)},
+		Values: []string{"second", "first", "second"}, Sort: []Sort{},
+	}
+	originalIDs := append([]string(nil), first.IDs...)
+	originalValues := append([]string(nil), first.Values...)
+	second := Query{
+		Keyword: "search", IDs: []string{uuidString(1), uuidString(2)},
+		Values: []string{"first", "second"}, Page: 1, PageSize: 20,
+	}
+	require.Equal(t, canonicalStaticCacheQuery(first, KindEnum), canonicalStaticCacheQuery(second, KindEnum))
+	require.Equal(t, originalIDs, first.IDs)
+	require.Equal(t, originalValues, first.Values)
+	require.NotEqual(t,
+		canonicalStaticCacheQuery(Query{Values: []string{"first"}}, KindEnum),
+		canonicalStaticCacheQuery(Query{Values: []string{"second"}}, KindEnum),
+	)
 }
 
 func TestValidProviderResultRejectsDuplicateAndOversizedTrees(t *testing.T) {
