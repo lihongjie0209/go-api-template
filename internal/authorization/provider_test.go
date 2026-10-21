@@ -64,7 +64,7 @@ func TestAuthorizerPrincipalScope(t *testing.T) {
 
 func TestAuthorizerSnapshotTracksPlatformGrantsAndReusesSnapshot(t *testing.T) {
 	a, mock := testAuthorizer(t)
-	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read"))
@@ -108,7 +108,7 @@ func TestAuthorizerSnapshotTracksTenantGrants(t *testing.T) {
 
 func TestAuthorizerSnapshotIsBoundToPrincipalAndIndependentOfRowOrder(t *testing.T) {
 	a, mock := testAuthorizer(t)
-	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read").AddRow("identity.user", "update"))
@@ -121,6 +121,15 @@ func TestAuthorizerSnapshotIsBoundToPrincipalAndIndependentOfRowOrder(t *testing
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	require.ErrorIs(t, a.Authorize(ctx, platformprincipal.Principal{ID: "user-2", Type: platformprincipal.TypeUser}, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
+	otherSession := principal
+	otherSession.SessionID = "session-2"
+	require.ErrorIs(t, a.Authorize(ctx, otherSession, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
+	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
+		WithArgs("user", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read").AddRow("identity.user", "update"))
+	_, otherSessionRevision, err := a.Snapshot(t.Context(), otherSession)
+	require.NoError(t, err)
+	require.NotEqual(t, first, otherSessionRevision)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

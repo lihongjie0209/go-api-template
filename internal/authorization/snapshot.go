@@ -73,7 +73,8 @@ func (a *Authorizer) platformGrants(ctx context.Context, principal platformprinc
 
 func (s grantSnapshot) matches(principal platformprincipal.Principal) bool {
 	return s.principal.Type == principal.Type && s.principal.ID == principal.ID &&
-		s.principal.TenantID == principal.TenantID && s.principal.MembershipID == principal.MembershipID
+		s.principal.TenantID == principal.TenantID && s.principal.MembershipID == principal.MembershipID &&
+		s.principal.SessionID == principal.SessionID
 }
 
 func (s grantSnapshot) allowed(scope resourceaction.ResourceScope, resource, action string) bool {
@@ -87,14 +88,14 @@ func (s grantSnapshot) allowed(scope resourceaction.ResourceScope, resource, act
 }
 
 func (s grantSnapshot) revision() string {
-	parts := []string{"operation-grants/v1", string(s.principal.Type), s.principal.ID, s.principal.TenantID, s.principal.MembershipID}
+	parts := []string{"operation-grants/v2", string(s.principal.Type), s.principal.ID, s.principal.TenantID, s.principal.MembershipID, s.principal.SessionID}
 	for key := range s.platform {
 		parts = append(parts, "platform:"+key)
 	}
 	for key := range s.tenant {
 		parts = append(parts, "tenant:"+key)
 	}
-	slices.Sort(parts[5:])
+	slices.Sort(parts[6:])
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:16])
 }

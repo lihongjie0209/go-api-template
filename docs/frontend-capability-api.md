@@ -103,7 +103,7 @@ submitting a business operation.
 The frontend may retain a result only until `expires_at` and only within the
 same authenticated session and tenant. A changed `revision` invalidates all
 capability results immediately. The revision is an opaque digest of the current
-principal's effective platform/tenant operation grants and the published
+principal/session's effective platform/tenant operation grants and the published
 data-permission snapshot. Grant queries fail closed, so an unavailable database
 cannot emit a stale revision. Clients compare the digest for equality and must
 not parse it. Changes that do not alter the effective grant set need not change
