@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -296,6 +297,44 @@ func TestExecuteManualShutdownLeavesRunRecoverable(t *testing.T) {
 	require.True(t, called)
 	require.NotContains(t, output.String(), "finish manual scheduled job", "shutdown must leave the run eligible for lease recovery")
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWatchManualLeaseIgnoresCancellationDuringRenewal(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		result := make(chan error, 1)
+		go func() {
+			result <- watchManualLease(ctx, done, time.Second, func(context.Context) error {
+				cancel()
+				return context.Canceled
+			})
+		}()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		require.NoError(t, <-result, "a canceled task must not be reported as lease loss")
+	})
+}
+
+func TestWatchManualLeaseReportsFailureWhileTaskIsActive(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		result := make(chan error, 1)
+		failure := errors.New("database unavailable")
+		go func() {
+			result <- watchManualLease(ctx, done, time.Second, func(context.Context) error {
+				return failure
+			})
+		}()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		require.ErrorIs(t, <-result, failure)
+	})
 }
 
 func TestFinishManualRollsBackWhenOperationLogCannotBeQueued(t *testing.T) {

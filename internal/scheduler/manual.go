@@ -162,22 +162,12 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	leaseLost := false
 	go func() {
 		defer close(renewed)
-		ticker := time.NewTicker(manualLeaseDuration / 3)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := m.renewManual(ctx, run.ID, run.LeaseOwner); err != nil {
-					m.logOperationFailure(ctx, "manual scheduled job lease lost", err)
-					leaseLost = true
-					cancel()
-					return
-				}
-			}
+		if err := watchManualLease(ctx, done, manualLeaseDuration/3, func(ctx context.Context) error {
+			return m.renewManual(ctx, run.ID, run.LeaseOwner)
+		}); err != nil {
+			m.logOperationFailure(ctx, "manual scheduled job lease lost", err)
+			leaseLost = true
+			cancel()
 		}
 	}()
 	handler, err := m.handlers.Resolve(run.Handler)
@@ -199,6 +189,26 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 		m.logOperationFailure(parent, "finish manual scheduled job", finishErr)
 	}
 	m.metrics.ObserveCron(run.Handler, status, started)
+}
+
+func watchManualLease(ctx context.Context, done <-chan struct{}, interval time.Duration, renew func(context.Context) error) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := renew(ctx); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+		}
+	}
 }
 
 func (m *Manager) renewManual(ctx context.Context, id, owner string) error {
