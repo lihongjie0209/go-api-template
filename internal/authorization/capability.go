@@ -98,17 +98,17 @@ func (s *CapabilityService) SetEndpointRegistry(registry *accesscontrol.Endpoint
 }
 
 func (s *CapabilityService) Evaluate(ctx context.Context, requests []CapabilityRequest) (CapabilityResult, error) {
-	return s.evaluate(ctx, requests, MaxCapabilityItems)
+	return s.evaluate(ctx, requests, MaxCapabilityItems, false)
 }
 
 // EvaluateNavigation evaluates one complete, bounded navigation tree against
 // one pinned authorization snapshot. It is for server-constructed menu requests,
 // not for the public capability endpoint.
 func (s *CapabilityService) EvaluateNavigation(ctx context.Context, requests []CapabilityRequest) (CapabilityResult, error) {
-	return s.evaluate(ctx, requests, MaxNavigationCapabilityItems)
+	return s.evaluate(ctx, requests, MaxNavigationCapabilityItems, true)
 }
 
-func (s *CapabilityService) evaluate(ctx context.Context, requests []CapabilityRequest, maximum int) (CapabilityResult, error) {
+func (s *CapabilityService) evaluate(ctx context.Context, requests []CapabilityRequest, maximum int, hideRetired bool) (CapabilityResult, error) {
 	if s == nil || s.authorizer == nil || s.resources == nil || len(requests) == 0 || len(requests) > maximum {
 		return CapabilityResult{}, ErrCapabilityInvalid
 	}
@@ -117,12 +117,16 @@ func (s *CapabilityService) evaluate(ctx context.Context, requests []CapabilityR
 		return CapabilityResult{}, err
 	}
 	seen := make(map[string]struct{}, len(requests))
-	for _, request := range requests {
+	retired := make([]bool, len(requests))
+	for index, request := range requests {
 		if err := validateCapabilityRequest(request, seen); err != nil {
 			return CapabilityResult{}, err
 		}
 		if _, _, err := s.resources.Resolve(request.Resource, request.Action); err != nil {
-			return CapabilityResult{}, ErrCapabilityInvalid
+			if !hideRetired {
+				return CapabilityResult{}, ErrCapabilityInvalid
+			}
+			retired[index] = true
 		}
 	}
 	ctx, result, err := s.resultMetadata(ctx, principal)
@@ -131,9 +135,15 @@ func (s *CapabilityService) evaluate(ctx context.Context, requests []CapabilityR
 	}
 	result.Items = make([]CapabilityDecision, len(requests))
 	for index, request := range requests {
+		if retired[index] {
+			result.Items[index] = CapabilityDecision{Key: request.Key, Allowed: false}
+			continue
+		}
 		allowed, err := s.evaluateOperation(ctx, principal, request.Resource, request.Action)
 		if err != nil {
-			return CapabilityResult{}, err
+			if !hideRetired || !errors.Is(err, ErrCapabilityInvalid) {
+				return CapabilityResult{}, err
+			}
 		}
 		result.Items[index] = CapabilityDecision{Key: request.Key, Allowed: allowed}
 	}

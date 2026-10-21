@@ -106,6 +106,42 @@ func TestCapabilityServiceEvaluatesNavigationBatchAgainstOneSnapshot(t *testing.
 	require.Equal(t, 1, calls)
 }
 
+func TestCapabilityServiceHidesRetiredNavigationTargetsWithoutMaskingOtherDecisions(t *testing.T) {
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{
+		Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/get", Authentication: accesscontrol.AuthenticationJWT,
+		Resource: "identity.user", Action: "read", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform resource",
+	}})
+	require.NoError(t, err)
+	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
+		return nil
+	}), nil, resources, nil, capabilityRevisionStub{revision: "revision-1"}, time.Now)
+	service.SetEndpointRegistry(endpoints)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	requests := []CapabilityRequest{
+		{Key: "current", Resource: "identity.user", Action: "read"},
+		{Key: "retired-resource", Resource: "retired.resource", Action: "read"},
+		{Key: "retired-target", Resource: "identity.user", Action: "update"},
+	}
+
+	_, err = service.Evaluate(ctx, requests)
+	require.ErrorIs(t, err, ErrCapabilityInvalid)
+	result, err := service.EvaluateNavigation(ctx, requests)
+	require.NoError(t, err)
+	require.Equal(t, "revision-1", result.Revision)
+	require.Equal(t, []CapabilityDecision{
+		{Key: "current", Allowed: true},
+		{Key: "retired-resource", Allowed: false},
+		{Key: "retired-target", Allowed: false},
+	}, result.Items)
+	service.authorizer = capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
+		return platformauthz.ErrDecisionUnavailable
+	})
+	_, err = service.EvaluateNavigation(ctx, requests)
+	require.ErrorIs(t, err, ErrCapabilityUnavailable)
+}
+
 func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {
 	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
