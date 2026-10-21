@@ -70,4 +70,7 @@ func TestPolicyRevisionsRequireSnapshotProviderAtConstruction(t *testing.T) {
 	t.Parallel()
 	_, err := NewPolicyRevisions(nil, nil)
 	require.Error(t, err)
+	var typedNil *Authorizer
+	_, err = NewPolicyRevisions(nil, typedNil)
+	require.Error(t, err)
 }

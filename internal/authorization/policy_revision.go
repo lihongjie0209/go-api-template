@@ -23,7 +23,7 @@ type grantSnapshotter interface {
 
 func NewPolicyRevisions(data *datapermission.RuntimeLoader, authorizer platformauthz.Authorizer) (*PolicyRevisions, error) {
 	grants, ok := authorizer.(grantSnapshotter)
-	if !ok || grants == nil {
+	if !ok || nilDependency(grants) {
 		return nil, errors.New("authorization grant snapshot provider is required")
 	}
 	return &PolicyRevisions{data: data, grants: grants}, nil

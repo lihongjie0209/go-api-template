@@ -212,4 +212,9 @@ func TestNewCapabilityServiceRejectsMissingRevisionDependency(t *testing.T) {
 	require.NoError(t, err)
 	_, err = NewCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }), nil, resources, nil, nil)
 	require.ErrorIs(t, err, ErrCapabilityUnavailable)
+	var typedNil *Authorizer
+	revisions, err := NewPolicyRevisions(nil, &revisionAuthorizerStub{grants: "grant-1"})
+	require.NoError(t, err)
+	_, err = NewCapabilityService(typedNil, nil, resources, nil, revisions)
+	require.ErrorIs(t, err, ErrCapabilityUnavailable)
 }

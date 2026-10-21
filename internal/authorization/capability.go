@@ -74,7 +74,7 @@ type policyRevisions interface {
 }
 
 func NewCapabilityService(authorizer platformauthz.Authorizer, dataScopes *datapermission.Service, resources *resourceaction.Registry, providers *RowCapabilityRegistry, revisions *PolicyRevisions) (*CapabilityService, error) {
-	if authorizer == nil || resources == nil || revisions == nil {
+	if nilDependency(authorizer) || resources == nil || revisions == nil {
 		return nil, ErrCapabilityUnavailable
 	}
 	return newCapabilityService(authorizer, dataScopes, resources, providers, revisions, time.Now), nil
