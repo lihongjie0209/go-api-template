@@ -21,7 +21,7 @@ func TestEveryPOSTBodyHasDocumentedFieldsOrIsExplicitlyEmpty(t *testing.T) {
 			Parameters []struct {
 				In       string `json:"in"`
 				Required bool   `json:"required"`
-				Schema struct {
+				Schema   struct {
 					Ref        string                     `json:"$ref"`
 					Type       string                     `json:"type"`
 					Properties map[string]json.RawMessage `json:"properties"`
@@ -78,4 +78,47 @@ func TestEveryPOSTBodyHasDocumentedFieldsOrIsExplicitlyEmpty(t *testing.T) {
 	}
 	require.NotZero(t, bodyCount, "no POST request bodies found in generated Swagger")
 	require.Equal(t, intentionallyEmpty, seenEmpty, "explicitly empty request paths changed")
+}
+
+func TestEveryPOSTDocumentsEffectiveMediaTypes(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("swagger.json")
+	require.NoError(t, err)
+	var document struct {
+		Consumes []string `json:"consumes"`
+		Produces []string `json:"produces"`
+		Paths    map[string]map[string]struct {
+			Consumes []string `json:"consumes"`
+			Produces []string `json:"produces"`
+		} `json:"paths"`
+	}
+	require.NoError(t, json.Unmarshal(data, &document))
+	require.Contains(t, document.Consumes, "application/json")
+	require.Contains(t, document.Produces, "application/json")
+	count := 0
+	for path, methods := range document.Paths {
+		post, ok := methods["post"]
+		if !ok {
+			continue
+		}
+		count++
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			consumes := post.Consumes
+			if len(consumes) == 0 {
+				consumes = document.Consumes
+			}
+			wantConsumes := "application/json"
+			if path == "/api/v1/files/upload" {
+				wantConsumes = "multipart/form-data"
+			}
+			require.Contains(t, consumes, wantConsumes)
+			produces := post.Produces
+			if len(produces) == 0 {
+				produces = document.Produces
+			}
+			require.Contains(t, produces, "application/json")
+		})
+	}
+	require.NotZero(t, count, "no POST routes found in generated Swagger")
 }

@@ -1,4 +1,6 @@
 basePath: /
+consumes:
+- application/json
 definitions:
   application.Context:
     properties:
@@ -12277,6 +12279,8 @@ paths:
       summary: Check database and Redis readiness
       tags:
       - operations
+produces:
+- application/json
 schemes:
 - http
 - https
