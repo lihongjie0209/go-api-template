@@ -632,6 +632,8 @@ deleted_by text
 - Do not push incremental changes merely to trigger CI. Run the full CI suite
   after a substantial feature is complete; during normal local work, run only
   relevant unit tests.
+- After changing a Go dependency, run `go mod tidy` and `make modules-check`
+  before committing. The module check is read-only and mirrors the CI gate.
 - Every defect first found by integration or manual testing must receive the
   smallest practical unit regression test before or together with the fix.
 - Generated Swagger/protobuf drift, migration audit contracts, race tests,
