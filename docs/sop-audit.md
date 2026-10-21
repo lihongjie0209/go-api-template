@@ -486,3 +486,13 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Optimistic lock and audit | Verification does not mutate rows; version predicates and audit fields are not applicable. Existing triggers maintain all state-changing paths. |
 | Presentation and dictionary | Errors use stable global codes and safe messages; there are no display names, dates or suitable dictionary data in this interface. |
 | Tests and shared capability | Auth service, HTTP and gRPC unit tests distinguish database failure from inactive credentials; bounded remote-verifier tests cover both remote-only and unknown-local-key paths, plus immediate invalid signatures. Config tests enforce timeout bounds. This error classification stays at the local authoritative-state seam; transports reuse shared global error codes and envelope instead of adding local equivalents. The shared JWKS component can suppress a first-refresh network failure and report only unknown key, so that case cannot yet be distinguished reliably without strengthening the SDK's error contract. |
+
+## Bearer principal-shape boundary
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Existing POST+JSON and gRPC contracts are unchanged. A signed token with an unsupported principal type or service-account token carrying user-only session, tenant/membership or password-change state is invalid and returns global unauthorized / gRPC Unauthenticated. Local signing rejects those shapes before producing a token. |
+| Authentication and authorization | Both local parsing and remotely verified principals enforce the service-account shape before attaching a principal to request context. This closes a future confused-deputy path even though current tenant-grant SQL already requires a user principal. Object and tenant checks remain mandatory. |
+| Logs, cache, locks, versions and audit | Invalid read-only verification does not write operation/security logs or audited rows; there is no cache, distributed lock or optimistic update. Existing transport error responses do not echo token contents. |
+| Presentation and dictionary | Only the existing safe unauthorized message is exposed; the token is neither display data nor a dictionary provider. |
+| Tests and shared capability | Unit regression first demonstrated acceptance of user-only claims on locally signed service-account tokens. Tests now cover signing rejection, local parse and VerifyWithState rejection, remote principal rejection, and unchanged valid service-account behavior. The local boundary reuses the shared principal types and global error response; a corresponding shape check in the shared JWKS SDK remains a candidate for central hardening. |

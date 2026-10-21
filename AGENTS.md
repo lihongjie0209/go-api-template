@@ -49,6 +49,10 @@ The next domain work must keep identity and tenancy separate:
 - Remote JWKS verification must have an explicit bounded per-request deadline;
   timeout/cancellation must not be classified as an invalid signature. The
   caller's shorter deadline always wins.
+- Service-account bearer tokens must not carry user session, tenant-membership,
+  or password-change claims. Enforce this both when signing local tokens and
+  when accepting local or remotely verified tokens; do not rely on downstream
+  authorization to ignore unexpected context fields.
 - A signed access-token claim is not authoritative for mutable credential
   state. User-token verification must recheck the active session, user, and
   credential; every password reset path must revoke existing sessions in the

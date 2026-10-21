@@ -205,6 +205,9 @@ func (s *Service) verifyRemote(ctx context.Context, raw string) (platformprincip
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return platformprincipal.Principal{}, fmt.Errorf("%w: remote token verification: %w", ErrStateUnavailable, err)
 	}
+	if err == nil && identity.Type == platformprincipal.TypeServiceAccount && (identity.SessionID != "" || identity.TenantID != "" || identity.MembershipID != "") {
+		return platformprincipal.Principal{}, errors.New("service account jwt cannot carry user session or tenant context")
+	}
 	return identity, err
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
@@ -230,6 +233,9 @@ func (s *Service) IssuePrincipalWithState(principal platformprincipal.Principal,
 	}
 	if principal.Type == platformprincipal.TypeUser && (strings.TrimSpace(principal.TenantID) == "") != (strings.TrimSpace(principal.MembershipID) == "") {
 		return "", errors.New("user jwt tenant and membership context must be paired")
+	}
+	if principal.Type == platformprincipal.TypeServiceAccount && (principal.SessionID != "" || principal.TenantID != "" || principal.MembershipID != "" || state.MustChangePassword) {
+		return "", errors.New("service account jwt cannot carry user session or tenant context")
 	}
 	now := time.Now()
 	jti, err := randomID()
@@ -275,6 +281,9 @@ func (s *Service) Parse(raw string) (*Claims, error) {
 	}
 	if claims.PrincipalType == platformprincipal.TypeUser && (strings.TrimSpace(claims.TenantID) == "") != (strings.TrimSpace(claims.MembershipID) == "") {
 		return nil, errors.New("user jwt tenant and membership context must be paired")
+	}
+	if claims.PrincipalType == platformprincipal.TypeServiceAccount && (claims.SessionID != "" || claims.TenantID != "" || claims.MembershipID != "" || claims.MustChangePassword) {
+		return nil, errors.New("service account jwt cannot carry user session or tenant context")
 	}
 	return claims, nil
 }

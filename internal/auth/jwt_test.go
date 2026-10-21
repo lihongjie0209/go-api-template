@@ -281,6 +281,16 @@ func TestService_RemoteInvalidTokenIsNotDependencyFailure(t *testing.T) {
 	}
 }
 
+func TestService_RejectsRemoteServiceAccountTenantContext(t *testing.T) {
+	service := New(config.Config{})
+	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
+		return platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount, TenantID: "tenant-1"}, nil
+	})
+	if _, err := service.Verify(t.Context(), "remote-token"); err == nil || errors.Is(err, ErrStateUnavailable) {
+		t.Fatalf("Verify error = %v, want invalid service-account claims", err)
+	}
+}
+
 func TestService_RemoteVerificationRespectsCallerDeadline(t *testing.T) {
 	service := New(config.Config{Auth: config.Auth{JWKSTimeout: time.Second}})
 	service.verifier = verifierFunc(func(ctx context.Context, _ string) (platformprincipal.Principal, error) {
@@ -322,12 +332,56 @@ func TestService_IssueRejectsUnsafePrincipalShapes(t *testing.T) {
 		{ID: "user-1", Type: platformprincipal.TypeUser},
 		{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1"},
 		{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", MembershipID: "member-1"},
+		{ID: "service-1", Type: platformprincipal.TypeServiceAccount, SessionID: "session-1"},
+		{ID: "service-1", Type: platformprincipal.TypeServiceAccount, TenantID: "tenant-1"},
+		{ID: "service-1", Type: platformprincipal.TypeServiceAccount, MembershipID: "member-1"},
 		{ID: "system-1", Type: platformprincipal.TypeSystem},
 		{ID: "unknown-1", Type: platformprincipal.Type("unknown")},
 	} {
 		if _, err := service.IssuePrincipal(principal); err == nil {
 			t.Fatalf("IssuePrincipal(%+v) succeeded", principal)
 		}
+	}
+}
+
+func TestService_RejectsUserOnlyStateOnServiceAccountToken(t *testing.T) {
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(config.Config{JWT: jwtConfig})
+	if _, err := service.IssuePrincipalWithState(platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, TokenState{MustChangePassword: true}); err == nil {
+		t.Fatal("IssuePrincipalWithState accepted user-only password state")
+	}
+	now := time.Now()
+	for _, test := range []struct {
+		name   string
+		mutate func(*Claims)
+	}{
+		{name: "session", mutate: func(c *Claims) { c.SessionID = "session-1" }},
+		{name: "tenant", mutate: func(c *Claims) { c.TenantID = "tenant-1" }},
+		{name: "membership", mutate: func(c *Claims) { c.MembershipID = "member-1" }},
+		{name: "password state", mutate: func(c *Claims) { c.MustChangePassword = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			claims := Claims{RegisteredClaims: jwtlib.RegisteredClaims{
+				Issuer: jwtConfig.Issuer, Audience: jwtlib.ClaimStrings{jwtConfig.Audience}, Subject: "service-1", ID: "token-1",
+				IssuedAt: jwtlib.NewNumericDate(now), NotBefore: jwtlib.NewNumericDate(now), ExpiresAt: jwtlib.NewNumericDate(now.Add(time.Hour)),
+			}, PrincipalType: platformprincipal.TypeServiceAccount}
+			test.mutate(&claims)
+			token := jwtlib.NewWithClaims(jwtlib.GetSigningMethod(service.active.algorithm), claims)
+			token.Header["kid"] = service.active.id
+			raw, err := token.SignedString(service.active.private)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Parse(raw); err == nil {
+				t.Fatal("Parse accepted user-only fields on service-account token")
+			}
+			if _, _, err := service.VerifyWithState(t.Context(), raw); err == nil || errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("VerifyWithState error = %v, want invalid token without database lookup", err)
+			}
+		})
 	}
 }
 
