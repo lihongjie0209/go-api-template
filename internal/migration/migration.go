@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/mysql"
@@ -15,6 +17,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 )
+
+const schemaCreationTimeout = 30 * time.Second
 
 func Run(cfg config.Migration, direction string, steps int) (runErr error) {
 	if direction != "up" && direction != "down" {
@@ -124,14 +128,16 @@ func ensureSchema(cfg config.Migration, databaseURL string) error {
 		return fmt.Errorf("open database to create schema: %w", err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := createSchema(db, cfg.Schema); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), schemaCreationTimeout)
+	defer cancel()
+	if err := createSchema(ctx, db, cfg.Schema); err != nil {
 		return fmt.Errorf("create migration schema %q: %w", cfg.Schema, err)
 	}
 	return nil
 }
 
-func createSchema(db *sql.DB, schema string) (err error) {
-	tx, err := db.Begin()
+func createSchema(ctx context.Context, db *sql.DB, schema string) (err error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin schema creation: %w", err)
 	}
@@ -140,10 +146,10 @@ func createSchema(db *sql.DB, schema string) (err error) {
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, "go-api-template:schema:"+schema); err != nil {
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "go-api-template:schema:"+schema); err != nil {
 		return fmt.Errorf("lock schema creation: %w", err)
 	}
-	if _, err = tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + schema + `"`); err != nil {
+	if _, err = tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS "`+schema+`"`); err != nil {
 		return fmt.Errorf("execute schema creation: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
