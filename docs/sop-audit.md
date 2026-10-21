@@ -72,7 +72,8 @@ Both defects were fixed with unit coverage; migration `000044` widens the MySQL
 column, and both verify and PostgreSQL/MySQL integration passed in run
 `39585012494` at commit `9e28987`. Migration `000045` additionally aligns the
 MySQL scheduled-run payload and operation-log request summary columns with
-their existing byte-limit contracts; its boundary integration cases await CI.
+their existing byte-limit contracts. Both verify and PostgreSQL/MySQL
+Testcontainers boundary cases passed in run `39585986505` at commit `7175fd9`.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,
