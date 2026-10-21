@@ -13819,6 +13819,9 @@ const docTemplate = `{
         },
         "dictionary.ResultItem": {
             "type": "object",
+            "required": [
+                "children"
+            ],
             "properties": {
                 "children": {
                     "type": "array",

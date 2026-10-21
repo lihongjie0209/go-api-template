@@ -93,7 +93,15 @@ type ResultItem struct {
 	Disabled  bool            `json:"disabled"`
 	SortOrder int64           `json:"sort_order"`
 	Extension json.RawMessage `json:"extension" swaggertype:"object"`
-	Children  []ResultItem    `json:"children,omitempty"`
+	Children  []ResultItem    `json:"children" binding:"required"`
+}
+
+func (item ResultItem) MarshalJSON() ([]byte, error) {
+	type alias ResultItem
+	if item.Children == nil {
+		item.Children = []ResultItem{}
+	}
+	return json.Marshal(alias(item))
 }
 
 type DefinitionInput struct {

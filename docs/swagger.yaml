@@ -1133,6 +1133,8 @@ definitions:
         type: integer
       value:
         type: string
+    required:
+    - children
     type: object
   dictionary.Sort:
     properties:

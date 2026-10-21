@@ -297,6 +297,42 @@ func TestBuildTree(t *testing.T) {
 	require.Equal(t, childID, got[0].Children[0].ID)
 }
 
+func TestTreeDictionaryJSONAlwaysIncludesChildrenArray(t *testing.T) {
+	t.Parallel()
+	rootID, childID := uuidString(1), uuidString(2)
+	staticItems, err := buildResultTree([]Item{
+		{ID: childID, ParentID: &rootID, Code: "child", Name: "Child"},
+		{ID: rootID, Code: "root", Name: "Root"},
+	}, nil)
+	require.NoError(t, err)
+	tests := []struct {
+		name  string
+		items []ResultItem
+	}{
+		{name: "static tree", items: staticItems},
+		{name: "provider tree", items: []ResultItem{{ID: rootID, Code: "root", Name: "Root", Children: []ResultItem{{ID: childID, ParentID: &rootID, Code: "child", Name: "Child"}}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			encoded, err := json.Marshal(Result{Type: KindTree, Items: test.items})
+			require.NoError(t, err)
+			var result struct {
+				Items []struct {
+					Children []struct {
+						Children []any `json:"children"`
+					} `json:"children"`
+				} `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal(encoded, &result))
+			require.Len(t, result.Items, 1)
+			require.Len(t, result.Items[0].Children, 1)
+			require.NotNil(t, result.Items[0].Children[0].Children)
+			require.Empty(t, result.Items[0].Children[0].Children)
+		})
+	}
+}
+
 type testProvider struct{}
 
 func (testProvider) Query(context.Context, Query) (Result, error) {
@@ -481,6 +517,9 @@ func TestStaticDictionaryCacheIgnoresUnusedQueryExtension(t *testing.T) {
 	require.Equal(t, first, second)
 	require.Equal(t, 1, store.writes)
 	require.Len(t, store.values, 1)
+	for key := range store.values {
+		require.True(t, strings.HasPrefix(key, "dictionary:query:v2:"), "cache key = %q", key)
+	}
 }
 
 func TestCanonicalStaticCacheQueryPreservesCallerFilters(t *testing.T) {

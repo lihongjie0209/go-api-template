@@ -315,6 +315,23 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if len(result.Items) != 1 || len(result.Items[0].Children) != 1 || result.Items[0].Children[0].Code != "gd" {
 		t.Fatalf("unexpected dictionary tree: %#v", result.Items)
 	}
+	encodedTree, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("encode dictionary tree: %v", err)
+	}
+	var treeResponse struct {
+		Items []struct {
+			Children []struct {
+				Children []json.RawMessage `json:"children"`
+			} `json:"children"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(encodedTree, &treeResponse); err != nil {
+		t.Fatalf("decode dictionary tree response: %v", err)
+	}
+	if len(treeResponse.Items) != 1 || len(treeResponse.Items[0].Children) != 1 || treeResponse.Items[0].Children[0].Children == nil {
+		t.Fatalf("dictionary leaf must encode children as an array: %s", encodedTree)
+	}
 	filtered, err := service.Query(ctx, dictionary.Query{Code: "test.region", Keyword: "guang"})
 	if err != nil || len(filtered.Items) != 1 || len(filtered.Items[0].Children) != 1 {
 		t.Fatalf("tree search must retain ancestors: %#v err=%v", filtered.Items, err)
