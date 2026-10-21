@@ -1,8 +1,10 @@
 package eventbus
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +16,39 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestOutboxPersistenceErrorDoesNotLeakThroughLogOrTrace(t *testing.T) {
+	t.Parallel()
+	secretErr := errors.New("database URL with secret-value")
+	var output bytes.Buffer
+	outbox := &Outbox{logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	outbox.logDispatchFailure(t.Context(), secretErr)
+	require.NotContains(t, output.String(), "secret-value")
+	require.Contains(t, output.String(), "outbox_persistence_failed")
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	_, span := provider.Tracer("outbox-test").Start(t.Context(), "event_outbox.dispatch")
+	recordOutboxPersistenceFailure(span, secretErr)
+	span.End()
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	require.Len(t, spans[0].Events(), 1)
+	foundSafeCode := false
+	for _, attribute := range spans[0].Events()[0].Attributes {
+		message := attribute.Value.AsString()
+		require.NotContains(t, message, "secret-value")
+		if attribute.Key == "exception.message" && message == "outbox_persistence_failed" {
+			foundSafeCode = true
+		}
+	}
+	require.True(t, foundSafeCode, "trace event lacks safe failure code")
+}
 
 func TestOutboxStoreUsesCallerTransaction(t *testing.T) {
 	db, mock, err := sqlmock.New()

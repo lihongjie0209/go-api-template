@@ -52,6 +52,7 @@ var outboxTracer = otel.Tracer("go-api-template/infrastructure/eventbus")
 var publishSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
 var errDecodeEnvelope = errors.New("decode_failed")
 var errPublishEvent = errors.New("publish_failed")
+var errOutboxPersistenceFailed = errors.New("outbox_persistence_failed")
 
 func NewOutbox(cfg config.Config, bus *Bus, transactor *database.Transactor, metrics *observability.Metrics, logger *slog.Logger) *Outbox {
 	return &Outbox{
@@ -104,7 +105,7 @@ func (o *Outbox) Run(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if err := o.dispatchBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			o.logger.ErrorContext(ctx, "dispatch transactional outbox", "error", err)
+			o.logDispatchFailure(ctx, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -112,6 +113,15 @@ func (o *Outbox) Run(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (o *Outbox) logDispatchFailure(ctx context.Context, err error) {
+	o.logger.ErrorContext(ctx, "dispatch transactional outbox", "error", observability.SafeError(err, errOutboxPersistenceFailed))
+}
+
+func recordOutboxPersistenceFailure(span trace.Span, err error) {
+	observability.RecordSafeError(span, err, errOutboxPersistenceFailed)
+	span.SetStatus(codes.Error, "outbox persistence failed")
 }
 
 func (o *Outbox) dispatchBatch(ctx context.Context) error {
@@ -130,7 +140,7 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 			span.RecordError(errDecodeEnvelope)
 			span.SetStatus(codes.Error, "decode envelope")
 			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errDecodeEnvelope); releaseErr != nil {
-				span.RecordError(releaseErr)
+				recordOutboxPersistenceFailure(span, releaseErr)
 				span.End()
 				return fmt.Errorf("release undecodable outbox event: %w", releaseErr)
 			}
@@ -148,7 +158,7 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		if err != nil {
 			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "dead", record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver), "reason", errPublishEvent.Error())
 			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errPublishEvent); releaseErr != nil {
-				span.RecordError(releaseErr)
+				recordOutboxPersistenceFailure(span, releaseErr)
 				span.End()
 				return fmt.Errorf("release unpublished outbox event: %w", releaseErr)
 			}
@@ -156,8 +166,7 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 			continue
 		}
 		if err := o.markPublished(dispatchCtx, record.ID); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "mark published")
+			recordOutboxPersistenceFailure(span, err)
 			span.End()
 			return err
 		}
