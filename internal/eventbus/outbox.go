@@ -87,7 +87,7 @@ func (o *Outbox) Store(ctx context.Context, tx *sqlx.Tx, subject string, envelop
 	}
 	now := time.Now()
 	traceParent, traceState := injectTraceContext(ctx)
-	query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,last_error,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,0,'',?,?,?,?,1)`)
+	query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,0,'','',?,?,?,?,1)`)
 	if _, err := tx.ExecContext(ctx, query, envelope.EventId, subject, data, traceParent, traceState, now, now, actor.ID, now, actor.ID); err != nil {
 		return fmt.Errorf("store outbox event: %w", err)
 	}

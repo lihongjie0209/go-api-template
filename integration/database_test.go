@@ -1951,8 +1951,9 @@ func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, 
 	var persisted struct {
 		Status    string `db:"status"`
 		RequestID string `db:"request_id"`
+		Version   int64  `db:"version"`
 	}
-	if err := db.GetContext(ctx, &persisted, db.Rebind(`SELECT status,request_id FROM scheduled_job_runs WHERE id=? AND deleted_at IS NULL`), result.RunID); err != nil || persisted.Status != "queued" || persisted.RequestID != "integration-manual-request" {
+	if err := db.GetContext(ctx, &persisted, db.Rebind(`SELECT status,request_id,version FROM scheduled_job_runs WHERE id=? AND deleted_at IS NULL`), result.RunID); err != nil || persisted.Status != "queued" || persisted.RequestID != "integration-manual-request" {
 		t.Fatalf("persisted manual run = %+v err=%v", persisted, err)
 	}
 	var events int
@@ -1968,6 +1969,23 @@ func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, 
 	var queuedRuns int
 	if err := db.GetContext(ctx, &queuedRuns, db.Rebind(`SELECT count(*) FROM scheduled_job_runs WHERE scheduled_job_id=? AND status='queued' AND trigger_source='manual' AND deleted_at IS NULL`), jobID); err != nil || queuedRuns != 1 {
 		t.Fatalf("manual runs after rejected dispatch = %d, want 1 committed run, err=%v", queuedRuns, err)
+	}
+	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		updated, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET status='error',started_at=?,finished_at=?,error_message='integration cleanup',updated_at=?,updated_by=? WHERE id=? AND version=? AND status='queued' AND deleted_at IS NULL`), now, now, now, "scheduler-admin", result.RunID, persisted.Version)
+		if err != nil {
+			return err
+		}
+		rows, err := updated.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return fmt.Errorf("cleanup manual run affected %d rows", rows)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("complete manual run fixture: %v", err)
 	}
 }
 

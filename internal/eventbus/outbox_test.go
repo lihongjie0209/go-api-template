@@ -25,7 +25,7 @@ func TestOutboxStoreUsesCallerTransaction(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := sqlxDB.BeginTxx(t.Context(), nil)
 	require.NoError(t, err)
-	mock.ExpectExec(`INSERT INTO event_outbox`).
+	mock.ExpectExec(`INSERT INTO event_outbox \(id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,`).
 		WithArgs("event-1", "platform.security.recorded.v1", sqlmock.AnyArg(), "", "", sqlmock.AnyArg(), sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectRollback()
