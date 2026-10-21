@@ -1,9 +1,12 @@
 package policysync
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +16,69 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
+
+type failingPublishClient struct{ redis.UniversalClient }
+
+func (failingPublishClient) Publish(ctx context.Context, _ string, _ any) *redis.IntCmd {
+	command := redis.NewIntCmd(ctx)
+	command.SetErr(errors.New("redis password=secret-value"))
+	return command
+}
+
+func TestPolicySyncFailureLogsDoNotExposeDependencyDetails(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		run  func(context.Context, *slog.Logger) error
+		code string
+	}{
+		{
+			name: "revision polling",
+			run: func(ctx context.Context, logger *slog.Logger) error {
+				syncer := New(nil, "policies", "data_permission", time.Second, time.Second,
+					func(context.Context) (string, error) { return "", errors.New("database password=secret-value") },
+					func(context.Context) error { return nil }, logger, nil)
+				syncer.poll(ctx)
+				return nil
+			},
+			code: "policy_revision_read_failed",
+		},
+		{
+			name: "snapshot refresh",
+			run: func(ctx context.Context, logger *slog.Logger) error {
+				syncer := New(nil, "policies", "data_permission", time.Second, time.Second,
+					func(context.Context) (string, error) { return "revision-1", nil },
+					func(context.Context) error { return errors.New("database password=secret-value") }, logger, nil)
+				syncer.refreshAndLog(ctx, "revision")
+				return nil
+			},
+			code: "policy_snapshot_refresh_failed",
+		},
+		{
+			name: "redis publication",
+			run: func(ctx context.Context, logger *slog.Logger) error {
+				syncer := New(failingPublishClient{}, "policies", "data_permission", time.Second, time.Second,
+					func(context.Context) (string, error) { return "revision-1", nil },
+					func(context.Context) error { return nil }, logger, nil)
+				return syncer.Changed(ctx)
+			},
+			code: "policy_invalidation_publish_failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var output bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&output, nil))
+			if err := test.run(t.Context(), logger); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), test.code) {
+				t.Fatalf("policy sync log leaked dependency details or omitted safe code: %s", output.String())
+			}
+		})
+	}
+}
 
 type metricsStub struct {
 	mu      sync.Mutex

@@ -250,6 +250,10 @@ otherwise unsuitable for dictionary use.
   and rate-limit middleware must also classify errors before logging. Preserve
   request/trace IDs and bounded operation names for correlation, never the raw
   dependency error or request payload.
+- Policy snapshot refresh, revision polling, and Redis invalidation logs must
+  retain a fixed failure reason and bounded component/channel identity, never
+  raw database or Redis errors. Return the original error only to a caller that
+  can handle it without exporting its text.
 - Security-critical successful actions default to fail-closed when their
   security event cannot be enqueued. Any fail-open exception requires an
   explicit product/security decision.

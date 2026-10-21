@@ -7,10 +7,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/redis/go-redis/v9"
 )
 
 const defaultPollInterval = 30 * time.Second
+
+var (
+	errPolicyInvalidationPublishFailed = errors.New("policy_invalidation_publish_failed")
+	errPolicyRevisionReadFailed        = errors.New("policy_revision_read_failed")
+	errPolicySnapshotRefreshFailed     = errors.New("policy_snapshot_refresh_failed")
+)
 
 // Sync keeps an immutable in-process policy snapshot aligned with its
 // authoritative database state. Pub/Sub reduces propagation latency; revision
@@ -102,7 +109,7 @@ func (s *Sync) Changed(ctx context.Context) error {
 			if s.metrics != nil {
 				s.metrics.ObserveInfrastructure("policy_sync", s.component, "publish", "error", started)
 			}
-			s.logger.WarnContext(ctx, "publish policy snapshot invalidation failed", "channel", s.channel, "error", err)
+			s.logger.WarnContext(ctx, "publish policy snapshot invalidation failed", "channel", s.channel, "error", observability.SafeError(err, errPolicyInvalidationPublishFailed))
 		} else if s.metrics != nil {
 			s.metrics.ObserveInfrastructure("policy_sync", s.component, "publish", "success", started)
 		}
@@ -146,7 +153,7 @@ func (s *Sync) poll(ctx context.Context) {
 	defer cancel()
 	revision, err := s.revision(checkCtx)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "read policy snapshot revision failed", "channel", s.channel, "error", err)
+		s.logger.ErrorContext(ctx, "read policy snapshot revision failed", "channel", s.channel, "error", observability.SafeError(err, errPolicyRevisionReadFailed))
 		return
 	}
 	s.mu.Lock()
@@ -159,6 +166,6 @@ func (s *Sync) poll(ctx context.Context) {
 
 func (s *Sync) refreshAndLog(ctx context.Context, source string) {
 	if err := s.Refresh(ctx); err != nil {
-		s.logger.ErrorContext(ctx, "refresh policy snapshot failed", "channel", s.channel, "source", source, "error", err)
+		s.logger.ErrorContext(ctx, "refresh policy snapshot failed", "channel", s.channel, "source", source, "error", observability.SafeError(err, errPolicySnapshotRefreshFailed))
 	}
 }
