@@ -17,6 +17,25 @@ type safeFailure struct {
 func (e safeFailure) Error() string { return e.reason }
 func (e safeFailure) Unwrap() error { return e.class }
 
+// SafeReason returns a frozen reason only for values produced by SafeError or
+// the two well-known Context cancellation classes. It deliberately does not
+// unwrap arbitrary errors because their outer text may contain secrets.
+func SafeReason(err error) (string, bool) {
+	switch err {
+	case context.Canceled:
+		return context.Canceled.Error(), true
+	case context.DeadlineExceeded:
+		return context.DeadlineExceeded.Error(), true
+	case errUnclassifiedFailure:
+		return errUnclassifiedFailure.Error(), true
+	}
+	classified, ok := err.(safeFailure)
+	if !ok {
+		return "", false
+	}
+	return classified.reason, true
+}
+
 // SafeError reduces an untrusted dependency error to a stable reason for
 // telemetry. The fallback must be a fixed component-owned sentinel, never a
 // wrapped upstream error. The original error remains available to its caller,

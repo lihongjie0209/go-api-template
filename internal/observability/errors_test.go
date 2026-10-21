@@ -108,3 +108,27 @@ func TestSafeErrorFreezesValidatedFallbackReason(t *testing.T) {
 		t.Fatalf("SafeError() = %v, want immutable reason with fallback identity", got)
 	}
 }
+
+func TestSafeReasonOnlyAcceptsClassifiedErrors(t *testing.T) {
+	t.Parallel()
+	classified := SafeError(errors.New("provider secret-value"), errors.New("dependency_failed"))
+	for _, test := range []struct {
+		name   string
+		err    error
+		reason string
+		ok     bool
+	}{
+		{name: "classified", err: classified, reason: "dependency_failed", ok: true},
+		{name: "raw error", err: errors.New("dependency_failed")},
+		{name: "wrapped classified", err: errors.Join(classified, errors.New("secret-value"))},
+		{name: "canceled", err: context.Canceled, reason: "context canceled", ok: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			reason, ok := SafeReason(test.err)
+			if reason != test.reason || ok != test.ok {
+				t.Fatalf("SafeReason() = %q, %t; want %q, %t", reason, ok, test.reason, test.ok)
+			}
+		})
+	}
+}

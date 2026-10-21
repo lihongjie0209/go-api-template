@@ -4,15 +4,64 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestContextHandlerClassifiesUntrustedErrorAttributes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		log  func(*slog.Logger)
+		want string
+	}{
+		{name: "raw error", log: func(logger *slog.Logger) {
+			logger.Error("failed", "error", errors.New("password=secret-value"))
+		}, want: `"error":"operation_failed"`},
+		{name: "raw error text", log: func(logger *slog.Logger) {
+			logger.Error("failed", "error", "password=secret-value")
+		}, want: `"error":"operation_failed"`},
+		{name: "classified error", log: func(logger *slog.Logger) {
+			logger.Error("failed", "error", observability.SafeError(errors.New("password=secret-value"), errors.New("dependency_failed")))
+		}, want: `"error":"dependency_failed"`},
+		{name: "bound error", log: func(logger *slog.Logger) {
+			logger.With("error", errors.New("password=secret-value")).Error("failed")
+		}, want: `"error":"operation_failed"`},
+		{name: "bound classified error", log: func(logger *slog.Logger) {
+			logger.With("error", observability.SafeError(errors.New("password=secret-value"), errors.New("dependency_failed"))).Error("failed")
+		}, want: `"error":"dependency_failed"`},
+		{name: "nested error", log: func(logger *slog.Logger) {
+			logger.Error("failed", slog.Group("dependency", slog.Any("error", errors.New("password=secret-value"))))
+		}, want: `"error":"operation_failed"`},
+		{name: "error group", log: func(logger *slog.Logger) {
+			logger.Error("failed", slog.Group("error", slog.String("detail", "password=secret-value")))
+		}, want: `"error":"operation_failed"`},
+		{name: "other attributes remain", log: func(logger *slog.Logger) {
+			logger.Info("ready", "service", "orders")
+		}, want: `"service":"orders"`},
+		{name: "panic value", log: func(logger *slog.Logger) {
+			logger.Error("recovered", "panic", "password=secret-value")
+		}, want: `"panic":"handler_panic"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var output bytes.Buffer
+			logger := slog.New(contextHandler{next: slog.NewJSONHandler(&output, nil)})
+			test.log(logger)
+			if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte(test.want)) {
+				t.Fatalf("log leaked error details or omitted safe reason: %s", output.String())
+			}
+		})
+	}
+}
 
 func TestContextHandlerAddsRequestAndTraceCorrelation(t *testing.T) {
 	t.Parallel()

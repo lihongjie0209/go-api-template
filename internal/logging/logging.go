@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"go.opentelemetry.io/otel/trace"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -45,6 +46,12 @@ func (h contextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h contextHandler) Handle(ctx context.Context, record slog.Record) error {
+	clean := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	record.Attrs(func(attr slog.Attr) bool {
+		clean.AddAttrs(sanitizeLogAttr(attr))
+		return true
+	})
+	record = clean
 	if id, ok := requestid.FromContext(ctx); ok && !h.hasKey(record, "request_id") {
 		record.AddAttrs(slog.String("request_id", id))
 	}
@@ -57,6 +64,35 @@ func (h contextHandler) Handle(ctx context.Context, record slog.Record) error {
 		}
 	}
 	return h.next.Handle(ctx, record)
+}
+
+func sanitizeLogAttr(attr slog.Attr) slog.Attr {
+	if attr.Key == "panic" {
+		return slog.String(attr.Key, "handler_panic")
+	}
+	value := attr.Value.Resolve()
+	if attr.Key == "error" || attr.Key == "err" {
+		if err, ok := value.Any().(error); ok {
+			if reason, safe := observability.SafeReason(err); safe {
+				return slog.String(attr.Key, reason)
+			}
+		}
+		return slog.String(attr.Key, "operation_failed")
+	}
+	if value.Kind() == slog.KindGroup {
+		attrs := append([]slog.Attr(nil), value.Group()...)
+		for index := range attrs {
+			attrs[index] = sanitizeLogAttr(attrs[index])
+		}
+		return slog.Attr{Key: attr.Key, Value: slog.GroupValue(attrs...)}
+	}
+	if err, ok := value.Any().(error); ok {
+		if reason, safe := observability.SafeReason(err); safe {
+			return slog.String(attr.Key, reason)
+		}
+		return slog.String(attr.Key, "operation_failed")
+	}
+	return slog.Attr{Key: attr.Key, Value: value}
 }
 
 func recordHasKey(record slog.Record, key string) bool {
@@ -81,10 +117,12 @@ func (h contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	for key := range h.boundKeys {
 		keys[key] = struct{}{}
 	}
-	for _, attr := range attrs {
+	clean := make([]slog.Attr, len(attrs))
+	for index, attr := range attrs {
 		keys[attr.Key] = struct{}{}
+		clean[index] = sanitizeLogAttr(attr)
 	}
-	return contextHandler{next: h.next.WithAttrs(attrs), boundKeys: keys}
+	return contextHandler{next: h.next.WithAttrs(clean), boundKeys: keys}
 }
 
 func (h contextHandler) WithGroup(name string) slog.Handler {
