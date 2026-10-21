@@ -22,17 +22,18 @@ func TestRepairServiceDeadScopesAndBoundsPage(t *testing.T) {
 	created := time.Now().UTC().Add(-time.Hour)
 	dead := time.Now().UTC()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM event_outbox WHERE dead_at IS NOT NULL`).
-		WithArgs("%publish%", "%publish%", "%publish%").
+		WithArgs("%platform%", "%platform%").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT id,subject,attempts,last_error,created_at,dead_at,version FROM event_outbox WHERE dead_at IS NOT NULL`).
-		WithArgs("%publish%", "%publish%", "%publish%", 20, 0).
+		WithArgs("%platform%", "%platform%", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "attempts", "last_error", "created_at", "dead_at", "version"}).
-			AddRow("event-1", "platform.event.v1", 10, "publish failed", created, dead, 3))
+			AddRow("event-1", "platform.event.v1", 10, "publish failed: bearer secret-value", created, dead, 3))
 
-	page, err := service.Dead(ctx, pagination.Request{Keyword: " Publish "})
+	page, err := service.Dead(ctx, pagination.Request{Keyword: " Platform "})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), page.Total)
 	require.Equal(t, "event-1", page.Items[0].ID)
+	require.Equal(t, "legacy_failure", page.Items[0].LastError)
 	_, offset := page.Items[0].DeadAt.Zone()
 	require.Equal(t, 8*60*60, offset)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -54,6 +55,21 @@ func TestRepairServiceReplayUsesAuditActorAndVersion(t *testing.T) {
 
 	require.NoError(t, service.Replay(ctx, "event-1", 3))
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSafeOutboxReason(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ name, input, want string }{
+		{name: "empty", input: "", want: ""},
+		{name: "decode", input: "decode_failed", want: "decode_failed"},
+		{name: "publish", input: "publish_failed", want: "publish_failed"},
+		{name: "legacy sensitive error", input: "publish failed: bearer secret-value", want: "legacy_failure"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, test.want, safeOutboxReason(test.input))
+		})
+	}
 }
 
 func TestRepairServiceRejectsMissingActorAndInvalidReplay(t *testing.T) {

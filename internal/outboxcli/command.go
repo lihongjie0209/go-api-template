@@ -67,7 +67,7 @@ func newCommand(list listRunner, replay replayRunner) *cobra.Command {
 	}
 	listCommand.Flags().IntVar(&listOptions.page, "page", 1, "page number")
 	listCommand.Flags().IntVar(&listOptions.pageSize, "page-size", 20, "page size, at most 100")
-	listCommand.Flags().StringVar(&listOptions.keyword, "keyword", "", "match event ID, subject, or last error")
+	listCommand.Flags().StringVar(&listOptions.keyword, "keyword", "", "match event ID or subject")
 
 	replayOptions := replayOptions{}
 	replayCommand := &cobra.Command{

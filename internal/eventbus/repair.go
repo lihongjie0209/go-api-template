@@ -54,9 +54,9 @@ func (s *RepairService) Dead(ctx context.Context, request pagination.Request) (D
 	where := "dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL"
 	args := []any{}
 	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
-		where += " AND (LOWER(id) LIKE ? OR LOWER(subject) LIKE ? OR LOWER(last_error) LIKE ?)"
+		where += " AND (LOWER(id) LIKE ? OR LOWER(subject) LIKE ?)"
 		pattern := "%" + strings.ToLower(keyword) + "%"
-		args = append(args, pattern, pattern, pattern)
+		args = append(args, pattern, pattern)
 	}
 	var total int64
 	if err := s.db.GetContext(ctx, &total, s.db.Rebind("SELECT count(*) FROM event_outbox WHERE "+where), args...); err != nil {
@@ -70,10 +70,20 @@ func (s *RepairService) Dead(ctx context.Context, request pagination.Request) (D
 	}
 	location := time.FixedZone("Asia/Shanghai", 8*60*60)
 	for index := range items {
+		items[index].LastError = safeOutboxReason(items[index].LastError)
 		items[index].CreatedAt = items[index].CreatedAt.In(location)
 		items[index].DeadAt = items[index].DeadAt.In(location)
 	}
 	return DeadPage{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+}
+
+func safeOutboxReason(value string) string {
+	switch value {
+	case "", errDecodeEnvelope.Error(), errPublishEvent.Error():
+		return value
+	default:
+		return "legacy_failure"
+	}
 }
 
 func (s *RepairService) Replay(ctx context.Context, id string, version int64) error {

@@ -58,3 +58,16 @@ func TestDeadCommandRequiresActor(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 }
+
+func TestDeadListHelpDescribesSafeSearchFields(t *testing.T) {
+	command := NewCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"dead", "list", "--help"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "match event ID or subject") || strings.Contains(output.String(), "last error") {
+		t.Fatalf("unsafe dead-list keyword help: %q", output.String())
+	}
+}
