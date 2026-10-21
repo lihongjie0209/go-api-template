@@ -18,6 +18,7 @@ type identityClientStub struct {
 	batchRequest  *identityv1.BatchGetUsersRequest
 	batchRequests []*identityv1.BatchGetUsersRequest
 	batchErr      error
+	userStatus    identityv1.UserStatus
 }
 
 func TestMembershipPresentationUsesIdentityBatchAndPlatformTimezone(t *testing.T) {
@@ -82,7 +83,21 @@ func TestGRPCUserResolverActorPresentationFallsBackWhenIdentityUnavailable(t *te
 
 func (s *identityClientStub) ListUsers(_ context.Context, request *identityv1.ListUsersRequest, _ ...grpc.CallOption) (*identityv1.ListUsersResponse, error) {
 	s.request = request
-	return &identityv1.ListUsersResponse{Users: []*identityv1.User{{Id: "user-1", Username: "alice", DisplayName: "Alice", Status: identityv1.UserStatus_USER_STATUS_ACTIVE}}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
+	status := s.userStatus
+	if status == identityv1.UserStatus_USER_STATUS_UNSPECIFIED {
+		status = identityv1.UserStatus_USER_STATUS_ACTIVE
+	}
+	return &identityv1.ListUsersResponse{Users: []*identityv1.User{{Id: "user-1", Username: "alice", DisplayName: "Alice", Status: status}}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
+}
+
+func TestGRPCUserResolverRejectsInactiveUserEvenIfIdentityReturnsIt(t *testing.T) {
+	t.Parallel()
+	client := &identityClientStub{userStatus: identityv1.UserStatus_USER_STATUS_DISABLED}
+	resolver := &grpcUserResolver{client: client}
+	_, err := resolver.ResolveUsername(t.Context(), "alice")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("disabled user lookup error=%v, want not found", err)
+	}
 }
 
 func TestGRPCUserResolverBatchResolvesOnceWithStableFallback(t *testing.T) {

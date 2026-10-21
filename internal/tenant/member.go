@@ -58,7 +58,7 @@ func (r *grpcUserResolver) ResolveUsername(ctx context.Context, username string)
 	if err != nil {
 		return UserSnapshot{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
 	}
-	if len(response.GetUsers()) == 1 && strings.EqualFold(response.GetUsers()[0].GetUsername(), username) {
+	if len(response.GetUsers()) == 1 && response.GetUsers()[0].GetStatus() == identityv1.UserStatus_USER_STATUS_ACTIVE && strings.EqualFold(response.GetUsers()[0].GetUsername(), username) {
 		u := response.GetUsers()[0]
 		return UserSnapshot{ID: u.GetId(), Username: u.GetUsername(), DisplayName: u.GetDisplayName()}, nil
 	}

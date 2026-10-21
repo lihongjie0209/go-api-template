@@ -42,7 +42,9 @@ func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchG
 }
 func (s *identityServer) ListUsers(ctx context.Context, r *identityv1.ListUsersRequest) (*identityv1.ListUsersResponse, error) {
 	if username, exact := strings.CutPrefix(strings.TrimSpace(r.GetKeyword()), "="); exact {
-		u, e := s.service.ResolveUsername(ctx, username)
+		// Exact user resolution can gate membership creation. Never decide active
+		// eligibility from a cache that may survive failed invalidation.
+		u, e := s.service.ResolveUsernameAuthoritative(ctx, username)
 		if errors.Is(e, identity.ErrNotFound) || e == nil && r.GetStatus() != identityv1.UserStatus_USER_STATUS_UNSPECIFIED && toProtoStatus(u.Status) != r.GetStatus() {
 			return &identityv1.ListUsersResponse{Users: []*identityv1.User{}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 0}}, nil
 		}

@@ -30,6 +30,11 @@ The next domain work must keep identity and tenancy separate:
 - Identity must not write tenant membership tables. Tenant membership must
   reference a user ID and obtain display data through the identity API or a
   locally maintained projection.
+- Identity lookups that decide whether a user may become a tenant owner or
+  member must read current database status and logical-delete state. A cached
+  user profile is only for presentation; failed cache invalidation must not
+  make a disabled or deleted identity eligible. The tenant client must also
+  reject any non-active identity response.
 - Authorization consumes normalized principal, tenant, membership, resource,
   and action information. Identity and tenant modules do not embed independent
   RBAC implementations.
