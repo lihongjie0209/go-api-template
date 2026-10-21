@@ -19,9 +19,13 @@ type capabilityAuthorizerFunc func(context.Context, platformprincipal.Principal,
 type capabilityRevisionStub struct {
 	revision string
 	err      error
+	calls    *int
 }
 
 func (s capabilityRevisionStub) ForRequest(ctx context.Context, _ platformprincipal.Principal) (context.Context, string, error) {
+	if s.calls != nil {
+		(*s.calls)++
+	}
 	return ctx, s.revision, s.err
 }
 
@@ -168,6 +172,28 @@ func TestCapabilityServiceReturnsCombinedRevisionAndFailsClosedOnSnapshotError(t
 	service.revisions = capabilityRevisionStub{err: errors.New("database unavailable")}
 	_, err = service.Evaluate(ctx, requests)
 	require.ErrorIs(t, err, ErrCapabilityUnavailable)
+}
+
+func TestCapabilityServiceRejectsInvalidBatchBeforeReadingGrants(t *testing.T) {
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	calls := 0
+	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error { return nil }), nil, resources, nil, capabilityRevisionStub{calls: &calls}, time.Now)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	for _, test := range []struct {
+		name     string
+		requests []CapabilityRequest
+	}{
+		{name: "duplicate keys", requests: []CapabilityRequest{{Key: "same", Resource: "identity.user", Action: "read"}, {Key: "same", Resource: "identity.user", Action: "update"}}},
+		{name: "unknown resource", requests: []CapabilityRequest{{Key: "unknown", Resource: "unknown.resource", Action: "read"}}},
+		{name: "blank action", requests: []CapabilityRequest{{Key: "blank", Resource: "identity.user", Action: ""}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := service.Evaluate(ctx, test.requests)
+			require.ErrorIs(t, err, ErrCapabilityInvalid)
+			require.Zero(t, calls)
+		})
+	}
 }
 
 func TestCapabilityServiceRejectsDuplicateRowIDs(t *testing.T) {

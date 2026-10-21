@@ -97,16 +97,21 @@ func (s *CapabilityService) Evaluate(ctx context.Context, requests []CapabilityR
 	if err != nil {
 		return CapabilityResult{}, err
 	}
+	seen := make(map[string]struct{}, len(requests))
+	for _, request := range requests {
+		if err := validateCapabilityRequest(request, seen); err != nil {
+			return CapabilityResult{}, err
+		}
+		if _, _, err := s.resources.Resolve(request.Resource, request.Action); err != nil {
+			return CapabilityResult{}, ErrCapabilityInvalid
+		}
+	}
 	ctx, result, err := s.resultMetadata(ctx, principal)
 	if err != nil {
 		return CapabilityResult{}, err
 	}
 	result.Items = make([]CapabilityDecision, len(requests))
-	seen := make(map[string]struct{}, len(requests))
 	for index, request := range requests {
-		if err := validateCapabilityRequest(request, seen); err != nil {
-			return CapabilityResult{}, err
-		}
 		allowed, err := s.evaluateOperation(ctx, principal, request.Resource, request.Action)
 		if err != nil {
 			return CapabilityResult{}, err

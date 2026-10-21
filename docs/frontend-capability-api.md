@@ -18,7 +18,7 @@ Two POST + JSON operations are supported:
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Both operations use the shared response envelope. Page requests carry a unique frontend correlation `key`, canonical resource, and action. Row requests carry only resource, actions, and IDs; duplicate or blank values fail validation. |
+| Contract | Both operations use the shared response envelope. Page requests carry a unique frontend correlation `key`, canonical resource, and action. Row requests carry only resource, actions, and IDs; duplicate, blank, or unknown values fail validation before the grant database is read. |
 | Authentication | JWT only. The caller can evaluate only the principal and tenant already established by the verified token. |
 | Authorization | Both routes bind `authorization.capability:evaluate` at principal scope. Authenticated subjects may evaluate their own capabilities. Requested capabilities are evaluated independently against registered target operations. |
 | Operation log | None. These are high-frequency, read-only presentation queries with no sensitive data export. |
@@ -28,7 +28,7 @@ Two POST + JSON operations are supported:
 | Optimistic lock | Not applicable; no state is changed. |
 | Audit | No table is written. Principal, tenant, endpoint context, subject roles, and department projections are all server-derived. |
 | Presentation | Results expose only boolean decisions keyed by the caller correlation key or resource ID. Policy IDs, expressions, internal attributes, and deny reasons are not returned. |
-| Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation, one tenant-scoped batch row query, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
+| Tests | Unit tests cover target-operation selection, allow/deny/unavailable, bounded validation before dependency access, one tenant-scoped batch row query, missing-row concealment, current-row policy evaluation, grant-order-independent revisions, principal binding, and database failure. The existing PostgreSQL/MySQL grant lifecycle integration test verifies that create/delete changes and restores the revision; execution remains a CI responsibility. |
 | Shared capability | Reuses the Resource/Action registry, grant authorizer and data-permission evaluator. Endpoint lookup and bounded row evaluation are shared infrastructure rather than handler-local logic. |
 | Dictionary | Not exposed as a dictionary: capability results are principal-, tenant-, policy-, and time-dependent security decisions. |
 
