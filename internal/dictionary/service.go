@@ -903,10 +903,10 @@ func (s *Service) queryStatic(ctx context.Context, d Definition, q Query) (Resul
 		}
 		order = strings.Join(parts, ",") + `,id ASC`
 	}
+	if !q.IncludeDisabled {
+		where += ` AND disabled=false`
+	}
 	if d.Kind == KindEnum {
-		if !q.IncludeDisabled {
-			where += ` AND disabled=false`
-		}
 		if q.Keyword != "" {
 			where += ` AND (lower(code) LIKE ? ESCAPE '!' OR lower(name) LIKE ? ESCAPE '!')`
 			like := database.LikeContainsPattern(strings.ToLower(q.Keyword))

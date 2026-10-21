@@ -368,6 +368,17 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || childParentCandidates.Total != 2 || len(childParentCandidates.Items) != 2 {
 		t.Fatalf("child exclusion must retain other parents: %#v err=%v", childParentCandidates, err)
 	}
+	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "hidden-root", Name: "Hidden Root", Disabled: true, SortOrder: -1}); err != nil {
+		t.Fatalf("create disabled dictionary item: %v", err)
+	}
+	boundedTreeService := dictionary.New(db, appdb.NewTransactor(db), nil, dictionary.NewProviderRegistry(), nil, nil, config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 3}})
+	visibleTree, err := boundedTreeService.Query(ctx, dictionary.Query{Code: "test.region"})
+	if err != nil || visibleTree.Total != 3 {
+		t.Fatalf("disabled nodes must not consume the visible tree limit: %#v err=%v", visibleTree, err)
+	}
+	if _, err := boundedTreeService.Query(ctx, dictionary.Query{Code: "test.region", IncludeDisabled: true}); !errors.Is(err, dictionary.ErrConflict) {
+		t.Fatalf("including disabled nodes must still enforce the tree limit: %v", err)
+	}
 	enumDefinition, err := service.CreateDefinition(actorCtx, dictionary.DefinitionInput{Code: "test.gender", Name: "Gender", Kind: dictionary.KindEnum, Source: dictionary.SourceStatic, Status: "active"})
 	if err != nil {
 		t.Fatalf("create enum dictionary: %v", err)

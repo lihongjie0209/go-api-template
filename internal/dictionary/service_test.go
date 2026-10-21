@@ -827,7 +827,7 @@ func TestQueryStaticTreeTotalCountsFilteredNodes(t *testing.T) {
 	rows.AddRow(rootID, dictionaryID, nil, "root", "Root", "", false, 1, []byte(`{}`), now, "system", now, "system", 1)
 	rows.AddRow(uuidString(2), dictionaryID, rootID, "target", "Target", "", false, 1, []byte(`{}`), now, "system", now, "system", 1)
 	rows.AddRow(uuidString(3), dictionaryID, nil, "other", "Other", "", false, 2, []byte(`{}`), now, "system", now, "system", 1)
-	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL ORDER BY .* LIMIT \?`).WithArgs(dictionaryID, 11).WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL AND disabled=false ORDER BY .* LIMIT \?`).WithArgs(dictionaryID, 11).WillReturnRows(rows)
 	mock.ExpectClose()
 	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 10}}}
 	result, err := service.queryStatic(t.Context(), Definition{ID: dictionaryID, Code: "regions", Name: "Regions", Kind: KindTree}, Query{Keyword: "target"})
@@ -835,6 +835,28 @@ func TestQueryStaticTreeTotalCountsFilteredNodes(t *testing.T) {
 	require.Equal(t, int64(2), result.Total)
 	require.Len(t, result.Items, 1)
 	require.Len(t, result.Items[0].Children, 1)
+}
+
+func TestQueryStaticTreeIncludeDisabledRetainsDisabledRows(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	dictionaryID := uuidString(4)
+	now := time.Now()
+	rows := sqlmock.NewRows(strings.Split(itemColumns, ","))
+	rows.AddRow(uuidString(1), dictionaryID, nil, "hidden", "Hidden", "", true, 1, []byte(`{}`), now, "system", now, "system", 1)
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL ORDER BY .* LIMIT \?`).WithArgs(dictionaryID, 2).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), cfg: config.Config{Dictionary: config.Dictionary{MaxTreeNodes: 1}}}
+	result, err := service.queryStatic(t.Context(), Definition{ID: dictionaryID, Code: "regions", Name: "Regions", Kind: KindTree}, Query{IncludeDisabled: true})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.Total)
+	require.Len(t, result.Items, 1)
+	require.True(t, result.Items[0].Disabled)
 }
 
 func uuidString(last byte) string {
