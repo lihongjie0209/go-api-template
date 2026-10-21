@@ -209,8 +209,8 @@ func TestUpdateItemPropagatesAncestorLookupFailure(t *testing.T) {
 	mock.ExpectQuery(`SELECT dictionary_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
 		WithArgs(itemID).
 		WillReturnRows(sqlmock.NewRows([]string{"dictionary_id"}).AddRow(dictionaryID))
-	mock.ExpectQuery(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).
-		WithArgs(parentID).
+	mock.ExpectQuery(`WITH RECURSIVE ancestors\(id,parent_id,dictionary_id,depth\) AS`).
+		WithArgs(parentID, maxDictionaryTreeDepth+1).
 		WillReturnError(lookupErr)
 	mock.ExpectRollback()
 	mock.ExpectClose()
@@ -218,6 +218,86 @@ func TestUpdateItemPropagatesAncestorLookupFailure(t *testing.T) {
 	_, err = service.UpdateItem(ctx, ItemUpdate{ID: itemID, ParentID: &parentID, Name: "Child", Version: 1})
 	require.ErrorIs(t, err, lookupErr)
 	require.NotErrorIs(t, err, ErrInvalid)
+}
+
+func TestValidateItemParentChain(t *testing.T) {
+	t.Parallel()
+	dictionaryID, itemID, parentID, rootID, missingID := uuidString(1), uuidString(2), uuidString(3), uuidString(4), uuidString(5)
+	for _, test := range []struct {
+		name      string
+		rows      [][]any
+		wantError error
+	}{
+		{name: "root parent", rows: [][]any{{parentID, nil, dictionaryID, 1}}},
+		{name: "two ancestors", rows: [][]any{{parentID, rootID, dictionaryID, 1}, {rootID, nil, dictionaryID, 2}}},
+		{name: "missing parent", wantError: ErrInvalid},
+		{name: "dangling ancestor", rows: [][]any{{parentID, missingID, dictionaryID, 1}}, wantError: ErrInvalid},
+		{name: "self parent", rows: [][]any{{itemID, nil, dictionaryID, 1}}, wantError: ErrInvalid},
+		{name: "foreign dictionary", rows: [][]any{{parentID, nil, uuidString(6), 1}}, wantError: ErrInvalid},
+		{name: "cycle", rows: [][]any{{parentID, rootID, dictionaryID, 1}, {rootID, parentID, dictionaryID, 2}}, wantError: ErrInvalid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, raw.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+			db := sqlx.NewDb(raw, "sqlmock")
+			mock.ExpectBegin()
+			rows := sqlmock.NewRows([]string{"id", "parent_id", "dictionary_id", "depth"})
+			for _, row := range test.rows {
+				rows.AddRow(row[0], row[1], row[2], row[3])
+			}
+			mock.ExpectQuery(`WITH RECURSIVE ancestors\(id,parent_id,dictionary_id,depth\) AS`).
+				WithArgs(parentID, maxDictionaryTreeDepth+1).WillReturnRows(rows)
+			mock.ExpectRollback()
+			mock.ExpectClose()
+			tx, err := db.BeginTxx(t.Context(), nil)
+			require.NoError(t, err)
+			err = validateItemParentChain(t.Context(), tx, dictionaryID, itemID, parentID)
+			if test.wantError != nil {
+				require.ErrorIs(t, err, test.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, tx.Rollback())
+		})
+	}
+}
+
+func TestValidateItemParentChainRejectsExcessiveDepth(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db := sqlx.NewDb(raw, "sqlmock")
+	dictionaryID, parentID := uuidString(1), uuidString(2)
+	rows := sqlmock.NewRows([]string{"id", "parent_id", "dictionary_id", "depth"})
+	for i := 1; i <= maxDictionaryTreeDepth+1; i++ {
+		var next any
+		if i < maxDictionaryTreeDepth+1 {
+			next = fmt.Sprintf("node-%d", i+1)
+		}
+		id := fmt.Sprintf("node-%d", i)
+		if i == 1 {
+			id = parentID
+		}
+		rows.AddRow(id, next, dictionaryID, i)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`WITH RECURSIVE ancestors\(id,parent_id,dictionary_id,depth\) AS`).
+		WithArgs(parentID, maxDictionaryTreeDepth+1).WillReturnRows(rows)
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	require.NoError(t, err)
+	require.ErrorIs(t, validateItemParentChain(t.Context(), tx, dictionaryID, uuidString(3), parentID), ErrInvalid)
+	require.NoError(t, tx.Rollback())
 }
 
 func TestDeleteItemLocksDefinitionBeforeItem(t *testing.T) {

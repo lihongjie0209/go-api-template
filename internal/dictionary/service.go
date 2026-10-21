@@ -559,28 +559,8 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 			return ErrInvalid
 		}
 		if in.ParentID != nil {
-			current := in.ParentID
-			for depth := 0; current != nil && depth <= s.cfg.Dictionary.MaxTreeNodes; depth++ {
-				if *current == in.ID {
-					return ErrInvalid
-				}
-				var parent struct {
-					DictionaryID string  `db:"dictionary_id"`
-					ParentID     *string `db:"parent_id"`
-				}
-				if e := tx.GetContext(ctx, &parent, tx.Rebind(`SELECT dictionary_id,parent_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL FOR UPDATE`), *current); e != nil {
-					if errors.Is(e, sql.ErrNoRows) {
-						return ErrInvalid
-					}
-					return fmt.Errorf("load dictionary ancestor: %w", e)
-				}
-				if parent.DictionaryID != dictionaryID {
-					return ErrInvalid
-				}
-				current = parent.ParentID
-				if depth == s.cfg.Dictionary.MaxTreeNodes {
-					return ErrInvalid
-				}
+			if e := validateItemParentChain(ctx, tx, dictionaryID, in.ID, *in.ParentID); e != nil {
+				return e
 			}
 		}
 		if e := ensureSelectableValueAvailable(ctx, tx, dictionaryID, in.ID, in.Value); e != nil {
@@ -625,6 +605,37 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 		item = records[0]
 	}
 	return item, err
+}
+
+func validateItemParentChain(ctx context.Context, tx *sqlx.Tx, dictionaryID, itemID, parentID string) error {
+	var ancestors []struct {
+		ID           string  `db:"id"`
+		ParentID     *string `db:"parent_id"`
+		DictionaryID string  `db:"dictionary_id"`
+		Depth        int     `db:"depth"`
+	}
+	const query = `WITH RECURSIVE ancestors(id,parent_id,dictionary_id,depth) AS (
+		SELECT id,parent_id,dictionary_id,1 FROM dictionary_items WHERE id=? AND deleted_at IS NULL
+		UNION ALL
+		SELECT parent.id,parent.parent_id,parent.dictionary_id,ancestors.depth+1
+		FROM dictionary_items parent JOIN ancestors ON parent.id=ancestors.parent_id
+		WHERE parent.deleted_at IS NULL AND ancestors.depth<?
+	) SELECT id,parent_id,dictionary_id,depth FROM ancestors ORDER BY depth`
+	if err := tx.SelectContext(ctx, &ancestors, tx.Rebind(query), parentID, maxDictionaryTreeDepth+1); err != nil {
+		return fmt.Errorf("load dictionary ancestor: %w", err)
+	}
+	if len(ancestors) == 0 || len(ancestors) > maxDictionaryTreeDepth {
+		return ErrInvalid
+	}
+	for index, ancestor := range ancestors {
+		if ancestor.ID == itemID || ancestor.DictionaryID != dictionaryID || ancestor.Depth != index+1 {
+			return ErrInvalid
+		}
+	}
+	if ancestors[len(ancestors)-1].ParentID != nil {
+		return ErrInvalid
+	}
+	return nil
 }
 
 func validateStoredTreeDepth(ctx context.Context, tx *sqlx.Tx, dictionaryID string) error {
