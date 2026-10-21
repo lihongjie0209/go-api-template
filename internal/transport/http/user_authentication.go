@@ -70,6 +70,10 @@ type ForceLogoutAllRequest struct {
 // @Produce json
 // @Param request body UserLoginRequest true "Credentials"
 // @Success 200 {object} Response{body=authentication.Tokens}
+// @Failure 400 {object} Response
+// @Failure 401 {object} Response
+// @Failure 429 {object} Response
+// @Failure 503 {object} Response
 // @Router /api/v1/auth/user/login [post]
 func (h *UserAuthenticationHandler) Login(c *gin.Context) {
 	var r UserLoginRequest
@@ -338,6 +342,8 @@ func authenticationFailureCode(err error) string {
 		return "session_not_found"
 	case errors.Is(err, authentication.ErrSessionVersionConflict):
 		return "stale_version"
+	case errors.Is(err, authentication.ErrAuthenticationUnavailable):
+		return "authentication_unavailable"
 	default:
 		return "internal_error"
 	}
@@ -345,6 +351,9 @@ func authenticationFailureCode(err error) string {
 func loginFailureReason(err error) string {
 	if errors.Is(err, authentication.ErrAccountLocked) {
 		return "account_locked"
+	}
+	if errors.Is(err, authentication.ErrAuthenticationUnavailable) {
+		return "authentication_unavailable"
 	}
 	return "invalid_credentials"
 }
@@ -362,6 +371,8 @@ func (h *UserAuthenticationHandler) fail(c *gin.Context, e error) {
 		Fail(c, h.logger, apperror.StaleVersion(e))
 	case errors.Is(e, authentication.ErrSecurityUnavailable):
 		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", e))
+	case errors.Is(e, authentication.ErrAuthenticationUnavailable):
+		Fail(c, h.logger, apperror.Unavailable("authentication is temporarily unavailable", e))
 	case errors.Is(e, identity.ErrNotFound):
 		Fail(c, h.logger, apperror.NotFound("user not found"))
 	default:

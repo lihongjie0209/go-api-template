@@ -330,6 +330,130 @@ func TestService_LoginReadsAuthoritativeUserStatus(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestService_LoginDistinguishesMissingRecordsFromDatabaseOutages(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		stage  string
+		outage bool
+	}{
+		{name: "unknown user", stage: "user"},
+		{name: "user store unavailable", stage: "user", outage: true},
+		{name: "missing credential", stage: "credential"},
+		{name: "credential store unavailable", stage: "credential", outage: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			users := identity.New(identity.NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, config.Config{})
+			service := New(db, database.NewTransactor(db), users, nil, config.Config{})
+			userQuery := mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("alice")
+			if test.stage == "user" {
+				if test.outage {
+					userQuery.WillReturnError(errors.New("database connection lost"))
+				} else {
+					userQuery.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+				}
+			} else {
+				now := time.Now()
+				userQuery.WillReturnRows(sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+					AddRow("user-1", "alice", "Alice", "", "", identity.StatusActive, now, "admin", "Administrator", now, "admin", "Administrator", 2))
+				credentialQuery := mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1")
+				if test.outage {
+					credentialQuery.WillReturnError(errors.New("database connection lost"))
+				} else {
+					credentialQuery.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+				}
+			}
+			_, err = service.Login(t.Context(), "alice", "present-password", "127.0.0.1", "test")
+			if test.outage {
+				require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+				require.NotErrorIs(t, err, ErrInvalidCredentials)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidCredentials)
+				require.NotErrorIs(t, err, ErrAuthenticationUnavailable)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestService_LoginRejectsOversizedPasswordBeforeDatabase(t *testing.T) {
+	service := New(nil, nil, nil, nil, config.Config{})
+	_, err := service.Login(t.Context(), "alice", strings.Repeat("x", 1025), "", "")
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	require.NotErrorIs(t, err, ErrAuthenticationUnavailable)
+}
+
+func TestService_LoginDistinguishesCorruptHashAndSigningFailure(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		storedHash string
+		makeHash   bool
+	}{
+		{name: "corrupt stored hash", storedHash: "not-an-argon2-hash"},
+		{name: "signing key unavailable", makeHash: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			users := identity.New(identity.NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, config.Config{})
+			service := New(db, database.NewTransactor(db), users, auth.New(config.Config{}), config.Config{})
+			storedHash := test.storedHash
+			if test.makeHash {
+				storedHash, err = service.hasher.Hash("correct-password-value")
+				require.NoError(t, err)
+			}
+			now := time.Now()
+			mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("alice").WillReturnRows(
+				sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+					AddRow("user-1", "alice", "Alice", "", "", identity.StatusActive, now, "admin", "Administrator", now, "admin", "Administrator", 2),
+			)
+			mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(
+				sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).
+					AddRow("credential-1", "user-1", storedHash, 0, nil, false, 3),
+			)
+			_, err = service.Login(t.Context(), "alice", "correct-password-value", "127.0.0.1", "test")
+			require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+			require.NotErrorIs(t, err, ErrInvalidCredentials)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestService_LoginDoesNotReturnTokenWhenSessionWriteFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	jwtConfig, err := testutil.JWTConfig()
+	require.NoError(t, err)
+	users := identity.New(identity.NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, config.Config{})
+	service := New(db, database.NewTransactor(db), users, auth.New(config.Config{JWT: jwtConfig}), config.Config{JWT: jwtConfig, Authentication: config.Authentication{RefreshTTL: time.Hour}})
+	hash, err := service.hasher.Hash("correct-password-value")
+	require.NoError(t, err)
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("alice").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "username", "display_name", "email", "phone", "status", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("user-1", "alice", "Alice", "", "", identity.StatusActive, now, "admin", "Administrator", now, "admin", "Administrator", 2),
+	)
+	mock.ExpectQuery(`SELECT id,user_id,password_hash`).WithArgs("user-1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "user_id", "password_hash", "failed_attempts", "locked_until", "must_change_password", "version"}).
+			AddRow("credential-1", "user-1", hash, 0, nil, false, 3),
+	)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE identity_user_credentials SET failed_attempts=0`).WillReturnError(errors.New("database write lost"))
+	mock.ExpectRollback()
+	tokens, err := service.Login(t.Context(), "alice", "correct-password-value", "127.0.0.1", "test")
+	require.ErrorIs(t, err, ErrAuthenticationUnavailable)
+	require.Empty(t, tokens.AccessToken)
+	require.Empty(t, tokens.RefreshToken)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestService_RecordFailureRollsBackWhenSecurityEventCannotBeStored(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

@@ -21,6 +21,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/authentication"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
@@ -174,5 +175,55 @@ func TestAuthenticationHandler_LoginDistinguishesStoreOutageFromInvalidCredentia
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUserLoginDistinguishesIdentityStoreOutageFromUnknownUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name   string
+		outage bool
+		status int
+		code   int
+		reason string
+	}{
+		{name: "database unavailable", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable, reason: "authentication_unavailable"},
+		{name: "unknown user", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized, reason: "invalid_credentials"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rawDB, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = rawDB.Close() })
+			db := sqlx.NewDb(rawDB, "sqlmock")
+			users := identity.New(identity.NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, config.Config{})
+			service := authentication.New(db, database.NewTransactor(db), users, nil, config.Config{})
+			security := &securityRecorderStub{}
+			handler := NewUserAuthenticationHandler(service, security, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			router := gin.New()
+			router.Use(RequestID())
+			router.POST("/api/v1/auth/user/login", handler.Login)
+			query := mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("alice")
+			if test.outage {
+				query.WillReturnError(errors.New("database connection lost"))
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/user/login", strings.NewReader(`{"username":"alice","password":"present-password"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			var body Response
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != test.status || body.Code != test.code || body.RequestID == "" || security.entry.Reason != test.reason || strings.Contains(response.Body.String(), "database connection lost") {
+				t.Fatalf("status=%d body=%s security=%+v", response.Code, response.Body.String(), security.entry)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

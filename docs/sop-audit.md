@@ -372,6 +372,17 @@ Status values:
 | Query and presentation | The current-user session page always retains its user predicate and uses shared pagination capped further at 100 rows. It supports bounded keyword (IP/user agent), session-ID/status/IP `IN`, creation-time and last-seen half-open ranges with deterministic ordering. Derived active/expired/revoked status and display name avoid frontend inference, while all returned session timestamps are explicitly converted to Asia/Shanghai. Stored IP and user-agent snapshots are UTF-8 normalized and bounded. |
 | Tests | Unit tests cover key algorithms/rotation/claims, password bounds, authoritative status, hash-fenced atomic failed-attempt increments (including a concurrent password-change observation), refresh signing rollback/reuse, password/session revocation, bounded filters, status/time presentation and security-outbox rollback. Logout attribution and dependency-error classification have direct regressions. PostgreSQL/Redis JWT/PSK transport E2E and full gates passed in run `35060112640`. |
 
+### User login failure classification
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | `POST /api/v1/auth/user/login` accepts bounded username/password JSON and returns tokens in the shared envelope only after commit. Invalid credentials or a missing account/credential return global unauthorized; a locked account retains its existing lock response. Database, hash-verifier, token-signer and session-write faults return global unavailable (HTTP 503), never a misleading 401 or raw dependency message. OpenAPI lists 400/401/429/503 errors. |
+| Authentication and authorization | Login is public because no principal exists yet; successful credentials still require an active account and a hash-fenced credential version before session issuance. Tenant/object permission and data-dictionary exposure do not apply to secret credentials. |
+| Operation and security logs | Login emits no operation log. Successful login and its security event commit in one transaction; rejected attempts use the independent security recorder with a bounded failure reason, identifier digest, IP and user agent. Credentials and raw dependency errors are not recorded. A failed security enqueue blocks successful login. |
+| Cache, lock and consistency | Authentication reads the authoritative identity/credential tables and does not cache the password decision. The Redis login limiter remains the coordination layer; credential rows use atomic failed-attempt increments and version/hash fencing, so no additional distributed lock is needed. Session creation and success audit share the transaction; failed commits return no tokens. |
+| Audit and presentation | The system login actor is transaction-local for the anonymous request; audited credential/session writes retain trigger-maintained timestamps and version. Errors use global codes and request ID; token expiry remains a duration, so no date presentation or related display name is exposed here. |
+| Tests and shared capability | Service unit tests cover missing versus unavailable identity/credential data, oversized password, malformed stored hash, signing failure and session-write rollback. HTTP tests pin the 401 versus 503 envelope and non-leakage; existing Testcontainers authentication coverage stays within this service. Reuses the shared response, error, security-log, transaction and principal components. |
+
 ## PBAC authorization audit decisions
 
 | Concern | Current decision and evidence |

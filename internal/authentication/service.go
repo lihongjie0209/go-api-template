@@ -24,16 +24,17 @@ import (
 )
 
 var (
-	ErrInvalidCredentials     = errors.New("invalid credentials")
-	ErrAccountLocked          = errors.New("account locked")
-	ErrRefreshInvalid         = errors.New("refresh token invalid")
-	ErrRefreshReused          = errors.New("refresh token reused")
-	ErrSessionNotFound        = errors.New("session not found")
-	ErrSessionVersionConflict = errors.New("session version conflict")
-	ErrForbidden              = errors.New("authentication operation forbidden")
-	ErrInvalid                = errors.New("invalid authentication request")
-	ErrSecurityUnavailable    = errors.New("security audit unavailable")
-	ErrAttemptAudited         = errors.New("authentication attempt audited")
+	ErrInvalidCredentials        = errors.New("invalid credentials")
+	ErrAccountLocked             = errors.New("account locked")
+	ErrRefreshInvalid            = errors.New("refresh token invalid")
+	ErrRefreshReused             = errors.New("refresh token reused")
+	ErrSessionNotFound           = errors.New("session not found")
+	ErrSessionVersionConflict    = errors.New("session version conflict")
+	ErrForbidden                 = errors.New("authentication operation forbidden")
+	ErrInvalid                   = errors.New("invalid authentication request")
+	ErrSecurityUnavailable       = errors.New("security audit unavailable")
+	ErrAuthenticationUnavailable = errors.New("user authentication unavailable")
+	ErrAttemptAudited            = errors.New("authentication attempt audited")
 )
 
 type Tokens struct {
@@ -485,28 +486,46 @@ func updatePasswordAndRevoke(ctx context.Context, tx *sqlx.Tx, credential Creden
 func (s *Service) Login(ctx context.Context, username, password, ip, ua string) (Tokens, error) {
 	ip = boundedSessionText(ip, maxSessionClientIP)
 	ua = boundedSessionText(ua, 1024)
+	if password == "" || len(password) > 1024 {
+		return Tokens{}, ErrInvalidCredentials
+	}
 	user, err := s.users.ResolveUsernameAuthoritative(ctx, username)
-	if err != nil || user.Status != identity.StatusActive {
+	if err != nil {
+		if errors.Is(err, identity.ErrNotFound) || errors.Is(err, identity.ErrInvalid) {
+			return Tokens{}, ErrInvalidCredentials
+		}
+		return Tokens{}, fmt.Errorf("%w: resolve login user: %w", ErrAuthenticationUnavailable, err)
+	}
+	if user.Status != identity.StatusActive {
 		return Tokens{}, ErrInvalidCredentials
 	}
 	var credential Credential
 	q := s.db.Rebind(`SELECT id,user_id,password_hash,failed_attempts,locked_until,must_change_password,version FROM identity_user_credentials WHERE user_id=? AND deleted_at IS NULL`)
 	if err = s.db.GetContext(ctx, &credential, q, user.ID); err != nil {
-		return Tokens{}, ErrInvalidCredentials
+		if errors.Is(err, sql.ErrNoRows) {
+			return Tokens{}, ErrInvalidCredentials
+		}
+		return Tokens{}, fmt.Errorf("%w: load login credential: %w", ErrAuthenticationUnavailable, err)
 	}
 	if credential.LockedUntil != nil && credential.LockedUntil.After(time.Now()) {
 		return Tokens{}, ErrAccountLocked
 	}
 	valid, verifyErr := s.hasher.Verify(password, credential.PasswordHash)
-	if verifyErr != nil || !valid {
+	if verifyErr != nil {
+		return Tokens{}, fmt.Errorf("%w: verify login credential: %w", ErrAuthenticationUnavailable, verifyErr)
+	}
+	if !valid {
 		if failureErr := s.recordFailure(ctx, credential, username, ip, ua); failureErr != nil {
-			return Tokens{}, fmt.Errorf("record failed login attempt: %w", failureErr)
+			if errors.Is(failureErr, ErrSecurityUnavailable) {
+				return Tokens{}, failureErr
+			}
+			return Tokens{}, fmt.Errorf("%w: record failed login attempt: %w", ErrAuthenticationUnavailable, failureErr)
 		}
 		return Tokens{}, errors.Join(ErrInvalidCredentials, ErrAttemptAudited)
 	}
 	refresh, hash, err := newRefreshToken()
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("%w: create refresh token: %w", ErrAuthenticationUnavailable, err)
 	}
 	sessionID := uuid.NewString()
 	access, err := s.jwt.IssuePrincipalWithState(
@@ -514,7 +533,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		auth.TokenState{MustChangePassword: credential.MustChangePassword},
 	)
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("%w: issue access token: %w", ErrAuthenticationUnavailable, err)
 	}
 	systemCtx := platformprincipal.SystemContext(ctx, "identity-service:login")
 	now := time.Now()
@@ -538,7 +557,10 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		return s.recordSecurityTx(systemCtx, tx, securitylog.Entry{EventType: securitylog.EventLogin, SubjectID: user.ID, SubjectName: user.DisplayName, SubjectType: string(platformprincipal.TypeUser), SessionID: sessionID, Succeeded: true, ClientIP: ip, UserAgent: ua})
 	})
 	if err != nil {
-		return Tokens{}, err
+		if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrSecurityUnavailable) {
+			return Tokens{}, err
+		}
+		return Tokens{}, fmt.Errorf("%w: commit user login: %w", ErrAuthenticationUnavailable, err)
 	}
 	return Tokens{AccessToken: access, RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), SessionID: sessionID, MustChangePassword: credential.MustChangePassword, UserID: user.ID}, nil
 }
