@@ -29,7 +29,7 @@ func TestTelemetryErrorDoesNotExposeProviderDetails(t *testing.T) {
 		t.Fatal("telemetryError(nil) must remain nil")
 	}
 	err := telemetryError(errors.New("request https://bucket.example/files/tenant-secret/report.pdf failed"))
-	if err == nil || err.Error() != "object storage operation failed" {
+	if err == nil || err.Error() != "object_storage_operation_failed" {
 		t.Fatalf("telemetryError() = %v", err)
 	}
 	canceled := telemetryError(errors.Join(context.Canceled, errors.New("secret-value")))

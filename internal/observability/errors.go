@@ -9,6 +9,14 @@ import (
 
 var errUnclassifiedFailure = errors.New("operation_failed")
 
+type safeFailure struct {
+	reason string
+	class  error
+}
+
+func (e safeFailure) Error() string { return e.reason }
+func (e safeFailure) Unwrap() error { return e.class }
+
 // SafeError reduces an untrusted dependency error to a stable reason for
 // telemetry. The fallback must be a fixed component-owned sentinel, never a
 // wrapped upstream error. The original error remains available to its caller,
@@ -26,7 +34,24 @@ func SafeError(err, fallback error) error {
 	if fallback == nil {
 		return errUnclassifiedFailure
 	}
-	return fallback
+	reason := fallback.Error()
+	if !validFailureReason(reason) {
+		return errUnclassifiedFailure
+	}
+	return safeFailure{reason: reason, class: fallback}
+}
+
+func validFailureReason(value string) bool {
+	if len(value) == 0 || len(value) > 64 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		char := value[index]
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // RecordSafeError records only a classified error in an OpenTelemetry span.

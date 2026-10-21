@@ -10,6 +10,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+type mutableFailureReason struct{ value string }
+
+func (e *mutableFailureReason) Error() string { return e.value }
+
 func TestSafeErrorPreservesOnlyKnownFailureClasses(t *testing.T) {
 	t.Parallel()
 	fallback := errors.New("dependency_failed")
@@ -71,5 +75,36 @@ func TestSafeErrorWithoutFallbackStillFailsClosed(t *testing.T) {
 	got := SafeError(errors.New("secret-value"), nil)
 	if got == nil || got.Error() != "operation_failed" {
 		t.Fatalf("SafeError() = %v, want fixed failure code", got)
+	}
+}
+
+func TestSafeErrorRejectsUnsafeFallbackReasons(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		fallback error
+	}{
+		{name: "upstream error text", fallback: errors.New("postgres password=secret-value")},
+		{name: "wrapped reason", fallback: errors.Join(errors.New("dependency_failed"), errors.New("secret-value"))},
+		{name: "too long", fallback: errors.New(strings.Repeat("x", 65))},
+		{name: "uppercase reason", fallback: errors.New("Database_Failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := SafeError(errors.New("upstream token=secret-value"), test.fallback)
+			if got == nil || got.Error() != "operation_failed" {
+				t.Fatalf("SafeError() = %v, want bounded generic reason", got)
+			}
+		})
+	}
+}
+
+func TestSafeErrorFreezesValidatedFallbackReason(t *testing.T) {
+	t.Parallel()
+	fallback := &mutableFailureReason{value: "dependency_failed"}
+	got := SafeError(errors.New("upstream failure"), fallback)
+	fallback.value = "password=secret-value"
+	if got.Error() != "dependency_failed" || !errors.Is(got, fallback) {
+		t.Fatalf("SafeError() = %v, want immutable reason with fallback identity", got)
 	}
 }

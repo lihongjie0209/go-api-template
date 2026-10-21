@@ -239,6 +239,9 @@ otherwise unsuitable for dictionary use.
   upstream `error.Error()` into them; dependency errors can contain credentials,
   connection strings, payload fragments, or personal data. Keep event IDs,
   attempts, and bounded component names for correlation instead.
+- Fixed failure reasons passed to `observability.SafeError` must be code-owned
+  lowercase ASCII identifiers (`[a-z][a-z0-9_]*`, at most 64 bytes). The helper
+  rejects malformed reasons and falls back to `operation_failed`.
 - Infrastructure spans use `observability.RecordSafeError` with a fixed
   component reason. Only known cancellation/deadline classes may retain their
   original error text; do not record raw Redis, object-storage, queue, or

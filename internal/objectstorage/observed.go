@@ -16,7 +16,7 @@ import (
 
 var storageTracer = otel.Tracer("go-api-template/infrastructure/objectstorage")
 
-var errObjectStorageOperationFailed = errors.New("object storage operation failed")
+var errObjectStorageOperationFailed = errors.New("object_storage_operation_failed")
 
 type observedStore struct {
 	next    Store
