@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type lockerStub struct {
@@ -90,5 +93,47 @@ func TestRunJobHonorsSchedulerShutdown(t *testing.T) {
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runJob() error = %v, want context cancellation", err)
+	}
+}
+
+func TestRunJobDoesNotLogHandlerErrorDetails(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	secretErr := errors.New("upstream request failed with secret-value")
+	err := runJob(t.Context(), "orders-service", "reconcile", time.Second, time.Second, lockerStub{mutex: mutexStub{}, acquired: true}, func(context.Context) error {
+		return secretErr
+	}, logger)
+	if !errors.Is(err, secretErr) {
+		t.Fatalf("runJob() error=%v, want original handler error for trusted caller", err)
+	}
+	if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte("scheduled_job_failed")) {
+		t.Fatalf("scheduler log exposes handler error or omits safe code: %s", output.String())
+	}
+}
+
+func TestRecordJobFailureDoesNotExposeHandlerErrorInTrace(t *testing.T) {
+	t.Parallel()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	_, span := provider.Tracer("scheduler-test").Start(t.Context(), "cron.reconcile")
+	recordJobFailure(span, errors.New("upstream request failed with secret-value"))
+	span.End()
+	spans := recorder.Ended()
+	if len(spans) != 1 || len(spans[0].Events()) != 1 {
+		t.Fatalf("recorded spans=%d events=%v", len(spans), spans)
+	}
+	foundSafeCode := false
+	for _, attribute := range spans[0].Events()[0].Attributes {
+		if bytes.Contains([]byte(attribute.Value.AsString()), []byte("secret-value")) {
+			t.Fatalf("trace event exposes handler error: %v", attribute)
+		}
+		if attribute.Key == "exception.message" && attribute.Value.AsString() == "scheduled_job_failed" {
+			foundSafeCode = true
+		}
+	}
+	if !foundSafeCode {
+		t.Fatalf("trace event lacks safe failure code: %v", spans[0].Events()[0].Attributes)
 	}
 }

@@ -29,6 +29,8 @@ import (
 
 var ErrSkipped = errors.New("scheduled job skipped because its distributed lock is held")
 
+var errJobExecutionFailed = errors.New("scheduled_job_failed")
+
 type Manager struct {
 	cfg            config.Config
 	db             *sqlx.DB
@@ -191,8 +193,7 @@ func (m *Manager) execute(parent context.Context, definition Definition, source 
 		err = runJobContext(ctx, definition.Code, time.Duration(definition.LockTTLSeconds)*time.Second, m.locker, func(ctx context.Context) error { return handler(ctx, definition.Payload) }, m.logger)
 	}
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "job failed")
+		recordJobFailure(span, err)
 	}
 	finished := time.Now()
 	if recordErr := m.recordRun(ctx, definition, source, statusForRun(err), started, finished); recordErr != nil {
@@ -290,10 +291,27 @@ func runJob(parent context.Context, serviceName, job string, timeout, lockTTL ti
 	defer span.End()
 	err := runJobContext(ctx, job, lockTTL, locker, execute, logger)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "job failed")
+		recordJobFailure(span, err)
 	}
 	return err
+}
+
+func recordJobFailure(span trace.Span, err error) {
+	span.RecordError(safeJobFailure(err))
+	span.SetStatus(codes.Error, "job failed")
+}
+
+func safeJobFailure(err error) error {
+	switch {
+	case errors.Is(err, ErrSkipped):
+		return ErrSkipped
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	default:
+		return errJobExecutionFailed
+	}
 }
 
 func startJobContext(parent context.Context, serviceName, job string, timeout time.Duration) (context.Context, context.CancelFunc, trace.Span) {
@@ -306,7 +324,7 @@ func startJobContext(parent context.Context, serviceName, job string, timeout ti
 func runJobContext(ctx context.Context, job string, lockTTL time.Duration, locker cache.Locker, execute func(context.Context) error, logger *slog.Logger) error {
 	acquired, err := cache.TryWithLock(ctx, locker, "cron:"+job, lockTTL, execute)
 	if err != nil {
-		logger.ErrorContext(ctx, "scheduled job failed", "job", job, "error", err)
+		logger.ErrorContext(ctx, "scheduled job failed", "job", job, "error", safeJobFailure(err))
 		return err
 	}
 	if !acquired {
