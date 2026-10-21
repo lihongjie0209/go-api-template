@@ -62,6 +62,13 @@ Status values:
 | Docker Compose and Kubernetes | verified | Compose provides PostgreSQL/MySQL, mandatory Redis, NATS, ordered migrations and one-command startup without the excluded observability stack. OCI/Kubernetes probes, least privilege, resources, rollout controls, network policy, TLS/secret wiring and migration-only production validation are covered. Compose/kubeconform/generated deployment gates passed in run `35060112640`. |
 | Unit/integration tests and CI | in_progress | Package-local unit/race tests and integration-tag Testcontainers suites are isolated by policy. PostgreSQL/MySQL migrations/module lifecycles, Redis cache/lock/idempotency contention and HTTP/gRPC anonymous/JWT/PSK/health E2E are covered. Vet, lint, vulnerabilities, contracts, generated services, Compose/Kubernetes and release dependencies passed in run `35060112640`. The dependency checksums, read-only `make modules-check`, PostgreSQL/MySQL integration and full verify, including data-snapshot pinning and literal wildcard search, passed in run `39555182833`. Dictionary and pagination passed both verify and Testcontainers integration in run `39566463629`; the subsequent OpenAPI/migration-lock batch passed both jobs in run `39570364159`. The dictionary, permission and distributed-lock error-classification batch passed both jobs in run `39573005459`. |
 
+The later dictionary ancestry optimization, poisoned-cache validation, row
+capability tenant check, menu snapshot/retirement handling, and endpoint index
+passed both verify and PostgreSQL/MySQL Testcontainers in run `39579942392` at
+commit `6d80267`. The subsequent 8 MiB aggregate dictionary item budget is
+locally unit-tested and has a PostgreSQL/MySQL integration regression queued
+for the next substantial CI batch; it is not yet CI-verified.
+
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,
 current-tenant lookup, password credential lookup, and permission

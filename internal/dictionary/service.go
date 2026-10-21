@@ -41,6 +41,10 @@ const maxDescriptionLength = 4096
 const maxValueLength = 1 << 20
 const maxDictionaryTreeDepth = 512
 
+// Limit serialized item data independently of node count: otherwise a tree
+// with many individually valid values can exhaust memory during JSON encoding.
+const maxDictionaryItemsBytes = 8 << 20
+
 type Service struct {
 	db         *sqlx.DB
 	tx         *database.Transactor
@@ -850,6 +854,7 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 		return false
 	}
 	count := 0
+	itemBytes := 0
 	seen := map[string]struct{}{}
 	seenCodes := map[string]struct{}{}
 	seenValues := map[string]struct{}{}
@@ -895,6 +900,11 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 			if count > maxNodes || uuid.Validate(item.ID) != nil || !codePattern.MatchString(item.Code) || strings.TrimSpace(item.Name) == "" || len(item.Name) > 256 || len(item.Value) > maxValueLength || (!query.IncludeDisabled && item.Disabled) {
 				return false, false
 			}
+			encodedBytes, err := resultItemBytes(item)
+			if err != nil || encodedBytes > maxDictionaryItemsBytes-itemBytes {
+				return false, false
+			}
+			itemBytes += encodedBytes
 			if (expectedParent == nil) != (item.ParentID == nil) || (expectedParent != nil && *expectedParent != *item.ParentID) {
 				return false, false
 			}
@@ -947,6 +957,46 @@ func validProviderResult(result Result, query Query, maxNodes int) bool {
 	}
 	return true
 }
+
+func resultItemBytes(item ResultItem) (int, error) {
+	// A shallow encoding accounts for all fields except descendants, which the
+	// caller visits separately. It also accounts for JSON escaping of values.
+	item.Children = nil
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return 0, err
+	}
+	return len(encoded), nil
+}
+
+func (s *Service) selectQueryItems(ctx context.Context, query string, args ...any) ([]Item, error) {
+	rows, err := s.db.QueryxContext(ctx, s.db.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Item, 0)
+	itemBytes := 0
+	for rows.Next() {
+		var item Item
+		if err := rows.StructScan(&item); err != nil {
+			return nil, err
+		}
+		encodedBytes, err := resultItemBytes(toResultItem(item))
+		if err != nil {
+			return nil, fmt.Errorf("encode dictionary item size: %w", err)
+		}
+		if encodedBytes > maxDictionaryItemsBytes-itemBytes {
+			return nil, ErrConflict
+		}
+		itemBytes += encodedBytes
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 func resultItemLess(left, right ResultItem, rules []Sort) bool {
 	return itemLess(
 		Item{ID: left.ID, Code: left.Code, Name: left.Name, SortOrder: left.SortOrder},
@@ -986,8 +1036,8 @@ func (s *Service) queryStatic(ctx context.Context, d Definition, q Query) (Resul
 			return Result{}, err
 		}
 		queryArgs := append(append([]any{}, args...), n[1], pagination.Offset(pagination.Request{Page: n[0], PageSize: n[1]}))
-		items := []Item{}
-		if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`), queryArgs...); err != nil {
+		items, err := s.selectQueryItems(ctx, `SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, queryArgs...)
+		if err != nil {
 			return Result{}, err
 		}
 		publicItems := make([]ResultItem, len(items))
@@ -996,9 +1046,9 @@ func (s *Service) queryStatic(ctx context.Context, d Definition, q Query) (Resul
 		}
 		return Result{Code: d.Code, Name: d.Name, Type: d.Kind, Items: publicItems, Page: n[0], PageSize: n[1], Total: total, Extension: d.Extension}, nil
 	}
-	items := []Item{}
 	treeArgs := append(args, s.cfg.Dictionary.MaxTreeNodes+1)
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY `+order+` LIMIT ?`), treeArgs...); err != nil {
+	items, err := s.selectQueryItems(ctx, `SELECT `+itemColumns+` FROM dictionary_items WHERE `+where+` ORDER BY `+order+` LIMIT ?`, treeArgs...)
+	if err != nil {
 		return Result{}, err
 	}
 	if len(items) > s.cfg.Dictionary.MaxTreeNodes {

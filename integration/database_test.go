@@ -454,6 +454,22 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 			t.Fatalf("literal wildcard keyword %q matched unexpected items: %#v err=%v", keyword, literal, queryErr)
 		}
 	}
+	largeDefinition, err := service.CreateDefinition(actorCtx, dictionary.DefinitionInput{Code: "test.large", Name: "Large", Kind: dictionary.KindEnum, Source: dictionary.SourceStatic, Status: "active"})
+	if err != nil {
+		t.Fatalf("create large dictionary: %v", err)
+	}
+	for index, value := range []string{strings.Repeat("<", 1<<20), strings.Repeat(">", 1<<20)} {
+		if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: largeDefinition.ID, Code: fmt.Sprintf("large%d", index), Name: "Large", Value: value, SortOrder: int64(index)}); err != nil {
+			t.Fatalf("create large dictionary item: %v", err)
+		}
+	}
+	if _, err := service.Query(ctx, dictionary.Query{Code: "test.large"}); !errors.Is(err, dictionary.ErrConflict) {
+		t.Fatalf("oversized enum page must be rejected: %v", err)
+	}
+	boundedPage, err := service.Query(ctx, dictionary.Query{Code: "test.large", Page: 1, PageSize: 1})
+	if err != nil || boundedPage.Total != 2 || len(boundedPage.Items) != 1 {
+		t.Fatalf("small page from large dictionary must remain available: %#v err=%v", boundedPage, err)
+	}
 	if _, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "duplicate-value", Name: "Duplicate", Value: "guangdong-value"}); !errors.Is(err, dictionary.ErrConflict) {
 		t.Fatalf("duplicate selectable value create error=%v", err)
 	}

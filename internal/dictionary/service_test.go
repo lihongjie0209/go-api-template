@@ -1371,6 +1371,44 @@ func TestQueryStaticTreeIncludeDisabledRetainsDisabledRows(t *testing.T) {
 	require.True(t, result.Items[0].Disabled)
 }
 
+func TestQueryStaticEnumRejectsOversizedItemPage(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	dictionaryID := uuidString(4)
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL AND disabled=false`).
+		WithArgs(dictionaryID).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(9))
+	rows := sqlmock.NewRows(strings.Split(itemColumns, ","))
+	valuePrefix := strings.Repeat("v", maxValueLength-2)
+	now := time.Now()
+	for index := 1; index <= 9; index++ {
+		rows.AddRow(uuidString(byte(index)), dictionaryID, nil, fmt.Sprintf("item%d", index), "Item", fmt.Sprintf("%s%02d", valuePrefix, index), false, index, []byte(`{}`), now, "system", now, "system", 1)
+	}
+	mock.ExpectQuery(`SELECT .* FROM dictionary_items WHERE dictionary_id=\? AND deleted_at IS NULL AND disabled=false ORDER BY .* LIMIT \? OFFSET \?`).
+		WithArgs(dictionaryID, 20, 0).WillReturnRows(rows)
+	mock.ExpectClose()
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock")}
+	_, err = service.queryStatic(t.Context(), Definition{ID: dictionaryID, Kind: KindEnum}, Query{})
+	require.ErrorIs(t, err, ErrConflict)
+}
+
+func TestValidProviderResultBoundsEscapedItemBytes(t *testing.T) {
+	t.Parallel()
+	value := strings.Repeat("\x00", maxValueLength)
+	result := Result{Code: "large", Name: "Large", Type: KindEnum, Page: 1, PageSize: 20, Total: 2, Extension: json.RawMessage(`{}`), Items: []ResultItem{
+		{ID: uuidString(1), Code: "one", Name: "One", Value: value, Extension: json.RawMessage(`{}`)},
+		{ID: uuidString(2), Code: "two", Name: "Two", Value: strings.Repeat("\x01", maxValueLength), Extension: json.RawMessage(`{}`)},
+	}}
+	require.False(t, validProviderResult(result, Query{}, 20))
+	result.Items = result.Items[:1]
+	result.Total = 1
+	require.True(t, validProviderResult(result, Query{}, 20))
+}
+
 func uuidString(last byte) string {
 	return fmt.Sprintf("00000000-0000-0000-0000-%012d", last)
 }

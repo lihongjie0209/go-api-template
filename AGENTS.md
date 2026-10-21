@@ -214,6 +214,10 @@ otherwise unsuitable for dictionary use.
 Provider results must honor every requested keyword, ID, code, value, disabled,
 and sort filter. A tree may additionally include only ancestors of matching
 nodes; its total is the number of returned nodes, including those ancestors.
+Dictionary result limits must bound aggregate serialized item data as well as
+row count and tree depth. Static queries must stop materializing rows when the
+aggregate budget is exceeded; in-process providers and cache hits must be
+validated against the same budget before returning a public response.
 Validate these invariants at the public dictionary boundary, even for an
 in-process provider. Bound the number of sort fields and reject duplicate
 fields before building SQL or calling the provider. Provider item codes are
