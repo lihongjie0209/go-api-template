@@ -1061,13 +1061,19 @@ func filterTreeItems(items []Item, query Query) []Item {
 
 func buildTree(items []Item, rules []Sort) ([]Item, error) {
 	byParent := map[string][]Item{}
-	ids := map[string]bool{}
+	ids := make(map[string]bool, len(items))
 	for _, v := range items {
+		if v.ID == "" || ids[v.ID] {
+			return nil, ErrInvalid
+		}
 		ids[v.ID] = true
 	}
 	for _, v := range items {
 		key := ""
-		if v.ParentID != nil && ids[*v.ParentID] {
+		if v.ParentID != nil {
+			if !ids[*v.ParentID] {
+				return nil, ErrInvalid
+			}
 			key = *v.ParentID
 		}
 		byParent[key] = append(byParent[key], v)

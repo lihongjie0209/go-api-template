@@ -712,11 +712,23 @@ func TestQueryStaticEnumTreatsKeywordWildcardsAsLiteral(t *testing.T) {
 	require.Zero(t, result.Total)
 }
 
-func TestBuildTreeRejectsCycleAndReturnsEmptyArray(t *testing.T) {
+func TestBuildTreeRejectsInvalidAncestryAndReturnsEmptyArray(t *testing.T) {
 	t.Parallel()
-	firstID, secondID := uuidString(1), uuidString(2)
-	_, err := buildTree([]Item{{ID: firstID, ParentID: &secondID}, {ID: secondID, ParentID: &firstID}}, nil)
-	require.ErrorIs(t, err, ErrInvalid)
+	firstID, secondID, missingID := uuidString(1), uuidString(2), uuidString(3)
+	for _, test := range []struct {
+		name  string
+		items []Item
+	}{
+		{name: "cycle", items: []Item{{ID: firstID, ParentID: &secondID}, {ID: secondID, ParentID: &firstID}}},
+		{name: "orphan", items: []Item{{ID: firstID, ParentID: &missingID}}},
+		{name: "duplicate", items: []Item{{ID: firstID}, {ID: firstID}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := buildTree(test.items, nil)
+			require.ErrorIs(t, err, ErrInvalid)
+		})
+	}
 	empty, err := buildTree(nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, empty)
