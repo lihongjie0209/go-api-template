@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/cache"
@@ -126,6 +127,32 @@ func TestRunJobHonorsSchedulerShutdown(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runJob() error = %v, want context cancellation", err)
 	}
+}
+
+func TestRunJobRejectsSuccessAfterContextCancellation(t *testing.T) {
+	t.Parallel()
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := runJob(parent, "orders-service", "reconcile", time.Minute, time.Second, lockerStub{mutex: mutexStub{}, acquired: true}, func(context.Context) error {
+		cancel()
+		return nil
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runJob() error = %v, want context cancellation", err)
+	}
+}
+
+func TestRunJobRejectsSuccessAfterDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		err := runJob(t.Context(), "orders-service", "reconcile", time.Second, 10*time.Second, lockerStub{mutex: mutexStub{}, acquired: true}, func(context.Context) error {
+			time.Sleep(2 * time.Second)
+			return nil
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("runJob() error = %v, want deadline exceeded", err)
+		}
+	})
 }
 
 func TestRunJobDoesNotLogHandlerErrorDetails(t *testing.T) {

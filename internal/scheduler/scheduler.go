@@ -329,6 +329,10 @@ func runJobContext(ctx context.Context, job string, lockTTL time.Duration, locke
 		logJobFailure(ctx, logger, job, err)
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		logJobFailure(ctx, logger, job, err)
+		return err
+	}
 	if !acquired {
 		logger.InfoContext(ctx, "scheduled job skipped", "job", job, "reason", "lock held")
 		return ErrSkipped

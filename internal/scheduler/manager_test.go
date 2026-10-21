@@ -159,6 +159,41 @@ func TestManagerExecuteRecordsHandlerPanicAsFailure(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestManagerExecuteRecordsCancellationAfterHandlerReturnsSuccess(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	manager := &Manager{
+		cfg:      config.Config{App: config.App{Name: "orders-service"}},
+		tx:       database.NewTransactor(sqlx.NewDb(raw, "sqlmock")),
+		locker:   lockerStub{mutex: mutexStub{}, acquired: true},
+		metrics:  &observability.Metrics{},
+		logger:   logger,
+		handlers: NewHandlerRegistry(logger),
+		operations: runLogRecorderStub{recordTx: func(_ context.Context, _ *sqlx.Tx, entry operationlog.Entry) error {
+			require.False(t, entry.Succeeded)
+			require.Equal(t, "job_error", entry.ErrorCode)
+			return nil
+		}},
+	}
+	manager.handlers.handlers["system.sample"] = HandlerDefinition{Key: "system.sample", handler: func(context.Context, json.RawMessage) error {
+		cancel()
+		return nil
+	}}
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO scheduled_job_runs`).
+		WithArgs(sqlmock.AnyArg(), "job-1", "sample-job", "Sample", "system.sample", "cron", "error", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "scheduled job execution failed", sqlmock.AnyArg(), "orders-service:scheduler:sample-job", sqlmock.AnyArg(), "orders-service:scheduler:sample-job").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	err = manager.execute(parent, Definition{ID: "job-1", Code: "sample-job", Name: "Sample", Handler: "system.sample", TimeoutSeconds: 30, LockTTLSeconds: 60}, "cron")
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestManagerRunRecordRollsBackWhenOperationLogCannotBeQueued(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
