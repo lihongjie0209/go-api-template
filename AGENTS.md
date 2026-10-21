@@ -34,7 +34,8 @@ The next domain work must keep identity and tenancy separate:
   member must read current database status and logical-delete state. A cached
   user profile is only for presentation; failed cache invalidation must not
   make a disabled or deleted identity eligible. The tenant client must also
-  reject any non-active identity response.
+  reject any non-active identity response and malformed/empty user ID before
+  constructing an owner or membership write.
 - Authorization consumes normalized principal, tenant, membership, resource,
   and action information. Identity and tenant modules do not embed independent
   RBAC implementations.

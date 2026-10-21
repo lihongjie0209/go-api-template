@@ -2,6 +2,7 @@ package grpctransport
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -134,5 +135,45 @@ func TestIdentityBatchGetUsersEmptyIDsStillRequiresAuthentication(t *testing.T) 
 	_, err := server.BatchGetUsers(t.Context(), &identityv1.BatchGetUsersRequest{})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("empty batch without principal code=%v, want unauthenticated", status.Code(err))
+	}
+}
+
+func TestIdentityBatchGetUsersReturnsFullMaximumBatch(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	ids := make([]string, 200)
+	rows := sqlmock.NewRows([]string{"id", "username", "display_name", "status"})
+	for i := range ids {
+		ids[i] = fmt.Sprintf("user-%03d", i)
+		rows.AddRow(ids[i], fmt.Sprintf("user_%03d", i), "User", identity.StatusActive)
+	}
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users WHERE deleted_at IS NULL AND id IN`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(len(ids)))
+	mock.ExpectQuery(`FROM identity_users u WHERE deleted_at IS NULL AND id IN`).WillReturnRows(rows)
+	server := &identityServer{service: identity.New(identity.NewRepository(sqlx.NewDb(raw, "sqlmock")), nil, nil, nil, nil, nil, config.Config{})}
+	ctx := platformprincipal.SystemContext(t.Context(), "identity-batch-test")
+	response, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: ids})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(response.GetUsers()); got != len(ids) {
+		t.Fatalf("batch returned %d users, want %d", got, len(ids))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentityBatchGetUsersRejectsOversizedBatch(t *testing.T) {
+	t.Parallel()
+	server := &identityServer{}
+	ctx := platformprincipal.SystemContext(t.Context(), "identity-batch-test")
+	_, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: make([]string, 201)})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("oversized batch code=%v, want invalid argument", status.Code(err))
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,8 @@ type identityClientStub struct {
 	batchRequests []*identityv1.BatchGetUsersRequest
 	batchErr      error
 	userStatus    identityv1.UserStatus
+	userID        string
+	returnEmptyID bool
 }
 
 func TestMembershipPresentationUsesIdentityBatchAndPlatformTimezone(t *testing.T) {
@@ -87,7 +90,33 @@ func (s *identityClientStub) ListUsers(_ context.Context, request *identityv1.Li
 	if status == identityv1.UserStatus_USER_STATUS_UNSPECIFIED {
 		status = identityv1.UserStatus_USER_STATUS_ACTIVE
 	}
-	return &identityv1.ListUsersResponse{Users: []*identityv1.User{{Id: "user-1", Username: "alice", DisplayName: "Alice", Status: status}}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
+	id := s.userID
+	if id == "" && !s.returnEmptyID {
+		id = "user-1"
+	}
+	return &identityv1.ListUsersResponse{Users: []*identityv1.User{{Id: id, Username: "alice", DisplayName: "Alice", Status: status}}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
+}
+
+func TestGRPCUserResolverRejectsMalformedIdentityID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{name: "empty"},
+		{name: "whitespace", id: " "},
+		{name: "oversized", id: strings.Repeat("x", 257)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			client := &identityClientStub{userID: test.id, returnEmptyID: true}
+			_, err := (&grpcUserResolver{client: client}).ResolveUsername(t.Context(), "alice")
+			if !errors.Is(err, ErrIdentityUnavailable) {
+				t.Fatalf("malformed identity ID error=%v, want unavailable", err)
+			}
+		})
+	}
 }
 
 func TestGRPCUserResolverRejectsInactiveUserEvenIfIdentityReturnsIt(t *testing.T) {

@@ -60,6 +60,9 @@ func (r *grpcUserResolver) ResolveUsername(ctx context.Context, username string)
 	}
 	if len(response.GetUsers()) == 1 && response.GetUsers()[0].GetStatus() == identityv1.UserStatus_USER_STATUS_ACTIVE && strings.EqualFold(response.GetUsers()[0].GetUsername(), username) {
 		u := response.GetUsers()[0]
+		if id := u.GetId(); id == "" || id != strings.TrimSpace(id) || len(id) > 256 {
+			return UserSnapshot{}, ErrIdentityUnavailable
+		}
 		return UserSnapshot{ID: u.GetId(), Username: u.GetUsername(), DisplayName: u.GetDisplayName()}, nil
 	}
 	return UserSnapshot{}, ErrNotFound
