@@ -161,8 +161,8 @@ func (r *EndpointRegistry) Definitions() []Endpoint {
 }
 
 // Find returns registered endpoints for one canonical resource/action pair in
-// stable order. It is used by self-capability evaluation so operation-policy
-// conditions see the actual target operation rather than the capability API.
+// stable order. Self-capability evaluation uses actual target operations rather
+// than the capability API's own descriptor.
 func (r *EndpointRegistry) Find(resource, action string) []Endpoint {
 	if r == nil {
 		return nil
