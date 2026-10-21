@@ -469,8 +469,13 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 	if err != nil || tenantID == "" || membershipID == "" || len(tenantID) > maxAuthorizationIDLength || len(membershipID) > maxAuthorizationIDLength || version <= 0 {
 		return ErrTenantAuthorizationInvalid
 	}
-	if actor.TenantID != "" && (actor.TenantID != tenantID || !s.isAdministrator(ctx, tenantID, actor.MembershipID)) {
-		return ErrTenantAuthorizationForbidden
+	if actor.TenantID != "" {
+		if actor.TenantID != tenantID {
+			return ErrTenantAuthorizationForbidden
+		}
+		if err := s.requireAdministrator(ctx, tenantID, actor.MembershipID); err != nil {
+			return err
+		}
 	}
 	memberName, err := s.membershipName(ctx, tenantID, membershipID)
 	if err != nil {
@@ -1614,13 +1619,6 @@ func softDeleteLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, 
 		return ErrTenantAuthorizationNotFound
 	}
 	return nil
-}
-
-func (s *TenantAuthorizationService) isAdministrator(ctx context.Context, tenantID, membershipID string) bool {
-	if membershipID == "" || s.db == nil {
-		return false
-	}
-	return s.requireAdministrator(ctx, tenantID, membershipID) == nil
 }
 
 func (s *TenantAuthorizationService) requireAdministrator(ctx context.Context, tenantID, membershipID string) error {

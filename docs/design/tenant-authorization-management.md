@@ -6,7 +6,7 @@
 | --- | --- |
 | Contract | Both platform and tenant POST routes require `{tenant_id,membership_id,enabled,version}` with positive membership version. Return the shared empty success envelope; invalid input, forbidden scope, missing membership and stale version use global errors. |
 | Authentication | JWT on both routes; no anonymous or PSK access. |
-| Authorization | Platform route uses `tenant:assign-administrator`; tenant route uses `tenant.authorization:assign-administrator` plus current administrator and same-tenant checks. Membership must be active and tenant-scoped. |
+| Authorization | Platform route uses `tenant:assign-administrator`; tenant route uses `tenant.authorization:assign-administrator` plus current administrator and same-tenant checks. Membership must be active and tenant-scoped. A failed administrator lookup fails closed and preserves its dependency error rather than masquerading as an ordinary deny. |
 | Operation log | Record `tenant.administrator.set` with target ID, display name, tenant and enabled state; do not log credentials. |
 | Security log | Record the existing tenant-authorization privilege-change event transactionally. |
 | Cache | Do not cache the administrator list; mutation retains the shared authorization invalidation path. |
@@ -15,7 +15,7 @@
 | Optimistic lock | Compare and increment `tenant_memberships.version` in the same transaction before changing the administrator link. A stale version returns the shared conflict error; a failed transaction rolls back the increment. |
 | Audit | The membership update and administrator link use actor-aware audited transactions; no physical delete. |
 | Presentation | Candidate page supplies member name and version; timestamps remain RFC3339 with explicit offset. After mutation the frontend refreshes the authoritative candidate page. |
-| Tests | Unit tests cover invalid and stale versions, successful compare-and-swap and rollback; the existing tagged database integration case covers assignment and final-administrator protection. Frontend unit tests assert version forwarding. |
+| Tests | Unit tests cover invalid and stale versions, successful compare-and-swap, rollback, and failed administrator lookup classification; the existing tagged database integration case covers assignment and final-administrator protection. Frontend unit tests assert version forwarding. |
 | Shared capability | Reuse the existing principal, transactor, lock lifecycle, error envelope, log recorders and authorization mutation invalidation. |
 | Dictionary provider | None: administrator assignment is sensitive transactional state, not reference data. |
 

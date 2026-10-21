@@ -65,6 +65,25 @@ func TestSetAdministratorRejectsMissingVersionBeforeDatabaseAccess(t *testing.T)
 	require.ErrorIs(t, service.SetAdministrator(ctx, "tenant-1", "member-1", true, 0), ErrTenantAuthorizationInvalid)
 }
 
+func TestSetAdministratorPropagatesAdministratorLookupFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	lookupErr := errors.New("database unavailable")
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators a JOIN tenant_memberships m`).
+		WithArgs("tenant-1", "actor-membership").WillReturnError(lookupErr)
+	mock.ExpectClose()
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "actor-membership"})
+	err = service.SetAdministrator(ctx, "tenant-1", "target-membership", true, 1)
+	require.ErrorIs(t, err, lookupErr)
+	require.NotErrorIs(t, err, ErrTenantAuthorizationForbidden)
+}
+
 func TestAdvanceAdministratorMembershipVersion(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
