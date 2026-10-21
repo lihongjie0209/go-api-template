@@ -884,6 +884,27 @@ func testLogQueryPresentation(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	largeRequest := `{"data":"` + strings.Repeat("x", (64<<10)-len(`{"data":""}`)) + `"}`
+	if len(largeRequest) != 64<<10 {
+		t.Fatalf("operation-log boundary payload length = %d", len(largeRequest))
+	}
+	err = appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE operation_logs SET request_payload=? WHERE id=? AND tenant_id=? AND version=?`), largeRequest, "operation-presentation", tenantID, 1); err != nil {
+			return err
+		}
+		var stored string
+		if err := tx.GetContext(actorCtx, &stored, tx.Rebind(`SELECT request_payload FROM operation_logs WHERE id=? AND tenant_id=?`), "operation-presentation", tenantID); err != nil {
+			return err
+		}
+		if stored != largeRequest {
+			return fmt.Errorf("operation-log boundary payload length = %d", len(stored))
+		}
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE operation_logs SET request_payload='' WHERE id=? AND tenant_id=?`), "operation-presentation", tenantID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("persist operation-log boundary payload: %v", err)
+	}
 
 	actors := staticActorResolver{actorID: "Log Presentation User"}
 	operationService := operationlog.New(config.Config{}, nil, db, nil, nil, nil, actors)
@@ -2218,9 +2239,13 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatalf("scheduled job delete target = %+v err=%v", deleteTarget, err)
 	}
 	queuedID := "integration-queued-run"
+	largePayload := `{"data":"` + strings.Repeat("x", (1<<20)-len(`{"data":""}`)) + `"}`
+	if len(largePayload) != 1<<20 {
+		t.Fatalf("scheduled-run boundary payload length = %d", len(largePayload))
+	}
 	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
-		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), queuedID, updated.ID, updated.Code, updated.Name, updated.Handler, "manual", "queued", "integration-request", "", string(updated.Payload), updated.TimeoutSeconds, updated.LockTTLSeconds, now, "scheduler-admin", now, "scheduler-admin")
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), queuedID, updated.ID, updated.Code, updated.Name, updated.Handler, "manual", "queued", "integration-request", "", largePayload, updated.TimeoutSeconds, updated.LockTTLSeconds, now, "scheduler-admin", now, "scheduler-admin")
 		return err
 	}); err != nil {
 		t.Fatalf("insert queued scheduled job run: %v", err)
@@ -2229,13 +2254,17 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || queuedRun.Status != "queued" || queuedRun.StartedAt != nil || queuedRun.FinishedAt != nil || queuedRun.Version != 1 {
 		t.Fatalf("queued scheduled job run = %+v err=%v", queuedRun, err)
 	}
+	var storedPayload string
+	if err := db.GetContext(ctx, &storedPayload, db.Rebind(`SELECT payload FROM scheduled_job_runs WHERE id=?`), queuedID); err != nil || storedPayload != largePayload {
+		t.Fatalf("scheduled-run boundary payload length = %d, err = %v", len(storedPayload), err)
+	}
 	queuedPage, err := service.PageRuns(actorCtx, scheduler.RunPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ScheduledJobID: updated.ID, Statuses: []string{"queued"}})
 	if err != nil || queuedPage.Total != 1 || len(queuedPage.Items) != 1 || queuedPage.Items[0].ID != queuedID {
 		t.Fatalf("queued scheduled job page = %+v err=%v", queuedPage, err)
 	}
 	if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
-		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET status='error',started_at=?,finished_at=?,error_message='integration cleanup',updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), now, now, now, "scheduler-admin", queuedID, queuedRun.Version)
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET status='error',started_at=?,finished_at=?,error_message='integration cleanup',payload='{}',updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), now, now, now, "scheduler-admin", queuedID, queuedRun.Version)
 		return err
 	}); err != nil {
 		t.Fatalf("complete queued scheduled job fixture: %v", err)

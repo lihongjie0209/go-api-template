@@ -68,9 +68,11 @@ passed both verify and PostgreSQL/MySQL Testcontainers in run `39579942392` at
 commit `6d80267`. The subsequent 8 MiB dictionary result batch reached CI run
 `39583829319`: verify exposed unchecked row-close errors and MySQL integration
 exposed a `TEXT` column too narrow for the already-documented 1 MiB item value.
-Both defects now have local fixes and unit coverage; migration `000044` widens
-the MySQL column, and the new PostgreSQL/MySQL integration assertions await
-the next batched CI run. This batch is not yet CI-verified.
+Both defects were fixed with unit coverage; migration `000044` widens the MySQL
+column, and both verify and PostgreSQL/MySQL integration passed in run
+`39585012494` at commit `9e28987`. Migration `000045` additionally aligns the
+MySQL scheduled-run payload and operation-log request summary columns with
+their existing byte-limit contracts; its boundary integration cases await CI.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,
@@ -290,7 +292,7 @@ and post-callback lock loss. The same CI run verified this change.
 | Concern | Current decision and evidence |
 | --- | --- |
 | Durable async path | `Record` no longer publishes directly to NATS. It builds a versioned protobuf envelope and commits it to the service-owned transactional outbox with a cancellation-detached three-second deadline. The dispatcher retries with leases/backoff and dead state; JetStream performs event-ID de-duplication and its durable consumer retries then emits the shared dead-letter event. `RecordTx` accepts a caller-owned transaction for atomic domain-write/log acceptance. |
-| Record contract | Records contain tenant and actor, application/resource/operation, source/protocol/method/route, request summary, duration/result/error, Request/Trace IDs, client IP, user agent, extension and occurrence time. Required and attacker-influenced strings, durations, UTF-8 and payload sizes are bounded. Events with an unsupported version, invalid timestamp/JSON or mismatched envelope identity/context are rejected before persistence. |
+| Record contract | Records contain tenant and actor, application/resource/operation, source/protocol/method/route, request summary, duration/result/error, Request/Trace IDs, client IP, user agent, extension and occurrence time. Required and attacker-influenced strings, durations, UTF-8 and payload sizes are bounded. The configurable request summary limit reaches 65,536 bytes, so MySQL `request_payload` uses `MEDIUMTEXT` instead of the smaller `TEXT`. Events with an unsupported version, invalid timestamp/JSON or mismatched envelope identity/context are rejected before persistence. |
 | Privacy | Request and extension JSON pass through the shared recursive credential redactor. Oversized request JSON becomes a small valid JSON truncation marker; extension JSON fails closed rather than being partially stored. Raw authorization headers, cookies and tokens are not accepted as explicit fields. Clear client IP and user agent are intentionally retained for the requested troubleshooting purpose and are protected by route authorization, tenant SQL predicates and lifecycle retention. |
 | Frontend ingestion | Only authenticated `menu_view` and `button_click` events are accepted. Event/name/route/duration/error/extension fields are bounded; actor, tenant, IP, user agent, Request ID and Trace ID come from trusted server context. The route is configured for idempotency so a client retry cannot enqueue a second event with the same key and payload. |
 | Persistence and delivery | `operation_logs` is append-only at the API layer, uses the common audit/version/delete columns and is partitioned monthly for PostgreSQL/Kingbase with BRIN and tenant/time/resource/application/request indexes; MySQL uses matching composite indexes and bounded retention deletion. The event ID is the insert idempotency key, so consumer redelivery is a no-op. Cache, distributed lock and optimistic-update concerns are not applicable to an append-only insert stream. |

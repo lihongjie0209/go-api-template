@@ -25,6 +25,9 @@ Definitions are operational configuration rather than a bounded business
 dictionary, so this module does not register a data-dictionary provider.
 
 Every run stores bounded snapshots of the task identity, trigger source,
-status, duration, Request ID and Trace ID. Payloads and raw technical errors are
-not copied into history. Metrics label executions by registered handler key,
+status, duration, Request ID and Trace ID. Manual queued runs also persist the
+validated definition payload (at most 1 MiB) so a recovering worker executes
+the accepted request. Cron runs do not need that snapshot. Raw technical errors
+are not copied into history. The MySQL run-payload column uses `MEDIUMTEXT` to
+hold the full byte limit. Metrics label executions by registered handler key,
 never by administrator-defined job code.

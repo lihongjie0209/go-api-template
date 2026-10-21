@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,17 @@ func TestValidateDefinition(t *testing.T) {
 			require.ErrorIs(t, validateDefinition(value), ErrInvalidDefinition)
 		})
 	}
+}
+
+func TestValidateDefinitionPayloadByteLimit(t *testing.T) {
+	t.Parallel()
+	input := DefinitionInput{Code: "payload-boundary", Name: "Payload boundary", CronSpec: "0 */5 * * * *", Timezone: "Asia/Shanghai", Handler: "system.sample", TimeoutSeconds: 30, LockTTLSeconds: 60, Status: "active"}
+	input.Payload = json.RawMessage(`{"data":"` + strings.Repeat("x", (1<<20)-len(`{"data":""}`)) + `"}`)
+	require.Len(t, input.Payload, 1<<20)
+	require.NoError(t, validateDefinition(input))
+	input.Payload = append(input.Payload[:len(input.Payload)-2], 'x', '"', '}')
+	require.Len(t, input.Payload, (1<<20)+1)
+	require.ErrorIs(t, validateDefinition(input), ErrInvalidDefinition)
 }
 
 func TestNormalizeDefinition(t *testing.T) {

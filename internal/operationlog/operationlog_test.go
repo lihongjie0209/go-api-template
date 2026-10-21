@@ -58,6 +58,24 @@ func TestSanitizedJSONRedactsAndTruncates(t *testing.T) {
 	}
 }
 
+func TestSanitizedJSONPayloadByteLimit(t *testing.T) {
+	t.Parallel()
+	const limit = 64 << 10
+	payload := json.RawMessage(`{"data":"` + strings.Repeat("x", limit-len(`{"data":""}`)) + `"}`)
+	if len(payload) != limit {
+		t.Fatalf("payload length = %d", len(payload))
+	}
+	value, err := sanitizedJSON(payload, limit)
+	if err != nil || value != string(payload) {
+		t.Fatalf("boundary payload length = %d, err = %v", len(value), err)
+	}
+	payload = append(payload[:len(payload)-2], 'x', '"', '}')
+	value, err = sanitizedJSON(payload, limit)
+	if err != nil || !strings.Contains(value, `"truncated":true`) || len(value) > limit {
+		t.Fatalf("oversized payload = %q, err = %v", value, err)
+	}
+}
+
 func TestValidateConsumedEventRejectsEnvelopeContextMismatch(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
