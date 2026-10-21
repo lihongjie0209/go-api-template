@@ -1,6 +1,7 @@
 package resourcecatalog
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"testing"
@@ -116,7 +117,29 @@ func TestPageActionsKeywordMatchesParentResource(t *testing.T) {
 	page, err := service.PageActions(t.Context(), input)
 	require.NoError(t, err)
 	require.Empty(t, page.Items)
+	require.NotNil(t, page.Items)
 	require.Zero(t, page.Total)
+	encoded, err := json.Marshal(page)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"items":[],"page":1,"page_size":20,"total":0}`, string(encoded))
+	mock.ExpectClose()
+	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPageResourcesEmptyResultUsesArrayContract(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	service := NewService(sqlxDB, nil, nil, nil)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM authorization_resources WHERE deleted_at IS NULL`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status`).WithArgs(20, 0).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	page, err := service.PageResources(t.Context(), PageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
+	require.NoError(t, err)
+	encoded, err := json.Marshal(page)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"items":[],"page":1,"page_size":20,"total":0}`, string(encoded))
 	mock.ExpectClose()
 	require.NoError(t, db.Close())
 	require.NoError(t, mock.ExpectationsWereMet())

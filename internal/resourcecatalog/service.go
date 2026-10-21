@@ -165,10 +165,10 @@ func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) 
 	return result, err
 }
 
-func (s *Service) PageResources(ctx context.Context, input PageInput) (pagination.Result[Resource], error) {
+func (s *Service) PageResources(ctx context.Context, input PageInput) (ResourcePage, error) {
 	request, err := pagination.Normalize(input.Request)
 	if err != nil || !validPage(input) || input.ResourceID != "" || input.ActiveResourcesOnly {
-		return pagination.Result[Resource]{}, ErrInvalid
+		return ResourcePage{}, ErrInvalid
 	}
 	where, args := pageConditions(input, "id", "resource_key")
 	if input.ResourceKey != "" {
@@ -181,14 +181,14 @@ func (s *Service) PageResources(ctx context.Context, input PageInput) (paginatio
 	}
 	var total int64
 	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM authorization_resources WHERE `+where), args...); err != nil {
-		return pagination.Result[Resource]{}, err
+		return ResourcePage{}, err
 	}
 	rows := []Resource{}
 	args = append(args, request.PageSize, pagination.Offset(request))
 	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE `+where+` ORDER BY resource_key,id LIMIT ? OFFSET ?`), args...); err != nil {
-		return pagination.Result[Resource]{}, err
+		return ResourcePage{}, err
 	}
-	return pagination.Result[Resource]{Items: rows, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+	return ResourcePage{Items: rows, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
 func (s *Service) UpdateResource(ctx context.Context, id string, version int64, input ResourceInput) (Resource, error) {
@@ -286,14 +286,14 @@ func (s *Service) GetAction(ctx context.Context, id string) (Action, error) {
 	return row, err
 }
 
-func (s *Service) PageActions(ctx context.Context, input PageInput) (pagination.Result[Action], error) {
+func (s *Service) PageActions(ctx context.Context, input PageInput) (ActionPage, error) {
 	request, err := pagination.Normalize(input.Request)
 	if err != nil || !validPage(input) {
-		return pagination.Result[Action]{}, ErrInvalid
+		return ActionPage{}, ErrInvalid
 	}
 	if input.ResourceID != "" {
 		if _, err := uuid.Parse(input.ResourceID); err != nil {
-			return pagination.Result[Action]{}, ErrInvalid
+			return ActionPage{}, ErrInvalid
 		}
 	}
 	where, args := pageConditions(input, "a.id", "a.action_key", "r.resource_key", "r.name")
@@ -315,14 +315,14 @@ func (s *Service) PageActions(ctx context.Context, input PageInput) (pagination.
 	}
 	var total int64
 	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*) FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE `+where), args...); err != nil {
-		return pagination.Result[Action]{}, err
+		return ActionPage{}, err
 	}
 	rows := []Action{}
 	args = append(args, request.PageSize, pagination.Offset(request))
 	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(actionSelect+` WHERE `+where+` ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?`), args...); err != nil {
-		return pagination.Result[Action]{}, err
+		return ActionPage{}, err
 	}
-	return pagination.Result[Action]{Items: rows, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
+	return ActionPage{Items: rows, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
 func (s *Service) UpdateAction(ctx context.Context, id string, version int64, input ActionInput) (Action, error) {
