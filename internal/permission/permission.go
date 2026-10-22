@@ -94,6 +94,9 @@ type Repository struct{ db *sqlx.DB }
 func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
 const columns = `id, parent_id, permission_key, name, node_type, resource, action, description, sort_order, status, is_system, created_at, created_by, updated_at, updated_by, version`
+const detailQuery = `SELECT p.id,p.parent_id,COALESCE(parent.name,'') AS parent_name,p.permission_key,p.name,p.node_type,p.resource,p.action,p.description,p.sort_order,p.status,p.is_system,p.created_at,p.created_by,p.updated_at,p.updated_by,p.version
+		FROM permissions p LEFT JOIN permissions parent ON parent.id=p.parent_id AND parent.deleted_at IS NULL
+		WHERE p.id=? AND p.deleted_at IS NULL`
 
 const (
 	maxIDLength          = 128
@@ -107,10 +110,7 @@ const (
 
 func (r *Repository) Get(ctx context.Context, id string) (Record, error) {
 	var v Record
-	const query = `SELECT p.id,p.parent_id,COALESCE(parent.name,'') AS parent_name,p.permission_key,p.name,p.node_type,p.resource,p.action,p.description,p.sort_order,p.status,p.is_system,p.created_at,p.created_by,p.updated_at,p.updated_by,p.version
-		FROM permissions p LEFT JOIN permissions parent ON parent.id=p.parent_id AND parent.deleted_at IS NULL
-		WHERE p.id=? AND p.deleted_at IS NULL`
-	if err := r.db.GetContext(ctx, &v, r.db.Rebind(query), id); err != nil {
+	if err := r.db.GetContext(ctx, &v, r.db.Rebind(detailQuery), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return v, ErrNotFound
 		}
@@ -209,6 +209,7 @@ func (s *Service) SetActions(ctx context.Context, id string, version int64, acti
 	if err != nil {
 		return Record{}, err
 	}
+	var updated Record
 	err = s.mutate(ctx, "permission.actions.set", id, map[string]any{"action_ids": actionIDs, "version": version}, func(tx *sqlx.Tx) error {
 		current, err := getForUpdate(ctx, tx, id)
 		if err != nil {
@@ -283,12 +284,23 @@ func (s *Service) SetActions(ctx context.Context, id string, version int64, acti
 		if n != 1 {
 			return ErrConflict
 		}
-		return nil
+		var readErr error
+		updated, readErr = getTx(ctx, tx, id)
+		return readErr
 	})
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, id)
+	return s.presentMutation(ctx, updated), nil
+}
+
+func getTx(ctx context.Context, tx *sqlx.Tx, id string) (Record, error) {
+	var record Record
+	err := tx.GetContext(ctx, &record, tx.Rebind(detailQuery), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	return record, err
 }
 
 func (s *Service) get(ctx context.Context, id string) (Record, error) {
@@ -330,6 +342,19 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
 	}
 	return nil
+}
+
+// The row was read inside the write transaction. Display-name resolution is
+// best effort after commit so an Identity outage cannot invite a duplicate
+// permission mutation or report a false failure during startup seeding.
+func (s *Service) presentMutation(ctx context.Context, record Record) Record {
+	records := []Record{record}
+	if err := s.present(ctx, records); err == nil {
+		return records[0]
+	}
+	record.CreatedByName, record.UpdatedByName = record.CreatedBy, record.UpdatedBy
+	record.CreatedAt, record.UpdatedAt = presentation.Time(record.CreatedAt), presentation.Time(record.UpdatedAt)
+	return record
 }
 
 func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*TreeNode, error) {
@@ -476,6 +501,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	}
 	id := uuid.NewString()
 	now := time.Now()
+	var created Record
 	e = s.mutate(ctx, "permission.create", id, input, func(tx *sqlx.Tx) error {
 		if err := s.validateTreeTx(ctx, tx, "", input.ParentID, input.NodeType); err != nil {
 			return err
@@ -485,12 +511,16 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 		if err != nil {
 			return err
 		}
-		return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
+		if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
+			return err
+		}
+		created, err = getTx(ctx, tx, id)
+		return err
 	})
 	if e != nil {
 		return Record{}, fmt.Errorf("create permission: %w", e)
 	}
-	return s.get(ctx, id)
+	return s.presentMutation(ctx, created), nil
 }
 
 // Seed idempotently installs a built-in permission with a stable UUIDv5. It is
@@ -513,11 +543,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 	}
 	err = s.repository.db.GetContext(ctx, &current, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
 	if err == nil && !current.DeletedAt.Valid && current.IsSystem && seedEqual(current.Record, input) {
-		records := []Record{current.Record}
-		if err := s.present(ctx, records); err != nil {
-			return Record{}, false, err
-		}
-		return records[0], false, nil
+		return s.presentMutation(ctx, current.Record), false, nil
 	}
 	if err == nil && !current.IsSystem {
 		return Record{}, false, ErrConflict
@@ -526,6 +552,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		return Record{}, false, err
 	}
 	a, _ := actor(ctx)
+	var seeded Record
 	err = s.mutate(ctx, "permission.seed", id, input, func(tx *sqlx.Tx) error {
 		treeID := current.ID
 		if current.DeletedAt.Valid {
@@ -540,7 +567,11 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 			if err != nil {
 				return err
 			}
-			return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
+			if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
+				return err
+			}
+			seeded, err = getTx(ctx, tx, id)
+			return err
 		}
 		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET parent_id=?,permission_key=?,name=?,node_type=?,resource=?,action=?,description=?,sort_order=?,status=?,is_system=true,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND is_system=true`), input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, id)
 		if err != nil {
@@ -553,20 +584,16 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		if rows != 1 {
 			return ErrConflict
 		}
-		return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
+		if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
+			return err
+		}
+		seeded, err = getTx(ctx, tx, id)
+		return err
 	})
 	if err != nil {
 		return Record{}, false, err
 	}
-	record, err := s.repository.Get(ctx, id)
-	if err != nil {
-		return record, true, err
-	}
-	records := []Record{record}
-	if err := s.present(ctx, records); err != nil {
-		return Record{}, true, err
-	}
-	return records[0], true, nil
+	return s.presentMutation(ctx, seeded), true, nil
 }
 
 func SeedID(key string) (string, error) {
@@ -675,6 +702,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 	if input.ParentID != nil && *input.ParentID == id {
 		return Record{}, ErrInvalid
 	}
+	var updated Record
 	e = s.mutate(ctx, "permission.update", id, input, func(tx *sqlx.Tx) error {
 		current, err := getForUpdate(ctx, tx, id)
 		if err != nil {
@@ -718,14 +746,17 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?) AND deleted_at IS NULL`), id, current.Resource, current.Action); err != nil {
 				return err
 			}
-			return syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a)
+			if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
+				return err
+			}
 		}
-		return nil
+		updated, err = getTx(ctx, tx, id)
+		return err
 	})
 	if e != nil {
 		return Record{}, e
 	}
-	return s.get(ctx, id)
+	return s.presentMutation(ctx, updated), nil
 }
 
 func (s *Service) validateInput(ctx context.Context, input Input) error {
@@ -802,7 +833,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if id == "" || len(id) > maxIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	current, e := s.get(ctx, id)
+	current, e := s.repository.Get(ctx, id)
 	if e != nil {
 		return e
 	}
