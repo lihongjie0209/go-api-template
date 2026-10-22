@@ -69,6 +69,27 @@ func TestValidateDepartmentMove(t *testing.T) {
 	}
 }
 
+func TestEnsureDepartmentMoveRejectsOversizedTree(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_departments WHERE tenant_id=\? AND id=\? AND deleted_at IS NULL`).WithArgs("tenant-a", "parent-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	rows := sqlmock.NewRows([]string{"id", "parent_id"})
+	for index := range maxDepartmentNodes + 1 {
+		rows.AddRow(index, nil)
+	}
+	mock.ExpectQuery(`SELECT id,parent_id FROM tenant_departments WHERE tenant_id=\? AND deleted_at IS NULL ORDER BY id LIMIT \?`).WithArgs("tenant-a", maxDepartmentNodes+1).WillReturnRows(rows)
+	mock.ExpectRollback()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	require.NoError(t, err)
+	require.ErrorIs(t, ensureDepartmentMove(t.Context(), tx, "tenant-a", "department-a", ptr("parent-a")), ErrInvalid)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFilterDepartmentsRetainsAncestorsAndSearchesCode(t *testing.T) {
 	root, group := "root", "group"
 	records := []Department{

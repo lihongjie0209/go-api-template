@@ -775,8 +775,11 @@ func ensureDepartmentMove(ctx context.Context, tx *sqlx.Tx, tenantID, id string,
 		ID       string  `db:"id"`
 		ParentID *string `db:"parent_id"`
 	}
-	if err := tx.SelectContext(ctx, &records, tx.Rebind(`SELECT id,parent_id FROM tenant_departments WHERE tenant_id=? AND deleted_at IS NULL`), tenantID); err != nil {
+	if err := tx.SelectContext(ctx, &records, tx.Rebind(`SELECT id,parent_id FROM tenant_departments WHERE tenant_id=? AND deleted_at IS NULL ORDER BY id LIMIT ?`), tenantID, maxDepartmentNodes+1); err != nil {
 		return err
+	}
+	if len(records) > maxDepartmentNodes {
+		return fmt.Errorf("%w: department tree exceeds %d nodes", ErrInvalid, maxDepartmentNodes)
 	}
 	parents := make(map[string]*string, len(records))
 	for _, record := range records {
