@@ -83,27 +83,38 @@ func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Tr
 			return nil, err
 		}
 	}
-	lc.Append(fx.Hook{OnStart: func(context.Context) error {
-		if cfg.Cron.Enabled {
-			if cfg.Database.Enabled {
-				if err := manager.Refresh(schedulerCtx); err != nil {
-					return err
-				}
-			}
-			runner.Start()
-			go manager.refreshLoop()
-			logger.Info("scheduler started")
-		} else {
-			close(manager.done)
-		}
-		if cfg.Database.Enabled {
-			for _, worker := range manager.manualWorkers {
-				worker.Start()
-			}
-		}
-		return nil
-	}, OnStop: manager.stop})
+	lc.Append(fx.Hook{OnStart: manager.start, OnStop: manager.stop})
 	return manager, nil
+}
+
+func (m *Manager) start(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		m.cancel()
+		return err
+	}
+	if m.cfg.Cron.Enabled {
+		if m.cfg.Database.Enabled {
+			if err := m.Refresh(ctx); err != nil {
+				m.cancel()
+				return err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			m.cancel()
+			return err
+		}
+		m.runner.Start()
+		go m.refreshLoop()
+		m.logger.Info("scheduler started")
+	} else {
+		close(m.done)
+	}
+	if m.cfg.Database.Enabled {
+		for _, worker := range m.manualWorkers {
+			worker.Start()
+		}
+	}
+	return nil
 }
 
 func (m *Manager) stop(ctx context.Context) error {

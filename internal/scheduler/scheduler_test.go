@@ -11,6 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -359,5 +361,43 @@ func TestManagerStopCancelsEveryWorkerWhenJoinDeadlineExpires(t *testing.T) {
 	}
 	if schedulerCtx.Err() != context.Canceled {
 		t.Fatal("scheduler context was not canceled")
+	}
+}
+
+func TestManagerStartHonorsStartupDeadlineDuringInitialRefresh(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs WHERE status='active'`).WillDelayFor(time.Second).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+	defer cancelScheduler()
+	workerStarted := make(chan struct{}, 1)
+	worker := background.New(func(context.Context) { workerStarted <- struct{}{} })
+	manager := &Manager{
+		cfg:           config.Config{Cron: config.Cron{Enabled: true}, Database: config.Database{Enabled: true}},
+		db:            sqlx.NewDb(raw, "sqlmock"),
+		runner:        cron.New(),
+		ctx:           schedulerCtx,
+		cancel:        cancelScheduler,
+		done:          make(chan struct{}),
+		manualWorkers: []*background.Worker{worker},
+	}
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelStart()
+	if err := manager.start(startCtx); err == nil || !errors.Is(startCtx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("start() error=%v context error=%v, want canceled initial refresh", err, startCtx.Err())
+	}
+	if schedulerCtx.Err() != context.Canceled {
+		t.Fatal("failed startup left scheduler context active")
+	}
+	select {
+	case <-workerStarted:
+		t.Fatal("manual worker started after initial refresh timed out")
+	default:
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
