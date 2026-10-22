@@ -149,6 +149,7 @@ func (s *DepartmentService) Create(ctx context.Context, input DepartmentInput) (
 		}
 		return Department{}, err
 	}
+	var created Department
 	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(lockCtx context.Context) error {
 		return s.mutate(lockCtx, "tenant.department.create", record.ID, input, nil, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(lockCtx, tx, actor.TenantID); err != nil {
@@ -162,13 +163,17 @@ func (s *DepartmentService) Create(ctx context.Context, input DepartmentInput) (
 			if isUniqueViolation(err) {
 				return ErrConflict
 			}
+			if err != nil {
+				return err
+			}
+			created, err = departmentTxRow(lockCtx, tx, actor.TenantID, record.ID)
 			return err
 		})
 	})
 	if err != nil {
 		return Department{}, err
 	}
-	return s.get(ctx, actor.TenantID, record.ID, unrestrictedMemberScope())
+	return s.presentDepartmentMutation(ctx, created), nil
 }
 func (s *DepartmentService) Get(ctx context.Context, id string) (Department, error) {
 	actor, err := departmentActor(ctx)
@@ -216,14 +221,9 @@ func (s *DepartmentService) DeleteTarget(ctx context.Context, id string) (Depart
 }
 
 func (s *DepartmentService) get(ctx context.Context, tenantID, id string, scope datapermission.SQLPredicate) (Department, error) {
-	var record Department
-	args := append([]any{tenantID, id}, scope.Args...)
-	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND `+scope.Clause), args...)
-	if errors.Is(err, sql.ErrNoRows) {
-		return record, ErrNotFound
-	}
+	record, err := s.getRaw(ctx, tenantID, id, scope)
 	if err != nil {
-		return record, err
+		return Department{}, err
 	}
 	if record.ParentID != nil {
 		var parentName string
@@ -239,6 +239,37 @@ func (s *DepartmentService) get(ctx context.Context, tenantID, id string, scope 
 		return Department{}, err
 	}
 	return records[0], nil
+}
+
+func (s *DepartmentService) getRaw(ctx context.Context, tenantID, id string, scope datapermission.SQLPredicate) (Department, error) {
+	var record Department
+	args := append([]any{tenantID, id}, scope.Args...)
+	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+departmentColumns+` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL AND `+scope.Clause), args...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return record, ErrNotFound
+	}
+	if err != nil {
+		return record, err
+	}
+	return record, nil
+}
+
+func departmentTxRow(ctx context.Context, tx *sqlx.Tx, tenantID, id string) (Department, error) {
+	var record Department
+	query := tx.Rebind(`SELECT ` + departmentColumns + ` FROM tenant_departments td WHERE td.tenant_id=? AND td.id=? AND td.deleted_at IS NULL`)
+	if err := tx.GetContext(ctx, &record, query, tenantID, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Department{}, ErrNotFound
+		}
+		return Department{}, fmt.Errorf("get department in transaction: %w", err)
+	}
+	if record.ParentID != nil {
+		query = tx.Rebind(`SELECT name FROM tenant_departments WHERE tenant_id=? AND id=? AND deleted_at IS NULL`)
+		if err := tx.GetContext(ctx, &record.ParentName, query, tenantID, *record.ParentID); err != nil {
+			return Department{}, fmt.Errorf("get department parent in transaction: %w", err)
+		}
+	}
+	return record, nil
 }
 func (s *DepartmentService) Tree(ctx context.Context, keyword string) ([]*DepartmentNode, error) {
 	actor, err := departmentActor(ctx)
@@ -318,6 +349,18 @@ func (s *DepartmentService) presentDepartments(ctx context.Context, records []De
 	}
 	return nil
 }
+
+func (s *DepartmentService) presentDepartmentMutation(ctx context.Context, record Department) Department {
+	records := []Department{record}
+	if err := s.presentDepartments(ctx, records); err == nil {
+		return records[0]
+	}
+	record.CreatedByName = record.CreatedBy
+	record.UpdatedByName = record.UpdatedBy
+	record.CreatedAt = presentation.Time(record.CreatedAt)
+	record.UpdatedAt = presentation.Time(record.UpdatedAt)
+	return record
+}
 func filterDepartments(records []Department, keyword string) []Department {
 	keyword = strings.ToLower(strings.TrimSpace(keyword))
 	if keyword == "" {
@@ -377,7 +420,7 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 	if err != nil {
 		return Department{}, err
 	}
-	current, err := s.get(ctx, actor.TenantID, input.ID, scope)
+	current, err := s.getRaw(ctx, actor.TenantID, input.ID, scope)
 	if err != nil {
 		return Department{}, err
 	}
@@ -398,6 +441,7 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 			return Department{}, err
 		}
 	}
+	var updated Department
 	err = s.withDepartmentLock(ctx, actor.TenantID, "tree", func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.department.update", input.ID, input, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
@@ -418,13 +462,14 @@ func (s *DepartmentService) Update(ctx context.Context, input DepartmentUpdate) 
 			if rows != 1 {
 				return ErrStaleVersion
 			}
-			return nil
+			updated, err = departmentTxRow(ctx, tx, actor.TenantID, input.ID)
+			return err
 		})
 	})
 	if err != nil {
 		return Department{}, err
 	}
-	return s.get(ctx, actor.TenantID, input.ID, unrestrictedMemberScope())
+	return s.presentDepartmentMutation(ctx, updated), nil
 }
 func (s *DepartmentService) Delete(ctx context.Context, id string, version int64) error {
 	actor, err := departmentActor(ctx)
@@ -439,7 +484,7 @@ func (s *DepartmentService) Delete(ctx context.Context, id string, version int64
 	if err != nil {
 		return err
 	}
-	current, err := s.Get(ctx, id)
+	current, err := s.getRaw(ctx, actor.TenantID, id, scope)
 	if err != nil {
 		return err
 	}

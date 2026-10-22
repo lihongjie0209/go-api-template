@@ -101,6 +101,95 @@ func TestDepartmentPresentationUsesOneIdentityBatchAndPlatformTimezone(t *testin
 	require.Len(t, client.batchRequest.GetUserIds(), 2)
 }
 
+func TestDepartmentCreateReturnsCommittedRowWhenActorPresentationFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL`).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`INSERT INTO tenant_departments`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL`).WithArgs("tenant-a", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow(departmentActionID, "tenant-a", nil, "engineering", "Engineering", 0, now, "admin", now, "admin", 1))
+	mock.ExpectCommit()
+	service := &DepartmentService{db: db, tx: database.NewTransactor(db), users: mutationOwnerResolver{actorErr: errors.New("identity unavailable")}}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "membership-a"})
+	record, err := service.Create(ctx, DepartmentInput{Code: "engineering", Name: "Engineering"})
+	require.NoError(t, err)
+	require.Equal(t, "Engineering", record.Name)
+	require.Equal(t, "admin", record.CreatedByName)
+	require.Equal(t, int64(1), record.Version)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentCreateRollsBackWhenResponseReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL`).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`INSERT INTO tenant_departments`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL`).WithArgs("tenant-a", sqlmock.AnyArg()).WillReturnError(errors.New("read unavailable"))
+	mock.ExpectRollback()
+	service := &DepartmentService{db: db, tx: database.NewTransactor(db)}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "membership-a"})
+	_, err = service.Create(ctx, DepartmentInput{Code: "engineering", Name: "Engineering"})
+	require.ErrorContains(t, err, "read unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentUpdateDoesNotRequireActorPresentationService(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	columns := []string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL`).WithArgs("tenant-a", departmentActionID).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(departmentActionID, "tenant-a", nil, "engineering", "Engineering", 0, now, "admin", now, "admin", 2))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL`).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`UPDATE tenant_departments AS td SET parent_id=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL`).WithArgs("tenant-a", departmentActionID).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(departmentActionID, "tenant-a", nil, "engineering", "Updated", 0, now, "admin", now, "admin", 3))
+	mock.ExpectCommit()
+	service := &DepartmentService{db: db, tx: database.NewTransactor(db), users: mutationOwnerResolver{actorErr: errors.New("identity unavailable")}}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "membership-a"})
+	record, err := service.Update(ctx, DepartmentUpdate{ID: departmentActionID, Name: "Updated", Version: 2})
+	require.NoError(t, err)
+	require.Equal(t, "Updated", record.Name)
+	require.Equal(t, "admin", record.UpdatedByName)
+	require.Equal(t, int64(3), record.Version)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDepartmentDeleteDoesNotRequireActorPresentationService(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM tenant_departments td WHERE td.tenant_id=\? AND td.id=\? AND td.deleted_at IS NULL`).WithArgs("tenant-a", departmentActionID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "parent_id", "code", "name", "sort_order", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow(departmentActionID, "tenant-a", nil, "engineering", "Engineering", 0, now, "admin", now, "admin", 2))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL`).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT \(SELECT count\(\*\) FROM tenant_departments`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`UPDATE tenant_departments AS td SET deleted_at=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	service := &DepartmentService{db: db, tx: database.NewTransactor(db), users: mutationOwnerResolver{actorErr: errors.New("identity unavailable")}}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a", MembershipID: "membership-a"})
+	require.NoError(t, service.Delete(ctx, departmentActionID, 2))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDepartmentServiceRejectsUnboundedInputBeforeDatabase(t *testing.T) {
 	t.Parallel()
 	service := &DepartmentService{}
