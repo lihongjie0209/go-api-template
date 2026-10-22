@@ -3,6 +3,7 @@ package eventbus
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"errors"
 	"io"
 	"log/slog"
@@ -207,17 +208,59 @@ func TestOutboxReleaseStoresSafeDecodeReason(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
+	var scheduledAt capturedSQLTime
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE event_outbox SET attempts=attempts\+1,available_at=`).
-		WithArgs(sqlmock.AnyArg(), "decode_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "event-1", "worker-1").
+		WithArgs(&scheduledAt, "decode_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "event-1", "worker-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	outbox := &Outbox{
-		cfg:     config.EventBus{ConsumerMaxDeliver: 3, DispatchRetryDelay: time.Second},
+		cfg:     config.EventBus{ConsumerMaxDeliver: 3, DispatchRetryDelay: time.Second, DispatchRetryMaxDelay: time.Minute},
 		appName: "api", workerID: "worker-1",
 		transactor: database.NewTransactor(sqlx.NewDb(db, "sqlmock")),
 	}
 	cause := errors.Join(errDecodeEnvelope, errors.New("secret-value from malformed payload"))
-	require.NoError(t, outbox.release(t.Context(), "event-1", 0, cause))
+	started := time.Now()
+	require.NoError(t, outbox.release(t.Context(), "event-1", 1, cause))
+	finished := time.Now()
+	require.False(t, scheduledAt.value.Before(started.Add(2*time.Second)))
+	require.False(t, scheduledAt.value.After(finished.Add(2400*time.Millisecond)))
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+type capturedSQLTime struct{ value time.Time }
+
+func (capture *capturedSQLTime) Match(value driver.Value) bool {
+	when, ok := value.(time.Time)
+	if ok {
+		capture.value = when
+	}
+	return ok
+}
+
+func TestOutboxRetryBackoffIsExponentialJitteredAndCapped(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		base     time.Duration
+		cap      time.Duration
+		attempts int64
+		minimum  time.Duration
+		upper    time.Duration
+	}{
+		{name: "first failure", base: 2 * time.Second, cap: time.Minute, attempts: 0, minimum: 2 * time.Second, upper: 2400 * time.Millisecond},
+		{name: "second failure", base: 2 * time.Second, cap: time.Minute, attempts: 1, minimum: 4 * time.Second, upper: 4800 * time.Millisecond},
+		{name: "third failure", base: 2 * time.Second, cap: time.Minute, attempts: 2, minimum: 8 * time.Second, upper: 9600 * time.Millisecond},
+		{name: "very large attempt count", base: 2 * time.Second, cap: time.Minute, attempts: 100, minimum: time.Minute, upper: time.Minute},
+		{name: "maximum base", base: time.Hour, cap: time.Hour, attempts: 1, minimum: time.Hour, upper: time.Hour},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			for range 100 {
+				delay := outboxRetryDelay(test.base, test.cap, test.attempts)
+				require.GreaterOrEqual(t, delay, test.minimum)
+				require.LessOrEqual(t, delay, test.upper)
+			}
+		})
+	}
 }

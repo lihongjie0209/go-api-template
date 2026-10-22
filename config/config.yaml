@@ -239,6 +239,7 @@ event_bus:
   dispatch_batch_size: 100
   dispatch_lease: 30s
   dispatch_retry_delay: 2s
+  dispatch_retry_max_delay: 1m
 
 # PostgreSQL/Kingbase native monthly partitions for append-only audit tables.
 # Keep disabled unless the database role can create/detach partitions. An empty

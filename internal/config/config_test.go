@@ -158,8 +158,16 @@ func TestLoad_UsesCanonicalPlatformEventStreamDefaults(t *testing.T) {
 	if cfg.EventBus.ConsumerAckWait != 30*time.Second || cfg.EventBus.ConsumerHandlerTimeout != 25*time.Second {
 		t.Fatalf("unexpected event consumer deadlines: %+v", cfg.EventBus)
 	}
-	if cfg.EventBus.DispatchInterval != time.Second || cfg.EventBus.DispatchBatchSize != 100 || cfg.EventBus.DispatchLease != 30*time.Second || cfg.EventBus.DispatchRetryDelay != 2*time.Second {
+	if cfg.EventBus.DispatchInterval != time.Second || cfg.EventBus.DispatchBatchSize != 100 || cfg.EventBus.DispatchLease != 30*time.Second || cfg.EventBus.DispatchRetryDelay != 2*time.Second || cfg.EventBus.DispatchRetryMaxDelay != time.Minute {
 		t.Fatalf("unexpected outbox dispatch defaults: %+v", cfg.EventBus)
+	}
+	t.Setenv("APP_EVENT_BUS_DISPATCH_RETRY_MAX_DELAY", "90s")
+	updated, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.EventBus.DispatchRetryMaxDelay != 90*time.Second {
+		t.Fatalf("outbox retry max environment override = %s", updated.EventBus.DispatchRetryMaxDelay)
 	}
 }
 
@@ -531,6 +539,8 @@ func TestConfig_RejectsUnsafeOutboxBounds(t *testing.T) {
 		{name: "batch size", mutate: func(cfg *EventBus) { cfg.DispatchBatchSize = 1001 }},
 		{name: "lease shorter than publish", mutate: func(cfg *EventBus) { cfg.DispatchLease = cfg.PublishTimeout }},
 		{name: "retry delay", mutate: func(cfg *EventBus) { cfg.DispatchRetryDelay = 2 * time.Hour }},
+		{name: "retry max below base", mutate: func(cfg *EventBus) { cfg.DispatchRetryMaxDelay = cfg.DispatchRetryDelay - time.Nanosecond }},
+		{name: "retry max above bound", mutate: func(cfg *EventBus) { cfg.DispatchRetryMaxDelay = 2 * time.Hour }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

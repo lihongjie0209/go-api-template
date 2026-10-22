@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"regexp"
 	"time"
 
@@ -46,6 +47,7 @@ type outboxRecord struct {
 }
 
 const maxOutboxEnvelopeBytes = 1 << 20
+const defaultOutboxRetryMaxDelay = time.Minute
 
 var outboxTracer = otel.Tracer("go-api-template/infrastructure/eventbus")
 var publishSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
@@ -254,7 +256,7 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 				args = []any{now, message, now, actorID, id, o.workerID}
 			} else {
 				query = `UPDATE event_outbox SET attempts=attempts+1,available_at=?,locked_by='',locked_until=NULL,last_error=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND locked_by=? AND published_at IS NULL AND deleted_at IS NULL`
-				args = []any{now.Add(o.cfg.DispatchRetryDelay), message, now, actorID, id, o.workerID}
+				args = []any{now.Add(outboxRetryDelay(o.cfg.DispatchRetryDelay, o.cfg.DispatchRetryMaxDelay, attempts)), message, now, actorID, id, o.workerID}
 			}
 		}
 		result, err := tx.ExecContext(actorCtx, tx.Rebind(query), args...)
@@ -270,4 +272,27 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 		}
 		return nil
 	})
+}
+
+// attempts counts previous failed deliveries. The configured delay is the
+// first retry's minimum; later retries double it, with bounded positive
+// jitter to avoid synchronized dispatchers after a broker outage.
+func outboxRetryDelay(base, maximum time.Duration, attempts int64) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	if maximum <= 0 {
+		maximum = defaultOutboxRetryMaxDelay
+	}
+	delay := min(base, maximum)
+	for attempts > 0 && delay < maximum {
+		if delay >= maximum/2 {
+			delay = maximum
+			break
+		}
+		delay *= 2
+		attempts--
+	}
+	jitter := min(delay/5, maximum-delay)
+	return delay + time.Duration(rand.Int64N(int64(jitter)+1))
 }
