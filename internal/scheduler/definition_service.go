@@ -125,10 +125,14 @@ func (s *DefinitionService) Create(ctx context.Context, input DefinitionInput) (
 		return Definition{}, ErrInvalidDefinition
 	}
 	id := uuid.NewString()
+	var created Definition
 	err = s.mutate(ctx, "platform.scheduled-job.create", id, input.Name, input, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		_, execErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO scheduled_jobs(id,code,name,description,cron_spec,timezone,handler,timeout_seconds,lock_ttl_seconds,status,payload,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.Code, input.Name, input.Description, input.CronSpec, input.Timezone, input.Handler, input.TimeoutSeconds, input.LockTTLSeconds, input.Status, string(input.Payload), now, actor.ID, now, actor.ID)
-		return execErr
+		if execErr != nil {
+			return execErr
+		}
+		return tx.GetContext(ctx, &created, tx.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE id=? AND deleted_at IS NULL`), id)
 	})
 	if database.IsUniqueViolation(err) {
 		return Definition{}, ErrDefinitionConflict
@@ -137,7 +141,7 @@ func (s *DefinitionService) Create(ctx context.Context, input DefinitionInput) (
 		return Definition{}, err
 	}
 	s.runtime.Notify()
-	return s.Get(ctx, id)
+	return s.presentMutation(ctx, created), nil
 }
 
 func (s *DefinitionService) Get(ctx context.Context, id string) (Definition, error) {
@@ -268,7 +272,7 @@ func (s *DefinitionService) Update(ctx context.Context, input UpdateDefinitionIn
 	if err != nil {
 		return Definition{}, err
 	}
-	current, err := s.Get(ctx, input.ID)
+	current, err := s.loadDefinition(ctx, input.ID)
 	if err != nil {
 		return Definition{}, err
 	}
@@ -279,6 +283,7 @@ func (s *DefinitionService) Update(ctx context.Context, input UpdateDefinitionIn
 	if _, err := s.handlers.Resolve(candidate.Handler); err != nil {
 		return Definition{}, ErrInvalidDefinition
 	}
+	var updated Definition
 	err = s.mutate(ctx, "platform.scheduled-job.update", input.ID, candidate.Name, input, func(tx *sqlx.Tx) error {
 		result, execErr := tx.ExecContext(ctx, tx.Rebind(`UPDATE scheduled_jobs SET name=?,description=?,cron_spec=?,timezone=?,handler=?,timeout_seconds=?,lock_ttl_seconds=?,status=?,payload=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), candidate.Name, candidate.Description, candidate.CronSpec, candidate.Timezone, candidate.Handler, candidate.TimeoutSeconds, candidate.LockTTLSeconds, candidate.Status, string(candidate.Payload), time.Now(), actor.ID, input.ID, input.Version)
 		if execErr != nil {
@@ -291,13 +296,13 @@ func (s *DefinitionService) Update(ctx context.Context, input UpdateDefinitionIn
 		if affected != 1 {
 			return ErrDefinitionStaleVersion
 		}
-		return nil
+		return tx.GetContext(ctx, &updated, tx.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE id=? AND deleted_at IS NULL`), input.ID)
 	})
 	if err != nil {
 		return Definition{}, err
 	}
 	s.runtime.Notify()
-	return s.Get(ctx, input.ID)
+	return s.presentMutation(ctx, updated), nil
 }
 
 func (s *DefinitionService) Delete(ctx context.Context, id string, version int64) error {
@@ -305,7 +310,7 @@ func (s *DefinitionService) Delete(ctx context.Context, id string, version int64
 	if err != nil {
 		return err
 	}
-	current, err := s.Get(ctx, id)
+	current, err := s.loadDefinition(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -503,6 +508,18 @@ func (s *DefinitionService) present(ctx context.Context, items []Definition) err
 		items[index].UpdatedAt = presentation.Time(items[index].UpdatedAt)
 	}
 	return nil
+}
+
+// The authoritative row was read before commit. A display-name lookup failure
+// after commit must not turn a successful mutation into a retryable error.
+func (s *DefinitionService) presentMutation(ctx context.Context, item Definition) Definition {
+	items := []Definition{item}
+	if err := s.present(ctx, items); err == nil {
+		return items[0]
+	}
+	item.CreatedByName, item.UpdatedByName = item.CreatedBy, item.UpdatedBy
+	item.CreatedAt, item.UpdatedAt = presentation.Time(item.CreatedAt), presentation.Time(item.UpdatedAt)
+	return item
 }
 
 func (s *DefinitionService) presentRuns(ctx context.Context, items []Run) error {
