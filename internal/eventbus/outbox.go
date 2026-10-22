@@ -134,8 +134,8 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		}
 		started := time.Now()
 		dispatchCtx, span := outboxTracer.Start(extractTraceContext(ctx, record.TraceParent, record.TraceState), "event_outbox.dispatch", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", record.Subject)))
-		var envelope commonv1.EventEnvelope
-		if err := proto.Unmarshal(record.Envelope, &envelope); err != nil {
+		envelope, err := decodeClaimedEnvelope(record)
+		if err != nil {
 			span.RecordError(errDecodeEnvelope)
 			span.SetStatus(codes.Error, "decode envelope")
 			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errDecodeEnvelope); releaseErr != nil {
@@ -146,7 +146,7 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 			span.End()
 			continue
 		}
-		err = Publish(dispatchCtx, o.bus, record.Subject, &envelope)
+		err = Publish(dispatchCtx, o.bus, record.Subject, envelope)
 		status := "success"
 		if err != nil {
 			status = "error"
@@ -172,6 +172,19 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		span.End()
 	}
 	return nil
+}
+
+// The database row ID owns the event's durable identity. Publishing a
+// different embedded ID would break duplicate-delivery protection and replay.
+func decodeClaimedEnvelope(record outboxRecord) (*commonv1.EventEnvelope, error) {
+	var envelope commonv1.EventEnvelope
+	if err := proto.Unmarshal(record.Envelope, &envelope); err != nil {
+		return nil, fmt.Errorf("%w: invalid protobuf", errDecodeEnvelope)
+	}
+	if record.ID == "" || envelope.EventId != record.ID {
+		return nil, fmt.Errorf("%w: event identity mismatch", errDecodeEnvelope)
+	}
+	return &envelope, nil
 }
 
 func (o *Outbox) claim(ctx context.Context) (outboxRecord, bool, error) {

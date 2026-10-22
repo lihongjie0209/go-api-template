@@ -19,6 +19,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestOutboxPersistenceErrorDoesNotLeakThroughLogOrTrace(t *testing.T) {
@@ -112,6 +113,39 @@ func TestOutboxStoreRejectsInvalidIdentityAndSubject(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestDecodeClaimedEnvelopeRequiresStoredEventIdentity(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		storedID   string
+		envelopeID string
+		wantError  bool
+	}{
+		{name: "matching ID", storedID: "event-1", envelopeID: "event-1"},
+		{name: "different ID", storedID: "event-1", envelopeID: "event-2", wantError: true},
+		{name: "empty envelope ID", storedID: "event-1", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			data, err := proto.Marshal(&commonv1.EventEnvelope{EventId: test.envelopeID})
+			require.NoError(t, err)
+			envelope, err := decodeClaimedEnvelope(outboxRecord{ID: test.storedID, Envelope: data})
+			if test.wantError {
+				require.ErrorIs(t, err, errDecodeEnvelope)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.storedID, envelope.EventId)
+		})
+	}
+}
+
+func TestDecodeClaimedEnvelopeRejectsMalformedProtobuf(t *testing.T) {
+	t.Parallel()
+	_, err := decodeClaimedEnvelope(outboxRecord{ID: "event-1", Envelope: []byte{0xff}})
+	require.ErrorIs(t, err, errDecodeEnvelope)
 }
 
 func TestOutboxReleaseMovesExhaustedEventToDeadState(t *testing.T) {
