@@ -211,6 +211,7 @@ func (s *PlatformGrantService) Create(ctx context.Context, input PlatformGrantIn
 	}
 	id := uuid.NewString()
 	now := time.Now()
+	var created PlatformGrant
 	err = s.mutate(ctx, "authorization.platform-grant.create", id, func(tx *sqlx.Tx) error {
 		if err := validatePrincipalExists(ctx, tx, input); err != nil {
 			return err
@@ -222,25 +223,35 @@ func (s *PlatformGrantService) Create(ctx context.Context, input PlatformGrantIn
 		if count == 0 {
 			return ErrPlatformGrantInvalid
 		}
-		_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO platform_principal_permissions(id,principal_type,principal_id,permission_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), id, input.PrincipalType, input.PrincipalID, input.PermissionID, now, actor.ID, now, actor.ID)
+		if _, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO platform_principal_permissions(id,principal_type,principal_id,permission_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), id, input.PrincipalType, input.PrincipalID, input.PermissionID, now, actor.ID, now, actor.ID); err != nil {
+			return err
+		}
+		created, err = readPlatformGrant(ctx, tx, tx.Rebind, id)
 		return err
 	})
 	if err != nil {
 		return PlatformGrant{}, err
 	}
-	return s.Get(ctx, id)
+	return created, nil
 }
 
 func (s *PlatformGrantService) Get(ctx context.Context, id string) (PlatformGrant, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return PlatformGrant{}, ErrPlatformGrantInvalid
 	}
+	return readPlatformGrant(ctx, s.db, s.db.Rebind, id)
+}
+
+func readPlatformGrant(ctx context.Context, queryer sqlx.QueryerContext, rebind func(string) string, id string) (PlatformGrant, error) {
 	var row PlatformGrant
-	err := s.db.GetContext(ctx, &row, s.db.Rebind(platformGrantSelect+` WHERE g.id=? AND g.deleted_at IS NULL AND p.deleted_at IS NULL`), id)
+	err := sqlx.GetContext(ctx, queryer, &row, rebind(platformGrantSelect+` WHERE g.id=? AND g.deleted_at IS NULL AND p.deleted_at IS NULL`), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PlatformGrant{}, ErrPlatformGrantNotFound
 	}
-	return row, err
+	if err != nil {
+		return PlatformGrant{}, fmt.Errorf("read platform grant: %w", err)
+	}
+	return row, nil
 }
 
 func (s *PlatformGrantService) Page(ctx context.Context, input PlatformGrantPageInput) (PlatformGrantPage, error) {
@@ -334,6 +345,7 @@ func (s *PlatformGrantService) Update(ctx context.Context, id string, version in
 	if _, err := uuid.Parse(id); err != nil || version <= 0 || validatePlatformGrant(input) != nil {
 		return PlatformGrant{}, ErrPlatformGrantInvalid
 	}
+	var updated PlatformGrant
 	err := s.mutate(ctx, "authorization.platform-grant.update", id, func(tx *sqlx.Tx) error {
 		if err := validatePrincipalExists(ctx, tx, input); err != nil {
 			return err
@@ -369,12 +381,13 @@ func (s *PlatformGrantService) Update(ctx context.Context, id string, version in
 		if n != 1 {
 			return ErrPlatformGrantStaleVersion
 		}
-		return nil
+		updated, err = readPlatformGrant(ctx, tx, tx.Rebind, id)
+		return err
 	})
 	if err != nil {
 		return PlatformGrant{}, err
 	}
-	return s.Get(ctx, id)
+	return updated, nil
 }
 
 func validatePrincipalExists(ctx context.Context, tx *sqlx.Tx, input PlatformGrantInput) error {

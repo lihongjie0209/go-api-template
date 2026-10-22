@@ -128,6 +128,125 @@ func TestPlatformGrantRejectsPermissionWithoutActivePlatformAction(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPlatformGrantCreateReadsAuditedResultBeforeCommit(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewPlatformGrantService(db, database.NewTransactor(db), nil, nil)
+	ctx := platformprincipal.SystemContext(t.Context(), "grant-admin")
+	stamp := time.Date(2026, time.October, 22, 10, 0, 0, 0, time.UTC)
+	grantID := "f833091d-3f48-4fe6-b46d-c439112cbdaa"
+	principalID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("grant-admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs(principalID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions p WHERE`).WithArgs(permissionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("INSERT INTO platform_principal_permissions").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT g.id,g.principal_type,g.principal_id`).WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(platformGrantRows().AddRow(grantID, "user", principalID, "Grant Admin", "grant-admin", permissionID, "platform.member.read", "Read member", stamp, "grant-admin", stamp, "grant-admin", 1))
+	mock.ExpectCommit()
+	grant, err := service.Create(ctx, PlatformGrantInput{PrincipalType: "user", PrincipalID: principalID, PermissionID: permissionID})
+	require.NoError(t, err)
+	require.Equal(t, grantID, grant.ID)
+	require.Equal(t, int64(1), grant.Version)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func platformGrantRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "principal_type", "principal_id", "principal_name", "principal_identifier", "permission_id", "permission_key", "name", "created_at", "created_by", "updated_at", "updated_by", "version"})
+}
+
+func TestPlatformGrantUpdateReadsAuditedResultBeforeCommit(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewPlatformGrantService(db, database.NewTransactor(db), nil, nil)
+	ctx := platformprincipal.SystemContext(t.Context(), "grant-admin")
+	grantID := "f833091d-3f48-4fe6-b46d-c439112cbdaa"
+	principalID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	stamp := time.Date(2026, time.October, 22, 10, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("grant-admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs(principalID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT version FROM platform_principal_permissions`).WithArgs(grantID).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions p WHERE`).WithArgs(permissionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("UPDATE platform_principal_permissions SET principal_type=").
+		WithArgs("user", principalID, permissionID, grantID, int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT g.id,g.principal_type,g.principal_id`).WithArgs(grantID).
+		WillReturnRows(platformGrantRows().AddRow(grantID, "user", principalID, "Grant Admin", "grant-admin", permissionID, "platform.member.read", "Read member", stamp, "grant-admin", stamp, "grant-admin", 2))
+	mock.ExpectCommit()
+	grant, err := service.Update(ctx, grantID, 1, PlatformGrantInput{PrincipalType: "user", PrincipalID: principalID, PermissionID: permissionID})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), grant.Version)
+	require.Equal(t, "grant-admin", grant.UpdatedBy)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPlatformGrantCreateRollsBackWhenAuditedResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewPlatformGrantService(db, database.NewTransactor(db), nil, nil)
+	ctx := platformprincipal.SystemContext(t.Context(), "grant-admin")
+	principalID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	want := errors.New("read grant unavailable")
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("grant-admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs(principalID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions p WHERE`).WithArgs(permissionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("INSERT INTO platform_principal_permissions").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT g.id,g.principal_type,g.principal_id`).WithArgs(sqlmock.AnyArg()).WillReturnError(want)
+	mock.ExpectRollback()
+	_, err = service.Create(ctx, PlatformGrantInput{PrincipalType: "user", PrincipalID: principalID, PermissionID: permissionID})
+	require.ErrorIs(t, err, want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPlatformGrantUpdateRollsBackWhenAuditedResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewPlatformGrantService(db, database.NewTransactor(db), nil, nil)
+	ctx := platformprincipal.SystemContext(t.Context(), "grant-admin")
+	grantID := "f833091d-3f48-4fe6-b46d-c439112cbdaa"
+	principalID := "18f4762f-f4f9-47d5-bd7a-6f07af436f58"
+	permissionID := "08896c3a-4c82-473e-90c8-b59f60446139"
+	want := errors.New("read grant unavailable")
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("grant-admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users`).WithArgs(principalID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT version FROM platform_principal_permissions`).WithArgs(grantID).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions p WHERE`).WithArgs(permissionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("UPDATE platform_principal_permissions SET principal_type=").
+		WithArgs("user", principalID, permissionID, grantID, int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT g.id,g.principal_type,g.principal_id`).WithArgs(grantID).WillReturnError(want)
+	mock.ExpectRollback()
+	_, err = service.Update(ctx, grantID, 1, PlatformGrantInput{PrincipalType: "user", PrincipalID: principalID, PermissionID: permissionID})
+	require.ErrorIs(t, err, want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPageGrantablePermissionsUsesLinkedPlatformActions(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()

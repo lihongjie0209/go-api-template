@@ -1948,6 +1948,25 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil || grant.PrincipalName != "Grant Test" || grant.PrincipalIdentifier != "grant.integration" {
 		t.Fatalf("platform grant=%+v err=%v", grant, err)
 	}
+	assertGrantAudit := func(grant authorization.PlatformGrant) {
+		t.Helper()
+		var stored struct {
+			CreatedAt time.Time `db:"created_at"`
+			CreatedBy string    `db:"created_by"`
+			UpdatedAt time.Time `db:"updated_at"`
+			UpdatedBy string    `db:"updated_by"`
+			Version   int64     `db:"version"`
+		}
+		query := db.Rebind(`SELECT created_at,created_by,updated_at,updated_by,version FROM platform_principal_permissions WHERE id=? AND deleted_at IS NULL`)
+		if err := db.GetContext(ctx, &stored, query, grant.ID); err != nil {
+			t.Fatalf("read platform grant audit: %v", err)
+		}
+		if !grant.CreatedAt.Equal(stored.CreatedAt) || !grant.UpdatedAt.Equal(stored.UpdatedAt) ||
+			grant.CreatedBy != stored.CreatedBy || grant.UpdatedBy != stored.UpdatedBy || grant.Version != stored.Version {
+			t.Fatalf("platform grant audit differs from committed row: returned=%+v stored=%+v", grant, stored)
+		}
+	}
+	assertGrantAudit(grant)
 	snapshotCtx, revisionAfterGrant, err := snapshotter.Snapshot(ctx, principal)
 	if err != nil || revisionAfterGrant == revisionBeforeGrant {
 		t.Fatalf("grant revision did not change: before=%q after=%q err=%v", revisionBeforeGrant, revisionAfterGrant, err)
@@ -1974,6 +1993,7 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil || grant.Version != 2 {
 		t.Fatalf("platform grant update=%+v err=%v", grant, err)
 	}
+	assertGrantAudit(grant)
 	if err := grants.Delete(actorCtx, grant.ID, grant.Version); err != nil {
 		t.Fatal(err)
 	}
