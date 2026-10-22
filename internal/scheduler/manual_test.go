@@ -22,6 +22,7 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type manualOutboxStub struct {
@@ -42,7 +43,10 @@ func TestTriggerQueuesRunAndEventInOneTransaction(t *testing.T) {
 	columns := []string{"id", "code", "name", "description", "cron_spec", "timezone", "handler", "timeout_seconds", "lock_ttl_seconds", "status", "payload", "created_at", "created_by", "updated_at", "updated_by", "version"}
 	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs WHERE id=`).WithArgs("job-1").WillReturnRows(sqlmock.NewRows(columns).AddRow("job-1", "sample-job", "Sample", "", "0 * * * * *", "Asia/Shanghai", "system.sample", 3600, 60, "active", []byte(`{"value":1}`), now, "actor", now, "actor", 1))
 	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO scheduled_job_runs`).WithArgs(sqlmock.AnyArg(), "job-1", "sample-job", "Sample", "system.sample", "manual", "queued", "req-1", sqlmock.AnyArg(), `{"value":1}`, int64(3600), int64(60), sqlmock.AnyArg(), "actor", sqlmock.AnyArg(), "actor").WillReturnResult(sqlmock.NewResult(1, 1))
+	traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	spanID := trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8}
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled})
+	mock.ExpectExec(`INSERT INTO scheduled_job_runs`).WithArgs(sqlmock.AnyArg(), "job-1", "sample-job", "Sample", "system.sample", "manual", "queued", "req-1", traceID.String(), "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", "", `{"value":1}`, int64(3600), int64(60), sqlmock.AnyArg(), "actor", sqlmock.AnyArg(), "actor").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	manager := &Manager{manualWake: make(chan struct{}, 1)}
 	service := &DefinitionService{db: db, tx: database.NewTransactor(db), runtime: manager, outbox: manualOutboxStub{store: func(_ context.Context, _ *sqlx.Tx, subject string, event *commonv1.EventEnvelope) error {
@@ -51,7 +55,7 @@ func TestTriggerQueuesRunAndEventInOneTransaction(t *testing.T) {
 		require.Equal(t, event.EventId, stringValue(t, event.Payload, "run_id"))
 		return nil
 	}}}
-	ctx := requestid.WithContext(platformprincipal.SystemContext(t.Context(), "actor"), "req-1")
+	ctx := requestid.WithContext(platformprincipal.SystemContext(trace.ContextWithSpanContext(t.Context(), spanContext), "actor"), "req-1")
 	result, err := service.Trigger(ctx, "job-1")
 	require.NoError(t, err)
 	require.Equal(t, "queued", result.Status)
@@ -160,16 +164,18 @@ func TestClaimManualRecoversExpiredRun(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	manager := &Manager{cfg: config.Config{App: config.App{Name: "orders-service"}}, tx: database.NewTransactor(sqlx.NewDb(raw, "sqlmock"))}
-	columns := []string{"id", "scheduled_job_id", "job_code", "job_name", "handler", "payload", "timeout_seconds", "lock_ttl_seconds", "request_id"}
+	columns := []string{"id", "scheduled_job_id", "job_code", "job_name", "handler", "payload", "timeout_seconds", "lock_ttl_seconds", "request_id", "trace_parent", "trace_state"}
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* status='queued' AND dispatched_at IS NOT NULL`).WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery(`SELECT .* status='running' AND lease_until<`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows(columns).AddRow("run-1", "job-1", "job-code", "Job", "system.sample", "{}", 30, 60, "req-1"))
+	mock.ExpectQuery(`SELECT .* status='running' AND lease_until<`).WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows(columns).AddRow("run-1", "job-1", "job-code", "Job", "system.sample", "{}", 30, 60, "req-1", "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", "vendor=value"))
 	mock.ExpectExec(`UPDATE scheduled_job_runs SET status='running'`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	run, found, err := manager.claimManual(t.Context(), false)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "run-1", run.ID)
+	require.Equal(t, "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", run.TraceParent)
+	require.Equal(t, "vendor=value", run.TraceState)
 	require.NotEmpty(t, run.LeaseOwner)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -263,6 +269,7 @@ func TestExecuteManualFinishesOutsideHTTPContext(t *testing.T) {
 		requestID, ok := requestid.FromContext(ctx)
 		require.True(t, ok)
 		require.Equal(t, "req-1", requestID)
+		require.Equal(t, "0102030405060708090a0b0c0d0e0f10", trace.SpanContextFromContext(ctx).TraceID().String())
 		return nil
 	}}
 	mock.ExpectBegin()
@@ -271,7 +278,7 @@ func TestExecuteManualFinishesOutsideHTTPContext(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(t.Context())
 	cancelRequest()
 	require.ErrorIs(t, requestCtx.Err(), context.Canceled)
-	manager.executeManual(context.WithoutCancel(requestCtx), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", LeaseOwner: "lease-1"})
+	manager.executeManual(context.WithoutCancel(requestCtx), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", TraceParent: "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", LeaseOwner: "lease-1"})
 	require.Equal(t, int32(2), locker.attempts.Load())
 	require.NoError(t, mock.ExpectationsWereMet())
 }

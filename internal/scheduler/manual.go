@@ -10,9 +10,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
+	"go.opentelemetry.io/otel"
 )
 
 const manualDispatchEventType = "platform.scheduled-job.triggered.v1"
@@ -41,6 +43,8 @@ type manualRun struct {
 	TimeoutSeconds int64  `db:"timeout_seconds"`
 	LockTTLSeconds int64  `db:"lock_ttl_seconds"`
 	RequestID      string `db:"request_id"`
+	TraceParent    string `db:"trace_parent"`
+	TraceState     string `db:"trace_state"`
 	LeaseOwner     string `db:"-"`
 }
 
@@ -122,7 +126,7 @@ func (m *Manager) claimManual(ctx context.Context, preferExpired bool) (manualRu
 	workerID := uuid.NewString()
 	err := m.tx.Within(actorCtx, &sql.TxOptions{}, func(tx *sqlx.Tx) error {
 		now := time.Now()
-		const columns = `id,scheduled_job_id,job_code,job_name,handler,payload,timeout_seconds,lock_ttl_seconds,request_id`
+		const columns = `id,scheduled_job_id,job_code,job_name,handler,payload,timeout_seconds,lock_ttl_seconds,request_id,trace_parent,trace_state`
 		loadQueued := func() error {
 			query := tx.Rebind(`SELECT ` + columns + ` FROM scheduled_job_runs WHERE trigger_source='manual' AND status='queued' AND dispatched_at IS NOT NULL AND deleted_at IS NULL ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
 			return tx.GetContext(actorCtx, &run, query)
@@ -164,9 +168,12 @@ func (m *Manager) claimManual(ctx context.Context, preferExpired bool) (manualRu
 
 func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(parent, time.Duration(run.TimeoutSeconds)*time.Second)
+	traceCtx := observability.RestoreTraceContext(parent, run.TraceParent, run.TraceState)
+	ctx, cancel := context.WithTimeout(traceCtx, time.Duration(run.TimeoutSeconds)*time.Second)
 	ctx = requestid.WithContext(platformprincipal.SystemContext(ctx, m.cfg.App.Name+":scheduler:manual"), run.RequestID)
 	ctx = context.WithValue(ctx, runIDContextKey{}, run.ID)
+	ctx, span := otel.Tracer("go-api-template/scheduler").Start(ctx, "scheduled_job.manual.execute")
+	defer span.End()
 	defer cancel()
 	done := make(chan struct{})
 	renewed := make(chan struct{})
@@ -192,6 +199,9 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	}
 	close(done)
 	<-renewed
+	if err != nil {
+		recordJobFailure(span, err)
+	}
 	if parent.Err() != nil || leaseLost {
 		return // The expired lease is reclaimed after restart or by another instance.
 	}

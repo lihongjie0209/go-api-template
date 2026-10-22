@@ -62,6 +62,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 	"google.golang.org/protobuf/proto"
 )
@@ -2375,7 +2376,14 @@ func testScheduledJobCompletionOutboxTransaction(t *testing.T, ctx context.Conte
 
 func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, db *sqlx.DB, transactor *appdb.Transactor, jobID string) {
 	t.Helper()
-	actorCtx := requestid.WithContext(platformprincipal.SystemContext(ctx, "scheduler-admin"), "integration-manual-request")
+	traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	spanID := trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8}
+	traceState, err := trace.ParseTraceState("vendor=value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled, TraceState: traceState})
+	actorCtx := requestid.WithContext(platformprincipal.SystemContext(trace.ContextWithSpanContext(ctx, spanContext), "scheduler-admin"), "integration-manual-request")
 	cfg := config.Config{App: config.App{Name: "scheduler-integration"}, EventBus: config.EventBus{Enabled: true}}
 	outbox := eventbus.NewOutbox(cfg, &eventbus.Bus{}, transactor, nil, nil)
 	service := scheduler.NewDefinitionService(db, transactor, nil, nil, nil, nil, outbox)
@@ -2385,11 +2393,14 @@ func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, 
 		t.Fatalf("submit manual scheduled job = %+v err=%v", result, err)
 	}
 	var persisted struct {
-		Status    string `db:"status"`
-		RequestID string `db:"request_id"`
-		Version   int64  `db:"version"`
+		Status      string `db:"status"`
+		RequestID   string `db:"request_id"`
+		TraceID     string `db:"trace_id"`
+		TraceParent string `db:"trace_parent"`
+		TraceState  string `db:"trace_state"`
+		Version     int64  `db:"version"`
 	}
-	if err := db.GetContext(ctx, &persisted, db.Rebind(`SELECT status,request_id,version FROM scheduled_job_runs WHERE id=? AND deleted_at IS NULL`), result.RunID); err != nil || persisted.Status != "queued" || persisted.RequestID != "integration-manual-request" {
+	if err := db.GetContext(ctx, &persisted, db.Rebind(`SELECT status,request_id,trace_id,trace_parent,trace_state,version FROM scheduled_job_runs WHERE id=? AND deleted_at IS NULL`), result.RunID); err != nil || persisted.Status != "queued" || persisted.RequestID != "integration-manual-request" || persisted.TraceID != traceID.String() || persisted.TraceParent != "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01" || persisted.TraceState != "vendor=value" {
 		t.Fatalf("persisted manual run = %+v err=%v", persisted, err)
 	}
 	var events int

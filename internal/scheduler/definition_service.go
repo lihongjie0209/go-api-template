@@ -12,6 +12,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
@@ -352,6 +353,7 @@ func (s *DefinitionService) Trigger(ctx context.Context, id string) (TriggerResu
 	runID := uuid.NewString()
 	requestID, _ := requestid.FromContext(ctx)
 	traceID := trace.SpanContextFromContext(ctx).TraceID().String()
+	traceParent, traceState := observability.CaptureTraceContext(ctx)
 	started := time.Now()
 	payload, err := json.Marshal(manualDispatchPayload{RunID: runID})
 	if err != nil {
@@ -359,7 +361,7 @@ func (s *DefinitionService) Trigger(ctx context.Context, id string) (TriggerResu
 	}
 	envelope := &commonv1.EventEnvelope{EventId: runID, EventType: manualDispatchEventType, AggregateId: definition.ID, AggregateType: "scheduled_job", SchemaVersion: 1, OccurredAt: timestamppb.New(started), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: traceID, ActorId: actor.ID, ActorType: string(actor.Type)}, Payload: payload}
 	err = s.tx.Within(ctx, &sql.TxOptions{}, func(tx *sqlx.Tx) error {
-		_, execErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), runID, definition.ID, definition.Code, definition.Name, definition.Handler, "manual", "queued", requestID, traceID, string(definition.Payload), definition.TimeoutSeconds, definition.LockTTLSeconds, started, actor.ID, started, actor.ID)
+		_, execErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,trace_parent,trace_state,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), runID, definition.ID, definition.Code, definition.Name, definition.Handler, "manual", "queued", requestID, traceID, traceParent, traceState, string(definition.Payload), definition.TimeoutSeconds, definition.LockTTLSeconds, started, actor.ID, started, actor.ID)
 		if execErr != nil {
 			return execErr
 		}

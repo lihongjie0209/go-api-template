@@ -18,7 +18,8 @@
 | 乐观锁 | 提交是新增记录，不需要期望版本；运行状态转移使用版本/所有权条件更新，重复消息不能重复执行。 |
 | 审计 | 请求记录和运行记录包含完整审计字段，由事务 actor 与数据库触发器维护；后台处理使用显式系统 actor。 |
 | 展示 | 返回 run ID 供前端跳转/轮询。所有时间保持带时区的 RFC 3339；任务名称随运行记录快照，执行中的状态和失败摘要清晰区分。 |
-| 测试 | 单测覆盖请求超时不取消已接受任务、重复消息、并发争抢、handler 失败、租约丢失和关闭恢复；带 `integration` 标签的数据库/消息队列测试由 CI 跑。 |
+| 可观测性 | 提交事务同时保存 `request_id`、`trace_id` 和有界的 W3C `traceparent`/`tracestate`，后台认领后恢复 Trace Context 并创建执行 span。只持久化 Trace Context，不复制 baggage、凭据或请求头；旧运行记录没有 Trace Context 时启动独立 span。日志关联沿用公共 Context handler，指标仅使用注册的 handler 名称。 |
+| 测试 | 单测覆盖请求超时不取消已接受任务、重复消息、并发争抢、handler 失败、租约丢失、关闭恢复及跨重启 Trace Context 恢复；带 `integration` 标签的数据库/消息队列测试由 CI 跑，并核对持久化的 Trace Context。 |
 | 共享能力 | 复用 SDK 分布式锁、现有事务 outbox、事件总线及后台生命周期；不新增临时 goroutine 或 Redis 队列。 |
 | 数据字典 | 运行记录含链路及错误数据，不适合字典；状态枚举由接口文档定义。 |
 
@@ -26,7 +27,7 @@
 
 提交请求必须在同一个数据库事务中写入待执行记录和 outbox 事件，不能在提交后直接发布消息。消息消费者在一个短事务中设置 `dispatched_at` 后确认消息；未被消息消费者确认的记录不得由 worker 认领。实际长任务由服务自身四个受生命周期管理的 worker 执行，不能占用消息消费者 25 秒的默认处理窗口。worker 在数据库中原子认领待处理记录，设置每次认领独立的随机 owner token 和有界租约并周期续约；服务重启后可重新认领已过期租约。状态限定为 `queued -> running -> success|error|skipped`，重复投递或过期 worker 无权覆盖最终结果。`skipped` 用于同一任务的分布式锁已被占用。任务执行超时以任务定义为准，且不继承 HTTP 请求 deadline。执行结束或超时后记录耗时、关联 Request ID/Trace ID 和不含敏感信息的错误摘要。执行器若有非幂等副作用，必须使用 run ID 作为业务幂等键；跨进程崩溃可能导致一次任务被重试。
 
-手动运行记录保存提交时已校验的任务 payload 快照，上限为 1 MiB，用于故障恢复后执行同一请求；该字段不向查询接口返回，也不进入操作日志。MySQL 的 `scheduled_job_runs.payload` 使用 `MEDIUMTEXT`，避免合法边界请求超过 `TEXT` 的 65,535 字节容量。
+手动运行记录保存提交时已校验的任务 payload 快照，上限为 1 MiB，用于故障恢复后执行同一请求；该字段不向查询接口返回，也不进入操作日志。MySQL 的 `scheduled_job_runs.payload` 使用 `MEDIUMTEXT`，避免合法边界请求超过 `TEXT` 的 65,535 字节容量。提交时另保存最大 55 字节的 `traceparent` 和 512 字节的 `tracestate`；worker 独立于 HTTP/消息消费者运行，必须从这两个持久字段恢复父 Trace，不能只依赖展示用的 `trace_id`。数据库字段长度与内存恢复入口均限制大小，并由 OpenTelemetry 校验格式。
 
 前端只在提交成功时提示“任务已提交”并显示返回的 run ID，不能提示“执行完成”。运行结果由 `/scheduled-job-runs/get` 或 `/page` 展示，默认按提交时间排序，避免不同数据库对空开始时间的排序差异。全链路失败处理应覆盖 outbox 派发重试/死信、消费者重复投递、worker 崩溃、数据库不可用、锁不可用及停机取消；超过重试上限的请求可通过现有 `outboxctl` 死信重放入口修复，不能静默丢失。
 

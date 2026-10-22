@@ -19,7 +19,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
@@ -207,14 +206,11 @@ func (o *Outbox) claim(ctx context.Context) (outboxRecord, bool, error) {
 }
 
 func injectTraceContext(ctx context.Context) (string, string) {
-	carrier := propagation.MapCarrier{}
-	propagation.TraceContext{}.Inject(ctx, carrier)
-	return carrier.Get("traceparent"), carrier.Get("tracestate")
+	return observability.CaptureTraceContext(ctx)
 }
 
 func extractTraceContext(ctx context.Context, traceParent, traceState string) context.Context {
-	carrier := propagation.MapCarrier{"traceparent": traceParent, "tracestate": traceState}
-	return propagation.TraceContext{}.Extract(ctx, carrier)
+	return observability.RestoreTraceContext(ctx, traceParent, traceState)
 }
 
 func (o *Outbox) markPublished(ctx context.Context, id string) error {
