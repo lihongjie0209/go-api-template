@@ -204,19 +204,93 @@ func TestDataLifecycleCreatePersistsDraftAndActionsAtomically(t *testing.T) {
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "tenant.member", action, sqlmock.AnyArg(), "admin-1", sqlmock.AnyArg(), "admin-1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 	}
-	mock.ExpectCommit()
 	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").
 		WithArgs(sqlmock.AnyArg(), "tenant-1").
 		WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", nil, "active", now, "admin-1", now, "admin-1", 1))
 	mock.ExpectQuery("SELECT v.id,v.policy_id,v.version_number").
 		WithArgs(sqlmock.AnyArg(), int64(1), "tenant-1").
 		WillReturnRows(versionRows().AddRow("version-1", "policy-1", 1, "document", "draft", nil, nil, now, "admin-1", now, "admin-1", 1))
+	mock.ExpectCommit()
 
 	ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
 	policy, version, err := service.Create(ctx, dataPolicyFixture())
 	require.NoError(t, err)
 	require.Equal(t, "policy-1", policy.ID)
 	require.Equal(t, VersionDraft, version.Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDataLifecycleCreateVersionReturnsAuditedRowBeforeCommit(t *testing.T) {
+	t.Parallel()
+	service, mock := dataLifecycleFixture(t, false)
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").
+		WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", nil, "active", now, "admin-1", now, "admin-1", 2))
+	mock.ExpectQuery(`SELECT COALESCE\(max\(version_number\),0\)\+1`).WithArgs("policy-1").
+		WillReturnRows(sqlmock.NewRows([]string{"next_version"}).AddRow(2))
+	mock.ExpectExec("INSERT INTO data_permission_policy_versions").
+		WithArgs(sqlmock.AnyArg(), "policy-1", int64(2), sqlmock.AnyArg(), VersionDraft, sqlmock.AnyArg(), "admin-1", sqlmock.AnyArg(), "admin-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	for _, action := range []string{"read", "list"} {
+		mock.ExpectExec("INSERT INTO data_permission_policy_actions").
+			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "tenant.member", action, sqlmock.AnyArg(), "admin-1", sqlmock.AnyArg(), "admin-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectExec("UPDATE data_permission_policies SET name=").
+		WithArgs("Member own records", sqlmock.AnyArg(), "admin-1", "policy-1", int64(2)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT v.id,v.policy_id,v.version_number").WithArgs("policy-1", int64(2), "tenant-1").
+		WillReturnRows(versionRows().AddRow("version-2", "policy-1", 2, "document", "draft", nil, nil, now, "admin-1", now, "admin-1", 1))
+	mock.ExpectCommit()
+	ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
+	version, err := service.CreateVersion(ctx, "policy-1", 2, dataPolicyFixture())
+	require.NoError(t, err)
+	require.Equal(t, "version-2", version.ID)
+	require.Equal(t, int64(2), version.VersionNumber)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDataLifecycleCreateRollsBackWhenAuditedReadFails(t *testing.T) {
+	t.Parallel()
+	service, mock := dataLifecycleFixture(t, false)
+	want := errors.New("read audited policy unavailable")
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id FROM tenants WHERE id=").WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("tenant-1"))
+	mock.ExpectExec("INSERT INTO data_permission_policies").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO data_permission_policy_versions").WillReturnResult(sqlmock.NewResult(0, 1))
+	for range 2 {
+		mock.ExpectExec("INSERT INTO data_permission_policy_actions").WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs(sqlmock.AnyArg(), "tenant-1").WillReturnError(want)
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
+	_, _, err := service.Create(ctx, dataPolicyFixture())
+	require.ErrorIs(t, err, want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDataLifecycleCreateVersionRollsBackWhenAuditedReadFails(t *testing.T) {
+	t.Parallel()
+	service, mock := dataLifecycleFixture(t, false)
+	want := errors.New("read audited version unavailable")
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").
+		WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", nil, "active", now, "admin-1", now, "admin-1", 2))
+	mock.ExpectQuery(`SELECT COALESCE\(max\(version_number\),0\)\+1`).WithArgs("policy-1").
+		WillReturnRows(sqlmock.NewRows([]string{"next_version"}).AddRow(2))
+	mock.ExpectExec("INSERT INTO data_permission_policy_versions").WillReturnResult(sqlmock.NewResult(0, 1))
+	for range 2 {
+		mock.ExpectExec("INSERT INTO data_permission_policy_actions").WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectExec("UPDATE data_permission_policies SET name=").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT v.id,v.policy_id,v.version_number").WithArgs("policy-1", int64(2), "tenant-1").WillReturnError(want)
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
+	_, err := service.CreateVersion(ctx, "policy-1", 2, dataPolicyFixture())
+	require.ErrorIs(t, err, want)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

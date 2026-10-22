@@ -635,6 +635,11 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || created.Version != 1 || version.Status != datapermission.VersionDraft {
 		t.Fatalf("create data permission policy=%+v version=%+v err=%v", created, version, err)
 	}
+	storedCreated, err := repository.Get(ctx, created.ID, tenantID)
+	if err != nil || created.Version != storedCreated.Version || created.CreatedBy != storedCreated.CreatedBy ||
+		!created.CreatedAt.Equal(storedCreated.CreatedAt) || !created.UpdatedAt.Equal(storedCreated.UpdatedAt) {
+		t.Fatalf("created data permission response must match committed audit row: returned=%+v stored=%+v err=%v", created, storedCreated, err)
+	}
 	storedDraft, err := service.GetVersion(actorCtx, created.ID, version.VersionNumber)
 	if err != nil {
 		t.Fatalf("load saved data permission draft: %v", err)
@@ -649,8 +654,21 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || draftSimulation.Baseline.CurrentAllowed || !draftSimulation.Candidate.CurrentAllowed || !draftSimulation.Changed {
 		t.Fatalf("saved draft simulation=%+v err=%v", draftSimulation, err)
 	}
-	published, err := service.Publish(actorCtx, created.ID, 1, created.Version)
-	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
+	createdVersion, err := service.CreateVersion(actorCtx, created.ID, created.Version, document)
+	if err != nil || createdVersion.VersionNumber != 2 || createdVersion.Status != datapermission.VersionDraft {
+		t.Fatalf("create next data permission version=%+v err=%v", createdVersion, err)
+	}
+	storedVersion, err := repository.GetVersion(ctx, created.ID, createdVersion.VersionNumber, tenantID)
+	if err != nil || createdVersion.Version != storedVersion.Version || createdVersion.CreatedBy != storedVersion.CreatedBy ||
+		!createdVersion.CreatedAt.Equal(storedVersion.CreatedAt) || !createdVersion.UpdatedAt.Equal(storedVersion.UpdatedAt) {
+		t.Fatalf("data permission version response must match committed audit row: returned=%+v stored=%+v err=%v", createdVersion, storedVersion, err)
+	}
+	currentPolicy, err := repository.Get(ctx, created.ID, tenantID)
+	if err != nil || currentPolicy.Version != created.Version+1 {
+		t.Fatalf("create version must update parent policy: policy=%+v err=%v", currentPolicy, err)
+	}
+	published, err := service.Publish(actorCtx, created.ID, createdVersion.VersionNumber, currentPolicy.Version)
+	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != createdVersion.VersionNumber {
 		t.Fatalf("publish data permission policy=%+v err=%v", published, err)
 	}
 	assertPolicyAudit := func(returned datapermission.PolicyRecord) {

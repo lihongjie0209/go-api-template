@@ -357,6 +357,8 @@ func (s *LifecycleService) Create(ctx context.Context, policy Policy) (PolicyRec
 		return PolicyRecord{}, VersionRecord{}, err
 	}
 	policyID, versionID, now := uuid.NewString(), uuid.NewString(), time.Now()
+	var createdPolicy PolicyRecord
+	var createdVersion VersionRecord
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var tenant any
 		if policy.Scope.Type == PolicyScopeTenant {
@@ -384,13 +386,27 @@ func (s *LifecycleService) Create(ctx context.Context, policy Policy) (PolicyRec
 		if err := insertActions(ctx, tx, versionID, policy, actor.ID, now); err != nil {
 			return err
 		}
-		return s.recordChangeTx(ctx, tx, "data-permission.policy.create", policyID, policy, 1)
+		if err := s.recordChangeTx(ctx, tx, "data-permission.policy.create", policyID, policy, 1); err != nil {
+			return err
+		}
+		createdPolicy, err = readPolicy(ctx, tx, tx.Rebind, policyID, actor.TenantID, false)
+		if err != nil {
+			return err
+		}
+		createdVersion, err = readVersion(ctx, tx, tx.Rebind, policyID, 1, actor.TenantID)
+		return err
 	})
 	if err != nil {
 		s.recordFailure(ctx, "data-permission.policy.create", policyID, policy)
 		return PolicyRecord{}, VersionRecord{}, err
 	}
-	return s.get(ctx, policyID, 1, actor.TenantID)
+	postCtx, cancel := s.postCommitContext(ctx)
+	defer cancel()
+	policies := []PolicyRecord{createdPolicy}
+	versions := []VersionRecord{createdVersion}
+	s.presentPolicies(postCtx, policies)
+	s.presentVersions(postCtx, versions)
+	return policies[0], versions[0], nil
 }
 
 func (s *LifecycleService) CreateVersion(ctx context.Context, policyID string, expectedVersion int64, policy Policy) (VersionRecord, error) {
@@ -410,6 +426,7 @@ func (s *LifecycleService) CreateVersion(ctx context.Context, policyID string, e
 		return VersionRecord{}, err
 	}
 	var number int64
+	var createdVersion VersionRecord
 	id, now := uuid.NewString(), time.Now()
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		current, e := lockPolicy(ctx, tx, policyID, actor.TenantID)
@@ -436,13 +453,21 @@ func (s *LifecycleService) CreateVersion(ctx context.Context, policyID string, e
 		if e := requireRow(result); e != nil {
 			return e
 		}
-		return s.recordChangeTx(ctx, tx, "data-permission.policy.version.create", policyID, policy, number)
+		if err := s.recordChangeTx(ctx, tx, "data-permission.policy.version.create", policyID, policy, number); err != nil {
+			return err
+		}
+		createdVersion, err = readVersion(ctx, tx, tx.Rebind, policyID, number, actor.TenantID)
+		return err
 	})
 	if err != nil {
 		s.recordFailure(ctx, "data-permission.policy.version.create", policyID, policy)
 		return VersionRecord{}, err
 	}
-	return s.GetVersion(ctx, policyID, number)
+	postCtx, cancel := s.postCommitContext(ctx)
+	defer cancel()
+	versions := []VersionRecord{createdVersion}
+	s.presentVersions(postCtx, versions)
+	return versions[0], nil
 }
 
 func (s *LifecycleService) Publish(ctx context.Context, policyID string, number, expectedVersion int64) (PolicyRecord, error) {
@@ -588,22 +613,6 @@ func (s *LifecycleService) postCommitContext(ctx context.Context) (context.Conte
 	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }
 
-func (s *LifecycleService) get(ctx context.Context, id string, number int64, tenantID string) (PolicyRecord, VersionRecord, error) {
-	policy, err := s.repository.Get(ctx, id, tenantID)
-	if err != nil {
-		return PolicyRecord{}, VersionRecord{}, err
-	}
-	version, err := s.repository.GetVersion(ctx, id, number, tenantID)
-	if err != nil {
-		return policy, version, err
-	}
-	policies := []PolicyRecord{policy}
-	versions := []VersionRecord{version}
-	s.presentPolicies(ctx, policies)
-	s.presentVersions(ctx, versions)
-	return policies[0], versions[0], nil
-}
-
 func (s *LifecycleService) presentPolicies(ctx context.Context, records []PolicyRecord) {
 	ids := make([]string, 0, len(records)*2)
 	for _, record := range records {
@@ -657,15 +666,7 @@ func (s *LifecycleService) actorNames(ctx context.Context, ids []string) map[str
 }
 
 func lockPolicy(ctx context.Context, tx *sqlx.Tx, id, tenantID string) (PolicyRecord, error) {
-	var record PolicyRecord
-	query, args := visiblePolicyQuery(`SELECT id,code,name,scope,tenant_id,published_version_number,status,created_at,created_by,updated_at,updated_by,version FROM data_permission_policies WHERE id=? AND deleted_at IS NULL`, []any{id}, tenantID)
-	if err := tx.GetContext(ctx, &record, tx.Rebind(query+` FOR UPDATE`), args...); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return record, ErrPolicyNotFound
-		}
-		return record, fmt.Errorf("lock data permission policy: %w", err)
-	}
-	return record, nil
+	return readPolicy(ctx, tx, tx.Rebind, id, tenantID, true)
 }
 
 func insertActions(ctx context.Context, tx *sqlx.Tx, versionID string, policy Policy, actor string, now time.Time) error {

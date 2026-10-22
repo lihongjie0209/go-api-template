@@ -33,6 +33,8 @@ retains request metadata but is not cancelled when the client disconnects.
 Their response records are read inside the mutation transaction after audit
 triggers run, before COMMIT; post-commit snapshot refresh or actor-name
 resolution cannot turn a committed write into a reported database-read failure.
+Policy and version creation follow the same rule: tenant-scoped reads of both
+new rows happen before COMMIT, and a failed read rolls back the creation.
 
 Status values:
 

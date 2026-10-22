@@ -76,9 +76,16 @@ func (r *Repository) Get(ctx context.Context, id, tenantID string) (PolicyRecord
 	if r == nil || r.db == nil {
 		return PolicyRecord{}, errors.New("data permission: policy database is disabled")
 	}
+	return readPolicy(ctx, r.db, r.db.Rebind, id, tenantID, false)
+}
+
+func readPolicy(ctx context.Context, queryer sqlx.QueryerContext, rebind func(string) string, id, tenantID string, forUpdate bool) (PolicyRecord, error) {
 	query, args := visiblePolicyQuery("SELECT "+policyColumns+" FROM data_permission_policies WHERE id=? AND deleted_at IS NULL", []any{id}, tenantID)
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
 	var record PolicyRecord
-	if err := r.db.GetContext(ctx, &record, r.db.Rebind(query), args...); err != nil {
+	if err := sqlx.GetContext(ctx, queryer, &record, rebind(query), args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return record, ErrPolicyNotFound
 		}
@@ -91,11 +98,15 @@ func (r *Repository) GetVersion(ctx context.Context, policyID string, versionNum
 	if r == nil || r.db == nil {
 		return VersionRecord{}, errors.New("data permission: policy database is disabled")
 	}
+	return readVersion(ctx, r.db, r.db.Rebind, policyID, versionNumber, tenantID)
+}
+
+func readVersion(ctx context.Context, queryer sqlx.QueryerContext, rebind func(string) string, policyID string, versionNumber int64, tenantID string) (VersionRecord, error) {
 	query := "SELECT " + prefixedVersionColumns("v") + " FROM data_permission_policy_versions v JOIN data_permission_policies p ON p.id=v.policy_id AND p.deleted_at IS NULL WHERE v.policy_id=? AND v.version_number=? AND v.deleted_at IS NULL"
 	args := []any{policyID, versionNumber}
 	query, args = visiblePolicyWhere(query, args, tenantID)
 	var record VersionRecord
-	if err := r.db.GetContext(ctx, &record, r.db.Rebind(query), args...); err != nil {
+	if err := sqlx.GetContext(ctx, queryer, &record, rebind(query), args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return record, ErrPolicyNotFound
 		}
