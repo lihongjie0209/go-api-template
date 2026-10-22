@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -201,13 +202,17 @@ func TestOutboxDispatchDeadLettersMismatchedEnvelopeWithoutPublishing(t *testing
 		WithArgs(sqlmock.AnyArg(), "decode_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "stored-event", "worker-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
+	metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
 	outbox := &Outbox{
 		cfg:     config.EventBus{DispatchBatchSize: 1, DispatchLease: time.Minute, ConsumerMaxDeliver: 1},
 		appName: "api", workerID: "worker-1", transactor: database.NewTransactor(sqlx.NewDb(db, "sqlmock")),
-		metrics: observability.NewMetrics(config.Config{}, nil, nil), logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		metrics: metrics, logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	require.NoError(t, outbox.dispatchBatch(t.Context()))
 	require.NoError(t, mock.ExpectationsWereMet())
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	require.Contains(t, recorder.Body.String(), `event_outbox_dispatch_outcomes_total{outcome="dead_letter"} 1`)
 }
 
 func TestOutboxPublishFailureRemainsPendingAfterDeliveryLimit(t *testing.T) {

@@ -129,6 +129,7 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 	for range o.cfg.DispatchBatchSize {
 		record, found, err := o.claim(ctx)
 		if err != nil {
+			o.metrics.ObserveOutboxOutcome("persistence_error")
 			return err
 		}
 		if !found {
@@ -141,9 +142,15 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 			span.RecordError(errDecodeEnvelope)
 			span.SetStatus(codes.Error, "decode envelope")
 			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errDecodeEnvelope); releaseErr != nil {
+				o.metrics.ObserveOutboxOutcome("persistence_error")
 				recordOutboxPersistenceFailure(span, releaseErr)
 				span.End()
 				return fmt.Errorf("release undecodable outbox event: %w", releaseErr)
+			}
+			if record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
+				o.metrics.ObserveOutboxOutcome("dead_letter")
+			} else {
+				o.metrics.ObserveOutboxOutcome("invalid_retry")
 			}
 			span.End()
 			continue
@@ -159,18 +166,22 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		if err != nil {
 			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "reason", errPublishEvent.Error())
 			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errPublishEvent); releaseErr != nil {
+				o.metrics.ObserveOutboxOutcome("persistence_error")
 				recordOutboxPersistenceFailure(span, releaseErr)
 				span.End()
 				return fmt.Errorf("release unpublished outbox event: %w", releaseErr)
 			}
+			o.metrics.ObserveOutboxOutcome("publish_retry")
 			span.End()
 			continue
 		}
 		if err := o.markPublished(dispatchCtx, record.ID); err != nil {
+			o.metrics.ObserveOutboxOutcome("persistence_error")
 			recordOutboxPersistenceFailure(span, err)
 			span.End()
 			return err
 		}
+		o.metrics.ObserveOutboxOutcome("published")
 		span.End()
 	}
 	return nil

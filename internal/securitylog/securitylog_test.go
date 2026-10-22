@@ -264,9 +264,9 @@ func TestConsumedEventIDMatchesMySQLPrimaryKeyLimit(t *testing.T) {
 	value := payload{EventType: EventLogin, Metadata: []byte(`{}`), OccurredAt: now}
 	service := &Service{cfg: config.SecurityLog{MaxPayloadBytes: 1024}}
 	for _, tc := range []struct {
-		name string
+		name   string
 		length int
-		valid bool
+		valid  bool
 	}{
 		{name: "64 bytes accepted", length: 64, valid: true},
 		{name: "65 bytes rejected", length: 65},

@@ -100,7 +100,7 @@ func TestConsumedEventIDMatchesMySQLPrimaryKeyLimit(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
 	value := eventPayload{
-		Entry: Entry{Operation: "order.create", Source: "backend", Protocol: "service", Succeeded: true},
+		Entry:   Entry{Operation: "order.create", Source: "backend", Protocol: "service", Succeeded: true},
 		ActorID: "actor-1", ActorType: "user", OccurredAt: now, Extension: json.RawMessage(`{}`),
 	}
 	service := &Service{cfg: config.OperationLog{MaxPayloadBytes: 1024}}

@@ -28,7 +28,10 @@ type Metrics struct {
 	InfrastructureDuration   *prometheus.HistogramVec
 	// Alert example: increase(event_consumer_restarts_total[5m]) > 3
 	EventConsumerRestarts *prometheus.CounterVec
-	BuildInfo             prometheus.Gauge
+	// Alert: increase(event_outbox_dispatch_outcomes_total{outcome="dead_letter"}[5m]) > 0
+	// Broker recovery: rate(event_outbox_dispatch_outcomes_total{outcome="publish_retry"}[5m]) > 0
+	EventOutboxOutcomes *prometheus.CounterVec
+	BuildInfo           prometheus.Gauge
 }
 
 func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
@@ -45,6 +48,7 @@ func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
 		InfrastructureOperations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "infrastructure_operations_total", Help: "Total cache, lock, idempotency, and object storage operations."}, []string{"component", "backend", "operation", "status"}),
 		InfrastructureDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "infrastructure_operation_duration_seconds", Help: "Cache, lock, idempotency, and object storage operation latency.", Buckets: prometheus.DefBuckets}, []string{"component", "backend", "operation"}),
 		EventConsumerRestarts:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "event_consumer_restarts_total", Help: "Consumer subscription restart attempts after unexpected exits."}, []string{"consumer"}),
+		EventOutboxOutcomes:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "event_outbox_dispatch_outcomes_total", Help: "Durable outbox dispatch attempt outcomes."}, []string{"outcome"}),
 		BuildInfo: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "service_build_info",
 			Help: "Static service build and deployment information.",
@@ -58,7 +62,7 @@ func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
 		}),
 	}
 	metrics.BuildInfo.Set(1)
-	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), metrics.HTTPRequests, metrics.HTTPDuration, metrics.CronRuns, metrics.CronDuration, metrics.GRPCRequests, metrics.GRPCDuration, metrics.OutboundRequests, metrics.OutboundDuration, metrics.InfrastructureOperations, metrics.InfrastructureDuration, metrics.EventConsumerRestarts, metrics.BuildInfo)
+	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), metrics.HTTPRequests, metrics.HTTPDuration, metrics.CronRuns, metrics.CronDuration, metrics.GRPCRequests, metrics.GRPCDuration, metrics.OutboundRequests, metrics.OutboundDuration, metrics.InfrastructureOperations, metrics.InfrastructureDuration, metrics.EventConsumerRestarts, metrics.EventOutboxOutcomes, metrics.BuildInfo)
 	if db != nil {
 		registry.MustRegister(collectors.NewDBStatsCollector(db.DB, "primary"))
 	}
@@ -81,6 +85,16 @@ func (m *Metrics) ObserveEventConsumerRestart(consumer string) {
 		return
 	}
 	m.EventConsumerRestarts.WithLabelValues(consumer).Inc()
+}
+
+func (m *Metrics) ObserveOutboxOutcome(outcome string) {
+	if m == nil || !m.enabled {
+		return
+	}
+	switch outcome {
+	case "published", "publish_retry", "invalid_retry", "dead_letter", "persistence_error":
+		m.EventOutboxOutcomes.WithLabelValues(outcome).Inc()
+	}
 }
 
 func (m *Metrics) Enabled() bool { return m.enabled }
