@@ -41,7 +41,7 @@ func TestPlatformConfigLockPreservesAcquisitionFailure(t *testing.T) {
 	require.False(t, called)
 }
 
-func TestPlatformConfigLockPreservesReleaseFailureAfterCommit(t *testing.T) {
+func TestPlatformConfigLockDoesNotReportReleaseFailureAfterCommit(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestPlatformConfigLockPreservesReleaseFailureAfterCommit(t *testing.T) {
 		called = true
 		return nil
 	})
-	require.ErrorIs(t, err, cache.ErrLockLost)
+	require.NoError(t, err)
 	require.NotErrorIs(t, err, ErrConflict)
 	require.True(t, called)
 	require.NoError(t, mock.ExpectationsWereMet())

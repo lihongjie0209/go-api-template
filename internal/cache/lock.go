@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/microservice-platform-go/distlock"
 )
 
@@ -44,7 +45,7 @@ func WithCommittedLock(ctx context.Context, locker Locker, key string, ttl, retr
 		return err
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "distributed lock error after committed mutation", slog.Any("error", err))
+		slog.WarnContext(ctx, "distributed lock error after committed mutation", slog.Any("error", observability.SafeError(err, errLockOperationFailed)))
 	}
 	return nil
 }

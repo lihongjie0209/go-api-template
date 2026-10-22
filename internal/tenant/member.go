@@ -320,7 +320,8 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		}
 		return s.presentMemberMutation(ctx, created), nil
 	}
-	if err := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
+	// A successful run has already committed the membership transaction.
+	if err := cache.WithCommittedLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
 		return Member{}, err
 	}
 	return s.presentMemberMutation(ctx, created), nil

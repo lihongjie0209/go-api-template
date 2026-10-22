@@ -607,7 +607,8 @@ func (s *Service) mutate(ctx context.Context, operation, id, key string, request
 		return nil
 	}
 	if s.locker != nil {
-		if err := cache.WithLock(ctx, s.locker, "platform-config:"+key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
+		// A successful run has already committed the configuration transaction.
+		if err := cache.WithCommittedLock(ctx, s.locker, "platform-config:"+key, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
 			return fmt.Errorf("%s: %w", operation, err)
 		}
 	} else if err := run(ctx); err != nil {

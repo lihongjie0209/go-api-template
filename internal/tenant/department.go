@@ -809,5 +809,6 @@ func (s *DepartmentService) withDepartmentLock(ctx context.Context, tenantID, su
 	if s.locker == nil {
 		return fn(ctx)
 	}
-	return cache.WithLock(ctx, s.locker, "tenant:"+tenantID+":department:"+suffix, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, fn)
+	// Department mutation callbacks return nil only after their transaction commits.
+	return cache.WithCommittedLock(ctx, s.locker, "tenant:"+tenantID+":department:"+suffix, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, fn)
 }
