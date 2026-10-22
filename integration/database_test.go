@@ -73,6 +73,27 @@ type integrationLifecycle struct{}
 
 func (integrationLifecycle) Append(fx.Hook) {}
 
+type integrationSchedulerLifecycle struct{ hook fx.Hook }
+
+func (l *integrationSchedulerLifecycle) Append(hook fx.Hook) { l.hook = hook }
+
+type rollbackCompletionRecorder struct {
+	base      operationlog.TransactionalRecorder
+	attempted chan struct{}
+}
+
+func (r rollbackCompletionRecorder) Enabled() bool { return r.base.Enabled() }
+func (r rollbackCompletionRecorder) Record(ctx context.Context, entry operationlog.Entry) error {
+	return r.base.Record(ctx, entry)
+}
+func (r rollbackCompletionRecorder) RecordTx(ctx context.Context, tx *sqlx.Tx, entry operationlog.Entry) error {
+	if err := r.base.RecordTx(ctx, tx, entry); err != nil {
+		return err
+	}
+	close(r.attempted)
+	return errors.New("force rollback after completion event insert")
+}
+
 type allowCapabilityAuthorizer struct{}
 
 func (allowCapabilityAuthorizer) Authorize(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
@@ -769,7 +790,7 @@ func testDataPermissionSimulationOutbox(t *testing.T, ctx context.Context, db *s
 			t.Fatal(err)
 		}
 		if envelope.EventType != "platform.operation-log.recorded.v1" || envelope.Context.GetRequestId() != "simulation-diagnostic-request" {
-			t.Fatalf("invalid simulation diagnostic envelope: %+v", envelope)
+			t.Fatalf("invalid simulation diagnostic envelope: %+v", &envelope)
 		}
 		var event struct {
 			Operation      string `json:"operation"`
@@ -2317,6 +2338,7 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 	testScheduledJobCompletionOutboxTransaction(t, ctx, db, transactor, handlers, updated)
 	testManualScheduledJobOutboxTransaction(t, ctx, db, transactor, updated.ID)
+	testManualWorkerCompletionTransaction(t, ctx, db, transactor, updated)
 
 	if err := service.Delete(actorCtx, updated.ID, updated.Version); err != nil {
 		t.Fatalf("delete scheduled job: %v", err)
@@ -2378,7 +2400,7 @@ func testScheduledJobCompletionOutboxTransaction(t *testing.T, ctx context.Conte
 	}
 	var envelope commonv1.EventEnvelope
 	if err := proto.Unmarshal(rawEnvelope, &envelope); err != nil || envelope.AggregateId == "" || envelope.EventType != "platform.operation-log.recorded.v1" {
-		t.Fatalf("completion event = %+v, err=%v", envelope, err)
+		t.Fatalf("completion event = %+v, err=%v", &envelope, err)
 	}
 	var linkedRuns int
 	if err := db.GetContext(ctx, &linkedRuns, db.Rebind(`SELECT count(*) FROM scheduled_job_runs WHERE id=? AND scheduled_job_id=? AND trigger_source='manual' AND status='success' AND deleted_at IS NULL`), envelope.AggregateId, definition.ID); err != nil || linkedRuns != 1 {
@@ -2462,6 +2484,133 @@ func testManualScheduledJobOutboxTransaction(t *testing.T, ctx context.Context, 
 	}); err != nil {
 		t.Fatalf("complete manual run fixture: %v", err)
 	}
+}
+
+func testManualWorkerCompletionTransaction(t *testing.T, ctx context.Context, db *sqlx.DB, transactor *appdb.Transactor, definition scheduler.Definition) {
+	t.Helper()
+	const subject = "platform.operation-log.v1"
+	cfg := config.Config{
+		App:           config.App{Name: "scheduler-integration"},
+		Database:      config.Database{Enabled: true},
+		Cron:          config.Cron{Timezone: "Asia/Shanghai"},
+		EventBus:      config.EventBus{Enabled: true},
+		OperationLog:  config.OperationLog{Enabled: true, Subject: subject, MaxPayloadBytes: 4096},
+		Observability: config.Observability{MetricsEnabled: true},
+	}
+	bus := &eventbus.Bus{}
+	outbox := eventbus.NewOutbox(cfg, bus, transactor, nil, nil)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	base := operationlog.New(cfg, bus, db, transactor, nil, outbox, nil)
+	actorCtx := platformprincipal.SystemContext(ctx, "scheduler-admin")
+
+	countEvents := func(t *testing.T) int {
+		t.Helper()
+		var count int
+		if err := db.GetContext(ctx, &count, db.Rebind(`SELECT count(*) FROM event_outbox WHERE subject=? AND deleted_at IS NULL`), subject); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	insertDispatchedRun := func(t *testing.T) string {
+		t.Helper()
+		runID := uuid.NewString()
+		if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			now := time.Now()
+			_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO scheduled_job_runs(id,scheduled_job_id,job_code,job_name,handler,trigger_source,status,request_id,trace_id,started_at,finished_at,duration_ms,error_message,payload,timeout_seconds,lock_ttl_seconds,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,0,'',?,?,?,?,?,?,?,1)`), runID, definition.ID, definition.Code, definition.Name, definition.Handler, "manual", "queued", "worker-integration", "", string(definition.Payload), definition.TimeoutSeconds, definition.LockTTLSeconds, now, "scheduler-admin", now, "scheduler-admin")
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET dispatched_at=?,updated_at=?,updated_by=? WHERE id=?`), now, now, "scheduler-admin", runID)
+			return err
+		}); err != nil {
+			t.Fatalf("insert dispatched manual run: %v", err)
+		}
+		return runID
+	}
+	startWorker := func(t *testing.T, recorder operationlog.TransactionalRecorder) (*scheduler.Manager, *observability.Metrics) {
+		t.Helper()
+		lifecycle := &integrationSchedulerLifecycle{}
+		metrics := observability.NewMetrics(cfg, nil, nil)
+		manager, err := scheduler.NewManager(lifecycle, cfg, db, transactor, integrationLifecycleLocker{}, metrics, logger, scheduler.NewHandlerRegistry(logger), recorder)
+		if err != nil {
+			t.Fatalf("construct manual worker: %v", err)
+		}
+		if err := lifecycle.hook.OnStart(ctx); err != nil {
+			t.Fatalf("start manual worker: %v", err)
+		}
+		t.Cleanup(func() {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := lifecycle.hook.OnStop(stopCtx); err != nil {
+				t.Errorf("stop manual worker: %v", err)
+			}
+		})
+		return manager, metrics
+	}
+	readStatus := func(t *testing.T, runID string) string {
+		t.Helper()
+		var status string
+		if err := db.GetContext(ctx, &status, db.Rebind(`SELECT status FROM scheduled_job_runs WHERE id=? AND deleted_at IS NULL`), runID); err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+
+	t.Run("completion commits run and event together", func(t *testing.T) {
+		before := countEvents(t)
+		manager, _ := startWorker(t, base)
+		runID := insertDispatchedRun(t)
+		manager.NotifyManual()
+		deadline := time.Now().Add(5 * time.Second)
+		for readStatus(t, runID) != "success" && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if status := readStatus(t, runID); status != "success" {
+			t.Fatalf("manual worker status=%q, want success", status)
+		}
+		if got := countEvents(t); got != before+1 {
+			t.Fatalf("completion events=%d, want %d", got, before+1)
+		}
+		var rawEnvelope []byte
+		if err := db.GetContext(ctx, &rawEnvelope, db.Rebind(`SELECT envelope FROM event_outbox WHERE subject=? AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 1`), subject); err != nil {
+			t.Fatal(err)
+		}
+		var envelope commonv1.EventEnvelope
+		if err := proto.Unmarshal(rawEnvelope, &envelope); err != nil || envelope.AggregateId != runID {
+			t.Fatalf("completion event run ID=%q, want %q, err=%v", envelope.AggregateId, runID, err)
+		}
+	})
+
+	t.Run("completion rollback retains recoverable run", func(t *testing.T) {
+		before := countEvents(t)
+		attempted := make(chan struct{})
+		manager, metrics := startWorker(t, rollbackCompletionRecorder{base: base, attempted: attempted})
+		runID := insertDispatchedRun(t)
+		manager.NotifyManual()
+		select {
+		case <-attempted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("worker did not attempt completion")
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			response := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+			if strings.Contains(response.Body.String(), `cron_runs_total{job="system.sample",status="error"} 1`) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("worker did not finish the failed completion attempt")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if status := readStatus(t, runID); status != "running" {
+			t.Fatalf("rolled-back completion status=%q, want running for lease recovery", status)
+		}
+		if got := countEvents(t); got != before {
+			t.Fatalf("rolled-back completion events=%d, want %d", got, before)
+		}
+	})
 }
 
 type integrationStorage struct {
