@@ -227,6 +227,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 		return Record{}, fmt.Errorf("upload object: %w", safeStorageFailure(err, errObjectUploadFailed))
 	}
 	record.ETag = stored.ETag
+	var uploaded Record
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		if err := insert(ctx, tx, record, actor.ID); err != nil {
 			return err
@@ -242,6 +243,11 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 		if rows != 1 {
 			return errors.New("file upload intent is no longer pending")
 		}
+		where, args := fileScope(actor, id)
+		query := tx.Rebind(`SELECT ` + recordColumns + ` FROM files WHERE ` + where + ` AND deleted_at IS NULL`)
+		if err := tx.GetContext(ctx, &uploaded, query, args...); err != nil {
+			return fmt.Errorf("read uploaded file in transaction: %w", err)
+		}
 		entry.Duration = time.Since(started)
 		entry.Succeeded = true
 		return s.operations.RecordTx(ctx, tx, entry)
@@ -251,7 +257,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 		s.recordFailure(ctx, entry, started)
 		return Record{}, fmt.Errorf("record uploaded file: %w", err)
 	}
-	return s.Get(ctx, id)
+	return s.presentBestEffort(ctx, uploaded), nil
 }
 
 func (s *Service) Page(ctx context.Context, input PageInput) (Page, error) {
@@ -326,6 +332,18 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	record, err := s.loadRecord(ctx, actor, id)
+	if err != nil {
+		return Record{}, err
+	}
+	records := []Record{record}
+	if err := s.present(ctx, records); err != nil {
+		return Record{}, fmt.Errorf("present file: %w", err)
+	}
+	return records[0], nil
+}
+
+func (s *Service) loadRecord(ctx context.Context, actor platformprincipal.Principal, id string) (Record, error) {
 	if strings.TrimSpace(id) == "" || len(id) > 256 {
 		return Record{}, ErrInvalidInput
 	}
@@ -338,17 +356,21 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		}
 		return Record{}, fmt.Errorf("get file: %w", err)
 	}
-	records := []Record{record}
-	if err := s.present(ctx, records); err != nil {
-		return Record{}, fmt.Errorf("present file: %w", err)
-	}
-	return records[0], nil
+	return record, nil
 }
 
 func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 	started := time.Now()
 	entry := operationlog.Entry{Operation: "file.download", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: map[string]any{"id": id}}
-	record, err := s.Get(ctx, id)
+	if !s.enabled {
+		return Download{}, ErrDisabled
+	}
+	actorValue, err := actor(ctx)
+	if err != nil {
+		s.recordFailure(ctx, entry, started)
+		return Download{}, err
+	}
+	record, err := s.loadRecord(ctx, actorValue, id)
 	if err != nil {
 		s.recordFailure(ctx, entry, started)
 		return Download{}, err
@@ -368,7 +390,7 @@ func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 	if err := s.operations.Record(ctx, entry); err != nil {
 		return Download{}, fmt.Errorf("record file download: %w", err)
 	}
-	return Download{File: record, URL: signed.URL, ExpiresAt: presentation.Time(signed.ExpiresAt)}, nil
+	return Download{File: s.presentBestEffort(ctx, record), URL: signed.URL, ExpiresAt: presentation.Time(signed.ExpiresAt)}, nil
 }
 
 func (s *Service) present(ctx context.Context, records []Record) error {
@@ -389,6 +411,18 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 	return nil
 }
 
+// An Identity display-name lookup failure must not report a committed upload
+// or an access-logged download as failed. Audit IDs remain visible as fallback.
+func (s *Service) presentBestEffort(ctx context.Context, record Record) Record {
+	records := []Record{record}
+	if err := s.present(ctx, records); err == nil {
+		return records[0]
+	}
+	record.CreatedByName, record.UpdatedByName = record.CreatedBy, record.UpdatedBy
+	record.CreatedAt, record.UpdatedAt = presentation.Time(record.CreatedAt), presentation.Time(record.UpdatedAt)
+	return record
+}
+
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if !s.enabled {
 		return ErrDisabled
@@ -397,7 +431,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err != nil {
 		return err
 	}
-	record, err := s.Get(ctx, id)
+	record, err := s.loadRecord(ctx, actorValue, id)
 	if err != nil {
 		return err
 	}

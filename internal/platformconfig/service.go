@@ -216,27 +216,31 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if err != nil {
 		return Record{}, fmt.Errorf("generate platform config stable ID: %w", err)
 	}
+	var created Record
 	err = s.mutate(ctx, "platform.config.create", id, input.Key, configLogRequest(input.Key, input.Name, input.Category, input.IsPublic, input.Status, 0), func(lockCtx context.Context, tx *sqlx.Tx) error {
 		now := time.Now()
 		var deletedAt sql.NullTime
 		findErr := tx.GetContext(lockCtx, &deletedAt, tx.Rebind(`SELECT deleted_at FROM platform_configs WHERE id=? FOR UPDATE`), id)
+		var writeErr error
 		switch {
 		case findErr == nil && !deletedAt.Valid:
 			return ErrConflict
 		case findErr == nil:
-			_, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE platform_configs SET config_key=?,name=?,category=?,value_type=?,value=?,description=?,is_public=?,status=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL`), input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, id)
-			return err
+			_, writeErr = tx.ExecContext(lockCtx, tx.Rebind(`UPDATE platform_configs SET config_key=?,name=?,category=?,value_type=?,value=?,description=?,is_public=?,status=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL`), input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, id)
 		case errors.Is(findErr, sql.ErrNoRows):
-			_, err := tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO platform_configs(id,config_key,name,category,value_type,value,description,is_public,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, now, actor.ID)
-			return err
+			_, writeErr = tx.ExecContext(lockCtx, tx.Rebind(`INSERT INTO platform_configs(id,config_key,name,category,value_type,value,description,is_public,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.Key, input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, now, actor.ID, now, actor.ID)
 		default:
 			return findErr
 		}
+		if writeErr != nil {
+			return writeErr
+		}
+		return tx.GetContext(lockCtx, &created, tx.Rebind(`SELECT `+columns+` FROM platform_configs WHERE id=? AND deleted_at IS NULL`), id)
 	})
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, id)
+	return s.presentMutation(ctx, created), nil
 }
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
@@ -246,19 +250,24 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if id == "" || len(id) > maxConfigIDLength {
 		return Record{}, ErrInvalid
 	}
-	var record Record
-	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+columns+` FROM platform_configs WHERE id=? AND deleted_at IS NULL`), id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return record, ErrNotFound
-	}
+	record, err := s.loadRecord(ctx, id)
 	if err != nil {
-		return record, err
+		return Record{}, err
 	}
 	records := []Record{record}
 	if err := s.present(ctx, records); err != nil {
 		return Record{}, err
 	}
 	return records[0], nil
+}
+
+func (s *Service) loadRecord(ctx context.Context, id string) (Record, error) {
+	var record Record
+	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+columns+` FROM platform_configs WHERE id=? AND deleted_at IS NULL`), strings.TrimSpace(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	return record, err
 }
 
 func actionTargetID(id string) (string, error) {
@@ -407,6 +416,18 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 	}
 	return nil
 }
+
+// Keep display-only Identity failures from making a committed configuration
+// change look retryable. The returned row was loaded inside the transaction.
+func (s *Service) presentMutation(ctx context.Context, record Record) Record {
+	records := []Record{record}
+	if err := s.present(ctx, records); err == nil {
+		return records[0]
+	}
+	record.CreatedByName, record.UpdatedByName = record.CreatedBy, record.UpdatedBy
+	record.CreatedAt, record.UpdatedAt = presentation.Time(record.CreatedAt), presentation.Time(record.UpdatedAt)
+	return record
+}
 func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error) {
 	actor, err := platformprincipal.Require(ctx)
 	if err != nil {
@@ -422,10 +443,11 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if err := validate("", input.Name, input.Category, input.Description, input.Status, input.Value); err != nil {
 		return Record{}, err
 	}
-	existing, err := s.Get(ctx, input.ID)
+	existing, err := s.loadRecord(ctx, input.ID)
 	if err != nil {
 		return Record{}, err
 	}
+	var updated Record
 	err = s.mutate(ctx, "platform.config.update", input.ID, existing.Key, configLogRequest(existing.Key, input.Name, input.Category, input.IsPublic, input.Status, input.Version), func(lockCtx context.Context, tx *sqlx.Tx) error {
 		result, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE platform_configs SET name=?,category=?,value_type=?,value=?,description=?,is_public=?,status=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`), input.Name, input.Category, valueType(input.Value), string(input.Value), input.Description, input.IsPublic, input.Status, time.Now(), actor.ID, input.ID, input.Version)
 		if err != nil {
@@ -438,12 +460,12 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 		if rows != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		return tx.GetContext(lockCtx, &updated, tx.Rebind(`SELECT `+columns+` FROM platform_configs WHERE id=? AND deleted_at IS NULL`), input.ID)
 	})
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, input.ID)
+	return s.presentMutation(ctx, updated), nil
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	actor, err := platformprincipal.Require(ctx)
@@ -454,7 +476,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if id == "" || len(id) > maxConfigIDLength || version <= 0 {
 		return ErrInvalid
 	}
-	existing, err := s.Get(ctx, id)
+	existing, err := s.loadRecord(ctx, id)
 	if err != nil {
 		return err
 	}
