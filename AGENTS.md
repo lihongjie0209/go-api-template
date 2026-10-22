@@ -435,6 +435,10 @@ available. A feature must not introduce a second transport for the same event.
 - A durable cross-service notification must use a transactional outbox written
   in the same database transaction as the business change and then be published
   to the message queue. Do not dual-write the database and queue directly.
+- The outbox row ID is the durable event identity. Before publishing a claimed
+  row, verify that the encoded envelope carries the same event ID; malformed
+  or mismatched rows must follow the bounded retry/dead-letter path without
+  publishing. Consumer idempotency keys must use that same canonical ID.
 - A request must not synchronously execute work whose configured maximum can
   exceed the HTTP/gRPC deadline or server write timeout. Persist the job request
   and outbox event atomically, return a durable run ID, and expose queued,

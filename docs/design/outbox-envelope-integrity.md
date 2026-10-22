@@ -8,7 +8,7 @@
 | Cache and distributed lock | Neither is used. The database claim lease and JetStream event ID retain their existing ownership and duplicate-delivery roles. |
 | Optimistic lock and audit | No business row is updated. Existing outbox claim/release updates and audit actor handling remain unchanged. |
 | Presentation and dictionary | Not applicable to an internal queue worker; outbox events are not dictionary data. |
-| Tests | Unit tests cover matching, mismatched, empty and malformed event IDs. CI integration tests continue to cover transactional outbox dispatch; local development runs only unit tests. |
+| Tests | Unit tests cover matching, mismatched, empty and malformed event IDs. A dispatcher-level SQL-mock case proves that a mismatched envelope is dead-lettered with `decode_failed` under the existing owner/published/deleted fencing predicates, without taking the publish path. CI integration tests continue to cover transactional outbox dispatch; local development runs only unit tests. |
 | Shared capability | Reuses the existing platform event bus, outbox, error sanitization and retry/dead-letter path. No parallel queue transport is introduced. |
 
 This check protects against corrupted or manually replayed outbox rows. A

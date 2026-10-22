@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/stretchr/testify/require"
@@ -146,6 +148,37 @@ func TestDecodeClaimedEnvelopeRejectsMalformedProtobuf(t *testing.T) {
 	t.Parallel()
 	_, err := decodeClaimedEnvelope(outboxRecord{ID: "event-1", Envelope: []byte{0xff}})
 	require.ErrorIs(t, err, errDecodeEnvelope)
+}
+
+func TestOutboxDispatchDeadLettersMismatchedEnvelopeWithoutPublishing(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	storedEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "unexpected-event"})
+	require.NoError(t, err)
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id,subject,envelope,trace_parent,trace_state,attempts,created_at FROM event_outbox`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope", "trace_parent", "trace_state", "attempts", "created_at"}).
+			AddRow("stored-event", "platform.test.recorded.v1", storedEnvelope, "", "", 0, now))
+	mock.ExpectExec(`UPDATE event_outbox SET locked_by=`).
+		WithArgs("worker-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "api:outbox-dispatcher", "stored-event").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE event_outbox SET attempts=attempts\+1,dead_at=.* WHERE id=\? AND locked_by=\? AND published_at IS NULL AND deleted_at IS NULL$`).
+		WithArgs(sqlmock.AnyArg(), "decode_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "stored-event", "worker-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	outbox := &Outbox{
+		cfg:     config.EventBus{DispatchBatchSize: 1, DispatchLease: time.Minute, ConsumerMaxDeliver: 1},
+		appName: "api", workerID: "worker-1", transactor: database.NewTransactor(sqlx.NewDb(db, "sqlmock")),
+		metrics: observability.NewMetrics(config.Config{}, nil, nil), logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	require.NoError(t, outbox.dispatchBatch(t.Context()))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestOutboxReleaseMovesExhaustedEventToDeadState(t *testing.T) {
