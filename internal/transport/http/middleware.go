@@ -106,6 +106,11 @@ type responseCapture struct {
 	written  bool
 }
 
+type idempotentHTTPResult struct {
+	HTTPStatus int      `json:"http_status"`
+	Response   Response `json:"response"`
+}
+
 func (w *responseCapture) Write(value []byte) (int, error) {
 	w.WriteHeaderNow()
 	w.capture(value)
@@ -188,14 +193,27 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		}
 		switch decision.State {
 		case idempotency.StateCompleted:
-			var response Response
-			if err := json.Unmarshal(decision.Response, &response); err != nil {
+			var saved idempotentHTTPResult
+			if err := json.Unmarshal(decision.Response, &saved); err != nil {
 				Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", err))
 				return
 			}
-			response.RequestID = requestID(c)
+			if saved.HTTPStatus == 0 {
+				// Results written before the status-aware format used the response
+				// envelope directly, and every such success had HTTP 200.
+				if err := json.Unmarshal(decision.Response, &saved.Response); err != nil {
+					Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", err))
+					return
+				}
+				saved.HTTPStatus = http.StatusOK
+			}
+			if saved.HTTPStatus < http.StatusOK || saved.HTTPStatus >= http.StatusMultipleChoices {
+				Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", nil))
+				return
+			}
+			saved.Response.RequestID = requestID(c)
 			c.Abort()
-			c.JSON(http.StatusOK, response)
+			c.JSON(saved.HTTPStatus, saved.Response)
 			return
 		case idempotency.StateFailed:
 			c.AbortWithStatusJSON(decision.Failure.HTTPStatus, Response{Code: decision.Failure.Code, Message: decision.Failure.Message, Body: nil, RequestID: requestID(c)})
@@ -262,8 +280,13 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			err = manager.Abort(persistCtx, key, decision.Owner)
 		} else if capture.Status() >= http.StatusBadRequest {
 			err = manager.Fail(persistCtx, key, decision.Owner, idempotency.Failure{Code: response.Code, Message: response.Message, HTTPStatus: capture.Status()})
+		} else if capture.Status() >= http.StatusMultipleChoices {
+			err = manager.Abort(persistCtx, key, decision.Owner)
+			if err == nil {
+				err = errors.New("idempotent response must be successful JSON")
+			}
 		} else {
-			err = manager.Complete(persistCtx, key, decision.Owner, response)
+			err = manager.Complete(persistCtx, key, decision.Owner, idempotentHTTPResult{HTTPStatus: capture.Status(), Response: response})
 		}
 		if err != nil {
 			failIdempotencyState(c, logger, originalHeaders, err)

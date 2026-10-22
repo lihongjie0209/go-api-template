@@ -29,19 +29,20 @@ import (
 )
 
 type fakeIdempotencyManager struct {
-	decision     idempotency.Decision
-	beginKey     string
-	fingerprint  string
-	completed    *Response
-	completeErr  error
-	failureErr   error
-	abortErr     error
-	failed       *idempotency.Failure
-	leaseStarted bool
-	leaseStopped bool
-	aborted      bool
-	maxBytes     int
-	onComplete   func()
+	decision        idempotency.Decision
+	beginKey        string
+	fingerprint     string
+	completed       *Response
+	completedStatus int
+	completeErr     error
+	failureErr      error
+	abortErr        error
+	failed          *idempotency.Failure
+	leaseStarted    bool
+	leaseStopped    bool
+	aborted         bool
+	maxBytes        int
+	onComplete      func()
 }
 
 func TestEnvironmentInjectsActiveProfile(t *testing.T) {
@@ -116,9 +117,10 @@ func (m *fakeIdempotencyManager) Complete(_ context.Context, _, _ string, respon
 	if m.onComplete != nil {
 		m.onComplete()
 	}
-	value, ok := response.(Response)
+	value, ok := response.(idempotentHTTPResult)
 	if ok {
-		m.completed = &value
+		m.completed = &value.Response
+		m.completedStatus = value.HTTPStatus
 	}
 	return m.completeErr
 }
@@ -255,8 +257,89 @@ func TestIdempotencyExecutionCompletesUnifiedResponse(t *testing.T) {
 	if calls != 1 || manager.beginKey != "operation-1" || manager.fingerprint == "" || !manager.leaseStarted {
 		t.Fatalf("calls=%d key=%q fingerprint=%q", calls, manager.beginKey, manager.fingerprint)
 	}
-	if manager.completed == nil || manager.completed.RequestID != "" || manager.completed.Code != 0 {
-		t.Fatalf("completed = %+v", manager.completed)
+	if manager.completed == nil || manager.completed.RequestID != "" || manager.completed.Code != 0 || manager.completedStatus != http.StatusOK {
+		t.Fatalf("completed = %+v, status = %d", manager.completed, manager.completedStatus)
+	}
+}
+
+func TestIdempotencyExecutionPreservesCreatedStatusOnReplay(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+	router.Use(RequestID(), func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "create-key"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/create"}, logger))
+	called := 0
+	router.POST("/create", func(c *gin.Context) {
+		called++
+		c.JSON(http.StatusCreated, Response{Code: 0, Message: "success", Body: gin.H{"id": "created-1"}, RequestID: requestID(c)})
+	})
+	request := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/create", strings.NewReader(`{}`))
+		req.Header.Set("X-Request-ID", id)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	first := request("first-request")
+	if first.Code != http.StatusCreated || manager.completedStatus != http.StatusCreated || manager.completed == nil {
+		t.Fatalf("first status=%d saved status=%d response=%+v", first.Code, manager.completedStatus, manager.completed)
+	}
+	stored, err := json.Marshal(idempotentHTTPResult{HTTPStatus: manager.completedStatus, Response: *manager.completed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.decision = idempotency.Decision{State: idempotency.StateCompleted, Response: stored}
+	replayed := request("replay-request")
+	var body Response
+	if err := json.Unmarshal(replayed.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Code != http.StatusCreated || called != 1 || body.RequestID != "replay-request" || !strings.Contains(replayed.Body.String(), "created-1") {
+		t.Fatalf("replay status=%d calls=%d response=%+v", replayed.Code, called, body)
+	}
+}
+
+func TestIdempotencyExecutionRejectsUnreplayableStatus(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{name: "redirect", status: http.StatusFound},
+		{name: "not modified", status: http.StatusNotModified},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+				c.Next()
+			}, IdempotencyExecution(manager, []string{"/test"}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			router.POST("/test", func(c *gin.Context) {
+				c.JSON(test.status, Response{Code: 0, Message: "unreplayable"})
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			if recorder.Code != http.StatusServiceUnavailable || !manager.aborted || manager.completed != nil || strings.Contains(recorder.Body.String(), "unreplayable") {
+				t.Fatalf("status=%d aborted=%v completed=%+v body=%q", recorder.Code, manager.aborted, manager.completed, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestIdempotencyExecutionRejectsInvalidStoredStatus(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateCompleted,
+		Response: []byte(`{"http_status":302,"response":{"code":0,"message":"redirect"}}`)}}
+	calls := 0
+	router := idempotencyTestRouter(t, manager, &calls)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	if recorder.Code != http.StatusServiceUnavailable || calls != 0 || strings.Contains(recorder.Body.String(), "redirect") {
+		t.Fatalf("status=%d calls=%d body=%q", recorder.Code, calls, recorder.Body.String())
 	}
 }
 
