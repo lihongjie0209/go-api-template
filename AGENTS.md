@@ -328,6 +328,12 @@ TTL, and invalidation for its own data.
   example refresh-token reuse), the transport must not enqueue a duplicate.
 - Log persistence is asynchronous through the configured queue. Business code
   must not write operation/security log tables directly.
+- Audit-log consumers must distinguish duplicate event IDs from all other
+  database errors. A duplicate may be acknowledged only when a specific
+  database uniqueness constraint proves that the same event was already
+  persisted; coercion, truncation, trigger and connectivity failures must
+  propagate so the queue can retry or dead-letter. Do not use MySQL
+  `INSERT IGNORE` or an untargeted conflict handler on durable log writes.
 - Queue consumer error callbacks must use the shared safe-error logger; SDK
   callbacks may carry handler errors, event identifiers, or connection details.
   Never forward their raw error text to application logs or traces.

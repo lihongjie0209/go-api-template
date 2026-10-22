@@ -278,13 +278,17 @@ func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, value 
 func insert(ctx context.Context, tx *sqlx.Tx, id string, value payload, auditActor, actorName, subjectName string) error {
 	now := time.Now()
 	query := `INSERT INTO security_logs (id, tenant_id, actor_id, actor_name_snapshot, actor_type, subject_id, subject_name_snapshot, subject_type, event_type, succeeded, reason, error_code, error_message, identifier_hash, token_id_hash, session_id, request_id, trace_id, client_ip, user_agent, metadata, occurred_at, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`
-	if tx.DriverName() == "mysql" {
-		query = "INSERT IGNORE" + strings.TrimPrefix(query, "INSERT")
-	} else {
+	mysql := tx.DriverName() == "mysql"
+	if !mysql {
 		query = strings.Replace(query, "CAST(? AS JSON)", "CAST(? AS jsonb)", 1) + " ON CONFLICT (id, occurred_at) DO NOTHING"
 	}
 	query = tx.Rebind(query)
 	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, truncate(actorName, 512), value.ActorType, value.SubjectID, truncate(subjectName, 512), value.SubjectType, value.EventType, value.Succeeded, value.Reason, value.ErrorCode, value.ErrorMessage, value.IdentifierHash, value.TokenIDHash, value.SessionID, value.RequestID, value.TraceID, value.ClientIP, value.UserAgent, string(value.Metadata), value.OccurredAt, now, auditActor, now, auditActor, 1)
+	// MySQL has only the event ID as a unique key. Ignore its duplicate error,
+	// not other write failures or coercion warnings hidden by INSERT IGNORE.
+	if mysql && database.IsUniqueViolation(err) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("insert security log: %w", err)
 	}

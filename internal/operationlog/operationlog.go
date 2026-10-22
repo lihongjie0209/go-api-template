@@ -269,14 +269,18 @@ func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, payloa
 func (s *Service) insert(ctx context.Context, tx *sqlx.Tx, id string, value eventPayload, actorName string) error {
 	now := time.Now()
 	query := `INSERT INTO operation_logs (id, tenant_id, actor_id, actor_name_snapshot, actor_type, application_id, source, operation, resource_type, resource_id, resource_name_snapshot, protocol, method, route, request_payload, duration_ms, succeeded, error_code, error_message, request_id, trace_id, client_ip, user_agent, extension, occurred_at, created_at, created_by, updated_at, updated_by, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`
-	if tx.DriverName() == "mysql" {
-		query = "INSERT IGNORE" + strings.TrimPrefix(query, "INSERT")
-	} else {
+	mysql := tx.DriverName() == "mysql"
+	if !mysql {
 		query = strings.Replace(query, "CAST(? AS JSON)", "CAST(? AS jsonb)", 1)
 		query += " ON CONFLICT (id, occurred_at) DO NOTHING"
 	}
 	query = tx.Rebind(query)
 	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, truncate(actorName, 512), value.ActorType, value.ApplicationID, value.Source, value.Operation, value.ResourceType, value.ResourceID, truncate(value.ResourceName, 512), value.Protocol, value.Method, value.Route, value.RequestPayload, value.DurationMS, value.Succeeded, value.ErrorCode, truncate(value.ErrorMessage, 2048), value.RequestID, value.TraceID, value.ClientIP, truncate(value.UserAgent, 1024), string(value.Extension), value.OccurredAt, now, value.ActorID, now, value.ActorID, 1)
+	// MySQL has only the event ID as a unique key. Ignore its duplicate error,
+	// not other write failures or coercion warnings hidden by INSERT IGNORE.
+	if mysql && database.IsUniqueViolation(err) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("insert operation log: %w", err)
 	}

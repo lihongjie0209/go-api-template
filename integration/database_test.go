@@ -21,6 +21,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	migratedb "github.com/golang-migrate/migrate/v4/database"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -1027,13 +1028,41 @@ func testMySQLLogRetention(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	now := time.Now()
 	operationInsert := db.Rebind(`INSERT INTO operation_logs(id,tenant_id,actor_id,actor_type,application_id,source,operation,resource_type,resource_id,protocol,method,route,request_payload,duration_ms,succeeded,error_code,error_message,request_id,trace_id,client_ip,user_agent,extension,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	securityInsert := db.Rebind(`INSERT INTO security_logs(id,tenant_id,actor_id,actor_type,subject_id,subject_type,event_type,succeeded,reason,error_code,error_message,identifier_hash,token_id_hash,session_id,request_id,trace_id,client_ip,user_agent,metadata,occurred_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	operationArgs := []any{"expired-operation", "tenant-retention", "actor", "system", "", "backend", "retention.test", "", "", "service", "", "", "", 1, true, "", "", "", "", "", "", `{}`, old, now, "ignored", now, "ignored", 99}
+	securityArgs := []any{
+		"expired-security", "tenant-retention", "actor", "system", "subject", "user", "login", true,
+		"", "", "", "", "", "", "", "", "", "",
+		`{}`, old, now, "ignored", now, "ignored", 99,
+	}
 	actorCtx := platformprincipal.SystemContext(ctx, "retention-test")
 	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
-		if _, err := tx.ExecContext(actorCtx, operationInsert, "expired-operation", "tenant-retention", "actor", "system", "", "backend", "retention.test", "", "", "service", "", "", "", 1, true, "", "", "", "", "", "", `{}`, old, now, "ignored", now, "ignored", 99); err != nil {
+		if _, err := tx.ExecContext(actorCtx, operationInsert, operationArgs...); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(actorCtx, securityInsert, "expired-security", "tenant-retention", "actor", "system", "subject", "user", "login", true, "", "", "", "", "", "", "", "", "", "", `{}`, old, now, "ignored", now, "ignored", 99)
-		return err
+		if _, err := tx.ExecContext(actorCtx, securityInsert, securityArgs...); err != nil {
+			return err
+		}
+		for _, record := range []struct {
+			name  string
+			query string
+			args  []any
+		}{
+			{name: "operation", query: operationInsert, args: operationArgs},
+			{name: "security", query: securityInsert, args: securityArgs},
+		} {
+			_, duplicateErr := tx.ExecContext(actorCtx, record.query, record.args...)
+			if !appdb.IsUniqueViolation(duplicateErr) {
+				return fmt.Errorf("%s log duplicate ID error = %v, want unique violation", record.name, duplicateErr)
+			}
+			invalidArgs := append([]any(nil), record.args...)
+			invalidArgs[0] = strings.Repeat("x", 65)
+			_, invalidErr := tx.ExecContext(actorCtx, record.query, invalidArgs...)
+			var mysqlErr *mysqlDriver.MySQLError
+			if !errors.As(invalidErr, &mysqlErr) || mysqlErr.Number != 1406 {
+				return fmt.Errorf("%s log overlong ID error = %v, want MySQL 1406", record.name, invalidErr)
+			}
+		}
+		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}

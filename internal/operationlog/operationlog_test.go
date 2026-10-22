@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
@@ -207,5 +208,63 @@ func TestRecordTxUsesCallerTransaction(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMySQLInsertOnlyIgnoresDuplicateEventID(t *testing.T) {
+	t.Parallel()
+	dbFailure := errors.New("database unavailable")
+	for _, test := range []struct {
+		name          string
+		dbError       error
+		wantMySQLCode uint16
+	}{
+		{name: "inserted"},
+		{name: "duplicate event", dbError: &mysqlDriver.MySQLError{Number: 1062, Message: "duplicate primary key"}},
+		{name: "invalid value", dbError: &mysqlDriver.MySQLError{Number: 1406, Message: "data too long"}, wantMySQLCode: 1406},
+		{name: "database failure", dbError: dbFailure},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "mysql")
+			mock.ExpectBegin()
+			tx, err := db.BeginTxx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation := mock.ExpectExec(`^INSERT INTO operation_logs `)
+			if test.dbError != nil {
+				operation.WillReturnError(test.dbError)
+			} else {
+				operation.WillReturnResult(sqlmock.NewResult(0, 1))
+			}
+			service := &Service{}
+			err = service.insert(t.Context(), tx, "event-1", eventPayload{Entry: Entry{Operation: "order.create"}, Extension: json.RawMessage(`{}`)}, "actor")
+			switch {
+			case test.wantMySQLCode != 0:
+				var mysqlErr *mysqlDriver.MySQLError
+				if !errors.As(err, &mysqlErr) || mysqlErr.Number != test.wantMySQLCode {
+					t.Fatalf("insert() error = %v, want MySQL %d", err, test.wantMySQLCode)
+				}
+			case test.dbError == dbFailure:
+				if !errors.Is(err, dbFailure) {
+					t.Fatalf("insert() error = %v, want database failure", err)
+				}
+			case err != nil:
+				t.Fatalf("insert() error = %v", err)
+			}
+			mock.ExpectRollback()
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
