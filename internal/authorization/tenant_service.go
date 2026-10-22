@@ -592,7 +592,7 @@ func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, rol
 	if err != nil {
 		return err
 	}
-	current, err := s.getRole(ctx, actor.TenantID, roleID, scope)
+	current, err := readRole(ctx, s.db, actor.TenantID, roleID, scope)
 	if err != nil {
 		return err
 	}
@@ -1235,7 +1235,7 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 	if err != nil {
 		return TenantRole{}, err
 	}
-	current, err := s.getRole(ctx, actor.TenantID, roleID, scope)
+	current, err := readRole(ctx, s.db, actor.TenantID, roleID, scope)
 	if err != nil {
 		return TenantRole{}, err
 	}
@@ -1290,7 +1290,7 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 	if err != nil {
 		return err
 	}
-	current, err := s.getRole(ctx, actor.TenantID, roleID, scope)
+	current, err := readRole(ctx, s.db, actor.TenantID, roleID, scope)
 	if err != nil {
 		return err
 	}

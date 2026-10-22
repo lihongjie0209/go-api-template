@@ -753,7 +753,7 @@ func TestSetRolePermissionsCanRemoveNoLongerAssignablePermission(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
-	service := &TenantAuthorizationService{db: db, transactor: database.NewTransactor(db)}
+	service := &TenantAuthorizationService{db: db, transactor: database.NewTransactor(db), actors: unavailableRoleActors{}}
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
 		ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1",
 	})
@@ -779,6 +779,27 @@ func TestSetRolePermissionsCanRemoveNoLongerAssignablePermission(t *testing.T) {
 	mock.ExpectCommit()
 
 	require.NoError(t, service.SetRolePermissions(ctx, "role-1", 2, nil))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDeleteRoleDoesNotRequireActorDisplayResolver(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &TenantAuthorizationService{db: db, transactor: database.NewTransactor(db), actors: unavailableRoleActors{}}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+		ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1",
+	})
+	want := errors.New("permission lookup unavailable")
+	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id.*FROM tenant_roles tr`).WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name"}).AddRow("role-1", "tenant-1", "Auditor"))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT permission_id FROM tenant_role_permissions`).WithArgs("tenant-1", "role-1").WillReturnError(want)
+	mock.ExpectRollback()
+	err = service.DeleteRole(ctx, "role-1", 1)
+	require.ErrorIs(t, err, want)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -1152,7 +1173,7 @@ func TestUpdateRoleReadsAuditedResultBeforeCommit(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = raw.Close() })
 			db := sqlx.NewDb(raw, "sqlmock")
-			service := NewTenantAuthorizationService(db, database.NewTransactor(db), nil, nil, nil, nil, config.Config{}, nil)
+			service := NewTenantAuthorizationService(db, database.NewTransactor(db), nil, nil, nil, unavailableRoleActors{}, config.Config{}, nil)
 			ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1"})
 			mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", "role-1").
 				WillReturnRows(tenantRoleRows("role-1", "Auditor", 1))
