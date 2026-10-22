@@ -37,16 +37,26 @@ func (w *Worker) Start() {
 	}()
 }
 
-// Stop cancels the worker and waits for it to return or for ctx to expire.
-func (w *Worker) Stop(ctx context.Context) error {
+// Cancel signals the worker to stop without waiting for it. It is useful when
+// several workers must receive cancellation before any of them is joined.
+func (w *Worker) Cancel() {
 	w.mu.Lock()
 	cancel := w.cancel
+	w.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// Stop cancels the worker and waits for it to return or for ctx to expire.
+func (w *Worker) Stop(ctx context.Context) error {
+	w.Cancel()
+	w.mu.Lock()
 	done := w.done
 	w.mu.Unlock()
 	if done == nil {
 		return nil
 	}
-	cancel()
 	select {
 	case <-done:
 		return nil

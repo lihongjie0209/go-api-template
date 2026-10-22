@@ -102,25 +102,39 @@ func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Tr
 			}
 		}
 		return nil
-	}, OnStop: func(ctx context.Context) error {
-		cancelScheduler()
-		for _, worker := range manager.manualWorkers {
-			if err := worker.Stop(ctx); err != nil {
-				return err
+	}, OnStop: manager.stop})
+	return manager, nil
+}
+
+func (m *Manager) stop(ctx context.Context) error {
+	m.cancel()
+	cronStopped := m.runner.Stop()
+	for _, worker := range m.manualWorkers {
+		worker.Cancel()
+	}
+	var stopErr error
+	for _, worker := range m.manualWorkers {
+		if err := worker.Stop(ctx); err != nil && stopErr == nil {
+			stopErr = err
+		}
+	}
+	if m.cfg.Cron.Enabled {
+		select {
+		case <-m.done:
+		case <-ctx.Done():
+			if stopErr == nil {
+				stopErr = ctx.Err()
 			}
 		}
-		if cfg.Cron.Enabled {
-			<-manager.done
+	}
+	select {
+	case <-cronStopped.Done():
+	case <-ctx.Done():
+		if stopErr == nil {
+			stopErr = ctx.Err()
 		}
-		stopCtx := runner.Stop()
-		select {
-		case <-stopCtx.Done():
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}})
-	return manager, nil
+	}
+	return stopErr
 }
 
 func (m *Manager) Notify() {

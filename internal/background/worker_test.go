@@ -51,3 +51,23 @@ func TestWorkerStopBeforeStart(t *testing.T) {
 		t.Fatalf("Stop() error = %v", err)
 	}
 }
+
+func TestWorkerCancelSignalsWithoutWaiting(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	worker := New(func(ctx context.Context) {
+		close(started)
+		<-ctx.Done()
+		close(canceled)
+		<-release
+	})
+	worker.Start()
+	<-started
+	worker.Cancel()
+	<-canceled
+	close(release)
+	if err := worker.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+}

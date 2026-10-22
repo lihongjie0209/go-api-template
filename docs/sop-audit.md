@@ -76,9 +76,13 @@ their existing byte-limit contracts. Both verify and PostgreSQL/MySQL
 Testcontainers boundary cases passed in run `39585986505` at commit `7175fd9`.
 Durable manual runs now persist and restore bounded W3C Trace Context across
 worker restarts; migration `000046` and both CI jobs passed in run `39705560089`
-at commit `d25d9fe`. Follow-up local work marks completion-persistence failure
-as a correlated error and rejects invalid persisted execution snapshots;
-migration `000047` adds database bounds, with CI pending the next batch.
+at commit `d25d9fe`. Follow-up work marks completion-persistence failure as a
+correlated error and rejects invalid persisted execution snapshots. Migration
+`000047` adds database bounds; both verify and PostgreSQL/MySQL integration
+passed in run `39706438023` at commit `e0f5261`. Subsequent local commits pin
+manual lock-contention deadline status and bound each database-lease renewal
+attempt to its renewal interval; their unit and scheduler race tests pass, but
+CI has not yet run on those commits.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,

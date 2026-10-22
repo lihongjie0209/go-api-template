@@ -11,7 +11,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/robfig/cron/v3"
@@ -303,4 +305,59 @@ func TestManualJobLockContentionUntilDeadlineIsError(t *testing.T) {
 			t.Fatalf("manual lock attempts=%d, want retry before deadline", locker.attempts.Load())
 		}
 	})
+}
+
+func TestManagerStopCancelsEveryWorkerWhenJoinDeadlineExpires(t *testing.T) {
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	first := background.New(func(context.Context) {
+		close(firstStarted)
+		<-firstRelease
+	})
+	secondStarted := make(chan struct{})
+	secondCanceled := make(chan struct{})
+	second := background.New(func(ctx context.Context) {
+		close(secondStarted)
+		<-ctx.Done()
+		close(secondCanceled)
+	})
+	first.Start()
+	second.Start()
+	<-firstStarted
+	<-secondStarted
+	defer func() {
+		close(firstRelease)
+		if err := first.Stop(context.Background()); err != nil {
+			t.Errorf("join first worker: %v", err)
+		}
+		if err := second.Stop(context.Background()); err != nil {
+			t.Errorf("join second worker: %v", err)
+		}
+	}()
+
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+	defer cancelScheduler()
+	runner := cron.New()
+	runner.Start()
+	manager := &Manager{
+		cfg:           config.Config{Cron: config.Cron{Enabled: true}},
+		runner:        runner,
+		ctx:           schedulerCtx,
+		cancel:        cancelScheduler,
+		done:          make(chan struct{}), // A stalled refresh must not block shutdown.
+		manualWorkers: []*background.Worker{first, second},
+	}
+	stopCtx, cancelStop := context.WithCancel(context.Background())
+	cancelStop()
+	if err := manager.stop(stopCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop() error=%v, want canceled shutdown deadline", err)
+	}
+	select {
+	case <-secondCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("second worker was not canceled after first worker join timed out")
+	}
+	if schedulerCtx.Err() != context.Canceled {
+		t.Fatal("scheduler context was not canceled")
+	}
 }
