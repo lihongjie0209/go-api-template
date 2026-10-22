@@ -116,9 +116,14 @@ func (s *Service) CreateDefinition(ctx context.Context, in DefinitionInput) (Def
 	}
 	id := uuid.NewString()
 	started := time.Now()
+	var created Definition
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		_, e := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO dictionary_definitions(id,dictionary_code,name,dictionary_type,source_type,description,status,extension,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, in.Code, in.Name, in.Kind, in.Source, in.Description, in.Status, string(in.Extension), now, actor.ID, now, actor.ID)
+		if e != nil {
+			return e
+		}
+		created, e = getDefinitionTx(ctx, tx, id)
 		if e != nil {
 			return e
 		}
@@ -131,7 +136,31 @@ func (s *Service) CreateDefinition(ctx context.Context, in DefinitionInput) (Def
 		}
 		return Definition{}, err
 	}
-	return s.getDefinition(ctx, id)
+	return s.presentDefinitionMutation(ctx, created), nil
+}
+
+func getDefinitionTx(ctx context.Context, tx *sqlx.Tx, id string) (Definition, error) {
+	var definition Definition
+	err := tx.GetContext(ctx, &definition, tx.Rebind(`SELECT `+definitionColumns+` FROM dictionary_definitions WHERE id=? AND deleted_at IS NULL`), id)
+	if err != nil {
+		return Definition{}, err
+	}
+	if err := storedDefinitionSize(definition); err != nil {
+		return Definition{}, err
+	}
+	return definition, nil
+}
+
+func (s *Service) presentDefinitionMutation(ctx context.Context, definition Definition) Definition {
+	names, err := presentation.ActorNames(ctx, s.actors, definition.CreatedBy, definition.UpdatedBy)
+	if err != nil {
+		definition.CreatedByName, definition.UpdatedByName = definition.CreatedBy, definition.UpdatedBy
+	} else {
+		definition.CreatedByName, definition.UpdatedByName = names[definition.CreatedBy], names[definition.UpdatedBy]
+	}
+	definition.CreatedAt = presentation.Time(definition.CreatedAt)
+	definition.UpdatedAt = presentation.Time(definition.UpdatedAt)
+	return definition
 }
 func (s *Service) getDefinition(ctx context.Context, id string) (Definition, error) {
 	var d Definition
@@ -428,6 +457,7 @@ func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 	}
 	id := uuid.NewString()
 	started := time.Now()
+	var created Item
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var definition struct {
 			Kind   Kind   `db:"dictionary_type"`
@@ -474,6 +504,10 @@ func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 		if e != nil {
 			return e
 		}
+		created, e = getItemTx(ctx, tx, id)
+		if e != nil {
+			return e
+		}
 		return s.recordTx(ctx, tx, "dictionary.item.create", "dictionary_item", id, in.Name, map[string]any{"dictionary_id": in.DictionaryID, "code": in.Code}, started)
 	})
 	if err != nil {
@@ -483,14 +517,39 @@ func (s *Service) CreateItem(ctx context.Context, in ItemInput) (Item, error) {
 		}
 		return Item{}, err
 	}
+	return s.presentItemMutation(ctx, created), nil
+}
+
+func getItemTx(ctx context.Context, tx *sqlx.Tx, id string) (Item, error) {
 	var item Item
-	err = s.db.GetContext(ctx, &item, s.db.Rebind(`SELECT `+itemColumns+` FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), id)
-	if err == nil {
-		records := []Item{item}
-		err = s.presentItems(ctx, records)
-		item = records[0]
+	if err := tx.GetContext(ctx, &item, tx.Rebind(`SELECT `+itemColumns+` FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), id); err != nil {
+		return Item{}, err
 	}
-	return item, err
+	if _, err := storedItemBytes(item); err != nil {
+		return Item{}, err
+	}
+	if item.ParentID != nil {
+		err := tx.GetContext(ctx, &item.ParentName, tx.Rebind(`SELECT name FROM dictionary_items WHERE id=? AND dictionary_id=? AND deleted_at IS NULL`), *item.ParentID, item.DictionaryID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Item{}, ErrInvalid
+		}
+		if err != nil {
+			return Item{}, err
+		}
+	}
+	return item, nil
+}
+
+func (s *Service) presentItemMutation(ctx context.Context, item Item) Item {
+	names, err := presentation.ActorNames(ctx, s.actors, item.CreatedBy, item.UpdatedBy)
+	if err != nil {
+		item.CreatedByName, item.UpdatedByName = item.CreatedBy, item.UpdatedBy
+	} else {
+		item.CreatedByName, item.UpdatedByName = names[item.CreatedBy], names[item.UpdatedBy]
+	}
+	item.CreatedAt = presentation.Time(item.CreatedAt)
+	item.UpdatedAt = presentation.Time(item.UpdatedAt)
+	return item
 }
 
 func (s *Service) UpdateDefinition(ctx context.Context, in DefinitionUpdate) (Definition, error) {
@@ -504,6 +563,7 @@ func (s *Service) UpdateDefinition(ctx context.Context, in DefinitionUpdate) (De
 		return Definition{}, ErrInvalid
 	}
 	started := time.Now()
+	var updated Definition
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		result, e := tx.ExecContext(ctx, tx.Rebind(`UPDATE dictionary_definitions SET name=?,description=?,status=?,extension=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), in.Name, in.Description, in.Status, string(in.Extension), time.Now(), actor.ID, in.ID, in.Version)
 		if e != nil {
@@ -516,13 +576,17 @@ func (s *Service) UpdateDefinition(ctx context.Context, in DefinitionUpdate) (De
 		if n == 0 {
 			return ErrStaleVersion
 		}
+		updated, e = getDefinitionTx(ctx, tx, in.ID)
+		if e != nil {
+			return e
+		}
 		return s.recordTx(ctx, tx, "dictionary.definition.update", "dictionary", in.ID, in.Name, map[string]any{"status": in.Status, "version": in.Version}, started)
 	})
 	if err != nil {
 		s.recordFailure(ctx, "dictionary.definition.update", "dictionary", in.ID, in.Name, map[string]any{"status": in.Status, "version": in.Version}, started)
 		return Definition{}, err
 	}
-	return s.getDefinition(ctx, in.ID)
+	return s.presentDefinitionMutation(ctx, updated), nil
 }
 func (s *Service) DeleteDefinition(ctx context.Context, id string, version int64) error {
 	actor, err := platformprincipal.Require(ctx)
@@ -582,6 +646,7 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 	}
 	started := time.Now()
 	var dictionaryID string
+	var updated Item
 	err = s.tx.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var candidateDictionaryID string
 		if e := tx.GetContext(ctx, &candidateDictionaryID, tx.Rebind(`SELECT dictionary_id FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), in.ID); e != nil {
@@ -639,6 +704,10 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 		if e != nil {
 			return e
 		}
+		updated, e = getItemTx(ctx, tx, in.ID)
+		if e != nil {
+			return e
+		}
 		return s.recordTx(ctx, tx, "dictionary.item.update", "dictionary_item", in.ID, in.Name, map[string]any{"version": in.Version}, started)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -649,14 +718,7 @@ func (s *Service) UpdateItem(ctx context.Context, in ItemUpdate) (Item, error) {
 		s.recordFailure(ctx, "dictionary.item.update", "dictionary_item", in.ID, in.Name, map[string]any{"version": in.Version}, started)
 		return Item{}, err
 	}
-	var item Item
-	err = s.db.GetContext(ctx, &item, s.db.Rebind(`SELECT `+itemColumns+` FROM dictionary_items WHERE id=? AND deleted_at IS NULL`), in.ID)
-	if err == nil {
-		records := []Item{item}
-		err = s.presentItems(ctx, records)
-		item = records[0]
-	}
-	return item, err
+	return s.presentItemMutation(ctx, updated), nil
 }
 
 func validateItemParentChain(ctx context.Context, tx *sqlx.Tx, dictionaryID, itemID, parentID string) error {

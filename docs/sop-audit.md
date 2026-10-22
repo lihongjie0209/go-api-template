@@ -728,3 +728,15 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Optimistic lock and audit | Update/rotation retain `WHERE id=? AND version=?`, and account audit triggers maintain actor, timestamps and version. The transaction reads these authoritative fields before commit. |
 | Presentation | The returned account retains actor display names from the existing owned identity tables; the one-time secret is returned only after confirmed commit. Times remain timezone-aware; no upstream display lookup runs after commit. |
 | Tests and shared capability | Unit regressions cover result-read rollback, secret non-delivery on rollback, committed secret delivery and transactional log behavior. Service-local integration tests remain the database gate; shared transactor, principal and log recorders are reused. |
+
+## Dictionary mutation response consistency
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Existing POST+JSON definition/item create and update contracts, validation, global errors and separate read/page APIs stay unchanged. Each mutation reads its returned row and validates stored size inside the write transaction; a failed read rolls back instead of reporting a failed request after commit. Query filters and tree semantics are unchanged. |
+| Authentication and authorization | Existing Resource/Action checks and actor principal stay mandatory for management mutations; public dictionary queries remain separate. Static items are managed only under a static definition; in-process providers stay code-registered. |
+| Operation and security logs | Existing dictionary operation events commit with the mutation after the result read. No new security event is required for ordinary dictionary content; failed reads follow the existing sanitized operation-failure path. Extension JSON is not added to logs. |
+| Cache and distributed lock | No mutation-response cache or lock is added. The existing definition row lock serializes item changes and the database is authoritative; ordinary read-cache behavior and invalidation owner are unchanged. |
+| Optimistic lock and audit | Update predicates retain expected versions; audit triggers maintain actor, timestamps and next version for both definitions and items. The returned row is read after the SQL write but before commit. |
+| Presentation | Actor display lookup is best-effort after commit with stable actor-ID fallback and Asia/Shanghai time conversion. An item's parent name is read in the same transaction, so a later display-service failure cannot leave an opaque parent ID without a display field or turn a committed write into an error. |
+| Tests and shared capability | Unit regressions cover rollback on result-read failure, post-commit display outage, parent-name preservation and audited version. Service-contained Testcontainers remain the integration gate. The shared transactor, principal, tree contract and presentation resolver are reused. |

@@ -348,6 +348,17 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || deleteTarget.ID != definition.ID || deleteTarget.Code != definition.Code || deleteTarget.Version != definition.Version {
 		t.Fatalf("dictionary delete target=%+v err=%v", deleteTarget, err)
 	}
+	definition, err = service.UpdateDefinition(actorCtx, dictionary.DefinitionUpdate{ID: definition.ID, Name: "Regions Updated", Status: "active", Version: definition.Version})
+	if err != nil || definition.Name != "Regions Updated" || definition.Version != 2 {
+		t.Fatalf("updated dictionary definition=%+v err=%v", definition, err)
+	}
+	var committedDefinition struct {
+		Name    string `db:"name"`
+		Version int64  `db:"version"`
+	}
+	if err := db.GetContext(actorCtx, &committedDefinition, db.Rebind(`SELECT name,version FROM dictionary_definitions WHERE id=?`), definition.ID); err != nil || committedDefinition.Name != definition.Name || committedDefinition.Version != definition.Version {
+		t.Fatalf("dictionary update response differs from committed row: %+v err=%v", committedDefinition, err)
+	}
 	root, err := service.CreateItem(actorCtx, dictionary.ItemInput{DictionaryID: definition.ID, Code: "cn", Name: "China", SortOrder: 1})
 	if err != nil {
 		t.Fatalf("create root dictionary item: %v", err)
@@ -420,7 +431,7 @@ func testDictionaryLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 		t.Fatalf("stale dictionary item update error=%v", err)
 	}
 	child, err = service.UpdateItem(actorCtx, dictionary.ItemUpdate{ID: child.ID, ParentID: &root.ID, Name: "Guangdong", Value: "guangdong-value", SortOrder: 1, Version: child.Version})
-	if err != nil || child.Version < 2 {
+	if err != nil || child.Version < 2 || child.ParentName != root.Name {
 		t.Fatalf("update dictionary tree item with depth validation: %#v err=%v", child, err)
 	}
 	stored, err := service.GetItem(actorCtx, root.ID)
