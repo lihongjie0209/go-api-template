@@ -171,6 +171,11 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				if err := db.GetContext(ctx, &timezone, `SELECT @@session.time_zone`); err != nil || timezone != "+08:00" {
 					t.Fatalf("timezone=%q err=%v", timezone, err)
 				}
+				var sqlMode string
+				if err := db.GetContext(ctx, &sqlMode, `SELECT @@session.sql_mode`); err != nil || !strings.Contains(sqlMode, "STRICT_TRANS_TABLES") {
+					t.Fatalf("mysql session sql_mode=%q err=%v", sqlMode, err)
+				}
+				testMySQLStrictModeOverride(t, ctx, dsn)
 			}
 			if userTables != 0 {
 				t.Fatal("generic template migration must not create a users table")
@@ -1019,6 +1024,26 @@ func assertFileQueryIndexes(t *testing.T, ctx context.Context, db *sqlx.DB, data
 		if count != 1 {
 			t.Fatalf("file index %s count=%d", index, count)
 		}
+	}
+}
+
+func testMySQLStrictModeOverride(t *testing.T, ctx context.Context, dsn string) {
+	t.Helper()
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	strictDB, err := appdb.Open(ctx, config.Database{
+		Type: "mysql", DSN: dsn + separator + "sql_mode=%27%27",
+		MaxOpenConns: 1, MaxIdleConns: 1, PingTimeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("open mysql with non-strict requested mode: %v", err)
+	}
+	defer func() { _ = strictDB.Close() }()
+	var sqlMode string
+	if err := strictDB.GetContext(ctx, &sqlMode, `SELECT @@session.sql_mode`); err != nil || !strings.Contains(sqlMode, "STRICT_TRANS_TABLES") {
+		t.Fatalf("mysql non-strict override was not hardened: mode=%q err=%v", sqlMode, err)
 	}
 }
 

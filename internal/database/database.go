@@ -80,6 +80,13 @@ func mysqlConnectionConfig(dsn, databaseName string) (*mysqlDriver.Config, error
 		connectionConfig.Params = make(map[string]string)
 	}
 	connectionConfig.Params["time_zone"] = "'+08:00'"
+	sqlMode := connectionConfig.Params["sql_mode"]
+	if sqlMode == "" {
+		sqlMode = "@@SESSION.sql_mode"
+	}
+	// The driver applies Params to every new connection. Preserve configured or
+	// server modes while making invalid audit-log values fail instead of coercing.
+	connectionConfig.Params["sql_mode"] = "CONCAT_WS(',', NULLIF(" + sqlMode + ", ''), 'STRICT_TRANS_TABLES')"
 	return connectionConfig, nil
 }
 

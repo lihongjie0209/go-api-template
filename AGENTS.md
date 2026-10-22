@@ -569,6 +569,9 @@ deleted_by text
 ```
 
 - Prefer PostgreSQL `text` unless a length constraint is a real domain rule.
+- MySQL application connections must retain strict SQL mode for every pooled
+  session so invalid audit and business values fail rather than being silently
+  coerced. Explicit DSN SQL modes may add modes but must not remove strictness.
 - Before raising a field's API size limit, verify every supported database
   column can store that many encoded bytes. MySQL `TEXT` is limited to 65,535
   bytes; use an appropriate wider type when the contract exceeds it. Add an
