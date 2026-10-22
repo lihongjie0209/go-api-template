@@ -591,6 +591,19 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		return err
 	})
 	if err != nil {
+		// Another instance may have installed the same stable seed while this
+		// transaction was waiting on the unique constraint. Only an identical,
+		// live system record makes that conflict an idempotent no-op.
+		if errors.Is(err, ErrConflict) && current.ID == "" {
+			var winner struct {
+				Record
+				DeletedAt sql.NullTime `db:"deleted_at"`
+			}
+			readErr := s.repository.db.GetContext(ctx, &winner, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
+			if readErr == nil && !winner.DeletedAt.Valid && winner.IsSystem && seedEqual(winner.Record, input) {
+				return s.presentMutation(ctx, winner.Record), false, nil
+			}
+		}
 		return Record{}, false, err
 	}
 	return s.presentMutation(ctx, seeded), true, nil

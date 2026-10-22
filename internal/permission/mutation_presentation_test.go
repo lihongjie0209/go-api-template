@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -121,6 +122,48 @@ func TestPermissionSeedSurvivesActorDisplayOutage(t *testing.T) {
 	require.Equal(t, id, seeded.ID)
 	require.Equal(t, "creator", seeded.CreatedByName)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.menu")
+	require.NoError(t, err)
+	tests := []struct {
+		name       string
+		winnerName string
+		isSystem   bool
+		wantNoop   bool
+	}{
+		{name: "identical system seed", winnerName: "Menu", isSystem: true, wantNoop: true},
+		{name: "different system seed", winnerName: "Other menu", isSystem: true},
+		{name: "manual record", winnerName: "Menu", isSystem: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnError(sql.ErrNoRows)
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+			mock.ExpectExec(`INSERT INTO permissions`).WillReturnError(&pgconn.PgError{Code: "23505"})
+			mock.ExpectRollback()
+			winner := sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at"}).AddRow(id, nil, "platform.menu", tt.winnerName, "group", "", "", "", 0, "active", tt.isSystem, time.Now(), "creator", time.Now(), "updater", 1, nil)
+			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnRows(winner)
+			seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
+			if tt.wantNoop {
+				require.NoError(t, err)
+				require.False(t, changed)
+				require.Equal(t, id, seeded.ID)
+			} else {
+				require.ErrorIs(t, err, ErrConflict)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestPermissionSetActionsSurvivesActorDisplayOutage(t *testing.T) {
