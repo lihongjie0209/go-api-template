@@ -157,7 +157,7 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		}
 		o.metrics.ObserveInfrastructure("event_outbox", "jetstream", "dispatch", status, started)
 		if err != nil {
-			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "dead", record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver), "reason", errPublishEvent.Error())
+			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "reason", errPublishEvent.Error())
 			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errPublishEvent); releaseErr != nil {
 				recordOutboxPersistenceFailure(span, releaseErr)
 				span.End()
@@ -251,7 +251,7 @@ func (o *Outbox) updateClaim(ctx context.Context, id string, published bool, att
 			if errors.Is(cause, errDecodeEnvelope) {
 				message = errDecodeEnvelope.Error()
 			}
-			if attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
+			if errors.Is(cause, errDecodeEnvelope) && attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
 				query = `UPDATE event_outbox SET attempts=attempts+1,dead_at=?,locked_by='',locked_until=NULL,last_error=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND locked_by=? AND published_at IS NULL AND deleted_at IS NULL`
 				args = []any{now, message, now, actorID, id, o.workerID}
 			} else {

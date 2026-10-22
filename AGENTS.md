@@ -470,6 +470,9 @@ available. A feature must not introduce a second transport for the same event.
 - A Redis outage may reduce performance or temporarily reject coordination-heavy
   operations, but must not silently corrupt authoritative business data. A queue
   outage must retain pending outbox records and recover delivery later.
+- Transient outbox publish failures remain pending with bounded retry backoff even
+  beyond the configured attempt limit; only deterministic invalid records may
+  enter a terminal dead-letter state.
 - Every asynchronous flow documents ordering scope, retry/backoff, dead-letter
   handling, retention, payload version, idempotency key, observability, and PII
   policy. Every Redis use documents key namespace, TTL, memory bound, failure
