@@ -285,3 +285,22 @@ func TestManualJobStopsRetryingWhenDeadlineContextEnds(t *testing.T) {
 		t.Fatalf("manual retry cancellation error=%v attempts=%d called=%t", err, locker.attempts.Load(), called)
 	}
 }
+
+func TestManualJobLockContentionUntilDeadlineIsError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		locker := &contendingLocker{contention: 100}
+		called := false
+		err := runManualJobContext(ctx, "reconcile", time.Second, 100*time.Millisecond, locker, func(context.Context) error {
+			called = true
+			return nil
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if !errors.Is(err, context.DeadlineExceeded) || statusForRun(err) != "error" || called {
+			t.Fatalf("manual lock deadline error=%v status=%q called=%t", err, statusForRun(err), called)
+		}
+		if locker.attempts.Load() < 2 {
+			t.Fatalf("manual lock attempts=%d, want retry before deadline", locker.attempts.Load())
+		}
+	})
+}
