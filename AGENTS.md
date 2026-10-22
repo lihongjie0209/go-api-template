@@ -108,6 +108,9 @@ The next domain work must keep identity and tenancy separate:
 Every resource must use consistent POST + JSON business APIs. Operational
 health and metrics endpoints are the only standard exceptions. File upload may
 use multipart on its exact documented route.
+Every business POST must declare `Content-Type: application/json`, including
+requests with an empty body. Only the exact file-upload route may declare
+multipart. Liveness and readiness probes do not require a JSON content type.
 
 Minimum resource operations, when applicable:
 

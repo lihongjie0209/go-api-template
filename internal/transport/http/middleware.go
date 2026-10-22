@@ -302,7 +302,7 @@ func MaxBody(limit int64) gin.HandlerFunc {
 
 func RequireJSON() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodPost && c.Request.ContentLength != 0 {
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path != "/live" && c.Request.URL.Path != "/ready" {
 			mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 			allowed := mediaType == "application/json" || (c.Request.URL.Path == "/api/v1/files/upload" && mediaType == "multipart/form-data")
 			if err != nil || !allowed {

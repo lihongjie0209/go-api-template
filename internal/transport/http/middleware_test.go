@@ -493,6 +493,41 @@ func TestRequireJSON(t *testing.T) {
 	}
 }
 
+func TestRequireJSONChecksEmptyPOSTAndKeepsHealthProbeExceptions(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name        string
+		path        string
+		contentType string
+		wantStatus  int
+	}{
+		{name: "empty API body without content type", path: "/api/v1/test", wantStatus: http.StatusUnsupportedMediaType},
+		{name: "empty API body with plain text", path: "/api/v1/test", contentType: "text/plain", wantStatus: http.StatusUnsupportedMediaType},
+		{name: "empty API body with JSON", path: "/api/v1/test", contentType: "application/json", wantStatus: http.StatusOK},
+		{name: "upload multipart exception", path: "/api/v1/files/upload", contentType: "multipart/form-data; boundary=test", wantStatus: http.StatusOK},
+		{name: "multipart on other route", path: "/api/v1/test", contentType: "multipart/form-data; boundary=test", wantStatus: http.StatusUnsupportedMediaType},
+		{name: "liveness probe", path: "/live", wantStatus: http.StatusOK},
+		{name: "readiness probe", path: "/ready", wantStatus: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			router := gin.New()
+			router.Use(RequestID(), RequireJSON())
+			router.POST(test.path, func(c *gin.Context) { OK(c, nil) })
+			request := httptest.NewRequest(http.MethodPost, test.path, nil)
+			if test.contentType != "" {
+				request.Header.Set("Content-Type", test.contentType)
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestTimeoutPropagatesCancellation(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
