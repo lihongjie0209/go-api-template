@@ -72,6 +72,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	var created Record
 	err = s.mutate(ctx, "platform.navigation.create", id, input.Name, input, func(tx *sqlx.Tx) error {
 		code, err := s.applicationCode(ctx, tx, input.ApplicationID)
 		if err != nil {
@@ -85,7 +86,10 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 		}
 		now := time.Now()
 		_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO navigations(id,application_id,parent_id,navigation_key,name,navigation_type,route_path,component,icon,resource,action,visible,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.ApplicationID, input.ParentID, input.Key, input.Name, input.Type, input.RoutePath, input.Component, input.Icon, input.Resource, input.Action, input.Visible, input.Status, input.SortOrder, string(input.Metadata), now, actor.ID, now, actor.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.GetContext(ctx, &created, tx.Rebind(detailQuery()), id)
 	})
 	if database.IsUniqueViolation(err) {
 		return Record{}, ErrConflict
@@ -93,19 +97,14 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, id)
+	return s.presentMutation(ctx, created), nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return Record{}, err
 	}
-	var record Record
-	query := `SELECT ` + prefixedColumns("n") + `,COALESCE(parent.name,'') AS parent_name FROM navigations n LEFT JOIN navigations parent ON parent.id=n.parent_id AND parent.application_id=n.application_id AND parent.deleted_at IS NULL WHERE n.id=? AND n.deleted_at IS NULL`
-	err := s.db.GetContext(ctx, &record, s.db.Rebind(query), strings.TrimSpace(id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Record{}, ErrNotFound
-	}
+	record, err := s.loadRecord(ctx, id)
 	if err != nil {
 		return Record{}, err
 	}
@@ -114,6 +113,19 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, err
 	}
 	return records[0], nil
+}
+
+func detailQuery() string {
+	return `SELECT ` + prefixedColumns("n") + `,COALESCE(parent.name,'') AS parent_name FROM navigations n LEFT JOIN navigations parent ON parent.id=n.parent_id AND parent.application_id=n.application_id AND parent.deleted_at IS NULL WHERE n.id=? AND n.deleted_at IS NULL`
+}
+
+func (s *Service) loadRecord(ctx context.Context, id string) (Record, error) {
+	var record Record
+	err := s.db.GetContext(ctx, &record, s.db.Rebind(detailQuery()), strings.TrimSpace(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	return record, err
 }
 
 func (s *Service) Tree(ctx context.Context, input TreeInput) ([]*Node, error) {
@@ -207,7 +219,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
-	existing, err := s.Get(ctx, input.ID)
+	existing, err := s.loadRecord(ctx, input.ID)
 	if err != nil {
 		return Record{}, err
 	}
@@ -218,6 +230,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if existing.Version != input.Version {
 		return Record{}, ErrStaleVersion
 	}
+	var updated Record
 	err = s.mutate(ctx, "platform.navigation.update", input.ID, candidate.Name, input, func(tx *sqlx.Tx) error {
 		if err := s.validateTree(ctx, tx, existing.ApplicationID, input.ID, Record{ID: input.ID, ApplicationID: existing.ApplicationID, ParentID: candidate.ParentID, Key: existing.Key, Name: candidate.Name, Type: candidate.Type, RoutePath: candidate.RoutePath}); err != nil {
 			return err
@@ -233,12 +246,12 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 		if affected != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		return tx.GetContext(ctx, &updated, tx.Rebind(detailQuery()), input.ID)
 	})
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, input.ID)
+	return s.presentMutation(ctx, updated), nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
@@ -246,7 +259,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err != nil {
 		return err
 	}
-	current, err := s.Get(ctx, id)
+	current, err := s.loadRecord(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -350,6 +363,18 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 		records[i].UpdatedAt = presentation.Time(records[i].UpdatedAt)
 	}
 	return nil
+}
+
+// A display-only Identity outage after commit must not turn the successful
+// mutation into a retryable error. Preserve the authoritative parent name.
+func (s *Service) presentMutation(ctx context.Context, record Record) Record {
+	records := []Record{record}
+	if err := s.present(ctx, records); err == nil {
+		return records[0]
+	}
+	record.CreatedByName, record.UpdatedByName = record.CreatedBy, record.UpdatedBy
+	record.CreatedAt, record.UpdatedAt = presentation.Time(record.CreatedAt), presentation.Time(record.UpdatedAt)
+	return record
 }
 
 func validTreeInput(input TreeInput) bool {

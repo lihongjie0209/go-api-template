@@ -19,6 +19,7 @@ import (
 )
 
 const grantColumns = `g.id,g.tenant_id,t.name tenant_name,g.application_id,a.code application_code,a.name application_name,a.icon application_icon,a.home_path application_home_path,g.status,g.starts_at,g.expires_at,g.created_at,g.created_by,g.updated_at,g.updated_by,g.version`
+const grantDetailQuery = `SELECT ` + grantColumns + ` FROM tenant_application_grants g JOIN tenants t ON t.id=g.tenant_id AND t.deleted_at IS NULL JOIN applications a ON a.id=g.application_id AND a.deleted_at IS NULL WHERE g.tenant_id=? AND g.id=? AND g.deleted_at IS NULL`
 
 var (
 	ErrGrantInvalid   = errors.New("invalid tenant application grant")
@@ -115,6 +116,7 @@ func (s *TenantAccessService) Grant(ctx context.Context, input GrantInput) (Gran
 		return Grant{}, ErrGrantInvalid
 	}
 	id := uuid.NewString()
+	var granted Grant
 	err = s.mutate(ctx, "tenant.application.grant", input.TenantID, input.ApplicationID, input, func(tx *sqlx.Tx) (string, string, error) {
 		var tenantName, applicationName string
 		if err := tx.GetContext(ctx, &tenantName, tx.Rebind(`SELECT name FROM tenants WHERE id=? AND deleted_at IS NULL FOR UPDATE`), input.TenantID); err != nil {
@@ -126,23 +128,29 @@ func (s *TenantAccessService) Grant(ctx context.Context, input GrantInput) (Gran
 		now := time.Now()
 		if input.Version == 0 {
 			_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO tenant_application_grants(id,tenant_id,application_id,status,starts_at,expires_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), id, input.TenantID, input.ApplicationID, "active", input.StartsAt, input.ExpiresAt, now, actor.ID, now, actor.ID)
-			return tenantName, applicationName, err
+			if err != nil {
+				return "", "", err
+			}
+		} else {
+			var existingID string
+			if err := tx.GetContext(ctx, &existingID, tx.Rebind(`SELECT id FROM tenant_application_grants WHERE tenant_id=? AND application_id=? AND deleted_at IS NULL FOR UPDATE`), input.TenantID, input.ApplicationID); err != nil {
+				return "", "", mapGrantReferenceError(err)
+			}
+			id = existingID
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_application_grants SET status='active',starts_at=?,expires_at=?,updated_at=?,updated_by=? WHERE tenant_id=? AND application_id=? AND version=? AND deleted_at IS NULL`), input.StartsAt, input.ExpiresAt, now, actor.ID, input.TenantID, input.ApplicationID, input.Version)
+			if err != nil {
+				return "", "", err
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return "", "", err
+			}
+			if affected != 1 {
+				return "", "", ErrGrantConflict
+			}
 		}
-		var existingID string
-		if err := tx.GetContext(ctx, &existingID, tx.Rebind(`SELECT id FROM tenant_application_grants WHERE tenant_id=? AND application_id=? AND deleted_at IS NULL FOR UPDATE`), input.TenantID, input.ApplicationID); err != nil {
-			return "", "", mapGrantReferenceError(err)
-		}
-		id = existingID
-		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_application_grants SET status='active',starts_at=?,expires_at=?,updated_at=?,updated_by=? WHERE tenant_id=? AND application_id=? AND version=? AND deleted_at IS NULL`), input.StartsAt, input.ExpiresAt, now, actor.ID, input.TenantID, input.ApplicationID, input.Version)
-		if err != nil {
+		if err := tx.GetContext(ctx, &granted, tx.Rebind(grantDetailQuery), input.TenantID, id); err != nil {
 			return "", "", err
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return "", "", err
-		}
-		if affected != 1 {
-			return "", "", ErrGrantConflict
 		}
 		return tenantName, applicationName, nil
 	})
@@ -152,7 +160,7 @@ func (s *TenantAccessService) Grant(ctx context.Context, input GrantInput) (Gran
 	if err != nil {
 		return Grant{}, err
 	}
-	return s.AdminGet(ctx, input.TenantID, id)
+	return s.presentGrantMutation(ctx, granted), nil
 }
 
 func (s *TenantAccessService) Revoke(ctx context.Context, tenantID, id string, version int64) error {
@@ -196,8 +204,7 @@ func (s *TenantAccessService) AdminGet(ctx context.Context, tenantID, id string)
 		return Grant{}, ErrGrantInvalid
 	}
 	var result Grant
-	query := `SELECT ` + grantColumns + ` FROM tenant_application_grants g JOIN tenants t ON t.id=g.tenant_id AND t.deleted_at IS NULL JOIN applications a ON a.id=g.application_id AND a.deleted_at IS NULL WHERE g.tenant_id=? AND g.id=? AND g.deleted_at IS NULL`
-	if err := s.db.GetContext(ctx, &result, s.db.Rebind(query), tenantID, id); errors.Is(err, sql.ErrNoRows) {
+	if err := s.db.GetContext(ctx, &result, s.db.Rebind(grantDetailQuery), tenantID, id); errors.Is(err, sql.ErrNoRows) {
 		return Grant{}, ErrGrantNotFound
 	} else if err != nil {
 		return Grant{}, err
@@ -375,6 +382,26 @@ func (s *TenantAccessService) present(ctx context.Context, items []Grant) error 
 		}
 	}
 	return nil
+}
+
+// The grant and its security event are already committed when presentation
+// runs; a display-only Identity outage must not encourage a duplicate grant.
+func (s *TenantAccessService) presentGrantMutation(ctx context.Context, grant Grant) Grant {
+	items := []Grant{grant}
+	if err := s.present(ctx, items); err == nil {
+		return items[0]
+	}
+	grant.CreatedByName, grant.UpdatedByName = grant.CreatedBy, grant.UpdatedBy
+	grant.CreatedAt, grant.UpdatedAt = presentation.Time(grant.CreatedAt), presentation.Time(grant.UpdatedAt)
+	if grant.StartsAt != nil {
+		value := presentation.Time(*grant.StartsAt)
+		grant.StartsAt = &value
+	}
+	if grant.ExpiresAt != nil {
+		value := presentation.Time(*grant.ExpiresAt)
+		grant.ExpiresAt = &value
+	}
+	return grant
 }
 
 func (s *TenantAccessService) mutate(ctx context.Context, operation, tenantID, subjectID string, request any, fn func(*sqlx.Tx) (string, string, error)) error {

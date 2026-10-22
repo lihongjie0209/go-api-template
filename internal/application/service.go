@@ -92,10 +92,14 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	var created Record
 	err = s.mutate(ctx, "platform.application.create", id, input.Name, input, func(tx *sqlx.Tx) error {
 		now := time.Now()
 		_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO applications(id,code,name,description,icon,home_path,status,sort_order,metadata,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)`), id, input.Code, input.Name, input.Description, input.Icon, input.HomePath, input.Status, input.SortOrder, string(input.Metadata), now, actor.ID, now, actor.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.GetContext(ctx, &created, tx.Rebind(`SELECT `+columns+` FROM applications WHERE id=? AND deleted_at IS NULL`), id)
 	})
 	if database.IsUniqueViolation(err) {
 		return Record{}, ErrConflict
@@ -103,18 +107,14 @@ func (s *Service) Create(ctx context.Context, input Input) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, id)
+	return s.presentMutation(ctx, created), nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return Record{}, err
 	}
-	var record Record
-	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+columns+` FROM applications WHERE id=? AND deleted_at IS NULL`), strings.TrimSpace(id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Record{}, ErrNotFound
-	}
+	record, err := s.loadRecord(ctx, id)
 	if err != nil {
 		return Record{}, err
 	}
@@ -123,6 +123,15 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 		return Record{}, err
 	}
 	return records[0], nil
+}
+
+func (s *Service) loadRecord(ctx context.Context, id string) (Record, error) {
+	var record Record
+	err := s.db.GetContext(ctx, &record, s.db.Rebind(`SELECT `+columns+` FROM applications WHERE id=? AND deleted_at IS NULL`), strings.TrimSpace(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	return record, err
 }
 
 // NavigationTarget resolves the display name needed by navigation-only operators.
@@ -241,7 +250,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
-	current, err := s.Get(ctx, input.ID)
+	current, err := s.loadRecord(ctx, input.ID)
 	if err != nil {
 		return Record{}, err
 	}
@@ -249,6 +258,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 	if input.Version <= 0 || Validate(candidate) != nil {
 		return Record{}, ErrInvalid
 	}
+	var updated Record
 	err = s.mutate(ctx, "platform.application.update", input.ID, candidate.Name, input, func(tx *sqlx.Tx) error {
 		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE applications SET name=?,description=?,icon=?,home_path=?,status=?,sort_order=?,metadata=?,updated_at=?,updated_by=? WHERE id=? AND version=? AND deleted_at IS NULL`), candidate.Name, candidate.Description, candidate.Icon, candidate.HomePath, candidate.Status, candidate.SortOrder, string(candidate.Metadata), time.Now(), actor.ID, input.ID, input.Version)
 		if err != nil {
@@ -261,12 +271,12 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Record, error)
 		if affected != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		return tx.GetContext(ctx, &updated, tx.Rebind(`SELECT `+columns+` FROM applications WHERE id=? AND deleted_at IS NULL`), input.ID)
 	})
 	if err != nil {
 		return Record{}, err
 	}
-	return s.Get(ctx, input.ID)
+	return s.presentMutation(ctx, updated), nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
@@ -274,7 +284,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	if err != nil {
 		return err
 	}
-	current, err := s.Get(ctx, id)
+	current, err := s.loadRecord(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -351,6 +361,18 @@ func (s *Service) present(ctx context.Context, records []Record) error {
 		records[index].UpdatedAt = presentation.Time(records[index].UpdatedAt)
 	}
 	return nil
+}
+
+// Display-name lookup is best effort after commit: a failed Identity call
+// must not make a committed mutation appear retryable to its caller.
+func (s *Service) presentMutation(ctx context.Context, record Record) Record {
+	records := []Record{record}
+	if err := s.present(ctx, records); err == nil {
+		return records[0]
+	}
+	record.CreatedByName, record.UpdatedByName = record.CreatedBy, record.UpdatedBy
+	record.CreatedAt, record.UpdatedAt = presentation.Time(record.CreatedAt), presentation.Time(record.UpdatedAt)
+	return record
 }
 
 func validPageInput(input PageInput, keyword string) bool {

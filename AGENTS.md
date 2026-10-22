@@ -576,6 +576,13 @@ deleted_by text
   metadata. Physical deletes from audited tables are forbidden.
 - Update, delete, and state-transition SQL must include the expected version in
   its predicate. Zero affected rows map to the shared version-conflict error.
+- Mutation pre-reads must load authoritative rows without remote presentation
+  enrichment. For create/update responses, read the resulting row inside the
+  write transaction before commit so a failed read rolls back rather than
+  reporting failure after a successful commit. Resolve display names only
+  after commit; an unavailable display-only dependency must not turn a
+  committed mutation into an error. Use the existing stable-ID display fallback
+  and test both dependency outage and transactional read failure.
 - Normal reads must filter `deleted_at IS NULL`.
 - Database constraints remain the final integrity boundary.
 - Every service owns a unique migration history table. PostgreSQL/Kingbase
