@@ -177,6 +177,24 @@ func (r *Repository) GetMember(ctx context.Context, tenantID, id string, scope d
 	}
 	return v, nil
 }
+
+// getMemberTx reads a row already written by this transaction. The mutation's
+// current-row data scope was enforced before and during the write; applying it
+// to the new row could reject a valid status transition after it succeeds.
+func (r *Repository) getMemberTx(ctx context.Context, tx *sqlx.Tx, tenantID, id string) (Member, error) {
+	if tenantID == "" {
+		return Member{}, ErrForbidden
+	}
+	var member Member
+	query := tx.Rebind(`SELECT ` + memberColumns + ` FROM tenant_memberships tm WHERE tm.tenant_id=? AND tm.id=? AND tm.deleted_at IS NULL`)
+	if err := tx.GetContext(ctx, &member, query, tenantID, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Member{}, ErrNotFound
+		}
+		return Member{}, fmt.Errorf("get member in transaction: %w", err)
+	}
+	return member, nil
+}
 func (r *Repository) PageMembers(ctx context.Context, tenantID string, input MemberPageInput, scope datapermission.SQLPredicate) ([]Member, int64, error) {
 	if tenantID == "" {
 		return nil, 0, ErrForbidden
@@ -286,24 +304,26 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 			if isUniqueViolation(err) {
 				return ErrConflict
 			}
+			if err != nil {
+				return err
+			}
+			created, err = s.repository.getMemberTx(runCtx, tx, actor.TenantID, id)
 			return err
 		}); err != nil {
 			return err
 		}
-		var err error
-		created, err = s.repository.GetMember(runCtx, actor.TenantID, id, unrestrictedMemberScope())
-		return err
+		return nil
 	}
 	if s.locker == nil {
 		if err := run(ctx); err != nil {
 			return Member{}, err
 		}
-		return s.presentMember(ctx, created)
+		return s.presentMemberMutation(ctx, created), nil
 	}
 	if err := cache.WithLock(ctx, s.locker, "tenant:"+actor.TenantID+":membership:"+user.ID, s.cfg.DistributedLock.TTL, s.cfg.DistributedLock.RetryDelay, run); err != nil {
 		return Member{}, err
 	}
-	return s.presentMember(ctx, created)
+	return s.presentMemberMutation(ctx, created), nil
 }
 
 func (s *MembershipService) Get(ctx context.Context, id string) (Member, error) {
@@ -380,6 +400,7 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 		}
 	}
 	subjectName := memberDisplayName(member)
+	var updated Member
 	e = s.mutate(ctx, "tenant.member.status.update", id, map[string]any{"status": status, "version": version}, securitylog.Entry{EventType: securitylog.EventMembershipChanged, SubjectID: id, SubjectName: subjectName, SubjectType: "tenant_membership", TenantID: actor.TenantID, Metadata: map[string]any{"status": status}}, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 		if err := ensureActiveTenant(ctx, tx, actor.TenantID); err != nil {
 			return err
@@ -401,16 +422,13 @@ func (s *MembershipService) UpdateStatus(ctx context.Context, id string, status 
 		if rows != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		updated, err = s.repository.getMemberTx(ctx, tx, actor.TenantID, id)
+		return err
 	})
 	if e != nil {
 		return Member{}, e
 	}
-	member, e = s.repository.GetMember(ctx, actor.TenantID, id, scope)
-	if e != nil {
-		return Member{}, e
-	}
-	return s.presentMember(ctx, member)
+	return s.presentMemberMutation(ctx, updated), nil
 }
 func (s *MembershipService) Remove(ctx context.Context, id string, version int64) error {
 	actor, e := requireActor(ctx)
@@ -618,6 +636,19 @@ func (s *MembershipService) presentMember(ctx context.Context, member Member) (M
 		return Member{}, err
 	}
 	return members[0], nil
+}
+
+func (s *MembershipService) presentMemberMutation(ctx context.Context, member Member) Member {
+	presented, err := s.presentMember(ctx, member)
+	if err == nil {
+		return presented
+	}
+	member.CreatedByName = member.CreatedBy
+	member.UpdatedByName = member.UpdatedBy
+	member.JoinedAt = presentation.Time(member.JoinedAt)
+	member.CreatedAt = presentation.Time(member.CreatedAt)
+	member.UpdatedAt = presentation.Time(member.UpdatedAt)
+	return member
 }
 
 func (s *MembershipService) presentMembers(ctx context.Context, members []Member) error {
