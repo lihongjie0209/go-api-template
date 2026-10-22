@@ -5,8 +5,8 @@
 | Contract | `Seed` takes a reviewed built-in permission definition and returns the record plus `changed`; a concurrent identical winner returns `changed=false`, while divergent data returns `ErrConflict`. This is not a public CRUD endpoint. |
 | Authentication | Internal startup command with an explicit system principal. |
 | Authorization | Only reviewed code-owned seed definitions; no client-controlled resource/action registration. |
-| Operation log | The attempted seed uses the existing transactional `permission.seed` operation record; a unique-conflict retry may also leave a failed-attempt record. |
-| Security log | The existing permission-change recorder captures successful writes and failed attempts. |
+| Operation log | A committed seed uses the transactional `permission.seed` record. An equivalent concurrent winner is a no-op and emits no misleading failed-attempt record; a divergent winner remains a failed operation. |
+| Security log | The existing permission-change recorder captures successful writes and genuine failures, but not an equivalent concurrent no-op. |
 | Cache | None; database is authoritative for startup seeds. |
 | Distributed lock | None; startup across instances must converge using database uniqueness and exact-record verification, independent of Redis. |
 | Optimistic lock | Ordinary permission updates use versions; the insert race is resolved only when the committed winner has the exact requested stable ID and fields. |

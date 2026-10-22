@@ -12,11 +12,30 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
 
 type unavailablePermissionActors struct{}
+
+type countingPermissionSecurityRecorder struct {
+	failureCalls       int
+	transactionalCalls int
+}
+
+func (*countingPermissionSecurityRecorder) Enabled() bool    { return true }
+func (*countingPermissionSecurityRecorder) FailClosed() bool { return true }
+func (r *countingPermissionSecurityRecorder) Record(_ context.Context, entry securitylog.Entry) error {
+	if !entry.Succeeded {
+		r.failureCalls++
+	}
+	return nil
+}
+func (r *countingPermissionSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	r.transactionalCalls++
+	return nil
+}
 
 func (unavailablePermissionActors) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
 	return nil, errors.New("identity unavailable")
@@ -145,7 +164,9 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = raw.Close() })
 			db := sqlx.NewDb(raw, "sqlmock")
-			service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+			operations := &failingOperationRecorder{}
+			security := &countingPermissionSecurityRecorder{}
+			service := New(NewRepository(db), database.NewTransactor(db), operations, security, nil, nil, nil)
 			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnError(sql.ErrNoRows)
 			mock.ExpectBegin()
 			mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}))
@@ -158,8 +179,14 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 				require.NoError(t, err)
 				require.False(t, changed)
 				require.Equal(t, id, seeded.ID)
+				require.Zero(t, operations.failureCalls)
+				require.Zero(t, security.failureCalls)
+				require.Zero(t, operations.transactionalCalls)
+				require.Zero(t, security.transactionalCalls)
 			} else {
 				require.ErrorIs(t, err, ErrConflict)
+				require.Equal(t, 1, operations.failureCalls)
+				require.Equal(t, 1, security.failureCalls)
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})

@@ -553,7 +553,8 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 	}
 	a, _ := actor(ctx)
 	var seeded Record
-	err = s.mutate(ctx, "permission.seed", id, input, func(tx *sqlx.Tx) error {
+	changed := true
+	err = s.mutateWithUniqueRecovery(ctx, "permission.seed", id, input, func(tx *sqlx.Tx) error {
 		treeID := current.ID
 		if current.DeletedAt.Valid {
 			treeID = ""
@@ -589,24 +590,29 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		}
 		seeded, err = getTx(ctx, tx, id)
 		return err
-	})
-	if err != nil {
+	}, func() bool {
 		// Another instance may have installed the same stable seed while this
 		// transaction was waiting on the unique constraint. Only an identical,
 		// live system record makes that conflict an idempotent no-op.
-		if errors.Is(err, ErrConflict) && current.ID == "" {
-			var winner struct {
-				Record
-				DeletedAt sql.NullTime `db:"deleted_at"`
-			}
-			readErr := s.repository.db.GetContext(ctx, &winner, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
-			if readErr == nil && !winner.DeletedAt.Valid && winner.IsSystem && seedEqual(winner.Record, input) {
-				return s.presentMutation(ctx, winner.Record), false, nil
-			}
+		if current.ID != "" {
+			return false
 		}
+		var winner struct {
+			Record
+			DeletedAt sql.NullTime `db:"deleted_at"`
+		}
+		readErr := s.repository.db.GetContext(ctx, &winner, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
+		if readErr == nil && !winner.DeletedAt.Valid && winner.IsSystem && seedEqual(winner.Record, input) {
+			seeded = winner.Record
+			changed = false
+			return true
+		}
+		return false
+	})
+	if err != nil {
 		return Record{}, false, err
 	}
-	return s.presentMutation(ctx, seeded), true, nil
+	return s.presentMutation(ctx, seeded), changed, nil
 }
 
 func SeedID(key string) (string, error) {
@@ -945,6 +951,10 @@ func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int,
 	return 0, nil
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
+	return s.mutateWithUniqueRecovery(ctx, operation, id, request, fn, nil)
+}
+
+func (s *Service) mutateWithUniqueRecovery(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error, recoverUnique func() bool) error {
 	started := time.Now()
 	resourceName := permissionMutationName(request, id)
 	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "permission", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
@@ -967,6 +977,9 @@ func (s *Service) mutate(ctx context.Context, operation, id string, request any,
 		return nil
 	})
 	if database.IsUniqueViolation(err) {
+		if recoverUnique != nil && recoverUnique() {
+			return nil
+		}
 		err = ErrConflict
 	}
 	if err != nil {
