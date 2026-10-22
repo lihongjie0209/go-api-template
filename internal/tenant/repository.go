@@ -89,6 +89,31 @@ func (r *Repository) AdminGet(ctx context.Context, id string) (Record, error) {
 	return r.get(ctx, `id = ? AND deleted_at IS NULL`, id)
 }
 
+// getTx captures the committed mutation response before the transaction ends.
+// A failed read must roll back the write rather than fail after commit.
+func (r *Repository) getTx(ctx context.Context, tx *sqlx.Tx, id string) (Record, error) {
+	return r.getTxWhere(ctx, tx, `id = ? AND deleted_at IS NULL`, id)
+}
+
+func (r *Repository) getTenantTx(ctx context.Context, tx *sqlx.Tx, id, tenantID string) (Record, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return Record{}, ErrForbidden
+	}
+	return r.getTxWhere(ctx, tx, `id = ? AND id = ? AND deleted_at IS NULL`, id, tenantID)
+}
+
+func (r *Repository) getTxWhere(ctx context.Context, tx *sqlx.Tx, where string, args ...any) (Record, error) {
+	var record Record
+	query := tx.Rebind(`SELECT id, code, name, description, status, owner_user_id, owner_name, created_at, created_by, updated_at, updated_by, version FROM tenants WHERE ` + where)
+	if err := tx.GetContext(ctx, &record, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Record{}, ErrNotFound
+		}
+		return Record{}, fmt.Errorf("get tenant in transaction: %w", err)
+	}
+	return record, nil
+}
+
 func (r *Repository) get(ctx context.Context, where string, args ...any) (Record, error) {
 	var record Record
 	query := r.db.Rebind(`SELECT id, code, name, description, status, owner_user_id, owner_name, created_at, created_by, updated_at, updated_by, version FROM tenants WHERE ` + where)

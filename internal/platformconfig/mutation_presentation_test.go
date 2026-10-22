@@ -45,16 +45,17 @@ func TestConfigMutationsDoNotRequireActorDisplayService(t *testing.T) {
 				mock.ExpectQuery(`SELECT .* FROM platform_configs WHERE id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(configRows(id, 4))
 			}
 			mock.ExpectBegin()
-			if operation == "create" {
+			switch operation {
+			case "create":
 				mock.ExpectQuery(`SELECT deleted_at FROM platform_configs WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
 				mock.ExpectExec(`INSERT INTO platform_configs`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT .* FROM platform_configs WHERE id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(configRows(id, 1))
 				mock.ExpectCommit()
-			} else if operation == "update" {
+			case "update":
 				mock.ExpectExec(`UPDATE platform_configs SET name=`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT .* FROM platform_configs WHERE id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(configRows(id, 5))
 				mock.ExpectCommit()
-			} else {
+			case "delete":
 				mock.ExpectExec(`UPDATE platform_configs SET deleted_at=`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 			}

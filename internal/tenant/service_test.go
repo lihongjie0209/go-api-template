@@ -3,6 +3,7 @@ package tenant
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"errors"
 	"log/slog"
 	"regexp"
@@ -105,6 +106,71 @@ type ownerResolverStub struct {
 	err      error
 }
 
+type mutationOwnerResolver struct{ actorErr error }
+
+func (r mutationOwnerResolver) ResolveUsername(_ context.Context, username string) (UserSnapshot, error) {
+	return UserSnapshot{ID: "owner-1", Username: username, DisplayName: "Owner One"}, nil
+}
+
+func (r mutationOwnerResolver) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
+	return nil, r.actorErr
+}
+
+func TestServiceCreateReturnsCommittedTenantWhenActorPresentationFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO tenants ").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO tenant_memberships ").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO tenant_administrators ").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT id, code, name, description, status, owner_user_id, owner_name, created_at, created_by, updated_at, updated_by, version FROM tenants WHERE id = \\? AND deleted_at IS NULL").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("tenant-1", "tenant-one", "Tenant One", "", "active", "owner-1", "Owner One", now, "platform-admin", now, "platform-admin", 1))
+	mock.ExpectCommit()
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, mutationOwnerResolver{actorErr: errors.New("identity unavailable")}, nil, config.Config{})
+	view, err := service.Create(platformprincipal.SystemContext(t.Context(), "platform-admin"), CreateInput{Code: "tenant-one", Name: "Tenant One", OwnerUsername: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.ID != "tenant-1" || view.Owner.Name != "Owner One" || view.CreatedByName != "platform-admin" || view.Version != 1 {
+		t.Fatalf("unexpected committed tenant view: %+v", view)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceCreateRollsBackWhenResponseReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO tenants ").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO tenant_memberships ").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO tenant_administrators ").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT id, code, name, description, status, owner_user_id, owner_name, created_at, created_by, updated_at, updated_by, version FROM tenants WHERE id = \\? AND deleted_at IS NULL").
+		WillReturnError(errors.New("database read unavailable"))
+	mock.ExpectRollback()
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, mutationOwnerResolver{}, nil, config.Config{})
+	_, err = service.Create(platformprincipal.SystemContext(t.Context(), "platform-admin"), CreateInput{Code: "tenant-one", Name: "Tenant One", OwnerUsername: "owner"})
+	if err == nil || !strings.Contains(err.Error(), "database read unavailable") {
+		t.Fatalf("Create() error = %v, want transaction read failure", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type policyRuntimeStub struct {
 	changed func(context.Context) error
 }
@@ -180,6 +246,10 @@ func TestTenantAdminUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
 	mock.ExpectExec("UPDATE tenants SET name").
 		WithArgs("Tenant One", "", StatusDisabled, sqlmock.AnyArg(), "platform-admin", "tenant-1", int64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	now := time.Now()
+	mock.ExpectQuery("FROM tenants WHERE id = \\? AND deleted_at IS NULL").WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("tenant-1", "tenant-one", "Tenant One", "", "disabled", "owner-1", "Owner One", now, "platform-admin", now, "platform-admin", 3))
 	mock.ExpectCommit()
 	want := errors.New("policy refresh unavailable")
 	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil, config.Config{})
@@ -209,6 +279,10 @@ func TestTenantScopedUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
 	mock.ExpectExec("UPDATE tenants SET name").
 		WithArgs("Tenant One", "", StatusDisabled, sqlmock.AnyArg(), "tenant-admin", "tenant-1", int64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	now := time.Now()
+	mock.ExpectQuery("FROM tenants WHERE id = \\? AND id = \\? AND deleted_at IS NULL").WithArgs("tenant-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+			AddRow("tenant-1", "tenant-one", "Tenant One", "", "disabled", "owner-1", "Owner One", now, "tenant-admin", now, "tenant-admin", 3))
 	mock.ExpectCommit()
 	want := errors.New("policy refresh unavailable")
 	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil, config.Config{})
@@ -222,6 +296,46 @@ func TestTenantScopedUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
 	_, err = service.Update(ctx, UpdateInput{ID: "tenant-1", Name: "Tenant One", Status: StatusDisabled, Version: 2})
 	if !errors.Is(err, want) {
 		t.Fatalf("post-commit policy refresh error = %v, want %v", err, want)
+	}
+}
+
+func TestTenantUpdatesReturnCommittedRowWhenActorPresentationFails(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		actor  platformprincipal.Principal
+		where  string
+		args   []driver.Value
+		update func(*Service, context.Context, UpdateInput) (View, error)
+	}{
+		{name: "platform", actor: platformprincipal.Principal{ID: "platform-admin", Type: platformprincipal.TypeSystem}, where: `FROM tenants WHERE id = \? AND deleted_at IS NULL`, args: []driver.Value{"tenant-1"}, update: (*Service).AdminUpdate},
+		{name: "tenant", actor: platformprincipal.Principal{ID: "tenant-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-1"}, where: `FROM tenants WHERE id = \? AND id = \? AND deleted_at IS NULL`, args: []driver.Value{"tenant-1", "tenant-1"}, update: (*Service).Update},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			now := time.Now()
+			mock.ExpectBegin()
+			mock.ExpectExec("UPDATE tenants SET name").WithArgs("Updated", "", StatusActive, sqlmock.AnyArg(), test.actor.ID, "tenant-1", int64(2)).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery(test.where).WithArgs(test.args...).WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow("tenant-1", "tenant-one", "Updated", "", "active", "owner-1", "Owner One", now, test.actor.ID, now, test.actor.ID, 3))
+			mock.ExpectCommit()
+			service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, mutationOwnerResolver{actorErr: errors.New("identity unavailable")}, nil, config.Config{})
+			ctx := platformprincipal.WithContext(t.Context(), test.actor)
+			view, err := test.update(service, ctx, UpdateInput{ID: "tenant-1", Name: "Updated", Status: StatusActive, Version: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Name != "Updated" || view.Version != 3 || view.UpdatedByName != test.actor.ID {
+				t.Fatalf("unexpected committed tenant view: %+v", view)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

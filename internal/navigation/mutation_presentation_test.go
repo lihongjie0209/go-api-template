@@ -47,22 +47,24 @@ func TestNavigationMutationsDoNotRequireActorDisplayService(t *testing.T) {
 			t.Cleanup(func() { _ = raw.Close() })
 			db := sqlx.NewDb(raw, "sqlmock")
 			service := &Service{db: db, tx: database.NewTransactor(db), actors: failedNavigationActors{}, logger: slog.Default()}
-			if operation == "create" {
+			switch operation {
+			case "create":
 				mock.ExpectQuery(`SELECT code FROM applications WHERE id=\?`).WithArgs("app-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("erp"))
-			} else {
+			default:
 				mock.ExpectQuery(`SELECT .* FROM navigations n LEFT JOIN navigations parent`).WithArgs(id).WillReturnRows(navigationDetailRows(id, 4))
 			}
 			mock.ExpectBegin()
-			if operation == "create" {
+			switch operation {
+			case "create":
 				mock.ExpectQuery(`SELECT code FROM applications WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs("app-1").WillReturnRows(sqlmock.NewRows([]string{"code"}).AddRow("erp"))
 				mock.ExpectQuery(`SELECT .* FROM navigations WHERE application_id=\?`).WithArgs("app-1", maxTreeNodes+1).WillReturnRows(navigationTreeRows(""))
 				mock.ExpectExec(`INSERT INTO navigations`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT .* FROM navigations n LEFT JOIN navigations parent`).WithArgs(id).WillReturnRows(navigationDetailRows(id, 1))
-			} else if operation == "update" {
+			case "update":
 				mock.ExpectQuery(`SELECT .* FROM navigations WHERE application_id=\?`).WithArgs("app-1", maxTreeNodes+1).WillReturnRows(navigationTreeRows(id))
 				mock.ExpectExec(`UPDATE navigations SET parent_id=`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT .* FROM navigations n LEFT JOIN navigations parent`).WithArgs(id).WillReturnRows(navigationDetailRows(id, 5))
-			} else {
+			case "delete":
 				mock.ExpectQuery(`SELECT count\(\*\) FROM navigations WHERE parent_id=\?`).WithArgs(id, "app-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 				mock.ExpectExec(`UPDATE navigations SET deleted_at=`).WillReturnResult(sqlmock.NewResult(0, 1))
 			}

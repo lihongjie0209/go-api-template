@@ -94,6 +94,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
 	}
 	input.OwnerUsername = owner.Username
 	record := Record{ID: uuid.NewString(), Code: input.Code, Name: input.Name, Description: input.Description, Status: StatusActive, OwnerUserID: owner.ID, OwnerName: owner.DisplayName}
+	var created Record
 	err = s.mutate(ctx, "tenant.create", record.ID, input, func(tx *sqlx.Tx) error {
 		if err := insertTenant(ctx, tx, record, actor.ID); err != nil {
 			return err
@@ -102,20 +103,17 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
 		if err := insertOwnerMembership(ctx, tx, membershipID, record, input.OwnerUsername, actor.ID); err != nil {
 			return err
 		}
-		return insertTenantAdministrator(ctx, tx, uuid.NewString(), record.ID, membershipID, actor.ID)
+		if err := insertTenantAdministrator(ctx, tx, uuid.NewString(), record.ID, membershipID, actor.ID); err != nil {
+			return err
+		}
+		var err error
+		created, err = s.repository.getTx(ctx, tx, record.ID)
+		return err
 	})
 	if err != nil {
 		return View{}, err
 	}
-	created, err := s.repository.AdminGet(ctx, record.ID)
-	if err != nil {
-		return View{}, err
-	}
-	views, err := s.present(ctx, []Record{created})
-	if err != nil {
-		return View{}, err
-	}
-	return views[0], nil
+	return s.presentMutation(ctx, created), nil
 }
 
 // AdminGet reads a tenant outside a tenant context. It is intentionally
@@ -313,6 +311,18 @@ func (s *Service) present(ctx context.Context, records []Record) ([]View, error)
 	return views, nil
 }
 
+// Display names are best effort after commit. Stable actor IDs remain usable
+// when the identity projection is temporarily unavailable.
+func (s *Service) presentMutation(ctx context.Context, record Record) View {
+	views, err := s.present(ctx, []Record{record})
+	if err == nil {
+		return views[0]
+	}
+	record.CreatedByName = record.CreatedBy
+	record.UpdatedByName = record.UpdatedBy
+	return toView(record)
+}
+
 func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, error) {
 	actor, err := requirePlatformActor(ctx)
 	if err != nil {
@@ -324,8 +334,14 @@ func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, err
 	if input.ID == "" || len(input.ID) > maxTenantIDLength || input.Name == "" || len(input.Name) > maxTenantNameLength || len(input.Description) > maxTenantDescriptionLength || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
 		return View{}, ErrInvalid
 	}
+	var updated Record
 	err = s.mutate(ctx, "platform.tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
-		return updateTenant(ctx, tx, input.ID, input.Name, input.Description, input.Status, input.Version, actor.ID)
+		if err := updateTenant(ctx, tx, input.ID, input.Name, input.Description, input.Status, input.Version, actor.ID); err != nil {
+			return err
+		}
+		var err error
+		updated, err = s.repository.getTx(ctx, tx, input.ID)
+		return err
 	})
 	if err != nil {
 		return View{}, err
@@ -333,7 +349,7 @@ func (s *Service) AdminUpdate(ctx context.Context, input UpdateInput) (View, err
 	if err := s.afterTenantMutation(ctx, input.ID); err != nil {
 		return View{}, err
 	}
-	return s.AdminGet(ctx, input.ID)
+	return s.presentMutation(ctx, updated), nil
 }
 
 func (s *Service) AdminDelete(ctx context.Context, id string, version int64) error {
@@ -372,8 +388,14 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (View, error) {
 	if input.ID == "" || len(input.ID) > maxTenantIDLength || input.Name == "" || len(input.Name) > maxTenantNameLength || len(input.Description) > maxTenantDescriptionLength || input.Version <= 0 || (input.Status != StatusActive && input.Status != StatusDisabled) {
 		return View{}, ErrInvalid
 	}
+	var updated Record
 	err = s.mutate(ctx, "tenant.update", input.ID, input, func(tx *sqlx.Tx) error {
-		return updateTenant(ctx, tx, input.ID, input.Name, input.Description, input.Status, input.Version, actor.ID)
+		if err := updateTenant(ctx, tx, input.ID, input.Name, input.Description, input.Status, input.Version, actor.ID); err != nil {
+			return err
+		}
+		var err error
+		updated, err = s.repository.getTenantTx(ctx, tx, input.ID, actor.TenantID)
+		return err
 	})
 	if err != nil {
 		return View{}, err
@@ -381,8 +403,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (View, error) {
 	if err := s.afterTenantMutation(ctx, input.ID); err != nil {
 		return View{}, err
 	}
-	view, err := s.Get(ctx, input.ID)
-	return view, err
+	return s.presentMutation(ctx, updated), nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
