@@ -183,26 +183,39 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	if err := m.db.SelectContext(ctx, &definitions, m.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE status='active' AND deleted_at IS NULL ORDER BY code ASC,id ASC`)); err != nil {
 		return err
 	}
+	type stagedDefinition struct {
+		definition Definition
+		schedule   cron.Schedule
+	}
+	staged := make([]stagedDefinition, 0, len(definitions))
 	for _, definition := range definitions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := validateDefinition(DefinitionInput{Code: definition.Code, Name: definition.Name, Description: definition.Description, CronSpec: definition.CronSpec, Timezone: definition.Timezone, Handler: definition.Handler, TimeoutSeconds: definition.TimeoutSeconds, LockTTLSeconds: definition.LockTTLSeconds, Status: definition.Status, Payload: definition.Payload}); err != nil {
 			return err
 		}
 		if _, err := m.handlers.Resolve(definition.Handler); err != nil {
 			return err
 		}
+		schedule, err := definitionParser.Parse(cronScheduleSpec(definition.Timezone, definition.CronSpec))
+		if err != nil {
+			return ErrInvalidDefinition
+		}
+		staged = append(staged, stagedDefinition{definition: definition, schedule: schedule})
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, entryID := range m.dynamicEntries {
 		m.runner.Remove(entryID)
 	}
-	m.dynamicEntries = make(map[string]cron.EntryID, len(definitions))
-	for _, item := range definitions {
-		definition := item
-		entryID, err := m.runner.AddFunc("CRON_TZ="+definition.Timezone+" "+definition.CronSpec, func() { _ = m.execute(m.ctx, definition, "cron") })
-		if err != nil {
-			return err
-		}
+	m.dynamicEntries = make(map[string]cron.EntryID, len(staged))
+	for _, item := range staged {
+		definition := item.definition
+		entryID := m.runner.Schedule(item.schedule, cron.FuncJob(func() { _ = m.execute(m.ctx, definition, "cron") }))
 		m.dynamicEntries[definition.ID] = entryID
 	}
 	m.logger.InfoContext(ctx, "scheduled jobs refreshed", "count", len(definitions))

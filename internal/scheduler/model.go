@@ -99,13 +99,17 @@ func validateDefinition(input DefinitionInput) error {
 		(input.Status != "active" && input.Status != "disabled") || len(input.Payload) > 1<<20 || !validDefinitionPayload(input.Payload) {
 		return ErrInvalidDefinition
 	}
-	if _, err := definitionParser.Parse(input.CronSpec); err != nil {
-		return ErrInvalidDefinition
-	}
 	if _, err := time.LoadLocation(input.Timezone); err != nil {
 		return ErrInvalidDefinition
 	}
+	if _, err := definitionParser.Parse(cronScheduleSpec(input.Timezone, input.CronSpec)); err != nil {
+		return ErrInvalidDefinition
+	}
 	return nil
+}
+
+func cronScheduleSpec(timezone, spec string) string {
+	return "CRON_TZ=" + timezone + " " + spec
 }
 
 func validDefinitionPayload(value json.RawMessage) bool {

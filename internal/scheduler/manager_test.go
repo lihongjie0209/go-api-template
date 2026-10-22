@@ -57,6 +57,11 @@ func TestManagerRefreshAtomicallyReplacesValidatedDefinitions(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-2", "unknown-job", "Unknown", "", "0 * * * * *", "Asia/Shanghai", "unknown.handler", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
 	require.ErrorIs(t, manager.Refresh(t.Context()), ErrHandlerNotRegistered)
 	require.Len(t, manager.dynamicEntries, 1, "invalid snapshots must not replace the active schedule")
+
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-2", "timezone-job", "Timezone", "", "CRON_TZ=UTC 0 * * * * *", "Asia/Shanghai", "system.sample", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
+	require.ErrorIs(t, manager.Refresh(t.Context()), ErrInvalidDefinition)
+	require.Len(t, manager.dynamicEntries, 1, "an inline timezone must not remove the active schedule")
+	require.Len(t, manager.runner.Entries(), 1)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

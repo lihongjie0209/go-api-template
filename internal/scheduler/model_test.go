@@ -19,6 +19,8 @@ func TestValidateDefinition(t *testing.T) {
 	}{
 		{name: "invalid code", change: func(value *DefinitionInput) { value.Code = "Invalid code" }},
 		{name: "invalid cron", change: func(value *DefinitionInput) { value.CronSpec = "not cron" }},
+		{name: "inline CRON_TZ conflicts with timezone field", change: func(value *DefinitionInput) { value.CronSpec = "CRON_TZ=UTC 0 */5 * * * *" }},
+		{name: "inline TZ conflicts with timezone field", change: func(value *DefinitionInput) { value.CronSpec = "TZ=UTC 0 */5 * * * *" }},
 		{name: "unknown timezone", change: func(value *DefinitionInput) { value.Timezone = "Moon/Base" }},
 		{name: "unregistered handler syntax", change: func(value *DefinitionInput) { value.Handler = "https://example.com" }},
 		{name: "unbounded timeout", change: func(value *DefinitionInput) { value.TimeoutSeconds = 3601 }},
