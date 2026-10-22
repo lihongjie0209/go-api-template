@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
@@ -19,6 +21,60 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestIdentityValidateSession(t *testing.T) {
+	expiresAt := time.Date(2026, time.October, 22, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		request   *identityv1.ValidateSessionRequest
+		rows      *sqlmock.Rows
+		queryErr  error
+		wantCode  codes.Code
+		wantValid bool
+	}{
+		{name: "active", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, rows: sqlmock.NewRows([]string{"expires_at"}).AddRow(expiresAt), wantValid: true},
+		{name: "inactive", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, rows: sqlmock.NewRows([]string{"expires_at"})},
+		{name: "invalid input", request: &identityv1.ValidateSessionRequest{UserId: "user-1"}, wantCode: codes.InvalidArgument},
+		{name: "store unavailable", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: errors.New("private database error"), wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			if tt.rows != nil || tt.queryErr != nil {
+				query := mock.ExpectQuery(`SELECT s.expires_at FROM identity_sessions s`).WithArgs("session-1", "user-1", sqlmock.AnyArg())
+				if tt.queryErr != nil {
+					query.WillReturnError(tt.queryErr)
+				} else {
+					query.WillReturnRows(tt.rows)
+				}
+			}
+			server := &identityServer{auth: auth.NewWithDatabase(config.Config{}, sqlx.NewDb(raw, "sqlmock"))}
+			response, err := server.ValidateSession(t.Context(), tt.request)
+			if status.Code(err) != tt.wantCode {
+				t.Fatalf("code = %v, want %v: %v", status.Code(err), tt.wantCode, err)
+			}
+			if tt.wantCode == codes.OK {
+				if response.GetValid() != tt.wantValid {
+					t.Fatalf("valid = %v, want %v", response.GetValid(), tt.wantValid)
+				}
+				if tt.wantValid && !response.GetExpiresAt().AsTime().Equal(expiresAt) {
+					t.Fatalf("expiry = %v, want %v", response.GetExpiresAt(), expiresAt)
+				}
+			}
+			if tt.queryErr != nil && strings.Contains(err.Error(), "private database error") {
+				t.Fatal("transport leaked a database error")
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestIdentityListUsersExactModeUsesUniqueUsernameLookup(t *testing.T) {
 	t.Parallel()

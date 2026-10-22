@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -18,6 +19,25 @@ import (
 type identityServer struct {
 	identityv1.UnimplementedIdentityServiceServer
 	service *identity.Service
+	auth    *auth.Service
+}
+
+func (s *identityServer) ValidateSession(ctx context.Context, r *identityv1.ValidateSessionRequest) (*identityv1.ValidateSessionResponse, error) {
+	if s.auth == nil {
+		return nil, status.Error(codes.Unavailable, "session state unavailable")
+	}
+	expiresAt, valid, err := s.auth.ValidateSession(ctx, r.GetSessionId(), r.GetUserId())
+	if errors.Is(err, auth.ErrInvalidSessionLookup) {
+		return nil, status.Error(codes.InvalidArgument, "session id and user id are required")
+	}
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "session state unavailable")
+	}
+	response := &identityv1.ValidateSessionResponse{Valid: valid}
+	if valid {
+		response.ExpiresAt = timestamppb.New(expiresAt)
+	}
+	return response, nil
 }
 
 func (s *identityServer) GetUser(ctx context.Context, r *identityv1.GetUserRequest) (*identityv1.GetUserResponse, error) {

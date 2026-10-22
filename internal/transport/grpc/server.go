@@ -80,7 +80,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, re
 	}
 	grpcServer := grpc.NewServer(options...)
 	hellov1.RegisterHelloServiceServer(grpcServer, &helloServer{})
-	identityv1.RegisterIdentityServiceServer(grpcServer, &identityServer{service: identityService})
+	identityv1.RegisterIdentityServiceServer(grpcServer, &identityServer{service: identityService, auth: authService})
 	healthPublisher := newGRPCHealthPublisher(healthService, cfg.App.Name)
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthPublisher.server)
 	if cfg.GRPC.ReflectionEnabled {

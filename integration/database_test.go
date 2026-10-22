@@ -191,6 +191,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			}
 			testTenantLifecycle(t, ctx, db)
 			testIdentityUserLifecycle(t, ctx, db)
+			testAuthoritativeSessionValidation(t, ctx, db)
 			testServiceAccountLifecycle(t, ctx, db)
 			testLogQueryPresentation(t, ctx, db)
 			testResourceCatalogLifecycle(t, ctx, db)
@@ -213,6 +214,44 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	actorCtx := platformprincipal.SystemContext(ctx, "session-validation-integration")
+	now := time.Now()
+	err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_users(id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`), "session-validation-user", "session.validation.user", "Session Validation", "", "", "active", now, "session-validation-integration", now, "session-validation-integration"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_user_credentials(id,user_id,password_hash,password_changed_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), "session-validation-credentials", "session-validation-user", "integration-only-hash", now, now, "session-validation-integration", now, "session-validation-integration"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_sessions(id,user_id,refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)`), "session-validation-session", "session-validation-user", "session-validation-refresh-hash", now.Add(time.Hour), now, "", "", "", now, "session-validation-integration", now, "session-validation-integration")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := auth.NewWithDatabase(config.Config{}, db)
+	_, valid, err := service.ValidateSession(ctx, "session-validation-session", "session-validation-user")
+	if err != nil || !valid {
+		t.Fatalf("active session valid=%v err=%v", valid, err)
+	}
+	_, valid, err = service.ValidateSession(ctx, "session-validation-session", "another-user")
+	if err != nil || valid {
+		t.Fatalf("mismatched user valid=%v err=%v", valid, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=? WHERE id=? AND version=?`), time.Now(), "session-validation-session", 1)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, valid, err = service.ValidateSession(ctx, "session-validation-session", "session-validation-user")
+	if err != nil || valid {
+		t.Fatalf("revoked session valid=%v err=%v", valid, err)
 	}
 }
 
