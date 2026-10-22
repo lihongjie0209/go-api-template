@@ -18,7 +18,7 @@
 | 乐观锁 | 提交是新增记录，不需要期望版本；运行状态转移使用版本/所有权条件更新，重复消息不能重复执行。 |
 | 审计 | 请求记录和运行记录包含完整审计字段，由事务 actor 与数据库触发器维护；后台处理使用显式系统 actor。 |
 | 展示 | 返回 run ID 供前端跳转/轮询。所有时间保持带时区的 RFC 3339；任务名称随运行记录快照，执行中的状态和失败摘要清晰区分。 |
-| 可观测性 | 提交事务同时保存 `request_id`、`trace_id` 和有界的 W3C `traceparent`/`tracestate`，后台认领后恢复 Trace Context 并创建执行 span。只持久化 Trace Context，不复制 baggage、凭据或请求头；旧运行记录没有 Trace Context 时启动独立 span。日志关联沿用公共 Context handler，指标仅使用注册的 handler 名称。 |
+| 可观测性 | 提交事务同时保存 `request_id`、`trace_id` 和有界的 W3C `traceparent`/`tracestate`，后台认领后恢复 Trace Context 并创建执行 span。只持久化 Trace Context，不复制 baggage、凭据或请求头；旧运行记录没有 Trace Context 时启动独立 span。终态写库失败记录到该 span 和带 Request ID/Trace ID 的日志，并将本次运行指标标为错误；指标标签仅使用注册的 handler 名称。 |
 | 测试 | 单测覆盖请求超时不取消已接受任务、重复消息、并发争抢、handler 失败、租约丢失、关闭恢复及跨重启 Trace Context 恢复；带 `integration` 标签的数据库/消息队列测试由 CI 跑，并核对持久化的 Trace Context。 |
 | 共享能力 | 复用 SDK 分布式锁、现有事务 outbox、事件总线及后台生命周期；不新增临时 goroutine 或 Redis 队列。 |
 | 数据字典 | 运行记录含链路及错误数据，不适合字典；状态枚举由接口文档定义。 |

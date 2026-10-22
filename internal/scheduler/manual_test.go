@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -28,6 +29,24 @@ import (
 type manualOutboxStub struct {
 	store func(context.Context, *sqlx.Tx, string, *commonv1.EventEnvelope) error
 }
+
+type manualFailureLogHandler struct {
+	message   string
+	requestID string
+	traceID   string
+}
+
+func (h *manualFailureLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *manualFailureLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Message == "finish manual scheduled job" {
+		h.message = record.Message
+		h.requestID, _ = requestid.FromContext(ctx)
+		h.traceID = trace.SpanContextFromContext(ctx).TraceID().String()
+	}
+	return nil
+}
+func (h *manualFailureLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *manualFailureLogHandler) WithGroup(string) slog.Handler      { return h }
 
 func (s manualOutboxStub) Store(ctx context.Context, tx *sqlx.Tx, subject string, event *commonv1.EventEnvelope) error {
 	return s.store(ctx, tx, subject, event)
@@ -310,6 +329,36 @@ func TestExecuteManualRecordsHandlerPanicAsFailure(t *testing.T) {
 	mock.ExpectExec(`UPDATE scheduled_job_runs SET status=`).WithArgs("error", sqlmock.AnyArg(), sqlmock.AnyArg(), "scheduled job execution failed", sqlmock.AnyArg(), "orders-service:scheduler:manual", "run-1", "lease-1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestExecuteManualCompletionFailureKeepsCorrelationAndErrorMetric(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	logHandler := &manualFailureLogHandler{}
+	logger := slog.New(logHandler)
+	metrics := observability.NewMetrics(config.Config{App: config.App{Name: "orders-service"}, Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+	manager := &Manager{
+		cfg:      config.Config{App: config.App{Name: "orders-service"}},
+		tx:       database.NewTransactor(sqlx.NewDb(raw, "sqlmock")),
+		locker:   lockerStub{mutex: mutexStub{}, acquired: true},
+		metrics:  metrics,
+		logger:   logger,
+		handlers: NewHandlerRegistry(logger),
+	}
+	manager.handlers.handlers["system.sample"] = HandlerDefinition{Key: "system.sample", handler: func(context.Context, json.RawMessage) error { return nil }}
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE scheduled_job_runs SET status=`).WillReturnError(errors.New("secret database detail"))
+	mock.ExpectRollback()
+	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", TraceParent: "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", LeaseOwner: "lease-1"})
+	require.Equal(t, "finish manual scheduled job", logHandler.message)
+	require.Equal(t, "req-1", logHandler.requestID)
+	require.Equal(t, "0102030405060708090a0b0c0d0e0f10", logHandler.traceID)
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+	require.Contains(t, response.Body.String(), `cron_runs_total{job="system.sample",status="error"} 1`)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

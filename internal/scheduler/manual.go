@@ -15,6 +15,7 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const manualDispatchEventType = "platform.scheduled-job.triggered.v1"
@@ -207,7 +208,10 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	}
 	status := statusForRun(err)
 	if finishErr := m.finishManual(ctx, run, status, started); finishErr != nil {
-		m.logOperationFailure(parent, "finish manual scheduled job", finishErr)
+		observability.RecordSafeError(span, finishErr, errSchedulerOperationFailed)
+		span.SetStatus(codes.Error, "completion persistence failed")
+		m.logOperationFailure(ctx, "finish manual scheduled job", finishErr)
+		status = "error"
 	}
 	m.metrics.ObserveCron(run.Handler, status, started)
 }
