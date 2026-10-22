@@ -504,6 +504,12 @@ message queue with an outbox.
 - Define processing, completed-result, and failure TTLs, maximum stored response
   size, retryable-failure behavior, and Redis-outage policy. Never persist
   credentials, tokens, cookies, signed URLs, or unbounded response bodies.
+- An opted-in HTTP mutation stages its bounded unified JSON response until the
+  owner-fenced Redis Complete/Fail/Abort transition succeeds. Never send a
+  successful body before the completed result is saved. If the transition fails,
+  return a generic unavailable response and discard handler-only headers such
+  as Set-Cookie. Streaming, flushing, and connection hijacking are not supported
+  for idempotent HTTP routes.
 - The authoritative write commits before a result is published. Database unique
   constraints, transactions and optimistic versions must make a retry safe;
   Redis idempotency cannot create atomicity with the business database.

@@ -34,10 +34,14 @@ type fakeIdempotencyManager struct {
 	fingerprint  string
 	completed    *Response
 	completeErr  error
+	failureErr   error
+	abortErr     error
 	failed       *idempotency.Failure
 	leaseStarted bool
+	leaseStopped bool
 	aborted      bool
 	maxBytes     int
+	onComplete   func()
 }
 
 func TestEnvironmentInjectsActiveProfile(t *testing.T) {
@@ -109,6 +113,9 @@ func (m *fakeIdempotencyManager) Begin(_ context.Context, key, fingerprint strin
 	return m.decision, nil
 }
 func (m *fakeIdempotencyManager) Complete(_ context.Context, _, _ string, response any) error {
+	if m.onComplete != nil {
+		m.onComplete()
+	}
 	value, ok := response.(Response)
 	if ok {
 		m.completed = &value
@@ -130,13 +137,26 @@ func TestIdempotencyExecutionDoesNotLogRedisErrorDetails(t *testing.T) {
 		c.Request = c.Request.WithContext(idempotency.WithContext(ctx, "operation-1"))
 		c.Next()
 	}, IdempotencyExecution(manager, []string{"/test"}, logger))
-	router.POST("/test", func(c *gin.Context) { OK(c, gin.H{}) })
+	router.POST("/test", func(c *gin.Context) {
+		c.Header("Set-Cookie", "session=should-not-leak")
+		OK(c, gin.H{})
+	})
 	request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`))
 	request.Header.Set("Idempotency-Key", "key-1")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || manager.completed == nil {
+	if response.Code != http.StatusServiceUnavailable || manager.completed == nil {
 		t.Fatalf("status = %d, completed = %v", response.Code, manager.completed)
+	}
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code == apperror.CodeOK || body.RequestID == "" {
+		t.Fatalf("failed persistence leaked success response: %+v", body)
+	}
+	if response.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("failed persistence leaked success cookie: %q", response.Header().Get("Set-Cookie"))
 	}
 	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "idempotency_state_failed") {
 		t.Fatalf("idempotency failure log leaked Redis detail or omitted safe code: %s", output.String())
@@ -144,15 +164,15 @@ func TestIdempotencyExecutionDoesNotLogRedisErrorDetails(t *testing.T) {
 }
 func (m *fakeIdempotencyManager) Fail(_ context.Context, _, _ string, failure idempotency.Failure) error {
 	m.failed = &failure
-	return nil
+	return m.failureErr
 }
 func (m *fakeIdempotencyManager) Abort(context.Context, string, string) error {
 	m.aborted = true
-	return nil
+	return m.abortErr
 }
 func (m *fakeIdempotencyManager) StartLease(ctx context.Context, _, _ string) (context.Context, func() error, error) {
 	m.leaseStarted = true
-	return ctx, func() error { return nil }, nil
+	return ctx, func() error { m.leaseStopped = true; return nil }, nil
 }
 
 func idempotencyTestRouter(t *testing.T, manager idempotencyManager, calls *int) *gin.Engine {
@@ -226,6 +246,11 @@ func TestIdempotencyExecutionCompletesUnifiedResponse(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"name":"demo"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
+	manager.onComplete = func() {
+		if recorder.Body.Len() != 0 {
+			t.Error("success response was sent before idempotency result was persisted")
+		}
+	}
 	router.ServeHTTP(recorder, request)
 	if calls != 1 || manager.beginKey != "operation-1" || manager.fingerprint == "" || !manager.leaseStarted {
 		t.Fatalf("calls=%d key=%q fingerprint=%q", calls, manager.beginKey, manager.fingerprint)
@@ -327,6 +352,46 @@ func TestIdempotencyExecutionAbortsRetryableFailure(t *testing.T) {
 	}
 }
 
+func TestIdempotencyExecutionHidesResponseWhenFailureStateCannotPersist(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		status     int
+		failureErr error
+		abortErr   error
+	}{
+		{name: "nonretryable failure", status: http.StatusBadRequest, failureErr: errors.New("redis unavailable")},
+		{name: "retryable failure", status: http.StatusServiceUnavailable, abortErr: errors.New("redis unavailable")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			manager := &fakeIdempotencyManager{
+				decision:   idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"},
+				failureErr: test.failureErr, abortErr: test.abortErr,
+			}
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			router := gin.New()
+			router.Use(RequestID(), func(c *gin.Context) {
+				c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+				c.Next()
+			}, IdempotencyExecution(manager, []string{"/test"}, logger))
+			router.POST("/test", func(c *gin.Context) {
+				c.Header("Set-Cookie", "session=should-not-leak")
+				c.JSON(test.status, Response{Code: 10001, Message: "original handler response", RequestID: requestID(c)})
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			var response Response
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != http.StatusServiceUnavailable || response.Message == "original handler response" || response.RequestID == "" || recorder.Header().Get("Set-Cookie") != "" {
+				t.Fatalf("status=%d response=%+v cookie=%q", recorder.Code, response, recorder.Header().Get("Set-Cookie"))
+			}
+		})
+	}
+}
+
 func TestIdempotencyExecutionBoundsCapturedResponse(t *testing.T) {
 	t.Parallel()
 	manager := &fakeIdempotencyManager{
@@ -344,8 +409,66 @@ func TestIdempotencyExecutionBoundsCapturedResponse(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
-	if recorder.Code != http.StatusOK || !manager.aborted || manager.completed != nil || manager.failed != nil {
+	if recorder.Code != http.StatusServiceUnavailable || !manager.aborted || manager.completed != nil || manager.failed != nil {
 		t.Fatalf("status=%d aborted=%v completed=%+v failed=%+v", recorder.Code, manager.aborted, manager.completed, manager.failed)
+	}
+	if strings.Contains(recorder.Body.String(), strings.Repeat("x", 128)) {
+		t.Fatal("oversized response body was sent to the client")
+	}
+}
+
+func TestIdempotencyExecutionRejectsUnreplayableResponseOperations(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		operate func(*gin.Context) error
+	}{
+		{name: "flush", operate: func(c *gin.Context) error { c.Writer.Flush(); return nil }},
+		{name: "hijack", operate: func(c *gin.Context) error {
+			_, _, err := c.Writer.Hijack()
+			return err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+			router := gin.New()
+			router.Use(RequestID(), func(c *gin.Context) {
+				c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+				c.Next()
+			}, IdempotencyExecution(manager, []string{"/test"}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			router.POST("/test", func(c *gin.Context) {
+				if err := test.operate(c); test.name == "hijack" && !errors.Is(err, errIdempotencyHijack) {
+					t.Errorf("Hijack() error = %v", err)
+				}
+				OK(c, "unreplayable")
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			if recorder.Code != http.StatusServiceUnavailable || !manager.aborted || strings.Contains(recorder.Body.String(), "unreplayable") {
+				t.Fatalf("status=%d aborted=%v body=%s", recorder.Code, manager.aborted, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestIdempotencyExecutionRestoresWriterAndLeaseAfterPanic(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := gin.New()
+	router.Use(RequestID(), Recovery(logger), func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, logger))
+	router.POST("/test", func(c *gin.Context) {
+		c.Header("Set-Cookie", "session=should-not-leak")
+		panic("secret-value")
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	if recorder.Code != http.StatusInternalServerError || !manager.leaseStopped || recorder.Header().Get("Set-Cookie") != "" || strings.Contains(recorder.Body.String(), "secret-value") {
+		t.Fatalf("status=%d lease_stopped=%v cookie=%q body=%s", recorder.Code, manager.leaseStopped, recorder.Header().Get("Set-Cookie"), recorder.Body.String())
 	}
 }
 

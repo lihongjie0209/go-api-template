@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,6 +37,7 @@ const requestIDKey = "request_id"
 
 var (
 	errIdempotencyStateFailed = errors.New("idempotency_state_failed")
+	errIdempotencyHijack      = errors.New("idempotent response cannot be hijacked")
 	errRateLimitCheckFailed   = errors.New("rate_limit_check_failed")
 )
 
@@ -99,17 +102,58 @@ type responseCapture struct {
 	body     bytes.Buffer
 	maxBytes int
 	overflow bool
+	status   int
+	written  bool
 }
 
 func (w *responseCapture) Write(value []byte) (int, error) {
+	w.WriteHeaderNow()
 	w.capture(value)
-	return w.ResponseWriter.Write(value)
+	return len(value), nil
 }
 
 func (w *responseCapture) WriteString(value string) (int, error) {
+	w.WriteHeaderNow()
 	w.capture([]byte(value))
-	return w.ResponseWriter.WriteString(value)
+	return len(value), nil
 }
+
+func (w *responseCapture) WriteHeader(status int) {
+	if status > 0 && !w.written {
+		w.status = status
+	}
+}
+
+func (w *responseCapture) WriteHeaderNow() { w.written = true }
+
+func (w *responseCapture) Status() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (w *responseCapture) Size() int {
+	if !w.written {
+		return -1
+	}
+	return w.body.Len()
+}
+
+func (w *responseCapture) Written() bool { return w.written }
+
+// Streaming responses cannot be replayed through the bounded JSON contract.
+func (w *responseCapture) Flush() {
+	w.WriteHeaderNow()
+	w.overflow = true
+}
+
+func (w *responseCapture) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.overflow = true
+	return nil, nil, errIdempotencyHijack
+}
+
+func (w *responseCapture) Pusher() http.Pusher { return nil }
 
 func (w *responseCapture) capture(value []byte) {
 	remaining := w.maxBytes - w.body.Len()
@@ -174,38 +218,82 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		}
 		c.Request = c.Request.WithContext(leaseCtx)
 
-		capture := &responseCapture{ResponseWriter: c.Writer, maxBytes: manager.MaxResponseBytes()}
+		originalWriter := c.Writer
+		originalHeaders := originalWriter.Header().Clone()
+		capture := &responseCapture{ResponseWriter: originalWriter, maxBytes: manager.MaxResponseBytes()}
 		c.Writer = capture
+		leaseStopped := false
+		handlerReturned := false
+		defer func() {
+			if !leaseStopped {
+				if stopErr := stopLease(); stopErr != nil {
+					logger.ErrorContext(c.Request.Context(), "idempotency lease lost", "error", observability.SafeError(stopErr, errIdempotencyStateFailed), "request_id", requestID(c))
+				}
+			}
+			c.Writer = originalWriter
+			if !handlerReturned {
+				restoreResponseHeaders(originalWriter.Header(), originalHeaders)
+			}
+		}()
 		c.Next()
+		handlerReturned = true
+		c.Writer = originalWriter
 		if leaseErr := stopLease(); leaseErr != nil {
-			logger.ErrorContext(c.Request.Context(), "idempotency lease lost", "error", observability.SafeError(leaseErr, errIdempotencyStateFailed), "request_id", requestID(c))
+			leaseStopped = true
+			failIdempotencyState(c, logger, originalHeaders, leaseErr)
 			return
 		}
+		leaseStopped = true
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
 		defer cancel()
 		if capture.overflow {
-			if err := manager.Abort(persistCtx, key, decision.Owner); err != nil {
-				logger.ErrorContext(c.Request.Context(), "release oversized idempotency response", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
-			}
+			abortErr := manager.Abort(persistCtx, key, decision.Owner)
+			failIdempotencyState(c, logger, originalHeaders, errors.Join(errors.New("idempotency response exceeded capture limit"), abortErr))
 			return
 		}
 		var response Response
 		if err := json.Unmarshal(capture.body.Bytes(), &response); err != nil {
-			logger.ErrorContext(c.Request.Context(), "idempotency response was not unified JSON", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
+			abortErr := manager.Abort(persistCtx, key, decision.Owner)
+			failIdempotencyState(c, logger, originalHeaders, errors.Join(err, abortErr))
 			return
 		}
 		response.RequestID = ""
-		if retryableHTTPStatus(c.Writer.Status()) {
+		if retryableHTTPStatus(capture.Status()) {
 			err = manager.Abort(persistCtx, key, decision.Owner)
-		} else if c.Writer.Status() >= http.StatusBadRequest {
-			err = manager.Fail(persistCtx, key, decision.Owner, idempotency.Failure{Code: response.Code, Message: response.Message, HTTPStatus: c.Writer.Status()})
+		} else if capture.Status() >= http.StatusBadRequest {
+			err = manager.Fail(persistCtx, key, decision.Owner, idempotency.Failure{Code: response.Code, Message: response.Message, HTTPStatus: capture.Status()})
 		} else {
 			err = manager.Complete(persistCtx, key, decision.Owner, response)
 		}
 		if err != nil {
-			logger.ErrorContext(c.Request.Context(), "persist idempotency result", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
+			failIdempotencyState(c, logger, originalHeaders, err)
+			return
+		}
+		originalWriter.WriteHeader(capture.Status())
+		if capture.body.Len() == 0 {
+			originalWriter.WriteHeaderNow()
+			return
+		}
+		if _, err := originalWriter.Write(capture.body.Bytes()); err != nil {
+			logger.WarnContext(c.Request.Context(), "write idempotent response", "error", observability.SafeError(err, errHTTPRequestFailed), "request_id", requestID(c))
 		}
 	}
+}
+
+func restoreResponseHeaders(target, original http.Header) {
+	for name := range target {
+		delete(target, name)
+	}
+	for name, values := range original {
+		target[name] = values
+	}
+}
+
+func failIdempotencyState(c *gin.Context, logger *slog.Logger, originalHeaders http.Header, err error) {
+	restoreResponseHeaders(c.Writer.Header(), originalHeaders)
+	logger.ErrorContext(c.Request.Context(), "idempotency state unavailable", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
+	appErr := apperror.Unavailable("idempotency state is unavailable", nil)
+	c.AbortWithStatusJSON(appErr.HTTPStatus, Response{Code: appErr.Code, Message: appErr.Message, Body: nil, RequestID: requestID(c)})
 }
 
 func retryableHTTPStatus(status int) bool {

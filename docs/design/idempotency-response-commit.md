@@ -1,0 +1,13 @@
+# HTTP idempotency response commit
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Configured mutation routes with an `Idempotency-Key` stage at most `max_response_bytes` of unified JSON. A successful body is sent only after the owner-fenced completed result is persisted. Non-idempotent routes and replay responses retain their existing behavior. |
+| Authentication and authorization | Existing route authentication and resource/action checks run before the business handler; this change does not add a public endpoint or bypass authorization. |
+| Operation and security logs | No new business or security event. Redis failures are logged with a bounded safe reason; the public 503 envelope contains no Redis details. Handler-only headers, including Set-Cookie, are discarded on persistence failure. |
+| Cache and distributed lock | The shared SDK Redis idempotency state machine and renewable processing lease remain the coordination authority. No new cache or lock is introduced. |
+| Optimistic lock and audit | Business writes still commit before the Redis result. Database constraints and optimistic versions remain mandatory because Redis and the business transaction are not atomic. |
+| Presentation and dictionary | Responses retain the shared `{code,message,body,request_id}` shape. Replays use the new request ID. No dictionary data is involved. |
+| Failure policy | If completion, failure recording, or retryable-abort persistence fails, discard the staged handler response and return a generic 503. An oversized, malformed, flushed, or hijacked response cannot be replayed: abort its processing key and return 503. These cases require the business write to remain independently retry-safe. |
+| Tests | Unit tests prove the response is not sent before completion, successful replay, bounded capture, no success body or Cookie on Redis failure, failure/abort state errors, and rejection of flush/hijack. Ordinary local tests and lint run before committing; Testcontainers remains a CI gate. |
+| Shared capability | Reuses the SDK idempotency state machine and existing HTTP response/error contracts. The bounded staging writer is transport-specific and does not duplicate Redis algorithms. |
