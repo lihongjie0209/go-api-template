@@ -2610,6 +2610,34 @@ func testManualWorkerCompletionTransaction(t *testing.T, ctx context.Context, db
 		if got := countEvents(t); got != before {
 			t.Fatalf("rolled-back completion events=%d, want %d", got, before)
 		}
+		if err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			var version int64
+			if err := tx.GetContext(actorCtx, &version, tx.Rebind(`SELECT version FROM scheduled_job_runs WHERE id=? AND status='running' AND deleted_at IS NULL FOR UPDATE`), runID); err != nil {
+				return err
+			}
+			now := time.Now()
+			result, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE scheduled_job_runs SET status='error',finished_at=?,error_message='integration cleanup',lease_owner='',lease_until=NULL,updated_at=?,updated_by=? WHERE id=? AND version=? AND status='running' AND deleted_at IS NULL`), now, now, "scheduler-admin", runID, version)
+			if err != nil {
+				return err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows != 1 {
+				return fmt.Errorf("cleanup manual worker run affected %d rows", rows)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("complete recoverable manual run fixture: %v", err)
+		}
+		var cleaned struct {
+			Status     string     `db:"status"`
+			FinishedAt *time.Time `db:"finished_at"`
+		}
+		if err := db.GetContext(ctx, &cleaned, db.Rebind(`SELECT status,finished_at FROM scheduled_job_runs WHERE id=?`), runID); err != nil || cleaned.Status != "error" || cleaned.FinishedAt == nil {
+			t.Fatalf("manual run fixture cleanup=%+v, err=%v", cleaned, err)
+		}
 	})
 }
 

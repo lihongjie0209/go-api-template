@@ -86,8 +86,10 @@ the Fx startup deadline; both CI jobs passed in run `39707818357` at commit
 `06f4f4a`. Later local work stages cron schedules before swapping them and
 ignores a renewal error arriving after handler completion; its unit and
 scheduler race gates pass locally. A new PostgreSQL/MySQL Testcontainers case
-for asynchronous worker completion/outbox atomicity compiles locally but awaits
-the next CI execution.
+for asynchronous worker completion/outbox atomicity exposed a fixture-cleanup
+gap in run `39709320338`: its intentionally recoverable `running` row blocked
+migration down. The case now closes that row after asserting rollback, with
+integration compile and vet passing locally; full CI revalidation is pending.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,
