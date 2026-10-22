@@ -74,7 +74,7 @@ func (o *Outbox) Store(ctx context.Context, tx *sqlx.Tx, subject string, envelop
 	if o == nil || !o.cfg.Enabled || o.bus == nil {
 		return errors.New("transactional outbox is unavailable")
 	}
-	if tx == nil || !publishSubjectPattern.MatchString(subject) || len(subject) > 256 || envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 {
+	if tx == nil || envelope == nil || !validOutboxIdentity(subject, envelope.EventId) {
 		return errors.New("transaction, subject and event envelope are required")
 	}
 	data, err := proto.Marshal(envelope)
@@ -179,6 +179,9 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 // The database row ID owns the event's durable identity. Publishing a
 // different embedded ID would break duplicate-delivery protection and replay.
 func decodeClaimedEnvelope(record outboxRecord) (*commonv1.EventEnvelope, error) {
+	if !validOutboxIdentity(record.Subject, record.ID) || len(record.Envelope) > maxOutboxEnvelopeBytes {
+		return nil, fmt.Errorf("%w: invalid stored record", errDecodeEnvelope)
+	}
 	var envelope commonv1.EventEnvelope
 	if err := proto.Unmarshal(record.Envelope, &envelope); err != nil {
 		return nil, fmt.Errorf("%w: invalid protobuf", errDecodeEnvelope)
@@ -187,6 +190,10 @@ func decodeClaimedEnvelope(record outboxRecord) (*commonv1.EventEnvelope, error)
 		return nil, fmt.Errorf("%w: event identity mismatch", errDecodeEnvelope)
 	}
 	return &envelope, nil
+}
+
+func validOutboxIdentity(subject, eventID string) bool {
+	return publishSubjectPattern.MatchString(subject) && len(subject) <= 256 && eventID != "" && len(eventID) <= 64
 }
 
 func (o *Outbox) claim(ctx context.Context) (outboxRecord, bool, error) {

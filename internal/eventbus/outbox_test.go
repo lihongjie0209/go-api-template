@@ -134,7 +134,7 @@ func TestDecodeClaimedEnvelopeRequiresStoredEventIdentity(t *testing.T) {
 			t.Parallel()
 			data, err := proto.Marshal(&commonv1.EventEnvelope{EventId: test.envelopeID})
 			require.NoError(t, err)
-			envelope, err := decodeClaimedEnvelope(outboxRecord{ID: test.storedID, Envelope: data})
+			envelope, err := decodeClaimedEnvelope(outboxRecord{ID: test.storedID, Subject: "platform.event.v1", Envelope: data})
 			if test.wantError {
 				require.ErrorIs(t, err, errDecodeEnvelope)
 				return
@@ -147,8 +147,36 @@ func TestDecodeClaimedEnvelopeRequiresStoredEventIdentity(t *testing.T) {
 
 func TestDecodeClaimedEnvelopeRejectsMalformedProtobuf(t *testing.T) {
 	t.Parallel()
-	_, err := decodeClaimedEnvelope(outboxRecord{ID: "event-1", Envelope: []byte{0xff}})
+	_, err := decodeClaimedEnvelope(outboxRecord{ID: "event-1", Subject: "platform.event.v1", Envelope: []byte{0xff}})
 	require.ErrorIs(t, err, errDecodeEnvelope)
+}
+
+func TestDecodeClaimedEnvelopeRejectsInvalidStoredRecord(t *testing.T) {
+	t.Parallel()
+	validEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "event-1"})
+	require.NoError(t, err)
+	oversizedID := strings.Repeat("e", 65)
+	oversizedIDEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: oversizedID})
+	require.NoError(t, err)
+	oversizedEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "event-1", Payload: make([]byte, maxOutboxEnvelopeBytes)})
+	require.NoError(t, err)
+	require.Greater(t, len(oversizedEnvelope), maxOutboxEnvelopeBytes)
+	for _, test := range []struct {
+		name   string
+		record outboxRecord
+	}{
+		{name: "wildcard subject", record: outboxRecord{ID: "event-1", Subject: "platform.>", Envelope: validEnvelope}},
+		{name: "empty subject token", record: outboxRecord{ID: "event-1", Subject: "platform..event", Envelope: validEnvelope}},
+		{name: "oversized subject", record: outboxRecord{ID: "event-1", Subject: strings.Repeat("s", 257), Envelope: validEnvelope}},
+		{name: "oversized row ID", record: outboxRecord{ID: oversizedID, Subject: "platform.event.v1", Envelope: oversizedIDEnvelope}},
+		{name: "oversized envelope", record: outboxRecord{ID: "event-1", Subject: "platform.event.v1", Envelope: oversizedEnvelope}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := decodeClaimedEnvelope(test.record)
+			require.ErrorIs(t, err, errDecodeEnvelope)
+		})
+	}
 }
 
 func TestOutboxDispatchDeadLettersMismatchedEnvelopeWithoutPublishing(t *testing.T) {
