@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -204,7 +205,8 @@ func decodeClaimedEnvelope(record outboxRecord) (*commonv1.EventEnvelope, error)
 }
 
 func validOutboxIdentity(subject, eventID string) bool {
-	return publishSubjectPattern.MatchString(subject) && len(subject) <= 256 && eventID != "" && len(eventID) <= 64
+	// Configuration currently requires the stream to own only platform.>.
+	return strings.HasPrefix(subject, "platform.") && publishSubjectPattern.MatchString(subject) && len(subject) <= 256 && eventID != "" && len(eventID) <= 64
 }
 
 func (o *Outbox) claim(ctx context.Context) (outboxRecord, bool, error) {

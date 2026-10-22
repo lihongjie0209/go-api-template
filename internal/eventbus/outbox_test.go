@@ -106,6 +106,7 @@ func TestOutboxStoreRejectsInvalidIdentityAndSubject(t *testing.T) {
 		subject string
 		id      string
 	}{
+		{name: "outside configured stream", subject: "orders.created.v1", id: "event-1"},
 		{name: "wildcard", subject: "platform.>", id: "event-1"},
 		{name: "empty token", subject: "platform..event", id: "event-1"},
 		{name: "whitespace", subject: "platform.bad event", id: "event-1"},
@@ -166,6 +167,7 @@ func TestDecodeClaimedEnvelopeRejectsInvalidStoredRecord(t *testing.T) {
 		name   string
 		record outboxRecord
 	}{
+		{name: "outside configured stream", record: outboxRecord{ID: "event-1", Subject: "orders.created.v1", Envelope: validEnvelope}},
 		{name: "wildcard subject", record: outboxRecord{ID: "event-1", Subject: "platform.>", Envelope: validEnvelope}},
 		{name: "empty subject token", record: outboxRecord{ID: "event-1", Subject: "platform..event", Envelope: validEnvelope}},
 		{name: "oversized subject", record: outboxRecord{ID: "event-1", Subject: strings.Repeat("s", 257), Envelope: validEnvelope}},
