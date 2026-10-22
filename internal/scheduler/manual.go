@@ -254,7 +254,14 @@ func watchManualLease(ctx context.Context, done <-chan struct{}, interval time.D
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := renew(ctx); err != nil {
+			// A stalled database call must not consume the entire lease window.
+			renewCtx, cancel := context.WithTimeout(ctx, interval)
+			err := renew(renewCtx)
+			if err == nil {
+				err = renewCtx.Err()
+			}
+			cancel()
+			if err != nil {
 				if ctx.Err() != nil {
 					return nil
 				}

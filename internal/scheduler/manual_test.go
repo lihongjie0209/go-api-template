@@ -494,6 +494,33 @@ func TestWatchManualLeaseReportsFailureWhileTaskIsActive(t *testing.T) {
 	})
 }
 
+func TestWatchManualLeaseBoundsRenewalBeforeLeaseExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		started := time.Now()
+		err := watchManualLease(ctx, make(chan struct{}), time.Second, func(renewCtx context.Context) error {
+			<-renewCtx.Done()
+			return renewCtx.Err()
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.NoError(t, ctx.Err(), "renewal timeout must be distinguished from task cancellation")
+		require.Equal(t, 2*time.Second, time.Since(started))
+	})
+}
+
+func TestWatchManualLeaseRejectsRenewalSuccessAfterDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		err := watchManualLease(ctx, make(chan struct{}), time.Second, func(renewCtx context.Context) error {
+			<-renewCtx.Done()
+			return nil
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+}
+
 func TestFinishManualRollsBackWhenOperationLogCannotBeQueued(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
