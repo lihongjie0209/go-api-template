@@ -490,6 +490,9 @@ message queue with an outbox.
 - Mutation endpoints explicitly opt in; query/list endpoints must not use an
   idempotency key as a cache substitute. HTTP and unary gRPC use the shared SDK
   state machine and the same semantic rules.
+- Every replay must pass current authentication and operation authorization
+  before the idempotency state is read or returned. HTTP idempotency middleware
+  must follow route authorization, not precede it as API-group middleware.
 - HTTP/gRPC ingress must reject malformed `Idempotency-Key` values before
   business work. Internal callers that require idempotency must validate the
   key explicitly before placing it in Context; the local Context adapter drops

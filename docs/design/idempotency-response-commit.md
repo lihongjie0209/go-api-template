@@ -3,7 +3,7 @@
 | Concern | Decision and rationale |
 | --- | --- |
 | Contract | Configured mutation routes with an `Idempotency-Key` stage at most `max_response_bytes` of unified JSON. A successful body is sent only after the owner-fenced completed result is persisted. Non-idempotent routes and replay responses retain their existing behavior. |
-| Authentication and authorization | Existing route authentication and resource/action checks run before the business handler; this change does not add a public endpoint or bypass authorization. |
+| Authentication and authorization | Authentication and the current route resource/action decision run before idempotency state lookup or replay on every request. The idempotency middleware is registered after the route authorization middleware, not on the API group. Replays remain scoped by the fingerprint's principal, tenant, membership, and session dimensions. The business handler and its object-level checks do not run on replay, so idempotency is reserved for explicitly reviewed mutation routes whose saved result is safe to return within that scope. |
 | Operation and security logs | No new business or security event. Redis failures are logged with a bounded safe reason; the public 503 envelope contains no Redis details. Handler-only headers, including Set-Cookie, are discarded on persistence failure. |
 | Cache and distributed lock | The shared SDK Redis idempotency state machine and renewable processing lease remain the coordination authority. No new cache or lock is introduced. |
 | Optimistic lock and audit | Business writes still commit before the Redis result. Database constraints and optimistic versions remain mandatory because Redis and the business transaction are not atomic. |

@@ -56,7 +56,7 @@ func dataPermissionExemption(resource, action string) string {
 }
 
 // registerPOST binds the handler and its authorization contract atomically.
-func registerPOST(group *gin.RouterGroup, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, logger *slog.Logger, endpoint accesscontrol.Endpoint, handlers ...gin.HandlerFunc) error {
+func registerPOST(group *gin.RouterGroup, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, logger *slog.Logger, idempotency gin.HandlerFunc, endpoint accesscontrol.Endpoint, handlers ...gin.HandlerFunc) error {
 	if err := schemas.ValidateEndpoint(endpoint); err != nil {
 		return err
 	}
@@ -66,7 +66,11 @@ func registerPOST(group *gin.RouterGroup, resources *resourceaction.Registry, sc
 	}
 	enforcer := accesscontrol.NewEnforcer(registry, authorizer)
 	_, path, _ := strings.Cut(endpoint.Operation, " ")
-	chain := append([]gin.HandlerFunc{operationAuthorization(enforcer, endpoint, logger)}, handlers...)
+	chain := []gin.HandlerFunc{operationAuthorization(enforcer, endpoint, logger)}
+	if idempotency != nil {
+		chain = append(chain, idempotency)
+	}
+	chain = append(chain, handlers...)
 	group.POST(strings.TrimPrefix(path, "/api/v1"), chain...)
 	return nil
 }

@@ -27,7 +27,7 @@ func TestLogoutRouteAcceptsRefreshCredentialWithoutAccessJWT(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	router := gin.New()
 	called := false
-	err = registerPOST(router.Group("/api/v1"), resources, schemas, nil, logger,
+	err = registerPOST(router.Group("/api/v1"), resources, schemas, nil, logger, nil,
 		publicEndpoint("/api/v1/auth/logout"), func(c *gin.Context) {
 			called = true
 			c.Status(http.StatusNoContent)
@@ -44,7 +44,7 @@ func TestLogoutRouteAcceptsRefreshCredentialWithoutAccessJWT(t *testing.T) {
 	}
 
 	protected := jwtEndpoint("/api/v1/auth/sessions/logout-all", "identity.session", "logout", accesscontrol.DataPermissionNone)
-	if err := registerPOST(router.Group("/api/v1"), resources, schemas, nil, logger, protected,
+	if err := registerPOST(router.Group("/api/v1"), resources, schemas, nil, logger, nil, protected,
 		func(c *gin.Context) { c.Status(http.StatusNoContent) }); err != nil {
 		t.Fatal(err)
 	}

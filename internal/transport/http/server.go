@@ -76,12 +76,12 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		subject, _ := value.(string)
 		return subject
 	}, logger))
-	api.Use(IdempotencyExecution(idempotencyManager, cfg.Idempotency.HTTPPaths, logger))
+	idempotencyHandler := IdempotencyExecution(idempotencyManager, cfg.Idempotency.HTTPPaths, logger)
 	var registrationErr error
 	definitions := make([]accesscontrol.Endpoint, 0, 128)
 	post := func(endpoint accesscontrol.Endpoint, handlers ...gin.HandlerFunc) {
 		if registrationErr == nil {
-			registrationErr = registerPOST(api, resources, schemas, authorizer, logger, endpoint, handlers...)
+			registrationErr = registerPOST(api, resources, schemas, authorizer, logger, idempotencyHandler, endpoint, handlers...)
 			if registrationErr == nil {
 				definitions = append(definitions, endpoint)
 			}
