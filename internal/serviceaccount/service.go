@@ -136,19 +136,23 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Created, error
 		return Created{}, fmt.Errorf("hash service account secret: %w", err)
 	}
 	id, now := uuid.NewString(), time.Now()
+	var account Account
 	err = s.mutate(ctx, "identity.service-account.create", id, safeRequest(input), func(tx *sqlx.Tx) error {
 		query := tx.Rebind(`INSERT INTO identity_service_accounts (id,client_id,name,description,secret_hash,status,expires_at,failed_attempts,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)`)
 		_, execErr := tx.ExecContext(ctx, query, id, input.ClientID, input.Name, input.Description, hash, StatusActive, input.ExpiresAt, 0, now, actor.ID, now, actor.ID)
 		if database.IsUniqueViolation(execErr) {
 			return ErrConflict
 		}
+		if execErr != nil {
+			return execErr
+		}
+		account, execErr = getAccountTx(ctx, tx, id)
 		return execErr
 	})
 	if err != nil {
 		return Created{}, err
 	}
-	account, err := s.get(ctx, "id=?", id)
-	return Created{Account: account, Secret: secret}, err
+	return Created{Account: account, Secret: secret}, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Account, error) {
@@ -231,15 +235,20 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Account, error
 	if input.ID == "" || len(input.ID) > maxAccountIDLength || input.Version <= 0 || input.Name == "" || len(input.Name) > 256 || len(input.Description) > 4096 || !validStatus(input.Status) || expired(input.ExpiresAt, time.Now()) {
 		return Account{}, ErrInvalid
 	}
+	var account Account
 	err = s.mutate(ctx, "identity.service-account.update", input.ID, safeRequest(input), func(tx *sqlx.Tx) error {
 		query := tx.Rebind(`UPDATE identity_service_accounts SET name=?,description=?,status=?,expires_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		result, execErr := tx.ExecContext(ctx, query, input.Name, input.Description, input.Status, input.ExpiresAt, time.Now(), actor.ID, input.ID, input.Version)
-		return oneRow(result, execErr)
+		if err := oneRow(result, execErr); err != nil {
+			return err
+		}
+		account, execErr = getAccountTx(ctx, tx, input.ID)
+		return execErr
 	})
 	if err != nil {
 		return Account{}, err
 	}
-	return s.get(ctx, "id=?", input.ID)
+	return account, nil
 }
 
 func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (Created, error) {
@@ -265,13 +274,16 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 	err = s.mutate(ctx, "identity.service-account.secret.rotate", id, map[string]any{"name": account.Name, "version": version}, func(tx *sqlx.Tx) error {
 		query := tx.Rebind(`UPDATE identity_service_accounts SET secret_hash=?,last_used_at=NULL,failed_attempts=0,locked_until=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		result, execErr := tx.ExecContext(ctx, query, hash, time.Now(), actor.ID, id, version)
-		return oneRow(result, execErr)
+		if err := oneRow(result, execErr); err != nil {
+			return err
+		}
+		account, execErr = getAccountTx(ctx, tx, id)
+		return execErr
 	})
 	if err != nil {
 		return Created{}, err
 	}
-	account, err = s.get(ctx, "id=?", id)
-	return Created{Account: account, Secret: secret}, err
+	return Created{Account: account, Secret: secret}, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
@@ -422,6 +434,18 @@ func (s *Service) get(ctx context.Context, predicate string, args ...any) (Accou
 			return Account{}, ErrNotFound
 		}
 		return Account{}, fmt.Errorf("get service account: %w", err)
+	}
+	return account, nil
+}
+
+func getAccountTx(ctx context.Context, tx *sqlx.Tx, id string) (Account, error) {
+	var account Account
+	query := tx.Rebind(`SELECT ` + accountColumns + ` FROM identity_service_accounts a WHERE id=? AND deleted_at IS NULL`)
+	if err := tx.GetContext(ctx, &account, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Account{}, ErrNotFound
+		}
+		return Account{}, fmt.Errorf("read mutated service account: %w", err)
 	}
 	return account, nil
 }

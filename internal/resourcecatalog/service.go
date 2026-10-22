@@ -143,14 +143,18 @@ func (s *Service) CreateResource(ctx context.Context, input ResourceInput) (Reso
 	}
 	id := uuid.NewString()
 	now := time.Now()
+	var created Resource
 	err = s.mutate(ctx, "authorization.resource.create", id, input.Name, func(tx *sqlx.Tx) error {
 		_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO authorization_resources(id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,'manual',?,?,?,?,?,1)`), id, input.Key, input.Name, input.Description, input.Scope, input.Status, now, actor.ID, now, actor.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.GetContext(ctx, &created, tx.Rebind(resourceSelect+` WHERE id=? AND deleted_at IS NULL`), id)
 	})
 	if err != nil {
 		return Resource{}, err
 	}
-	return s.GetResource(ctx, id)
+	return created, nil
 }
 
 func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) {
@@ -158,7 +162,7 @@ func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) 
 		return Resource{}, ErrInvalid
 	}
 	var result Resource
-	err := s.db.GetContext(ctx, &result, s.db.Rebind(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE id=? AND deleted_at IS NULL`), id)
+	err := s.db.GetContext(ctx, &result, s.db.Rebind(resourceSelect+` WHERE id=? AND deleted_at IS NULL`), id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Resource{}, ErrNotFound
 	}
@@ -196,6 +200,7 @@ func (s *Service) UpdateResource(ctx context.Context, id string, version int64, 
 	if _, err := uuid.Parse(id); err != nil || version <= 0 || validateResource(input) != nil {
 		return Resource{}, ErrInvalid
 	}
+	var updated Resource
 	err := s.mutate(ctx, "authorization.resource.update", id, input.Name, func(tx *sqlx.Tx) error {
 		current, err := lockResource(ctx, tx, id)
 		if err != nil {
@@ -211,12 +216,15 @@ func (s *Service) UpdateResource(ctx context.Context, id string, version int64, 
 			return ErrInvalid
 		}
 		res, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE authorization_resources SET name=?,description=?,status=? WHERE id=? AND version=? AND source='manual' AND deleted_at IS NULL`), input.Name, input.Description, input.Status, id, version)
-		return affected(res, err)
+		if err := affected(res, err); err != nil {
+			return err
+		}
+		return tx.GetContext(ctx, &updated, tx.Rebind(resourceSelect+` WHERE id=? AND deleted_at IS NULL`), id)
 	})
 	if err != nil {
 		return Resource{}, err
 	}
-	return s.GetResource(ctx, id)
+	return updated, nil
 }
 
 func (s *Service) DeleteResource(ctx context.Context, id string, version int64) error {
@@ -257,6 +265,7 @@ func (s *Service) CreateAction(ctx context.Context, input ActionInput) (Action, 
 	}
 	id := uuid.NewString()
 	now := time.Now()
+	var created Action
 	err = s.mutate(ctx, "authorization.action.create", id, input.Name, func(tx *sqlx.Tx) error {
 		resource, err := lockResource(ctx, tx, input.ResourceID)
 		if err != nil {
@@ -266,12 +275,15 @@ func (s *Service) CreateAction(ctx context.Context, input ActionInput) (Action, 
 			return ErrConflict
 		}
 		_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO authorization_resource_actions(id,resource_id,action_key,name,description,source,status,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,'manual',?,?,?,?,?,1)`), id, input.ResourceID, input.Key, input.Name, input.Description, input.Status, now, actor.ID, now, actor.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.GetContext(ctx, &created, tx.Rebind(actionSelect+` WHERE a.id=? AND a.deleted_at IS NULL AND r.deleted_at IS NULL`), id)
 	})
 	if err != nil {
 		return Action{}, err
 	}
-	return s.GetAction(ctx, id)
+	return created, nil
 }
 
 func (s *Service) GetAction(ctx context.Context, id string) (Action, error) {
@@ -330,6 +342,7 @@ func (s *Service) UpdateAction(ctx context.Context, id string, version int64, in
 	if _, err := uuid.Parse(id); err != nil || version <= 0 || validateAction(input) != nil {
 		return Action{}, ErrInvalid
 	}
+	var updated Action
 	err := s.mutate(ctx, "authorization.action.update", id, input.Name, func(tx *sqlx.Tx) error {
 		current, err := lockAction(ctx, tx, id)
 		if err != nil {
@@ -352,12 +365,15 @@ func (s *Service) UpdateAction(ctx context.Context, id string, version int64, in
 			return ErrConflict
 		}
 		res, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE authorization_resource_actions SET name=?,description=?,status=? WHERE id=? AND version=? AND source='manual' AND deleted_at IS NULL`), input.Name, input.Description, input.Status, id, version)
-		return affected(res, err)
+		if err := affected(res, err); err != nil {
+			return err
+		}
+		return tx.GetContext(ctx, &updated, tx.Rebind(actionSelect+` WHERE a.id=? AND a.deleted_at IS NULL AND r.deleted_at IS NULL`), id)
 	})
 	if err != nil {
 		return Action{}, err
 	}
-	return s.GetAction(ctx, id)
+	return updated, nil
 }
 
 func (s *Service) DeleteAction(ctx context.Context, id string, version int64) error {
@@ -387,6 +403,7 @@ func (s *Service) DeleteAction(ctx context.Context, id string, version int64) er
 	})
 }
 
+const resourceSelect = `SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources`
 const actionSelect = `SELECT a.id,a.resource_id,r.resource_key,r.name AS resource_name,a.action_key,a.name,a.description,a.source,a.status,a.created_at,a.created_by,a.updated_at,a.updated_by,a.version FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id`
 
 func lockResource(ctx context.Context, tx *sqlx.Tx, id string) (Resource, error) {

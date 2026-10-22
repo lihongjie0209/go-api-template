@@ -93,6 +93,10 @@ func TestService_CreateRollsBackWhenTransactionalSecurityLogFails(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_service_accounts`).WillReturnResult(sqlmock.NewResult(1, 1))
+	now := time.Now()
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin-1", "Administrator", now, "admin-1", "Administrator", 1))
 	mock.ExpectRollback()
 
 	_, err = service.Create(ctx, CreateInput{ClientID: "billing-worker", Name: "Billing Worker"})
@@ -127,10 +131,10 @@ func TestService_CreateReturnsSecretOnceWithoutAuditingIt(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO identity_service_accounts`).
 		WithArgs(sqlmock.AnyArg(), "billing-worker", "Billing Worker", "settles invoices", sqlmock.AnyArg(), StatusActive, nil, 0, sqlmock.AnyArg(), "admin-1", sqlmock.AnyArg(), "admin-1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
 			AddRow("account-1", "billing-worker", "Billing Worker", "settles invoices", StatusActive, nil, nil, 0, nil, now, "admin-1", "Administrator", now, "admin-1", "Administrator", 1))
+	mock.ExpectCommit()
 
 	created, err := service.Create(ctx, CreateInput{ClientID: " Billing-Worker ", Name: "Billing Worker", Description: "settles invoices"})
 	if err != nil {
@@ -151,6 +155,135 @@ func TestService_CreateReturnsSecretOnceWithoutAuditingIt(t *testing.T) {
 	}
 	if security.entry.EventType != securitylog.EventServiceAccountChanged || !security.entry.Succeeded {
 		t.Fatalf("security entry = %+v", security.entry)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_CreateRollsBackAndDoesNotDeliverSecretWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := New(db, database.NewTransactor(db), &operationRecorder{}, &securityRecorder{}, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO identity_service_accounts`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs(sqlmock.AnyArg()).WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	created, err := service.Create(ctx, CreateInput{ClientID: "billing-worker", Name: "Billing Worker"})
+	if err == nil || !strings.Contains(err.Error(), "result read unavailable") {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.Secret != "" {
+		t.Fatal("Create() delivered a secret after rollback")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_RotateSecretRollsBackAndDoesNotDeliverSecretWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := New(db, database.NewTransactor(db), &operationRecorder{}, &securityRecorder{}, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser})
+	now := time.Now()
+	accountRow := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin-1", "Administrator", now, "admin-1", "Administrator", 2)
+	}
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnRows(accountRow())
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET secret_hash=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	created, err := service.RotateSecret(ctx, "account-1", 2)
+	if err == nil || !strings.Contains(err.Error(), "result read unavailable") {
+		t.Fatalf("RotateSecret() error = %v", err)
+	}
+	if created.Secret != "" {
+		t.Fatal("RotateSecret() delivered a secret after rollback")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_RotateSecretDeliversCommittedSecretAndVersion(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	operations, security := &operationRecorder{}, &securityRecorder{}
+	service := New(db, database.NewTransactor(db), operations, security, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser})
+	now := time.Now()
+	accountRow := func(version int64) *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin-1", "Administrator", now, "admin-1", "Administrator", version)
+	}
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnRows(accountRow(2))
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET secret_hash=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnRows(accountRow(3))
+	mock.ExpectCommit()
+
+	created, err := service.RotateSecret(ctx, "account-1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Secret) < 40 || created.Account.Version != 3 {
+		t.Fatalf("RotateSecret() result = %+v", created.Account)
+	}
+	payload, err := json.Marshal(struct{ Operation, Security any }{operations.entry, security.entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsCredential(string(payload), created.Secret) {
+		t.Fatal("audit payload leaked rotated secret")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_UpdateRollsBackWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := New(db, database.NewTransactor(db), &operationRecorder{}, &securityRecorder{}, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser})
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET name=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	_, err = service.Update(ctx, UpdateInput{ID: "account-1", Name: "Billing Worker", Status: StatusActive, Version: 2})
+	if err == nil || !strings.Contains(err.Error(), "result read unavailable") {
+		t.Fatalf("Update() error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

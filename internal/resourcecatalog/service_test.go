@@ -165,6 +165,101 @@ func TestGetActionIncludesResourceDisplayName(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestCatalogCreateResourceRollsBackWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewService(db, database.NewTransactor(db), nil, nil)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO authorization_resources`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE id=`).
+		WithArgs(sqlmock.AnyArg()).WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	_, err = service.CreateResource(platformprincipal.SystemContext(t.Context(), "admin"), ResourceInput{Key: "catalog.resource", Name: "Resource", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
+	require.ErrorContains(t, err, "result read unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCatalogCreateActionRollsBackWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewService(db, database.NewTransactor(db), nil, nil)
+	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status.*FROM authorization_resources WHERE id=`).
+		WithArgs(resourceID).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow(resourceID, "catalog.resource", "Resource", "", "platform", "manual", "active", now, "admin", now, "admin", 1))
+	mock.ExpectExec(`INSERT INTO authorization_resource_actions`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT a.id,a.resource_id,r.resource_key,r.name AS resource_name.*WHERE a.id=`).
+		WithArgs(sqlmock.AnyArg()).WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	_, err = service.CreateAction(platformprincipal.SystemContext(t.Context(), "admin"), ActionInput{ResourceID: resourceID, Key: "read", Name: "Read", Status: "active"})
+	require.ErrorContains(t, err, "result read unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCatalogUpdateResourceRollsBackWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewService(db, database.NewTransactor(db), nil, nil)
+	id := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status.*FROM authorization_resources WHERE id=`).
+		WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow(id, "catalog.resource", "Resource", "", "platform", "manual", "active", now, "admin", now, "admin", 2))
+	mock.ExpectExec(`UPDATE authorization_resources SET name=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status.*FROM authorization_resources WHERE id=`).
+		WithArgs(id).WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	_, err = service.UpdateResource(platformprincipal.SystemContext(t.Context(), "admin"), id, 2, ResourceInput{Key: "catalog.resource", Name: "Renamed", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
+	require.ErrorContains(t, err, "result read unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCatalogUpdateActionRollsBackWhenResultReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewService(db, database.NewTransactor(db), nil, nil)
+	id := "2f3c4f4d-f243-4204-a75a-20cf4b39b541"
+	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT a.id,a.resource_id,r.resource_key,r.name AS resource_name.*WHERE a.id=`).
+		WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow(id, resourceID, "catalog.resource", "Resource", "read", "Read", "", "manual", "active", now, "admin", now, "admin", 2))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status.*FROM authorization_resources WHERE id=`).
+		WithArgs(resourceID).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow(resourceID, "catalog.resource", "Resource", "", "platform", "manual", "active", now, "admin", now, "admin", 1))
+	mock.ExpectExec(`UPDATE authorization_resource_actions SET name=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT a.id,a.resource_id,r.resource_key,r.name AS resource_name.*WHERE a.id=`).
+		WithArgs(id).WillReturnError(errors.New("result read unavailable"))
+	mock.ExpectRollback()
+
+	_, err = service.UpdateAction(platformprincipal.SystemContext(t.Context(), "admin"), id, 2, ActionInput{ResourceID: resourceID, Key: "read", Name: "View", Status: "active"})
+	require.ErrorContains(t, err, "result read unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func paginationRequest(keyword string) pagination.Request {
 	return pagination.Request{Keyword: keyword}
 }

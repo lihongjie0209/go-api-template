@@ -704,3 +704,27 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Lock and consistency | Department mutations, membership add and platform configuration updates now use the commit-aware wrapper because their lock callbacks return nil only after the database transaction commits. Lock acquisition, callback and pre-commit lease-loss errors still fail the request; release failure after commit is warned but cannot make a committed mutation appear to fail. Narrow existing lock keys, database constraints, tenant filters and optimistic versions remain authoritative. File upload/deletion are excluded because their callbacks also coordinate object-storage repair and do not share this commit boundary. |
 | Audit and presentation | Database transactions continue to inject the actor and rely on audit triggers for timestamps/version; update/delete SQL retains expected-version predicates. Post-commit display resolution stays best-effort. No timestamp format or related-name contract changes. |
 | Tests and shared capability | Unit regressions cover acquisition failure, callback failure before commit and release failure after commit, including an actual membership transaction. Existing local integration tests remain service-contained; the shared SDK lock lifecycle is reused through the local commit-aware adapter, a candidate for SDK extraction. |
+
+## Resource/action catalog mutation response consistency
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Existing POST+JSON create/update resource and action contracts, validation and global errors stay unchanged. The returned row must be read in the mutation transaction; a failed read rolls back the write rather than reporting a failed request after commit. No pagination or filter contract changes. |
+| Authentication and authorization | Existing platform administration Resource/Action interception and system principal remain required. Manual definitions alone may be updated; code-owned definitions remain read-only through these interfaces. This catalog is authorization metadata, not a public data-dictionary provider. |
+| Operation and security logs | Existing permission-change operation and security events stay in the same transaction as the write and result read. Failed reads roll back successful events and use the existing sanitized failure path. |
+| Cache and distributed lock | No new response cache or distributed lock. The authoritative transaction, unique constraints and expected-version predicates handle consistency; code-owned reconciliation remains separate. |
+| Optimistic lock and audit | Updates retain `WHERE id=? AND version=?`; triggers maintain actor, timestamp and next version. The transactional result read observes that audited row before commit. |
+| Presentation | Action results retain their related resource key/name; resource and action timestamps remain timezone-aware. No display-only upstream call is needed. |
+| Tests and shared capability | Unit regressions cover read-before-commit and rollback on result-read failure for both resource and action mutations. Existing service-local Testcontainers cover catalog persistence; the shared transactor and log recorders remain reused. |
+
+## Service-account one-time secret delivery consistency
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Existing create, update and rotate-secret POST+JSON contracts, validation and global errors remain. Create/rotate return the generated secret only after a transaction commits; the account response is read within that transaction so a read failure rolls back the secret change. Get/page contracts are unchanged. |
+| Authentication and authorization | Existing identity administration Resource/Action checks and actor principal remain mandatory. Account secrets are sensitive transactional data and cannot be a public dictionary provider. |
+| Operation and security logs | Existing service-account-change operation and security events commit with the account and result read. The event request remains sanitized and never includes the generated secret or its hash. A result-read failure rolls back the successful event and follows the existing failure path. |
+| Cache and distributed lock | No cache or Redis lock is added: expected versions and database uniqueness remain the correctness boundary. No account or credential response is cached. |
+| Optimistic lock and audit | Update/rotation retain `WHERE id=? AND version=?`, and account audit triggers maintain actor, timestamps and version. The transaction reads these authoritative fields before commit. |
+| Presentation | The returned account retains actor display names from the existing owned identity tables; the one-time secret is returned only after confirmed commit. Times remain timezone-aware; no upstream display lookup runs after commit. |
+| Tests and shared capability | Unit regressions cover result-read rollback, secret non-delivery on rollback, committed secret delivery and transactional log behavior. Service-local integration tests remain the database gate; shared transactor, principal and log recorders are reused. |
