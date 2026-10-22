@@ -452,6 +452,7 @@ func (s *LifecycleService) Publish(ctx context.Context, policyID string, number,
 	}
 	now := time.Now()
 	var policy Policy
+	var updated PolicyRecord
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		current, e := lockPolicy(ctx, tx, policyID, actor.TenantID)
 		if e != nil {
@@ -462,7 +463,10 @@ func (s *LifecycleService) Publish(ctx context.Context, policyID string, number,
 		}
 		var version VersionRecord
 		if e := tx.GetContext(ctx, &version, tx.Rebind(`SELECT id,policy_id,version_number,document,status,version FROM data_permission_policy_versions WHERE policy_id=? AND version_number=? AND deleted_at IS NULL FOR UPDATE`), policyID, number); e != nil {
-			return ErrPolicyNotFound
+			if errors.Is(e, sql.ErrNoRows) {
+				return ErrPolicyNotFound
+			}
+			return fmt.Errorf("lock data permission policy version: %w", e)
 		}
 		if version.Status != VersionDraft {
 			return ErrVersionNotDraft
@@ -494,7 +498,11 @@ func (s *LifecycleService) Publish(ctx context.Context, policyID string, number,
 		if e = requireRow(result); e != nil {
 			return e
 		}
-		return s.recordChangeTx(ctx, tx, "data-permission.policy.publish", policyID, policy, number)
+		if e = s.recordChangeTx(ctx, tx, "data-permission.policy.publish", policyID, policy, number); e != nil {
+			return e
+		}
+		updated, e = lockPolicy(ctx, tx, policyID, actor.TenantID)
+		return e
 	})
 	if err != nil {
 		s.recordFailure(ctx, "data-permission.policy.publish", policyID, policy)
@@ -507,8 +515,9 @@ func (s *LifecycleService) Publish(ctx context.Context, policyID string, number,
 			slog.Default().ErrorContext(postCtx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
 		}
 	}
-	record, _, err := s.get(postCtx, policyID, number, actor.TenantID)
-	return record, err
+	records := []PolicyRecord{updated}
+	s.presentPolicies(postCtx, records)
+	return records[0], nil
 }
 
 // SetStatus activates or disables a policy without changing its immutable
@@ -525,6 +534,7 @@ func (s *LifecycleService) SetStatus(ctx context.Context, input SetPolicyStatusI
 	}
 	now := time.Now()
 	var policy Policy
+	var updated PolicyRecord
 	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		current, lockErr := lockPolicy(ctx, tx, input.PolicyID, actor.TenantID)
 		if lockErr != nil {
@@ -548,7 +558,11 @@ func (s *LifecycleService) SetStatus(ctx context.Context, input SetPolicyStatusI
 		if rowErr := requireRow(result); rowErr != nil {
 			return rowErr
 		}
-		return s.recordChangeTx(ctx, tx, "data-permission.policy.status.set", input.PolicyID, policy, 0)
+		if err := s.recordChangeTx(ctx, tx, "data-permission.policy.status.set", input.PolicyID, policy, 0); err != nil {
+			return err
+		}
+		updated, err = lockPolicy(ctx, tx, input.PolicyID, actor.TenantID)
+		return err
 	})
 	if err != nil {
 		s.recordFailure(ctx, "data-permission.policy.status.set", input.PolicyID, policy)
@@ -561,7 +575,9 @@ func (s *LifecycleService) SetStatus(ctx context.Context, input SetPolicyStatusI
 			slog.Default().ErrorContext(postCtx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
 		}
 	}
-	return s.Get(postCtx, input.PolicyID)
+	records := []PolicyRecord{updated}
+	s.presentPolicies(postCtx, records)
+	return records[0], nil
 }
 
 func (s *LifecycleService) postCommitContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -644,7 +660,10 @@ func lockPolicy(ctx context.Context, tx *sqlx.Tx, id, tenantID string) (PolicyRe
 	var record PolicyRecord
 	query, args := visiblePolicyQuery(`SELECT id,code,name,scope,tenant_id,published_version_number,status,created_at,created_by,updated_at,updated_by,version FROM data_permission_policies WHERE id=? AND deleted_at IS NULL`, []any{id}, tenantID)
 	if err := tx.GetContext(ctx, &record, tx.Rebind(query+` FOR UPDATE`), args...); err != nil {
-		return record, ErrPolicyNotFound
+		if errors.Is(err, sql.ErrNoRows) {
+			return record, ErrPolicyNotFound
+		}
+		return record, fmt.Errorf("lock data permission policy: %w", err)
 	}
 	return record, nil
 }

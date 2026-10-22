@@ -262,12 +262,12 @@ func TestDataLifecycleSetStatusRefreshesRuntimeAfterCommit(t *testing.T) {
 	mock.ExpectExec("UPDATE data_permission_policies SET status=").
 		WithArgs(StatusDisabled, sqlmock.AnyArg(), "admin-1", "policy-1", int64(4)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").
+		WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", 1, "disabled", now, "admin-1", now, "admin-1", 5))
 	mock.ExpectCommit()
 	// Disabled policies are absent from the replacement snapshot.
 	mock.ExpectQuery("SELECT p.code,p.scope,p.tenant_id,v.document").
 		WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}))
-	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").
-		WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", 1, "disabled", now, "admin-1", now, "admin-1", 5))
 
 	ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
 	record, err := service.SetStatus(ctx, SetPolicyStatusInput{PolicyID: "policy-1", Status: StatusDisabled, ExpectedPolicyVersion: 4})
@@ -298,11 +298,9 @@ func TestDataLifecyclePublishArchivesAndSwitchesAtomically(t *testing.T) {
 	mock.ExpectExec("UPDATE data_permission_policies SET published_version_number=").
 		WithArgs(int64(2), sqlmock.AnyArg(), "admin-1", "policy-1", int64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
 	mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").
 		WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", 2, "active", now, "admin-1", now, "admin-1", 4))
-	mock.ExpectQuery("SELECT v.id,v.policy_id,v.version_number").WithArgs("policy-1", int64(2), "tenant-1").
-		WillReturnRows(versionRows().AddRow("version-2", "policy-1", 2, string(document), "published", now, "admin-1", now, "admin-1", now, "admin-1", 2))
+	mock.ExpectCommit()
 
 	ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
 	record, err := service.Publish(ctx, "policy-1", 2, 3)
@@ -310,6 +308,53 @@ func TestDataLifecyclePublishArchivesAndSwitchesAtomically(t *testing.T) {
 	require.Equal(t, int64(2), record.PublishedVersionNumber.Int64)
 	require.Equal(t, int64(4), record.Version)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDataLifecycleLockDatabaseErrorsAreNotReportedAsNotFound(t *testing.T) {
+	t.Parallel()
+	want := errors.New("database temporarily unavailable")
+	for _, test := range []struct {
+		name  string
+		run   func(context.Context, *LifecycleService) error
+		setup func(sqlmock.Sqlmock)
+	}{
+		{
+			name: "policy lock",
+			run: func(ctx context.Context, service *LifecycleService) error {
+				_, err := service.SetStatus(ctx, SetPolicyStatusInput{PolicyID: "policy-1", Status: StatusDisabled, ExpectedPolicyVersion: 4})
+				return err
+			},
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").WillReturnError(want)
+			},
+		},
+		{
+			name: "version lock",
+			run: func(ctx context.Context, service *LifecycleService) error {
+				_, err := service.Publish(ctx, "policy-1", 2, 3)
+				return err
+			},
+			setup: func(mock sqlmock.Sqlmock) {
+				now := time.Now()
+				mock.ExpectQuery("SELECT id,code,name,scope,tenant_id").WithArgs("policy-1", "tenant-1").
+					WillReturnRows(policyRows().AddRow("policy-1", "member-own-records", "Member own records", "tenant", "tenant-1", 1, "active", now, "admin-1", now, "admin-1", 3))
+				mock.ExpectQuery("SELECT id,policy_id,version_number,document,status,version").WithArgs("policy-1", int64(2)).WillReturnError(want)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service, mock := dataLifecycleFixture(t, false)
+			mock.ExpectBegin()
+			test.setup(mock)
+			mock.ExpectRollback()
+			ctx := platformprincipal.WithContext(t.Context(), dataTenantContext(t))
+			err := test.run(ctx, service)
+			require.ErrorIs(t, err, want)
+			require.NotErrorIs(t, err, ErrPolicyNotFound)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestDataLifecycleCreateRejectsCrossTenantPolicy(t *testing.T) {

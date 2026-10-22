@@ -30,6 +30,9 @@ Revision-read failures also invalidate the local snapshot; polling retries a
 full replacement after recovery even if the database revision did not change.
 Post-commit policy publication and status changes use a bounded Context that
 retains request metadata but is not cancelled when the client disconnects.
+Their response records are read inside the mutation transaction after audit
+triggers run, before COMMIT; post-commit snapshot refresh or actor-name
+resolution cannot turn a committed write into a reported database-read failure.
 
 Status values:
 

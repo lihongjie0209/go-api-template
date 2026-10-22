@@ -653,6 +653,16 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || !published.PublishedVersionNumber.Valid || published.PublishedVersionNumber.Int64 != 1 {
 		t.Fatalf("publish data permission policy=%+v err=%v", published, err)
 	}
+	assertPolicyAudit := func(returned datapermission.PolicyRecord) {
+		t.Helper()
+		stored, readErr := repository.Get(ctx, returned.ID, tenantID)
+		if readErr != nil || returned.Version != stored.Version || returned.UpdatedBy != stored.UpdatedBy ||
+			!returned.UpdatedAt.Equal(stored.UpdatedAt) || returned.Status != stored.Status ||
+			returned.PublishedVersionNumber != stored.PublishedVersionNumber {
+			t.Fatalf("data permission response must match committed audit row: returned=%+v stored=%+v err=%v", returned, stored, readErr)
+		}
+	}
+	assertPolicyAudit(published)
 	_, publishedSnapshotRevision, err := engine.Pin(ctx)
 	if err != nil || publishedSnapshotRevision == initialSnapshotRevision {
 		t.Fatalf("published policy must advance snapshot revision: before=%q after=%q err=%v", initialSnapshotRevision, publishedSnapshotRevision, err)
@@ -708,6 +718,7 @@ func testDataPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || disabled.Status != datapermission.StatusDisabled {
 		t.Fatalf("disable data permission policy=%+v err=%v", disabled, err)
 	}
+	assertPolicyAudit(disabled)
 	_, disabledSnapshotRevision, err := engine.Pin(ctx)
 	if err != nil || disabledSnapshotRevision == publishedSnapshotRevision {
 		t.Fatalf("disabled policy must advance snapshot revision: published=%q disabled=%q err=%v", publishedSnapshotRevision, disabledSnapshotRevision, err)
