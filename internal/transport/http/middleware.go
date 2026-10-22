@@ -280,7 +280,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			err = manager.Abort(persistCtx, key, decision.Owner)
 		} else if capture.Status() >= http.StatusBadRequest {
 			err = manager.Fail(persistCtx, key, decision.Owner, idempotency.Failure{Code: response.Code, Message: response.Message, HTTPStatus: capture.Status()})
-		} else if capture.Status() >= http.StatusMultipleChoices {
+		} else if capture.Status() < http.StatusOK || capture.Status() >= http.StatusMultipleChoices {
 			err = manager.Abort(persistCtx, key, decision.Owner)
 			if err == nil {
 				err = errors.New("idempotent response must be successful JSON")

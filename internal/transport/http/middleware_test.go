@@ -308,6 +308,7 @@ func TestIdempotencyExecutionRejectsUnreplayableStatus(t *testing.T) {
 		name   string
 		status int
 	}{
+		{name: "informational", status: http.StatusEarlyHints},
 		{name: "redirect", status: http.StatusFound},
 		{name: "not modified", status: http.StatusNotModified},
 	} {

@@ -5,12 +5,14 @@ import (
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
+	"github.com/lihongjie0209/go-api-template/internal/config"
 )
 
 func TestValidateHTTPIdempotencyRoutes(t *testing.T) {
 	t.Parallel()
 	endpoints := []accesscontrol.Endpoint{
 		{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/create", Authentication: accesscontrol.AuthenticationJWT, Action: "create"},
+		{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/reports/create", Authentication: accesscontrol.AuthenticationJWT, Action: "create"},
 		{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/page", Authentication: accesscontrol.AuthenticationJWT, Action: "list"},
 		{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/update-target", Authentication: accesscontrol.AuthenticationJWT, Action: "update"},
 		{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/auth/login", Authentication: accesscontrol.AuthenticationPublic},
@@ -24,6 +26,8 @@ func TestValidateHTTPIdempotencyRoutes(t *testing.T) {
 		want     string
 	}{
 		{name: "exact mutation", patterns: []string{"/api/v1/users/create"}},
+		{name: "new mutation needs code approval", patterns: []string{"/api/v1/reports/create"}, want: "without code-owned idempotency approval"},
+		{name: "wildcard cannot opt in new mutation", patterns: []string{"/api/v1/*/create"}, want: "without code-owned idempotency approval"},
 		{name: "anonymous logout", patterns: []string{"/api/v1/auth/logout"}},
 		{name: "wildcard includes query", patterns: []string{"/api/v1/users/*"}, want: "query route"},
 		{name: "query action", patterns: []string{"/api/v1/authorization/rows/evaluate"}, want: "query route"},
@@ -41,5 +45,25 @@ func TestValidateHTTPIdempotencyRoutes(t *testing.T) {
 				t.Fatalf("validateHTTPIdempotencyRoutes() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestDefaultIdempotencySelectionMatchesCodeApproval(t *testing.T) {
+	t.Parallel()
+	cfg, err := config.LoadWithProfile("../../../config/config.yaml", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := make(map[string]struct{}, len(cfg.Idempotency.HTTPPaths))
+	for _, route := range cfg.Idempotency.HTTPPaths {
+		configured[route] = struct{}{}
+		if _, approved := idempotencyEligibleHTTPRoutes[route]; !approved {
+			t.Errorf("default idempotency route %q has no code approval", route)
+		}
+	}
+	for route := range idempotencyEligibleHTTPRoutes {
+		if _, selected := configured[route]; !selected {
+			t.Errorf("code-approved route %q is absent from the default selection", route)
+		}
 	}
 }

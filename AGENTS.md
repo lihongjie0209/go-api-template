@@ -493,7 +493,8 @@ message queue with an outbox.
 - Configured HTTP idempotency patterns must match registered mutation routes at
   startup. Wildcards must not silently include new query, target-preview, or
   public routes; newly added mutation responses still require a secret-data
-  review before being selected.
+  review and code-owned approval before being selected. Configuration can only
+  select a subset of code-approved routes.
 - Every replay must pass current authentication and operation authorization
   before the idempotency state is read or returned. HTTP idempotency middleware
   must follow route authorization, not precede it as API-group middleware.
