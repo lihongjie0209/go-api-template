@@ -216,6 +216,9 @@ func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnv
 }
 
 func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope) error {
+	if envelope == nil {
+		return fmt.Errorf("%w: nil security log envelope", ErrInvalidEntry)
+	}
 	if envelope.EventType != envelopeType {
 		return nil
 	}
@@ -255,7 +258,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 }
 
 func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, value payload) error {
-	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 256 || envelope.EventType != envelopeType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
+	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 || envelope.EventType != envelopeType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
 		return fmt.Errorf("%w: invalid security log envelope", ErrInvalidEntry)
 	}
 	if err := envelope.OccurredAt.CheckValid(); err != nil || !envelope.OccurredAt.AsTime().Equal(value.OccurredAt) {

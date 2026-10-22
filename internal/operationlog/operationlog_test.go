@@ -96,6 +96,47 @@ func TestValidateConsumedEventRejectsEnvelopeContextMismatch(t *testing.T) {
 	}
 }
 
+func TestConsumedEventIDMatchesMySQLPrimaryKeyLimit(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	value := eventPayload{
+		Entry: Entry{Operation: "order.create", Source: "backend", Protocol: "service", Succeeded: true},
+		ActorID: "actor-1", ActorType: "user", OccurredAt: now, Extension: json.RawMessage(`{}`),
+	}
+	service := &Service{cfg: config.OperationLog{MaxPayloadBytes: 1024}}
+	for _, test := range []struct {
+		name    string
+		idSize  int
+		wantErr bool
+	}{
+		{name: "64 byte ID fits", idSize: 64},
+		{name: "65 byte ID rejected", idSize: 65, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			envelope := &commonv1.EventEnvelope{
+				EventId: strings.Repeat("x", test.idSize), EventType: eventType, SchemaVersion: 1,
+				OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{ActorId: "actor-1", ActorType: "user"},
+			}
+			err := service.validateConsumedEvent(envelope, value)
+			if test.wantErr && !errors.Is(err, ErrInvalidEntry) {
+				t.Fatalf("validateConsumedEvent() = %v, want invalid entry", err)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("validateConsumedEvent() = %v", err)
+			}
+		})
+	}
+}
+
+func TestConsumeRejectsNilEnvelopeWithoutPanic(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	if err := service.consume(t.Context(), nil); !errors.Is(err, ErrInvalidEntry) {
+		t.Fatalf("consume(nil) = %v, want invalid entry", err)
+	}
+}
+
 func TestValidateEntryRejectsUnboundedFields(t *testing.T) {
 	t.Parallel()
 	entry := Entry{Operation: strings.Repeat("x", 257), Source: "backend", Protocol: "service"}

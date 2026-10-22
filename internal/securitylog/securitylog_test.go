@@ -258,6 +258,40 @@ func TestValidateConsumedEventRejectsEnvelopeContextMismatch(t *testing.T) {
 	}
 }
 
+func TestConsumedEventIDMatchesMySQLPrimaryKeyLimit(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	value := payload{EventType: EventLogin, Metadata: []byte(`{}`), OccurredAt: now}
+	service := &Service{cfg: config.SecurityLog{MaxPayloadBytes: 1024}}
+	for _, tc := range []struct {
+		name string
+		length int
+		valid bool
+	}{
+		{name: "64 bytes accepted", length: 64, valid: true},
+		{name: "65 bytes rejected", length: 65},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envelope := &commonv1.EventEnvelope{EventId: strings.Repeat("x", tc.length), EventType: envelopeType, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{}}
+			err := service.validateConsumedEvent(envelope, value)
+			if tc.valid && err != nil {
+				t.Fatalf("validateConsumedEvent() = %v, want nil", err)
+			}
+			if !tc.valid && !errors.Is(err, ErrInvalidEntry) {
+				t.Fatalf("validateConsumedEvent() = %v, want ErrInvalidEntry", err)
+			}
+		})
+	}
+}
+
+func TestConsumeRejectsNilEnvelopeWithoutPanic(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	if err := service.consume(t.Context(), nil); !errors.Is(err, ErrInvalidEntry) {
+		t.Fatalf("consume(nil) = %v, want ErrInvalidEntry", err)
+	}
+}
+
 func TestValidateEntryRejectsUnboundedFields(t *testing.T) {
 	t.Parallel()
 	if err := validateEntry(Entry{EventType: EventLogin, TokenID: strings.Repeat("x", 4097)}); !errors.Is(err, ErrInvalidEntry) {

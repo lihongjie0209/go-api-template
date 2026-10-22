@@ -203,6 +203,9 @@ func (s *Service) observeEnqueue(started time.Time, err error) {
 }
 
 func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope) error {
+	if envelope == nil {
+		return fmt.Errorf("%w: nil operation log envelope", ErrInvalidEntry)
+	}
 	if envelope.EventType != eventType {
 		return nil
 	}
@@ -236,7 +239,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 }
 
 func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, payload eventPayload) error {
-	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 256 || envelope.EventType != eventType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
+	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 || envelope.EventType != eventType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
 		return fmt.Errorf("%w: invalid operation log envelope", ErrInvalidEntry)
 	}
 	if err := envelope.OccurredAt.CheckValid(); err != nil || !envelope.OccurredAt.AsTime().Equal(payload.OccurredAt) {
