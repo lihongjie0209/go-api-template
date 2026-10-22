@@ -2259,6 +2259,34 @@ func testScheduledJobLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := db.GetContext(ctx, &storedPayload, db.Rebind(`SELECT payload FROM scheduled_job_runs WHERE id=?`), queuedID); err != nil || storedPayload != largePayload {
 		t.Fatalf("scheduled-run boundary payload length = %d, err = %v", len(storedPayload), err)
 	}
+	for _, test := range []struct {
+		name  string
+		query string
+		value any
+	}{
+		{name: "timeout", query: `UPDATE scheduled_job_runs SET timeout_seconds=? WHERE id=?`, value: int64(3601)},
+		{name: "lock ttl", query: `UPDATE scheduled_job_runs SET lock_ttl_seconds=? WHERE id=?`, value: int64(86401)},
+		{name: "payload bytes", query: `UPDATE scheduled_job_runs SET payload=? WHERE id=?`, value: largePayload + "x"},
+	} {
+		t.Run("scheduled run rejects "+test.name, func(t *testing.T) {
+			err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+				_, err := tx.ExecContext(actorCtx, tx.Rebind(test.query), test.value, queuedID)
+				return err
+			})
+			if err == nil {
+				t.Fatal("invalid execution snapshot was persisted")
+			}
+		})
+	}
+	var bounded struct {
+		Payload        string `db:"payload"`
+		TimeoutSeconds int64  `db:"timeout_seconds"`
+		LockTTLSeconds int64  `db:"lock_ttl_seconds"`
+		Version        int64  `db:"version"`
+	}
+	if err := db.GetContext(ctx, &bounded, db.Rebind(`SELECT payload,timeout_seconds,lock_ttl_seconds,version FROM scheduled_job_runs WHERE id=?`), queuedID); err != nil || bounded.Payload != largePayload || bounded.TimeoutSeconds != updated.TimeoutSeconds || bounded.LockTTLSeconds != updated.LockTTLSeconds || bounded.Version != queuedRun.Version {
+		t.Fatalf("scheduled-run bounds after rejected updates = %+v, err = %v", bounded, err)
+	}
 	queuedPage, err := service.PageRuns(actorCtx, scheduler.RunPageInput{Request: pagination.Request{Page: 1, PageSize: 20}, ScheduledJobID: updated.ID, Statuses: []string{"queued"}})
 	if err != nil || queuedPage.Total != 1 || len(queuedPage.Items) != 1 || queuedPage.Items[0].ID != queuedID {
 		t.Fatalf("queued scheduled job page = %+v err=%v", queuedPage, err)

@@ -74,6 +74,11 @@ column, and both verify and PostgreSQL/MySQL integration passed in run
 MySQL scheduled-run payload and operation-log request summary columns with
 their existing byte-limit contracts. Both verify and PostgreSQL/MySQL
 Testcontainers boundary cases passed in run `39585986505` at commit `7175fd9`.
+Durable manual runs now persist and restore bounded W3C Trace Context across
+worker restarts; migration `000046` and both CI jobs passed in run `39705560089`
+at commit `d25d9fe`. Follow-up local work marks completion-persistence failure
+as a correlated error and rejects invalid persisted execution snapshots;
+migration `000047` adds database bounds, with CI pending the next batch.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,

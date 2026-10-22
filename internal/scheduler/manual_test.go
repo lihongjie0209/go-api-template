@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -50,6 +51,69 @@ func (h *manualFailureLogHandler) WithGroup(string) slog.Handler      { return h
 
 func (s manualOutboxStub) Store(ctx context.Context, tx *sqlx.Tx, subject string, event *commonv1.EventEnvelope) error {
 	return s.store(ctx, tx, subject, event)
+}
+
+func TestValidateManualRunRejectsInvalidPersistedSnapshot(t *testing.T) {
+	t.Parallel()
+	valid := manualRun{JobCode: "sample-job", JobName: "Sample", Handler: "system.sample", Payload: `{}`, TimeoutSeconds: 3600, LockTTLSeconds: 86400}
+	require.NoError(t, validateManualRun(valid))
+	boundary := valid
+	boundary.Payload = `{"data":"` + strings.Repeat("x", (1<<20)-len(`{"data":""}`)) + `"}`
+	require.Len(t, boundary.Payload, 1<<20)
+	require.NoError(t, validateManualRun(boundary))
+	for _, test := range []struct {
+		name   string
+		change func(*manualRun)
+	}{
+		{name: "unbounded timeout", change: func(run *manualRun) { run.TimeoutSeconds = 3601 }},
+		{name: "negative timeout", change: func(run *manualRun) { run.TimeoutSeconds = -1 }},
+		{name: "unbounded lock lease", change: func(run *manualRun) { run.LockTTLSeconds = 86401 }},
+		{name: "invalid payload", change: func(run *manualRun) { run.Payload = `[]` }},
+		{name: "oversized payload", change: func(run *manualRun) { run.Payload = `{"data":"` + strings.Repeat("x", 1<<20) + `"}` }},
+		{name: "invalid job code", change: func(run *manualRun) { run.JobCode = "BAD CODE" }},
+		{name: "missing name", change: func(run *manualRun) { run.JobName = "" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := valid
+			test.change(&run)
+			require.ErrorIs(t, validateManualRun(run), ErrInvalidDefinition)
+		})
+	}
+}
+
+func TestExecuteManualRejectsInvalidSnapshotWithoutCallingHandler(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	called := false
+	metrics := observability.NewMetrics(config.Config{App: config.App{Name: "orders-service"}, Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+	manager := &Manager{
+		cfg:      config.Config{App: config.App{Name: "orders-service"}},
+		tx:       database.NewTransactor(sqlx.NewDb(raw, "sqlmock")),
+		metrics:  metrics,
+		logger:   logger,
+		handlers: NewHandlerRegistry(logger),
+		operations: runLogRecorderStub{recordTx: func(_ context.Context, _ *sqlx.Tx, entry operationlog.Entry) error {
+			require.Equal(t, "Invalid scheduled job snapshot", entry.ResourceName)
+			require.Equal(t, "invalid.snapshot", entry.Request.(map[string]any)["handler"])
+			return nil
+		}},
+	}
+	manager.handlers.handlers["system.sample"] = HandlerDefinition{Key: "system.sample", handler: func(context.Context, json.RawMessage) error {
+		called = true
+		return nil
+	}}
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE scheduled_job_runs SET status=`).WithArgs("error", sqlmock.AnyArg(), sqlmock.AnyArg(), "scheduled job execution failed", sqlmock.AnyArg(), "orders-service:scheduler:manual", "run-1", "lease-1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", JobName: strings.Repeat("x", 600), Handler: "system.sample", Payload: `{}`, TimeoutSeconds: 1 << 62, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
+	require.False(t, called)
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+	require.Contains(t, response.Body.String(), `cron_runs_total{job="invalid.snapshot",status="error"} 1`)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestTriggerQueuesRunAndEventInOneTransaction(t *testing.T) {
@@ -297,7 +361,7 @@ func TestExecuteManualFinishesOutsideHTTPContext(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(t.Context())
 	cancelRequest()
 	require.ErrorIs(t, requestCtx.Err(), context.Canceled)
-	manager.executeManual(context.WithoutCancel(requestCtx), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", TraceParent: "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", LeaseOwner: "lease-1"})
+	manager.executeManual(context.WithoutCancel(requestCtx), manualRun{ID: "run-1", JobCode: "sample-job", JobName: "Sample", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", TraceParent: "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", LeaseOwner: "lease-1"})
 	require.Equal(t, int32(2), locker.attempts.Load())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -328,7 +392,7 @@ func TestExecuteManualRecordsHandlerPanicAsFailure(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE scheduled_job_runs SET status=`).WithArgs("error", sqlmock.AnyArg(), sqlmock.AnyArg(), "scheduled job execution failed", sqlmock.AnyArg(), "orders-service:scheduler:manual", "run-1", "lease-1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
+	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", JobName: "Sample", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -352,7 +416,7 @@ func TestExecuteManualCompletionFailureKeepsCorrelationAndErrorMetric(t *testing
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE scheduled_job_runs SET status=`).WillReturnError(errors.New("secret database detail"))
 	mock.ExpectRollback()
-	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", TraceParent: "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", LeaseOwner: "lease-1"})
+	manager.executeManual(t.Context(), manualRun{ID: "run-1", JobCode: "sample-job", JobName: "Sample", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, RequestID: "req-1", TraceParent: "00-0102030405060708090a0b0c0d0e0f10-0102030405060708-01", LeaseOwner: "lease-1"})
 	require.Equal(t, "finish manual scheduled job", logHandler.message)
 	require.Equal(t, "req-1", logHandler.requestID)
 	require.Equal(t, "0102030405060708090a0b0c0d0e0f10", logHandler.traceID)
@@ -386,7 +450,7 @@ func TestExecuteManualShutdownLeavesRunRecoverable(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
-	manager.executeManual(parent, manualRun{ID: "run-1", JobCode: "sample-job", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
+	manager.executeManual(parent, manualRun{ID: "run-1", JobCode: "sample-job", JobName: "Sample", Handler: "system.sample", Payload: "{}", TimeoutSeconds: 30, LockTTLSeconds: 60, LeaseOwner: "lease-1"})
 	require.True(t, called)
 	require.NotContains(t, output.String(), "finish manual scheduled job", "shutdown must leave the run eligible for lease recovery")
 	require.NoError(t, mock.ExpectationsWereMet())

@@ -1,0 +1,1 @@
+ALTER TABLE scheduled_job_runs DROP CHECK scheduled_job_runs_execution_bounds_check;

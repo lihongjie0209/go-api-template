@@ -49,6 +49,18 @@ type manualRun struct {
 	LeaseOwner     string `db:"-"`
 }
 
+func validateManualRun(run manualRun) error {
+	if !definitionKeyPattern.MatchString(run.JobCode) ||
+		run.JobName == "" || len(run.JobName) > 256 ||
+		!handlerKeyPattern.MatchString(run.Handler) || len(run.Handler) > 128 ||
+		run.TimeoutSeconds < 1 || run.TimeoutSeconds > 3600 ||
+		run.LockTTLSeconds < 1 || run.LockTTLSeconds > 86400 ||
+		len(run.Payload) > 1<<20 || !validDefinitionPayload(json.RawMessage(run.Payload)) {
+		return ErrInvalidDefinition
+	}
+	return nil
+}
+
 func (m *Manager) NotifyManual() {
 	select {
 	case m.manualWake <- struct{}{}:
@@ -169,8 +181,20 @@ func (m *Manager) claimManual(ctx context.Context, preferExpired bool) (manualRu
 
 func (m *Manager) executeManual(parent context.Context, run manualRun) {
 	started := time.Now()
+	validationErr := validateManualRun(run)
+	if validationErr != nil {
+		// The database snapshot may be malformed or unbounded. Keep only stable,
+		// bounded identifiers in completion logs and metric labels.
+		run.JobCode = "invalid-snapshot"
+		run.JobName = "Invalid scheduled job snapshot"
+		run.Handler = "invalid.snapshot"
+	}
+	timeout := 30 * time.Second
+	if validationErr == nil {
+		timeout = time.Duration(run.TimeoutSeconds) * time.Second
+	}
 	traceCtx := observability.RestoreTraceContext(parent, run.TraceParent, run.TraceState)
-	ctx, cancel := context.WithTimeout(traceCtx, time.Duration(run.TimeoutSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(traceCtx, timeout)
 	ctx = requestid.WithContext(platformprincipal.SystemContext(ctx, m.cfg.App.Name+":scheduler:manual"), run.RequestID)
 	ctx = context.WithValue(ctx, runIDContextKey{}, run.ID)
 	ctx, span := otel.Tracer("go-api-template/scheduler").Start(ctx, "scheduled_job.manual.execute")
@@ -189,11 +213,15 @@ func (m *Manager) executeManual(parent context.Context, run manualRun) {
 			cancel()
 		}
 	}()
-	handler, err := m.handlers.Resolve(run.Handler)
+	err := validationErr
 	if err == nil {
-		err = runManualJobContext(ctx, run.JobCode, time.Duration(run.LockTTLSeconds)*time.Second, m.cfg.DistributedLock.RetryDelay, m.locker, func(ctx context.Context) error {
-			return handler(ctx, json.RawMessage(run.Payload))
-		}, m.logger)
+		var handler Handler
+		handler, err = m.handlers.Resolve(run.Handler)
+		if err == nil {
+			err = runManualJobContext(ctx, run.JobCode, time.Duration(run.LockTTLSeconds)*time.Second, m.cfg.DistributedLock.RetryDelay, m.locker, func(ctx context.Context) error {
+				return handler(ctx, json.RawMessage(run.Payload))
+			}, m.logger)
+		}
 	}
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
