@@ -79,10 +79,13 @@ worker restarts; migration `000046` and both CI jobs passed in run `39705560089`
 at commit `d25d9fe`. Follow-up work marks completion-persistence failure as a
 correlated error and rejects invalid persisted execution snapshots. Migration
 `000047` adds database bounds; both verify and PostgreSQL/MySQL integration
-passed in run `39706438023` at commit `e0f5261`. Subsequent local commits pin
-manual lock-contention deadline status and bound each database-lease renewal
-attempt to its renewal interval; their unit and scheduler race tests pass, but
-CI has not yet run on those commits.
+passed in run `39706438023` at commit `e0f5261`. The subsequent scheduler
+reliability batch pins manual lock-contention deadline status, bounds each
+database-lease renewal attempt, signals all workers on shutdown and honors
+the Fx startup deadline; both CI jobs passed in run `39707818357` at commit
+`06f4f4a`. Later local work stages cron schedules before swapping them and
+ignores a renewal error arriving after handler completion; its unit and
+scheduler race gates are local until the next batch push.
 
 The error-classification hardening batch (verified in run `39573005459`)
 preserves database and cancellation failures on tenant role assignment,

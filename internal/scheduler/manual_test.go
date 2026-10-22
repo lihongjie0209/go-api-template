@@ -494,6 +494,24 @@ func TestWatchManualLeaseReportsFailureWhileTaskIsActive(t *testing.T) {
 	})
 }
 
+func TestWatchManualLeaseIgnoresFailureAfterHandlerCompletes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		result := make(chan error, 1)
+		go func() {
+			result <- watchManualLease(ctx, done, time.Second, func(context.Context) error {
+				close(done)
+				return errors.New("renewal failed after handler completion")
+			})
+		}()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		require.NoError(t, <-result, "a late renewal failure must not force an otherwise completed run to retry")
+	})
+}
+
 func TestWatchManualLeaseBoundsRenewalBeforeLeaseExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
