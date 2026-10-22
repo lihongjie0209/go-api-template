@@ -189,6 +189,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			testLogQueryPresentation(t, ctx, db)
 			testResourceCatalogLifecycle(t, ctx, db)
 			permissionID := testPermissionLifecycle(t, ctx, db)
+			testConcurrentPermissionSeed(t, ctx, db)
 			testManagedAuthorizationLifecycle(t, ctx, db, permissionID)
 			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
 			testApplicationNavigationLifecycle(t, ctx, db)
@@ -1866,6 +1867,52 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	}
 
 	return leaf.ID
+}
+
+func testConcurrentPermissionSeed(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	const workers = 4
+	input := permission.Input{Key: "integration.concurrent-seed", Name: "Concurrent seed", NodeType: "group", Status: "active"}
+	id, err := permission.SeedID(input.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		record  permission.Record
+		changed bool
+		err     error
+	}
+	results := make(chan result, workers)
+	start := make(chan struct{})
+	for range workers {
+		go func() {
+			service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, nil, nil, slog.Default())
+			<-start
+			record, changed, err := service.Seed(platformprincipal.SystemContext(ctx, "permission-seed-integration"), input)
+			results <- result{record: record, changed: changed, err: err}
+		}()
+	}
+	close(start)
+	changes := 0
+	for range workers {
+		outcome := <-results
+		if outcome.err != nil {
+			t.Fatalf("concurrent permission seed: %v", outcome.err)
+		}
+		if outcome.record.ID != id || outcome.record.Name != input.Name {
+			t.Fatalf("unexpected concurrent seed record: %+v", outcome.record)
+		}
+		if outcome.changed {
+			changes++
+		}
+	}
+	if changes != 1 {
+		t.Fatalf("concurrent permission seed changed %d times, want 1", changes)
+	}
+	var count int
+	if err := db.GetContext(ctx, &count, db.Rebind(`SELECT count(*) FROM permissions WHERE id=? AND deleted_at IS NULL`), id); err != nil || count != 1 {
+		t.Fatalf("seed record count=%d err=%v", count, err)
+	}
 }
 
 func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, tenantPermissionID string) {

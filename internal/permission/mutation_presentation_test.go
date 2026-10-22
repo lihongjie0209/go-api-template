@@ -128,8 +128,8 @@ func TestPermissionSeedSurvivesActorDisplayOutage(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
 	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, unavailablePermissionActors{}, nil, nil)
-	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnError(sql.ErrNoRows)
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}))
 	mock.ExpectExec(`INSERT INTO permissions`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).WillReturnRows(permissionRows(id, 1, true))
@@ -152,8 +152,10 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 		winnerName string
 		isSystem   bool
 		wantNoop   bool
+		writeError error
 	}{
 		{name: "identical system seed", winnerName: "Menu", isSystem: true, wantNoop: true},
+		{name: "identical seed after serialization failure", winnerName: "Menu", isSystem: true, wantNoop: true, writeError: &pgconn.PgError{Code: "40001"}},
 		{name: "different system seed", winnerName: "Other menu", isSystem: true},
 		{name: "manual record", winnerName: "Menu", isSystem: false},
 	}
@@ -167,10 +169,14 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 			operations := &failingOperationRecorder{}
 			security := &countingPermissionSecurityRecorder{}
 			service := New(NewRepository(db), database.NewTransactor(db), operations, security, nil, nil, nil)
-			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnError(sql.ErrNoRows)
 			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
 			mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}))
-			mock.ExpectExec(`INSERT INTO permissions`).WillReturnError(&pgconn.PgError{Code: "23505"})
+			writeError := tt.writeError
+			if writeError == nil {
+				writeError = &pgconn.PgError{Code: "23505"}
+			}
+			mock.ExpectExec(`INSERT INTO permissions`).WillReturnError(writeError)
 			mock.ExpectRollback()
 			winner := sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at"}).AddRow(id, nil, "platform.menu", tt.winnerName, "group", "", "", "", 0, "active", tt.isSystem, time.Now(), "creator", time.Now(), "updater", 1, nil)
 			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnRows(winner)
@@ -191,6 +197,120 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func TestPermissionSeedExistingIdenticalHasNoAuditEvent(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.menu")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	operations := &failingOperationRecorder{}
+	security := &countingPermissionSecurityRecorder{}
+	service := New(NewRepository(db), database.NewTransactor(db), operations, security, nil, nil, nil)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at"}).AddRow(id, nil, "platform.menu", "Menu", "group", "", "", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 1, nil))
+	mock.ExpectCommit()
+	seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, id, seeded.ID)
+	require.Zero(t, operations.transactionalCalls)
+	require.Zero(t, operations.failureCalls)
+	require.Zero(t, security.transactionalCalls)
+	require.Zero(t, security.failureCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedDoesNotOverwriteConcurrentUpdate(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.menu")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+	columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	row := func(withDeleted bool) *sqlmock.Rows {
+		rowColumns := append([]string{}, columns...)
+		values := []driver.Value{id, nil, "platform.menu", "Old Menu", "group", "", "", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 4}
+		if withDeleted {
+			rowColumns = append(rowColumns, "deleted_at")
+			values = append(values, nil)
+		}
+		return sqlmock.NewRows(rowColumns).AddRow(values...)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnRows(row(true))
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(row(false))
+	mock.ExpectExec(`UPDATE permissions SET .* WHERE id=\? AND is_system=true AND version=\?`).WithArgs(nil, "platform.menu", "New Menu", "group", "", "", "", int64(0), "active", sqlmock.AnyArg(), "admin", id, int64(4)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnRows(sqlmock.NewRows(append(columns, "deleted_at")).AddRow(id, nil, "platform.menu", "Other Menu", "group", "", "", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 5, nil))
+	_, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "New Menu", NodeType: "group", Status: "active"})
+	require.ErrorIs(t, err, ErrConflict)
+	require.False(t, changed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedRetriesSerializationFailure(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.menu")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	operations := &failingOperationRecorder{}
+	security := &countingPermissionSecurityRecorder{}
+	service := New(NewRepository(db), database.NewTransactor(db), operations, security, nil, nil, nil)
+	emptyTree := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"})
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(emptyTree())
+	mock.ExpectExec(`INSERT INTO permissions`).WillReturnError(&pgconn.PgError{Code: "40001"})
+	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnError(sql.ErrNoRows)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(emptyTree())
+	mock.ExpectExec(`INSERT INTO permissions`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).WillReturnRows(permissionRows(id, 1, true))
+	mock.ExpectCommit()
+	seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, id, seeded.ID)
+	require.Zero(t, operations.failureCalls)
+	require.Zero(t, security.failureCalls)
+	require.Equal(t, 1, operations.transactionalCalls)
+	require.Equal(t, 1, security.transactionalCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedRecoveryReadFailureIsNotConflict(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.menu")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+	readFailure := errors.New("database read unavailable")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}))
+	mock.ExpectExec(`INSERT INTO permissions`).WillReturnError(&pgconn.PgError{Code: "23505"})
+	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnError(readFailure)
+	_, _, err = service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
+	require.ErrorIs(t, err, readFailure)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestPermissionSetActionsSurvivesActorDisplayOutage(t *testing.T) {

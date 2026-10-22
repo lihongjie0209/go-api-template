@@ -18,3 +18,14 @@ func IsUniqueViolation(err error) bool {
 	var mysqlErr *mysqlDriver.MySQLError
 	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
+
+// IsRetryableTransaction reports transaction-abort errors for which the whole
+// operation may be retried after the transaction has rolled back.
+func IsRetryableTransaction(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "40001" || pgErr.Code == "40P01"
+	}
+	var mysqlErr *mysqlDriver.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1213
+}

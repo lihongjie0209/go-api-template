@@ -537,24 +537,27 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 	if err != nil {
 		return Record{}, false, err
 	}
-	var current struct {
-		Record
-		DeletedAt sql.NullTime `db:"deleted_at"`
-	}
-	err = s.repository.db.GetContext(ctx, &current, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
-	if err == nil && !current.DeletedAt.Valid && current.IsSystem && seedEqual(current.Record, input) {
-		return s.presentMutation(ctx, current.Record), false, nil
-	}
-	if err == nil && !current.IsSystem {
-		return Record{}, false, ErrConflict
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Record{}, false, err
-	}
 	a, _ := actor(ctx)
 	var seeded Record
 	changed := true
-	err = s.mutateWithUniqueRecovery(ctx, "permission.seed", id, input, func(tx *sqlx.Tx) error {
+	err = s.mutateWithSeedRecovery(ctx, "permission.seed", id, input, func(tx *sqlx.Tx) error {
+		changed = true
+		var current struct {
+			Record
+			DeletedAt sql.NullTime `db:"deleted_at"`
+		}
+		readErr := tx.GetContext(ctx, &current, tx.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=? FOR UPDATE`), id)
+		if readErr == nil && !current.DeletedAt.Valid && current.IsSystem && seedEqual(current.Record, input) {
+			seeded = current.Record
+			changed = false
+			return nil
+		}
+		if readErr == nil && !current.IsSystem {
+			return ErrConflict
+		}
+		if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+			return fmt.Errorf("read permission seed: %w", readErr)
+		}
 		treeID := current.ID
 		if current.DeletedAt.Valid {
 			treeID = ""
@@ -574,7 +577,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 			seeded, err = getTx(ctx, tx, id)
 			return err
 		}
-		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET parent_id=?,permission_key=?,name=?,node_type=?,resource=?,action=?,description=?,sort_order=?,status=?,is_system=true,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND is_system=true`), input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, id)
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET parent_id=?,permission_key=?,name=?,node_type=?,resource=?,action=?,description=?,sort_order=?,status=?,is_system=true,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND is_system=true AND version=?`), input.ParentID, input.Key, input.Name, input.NodeType, input.Resource, input.Action, input.Description, input.SortOrder, input.Status, now, a, id, current.Version)
 		if err != nil {
 			return err
 		}
@@ -590,24 +593,27 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		}
 		seeded, err = getTx(ctx, tx, id)
 		return err
-	}, func() bool {
+	}, func() bool { return changed }, func() (bool, error) {
 		// Another instance may have installed the same stable seed while this
-		// transaction was waiting on the unique constraint. Only an identical,
+		// transaction was waiting on a conflicting write. Only an identical,
 		// live system record makes that conflict an idempotent no-op.
-		if current.ID != "" {
-			return false
-		}
 		var winner struct {
 			Record
 			DeletedAt sql.NullTime `db:"deleted_at"`
 		}
 		readErr := s.repository.db.GetContext(ctx, &winner, s.repository.db.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=?`), id)
-		if readErr == nil && !winner.DeletedAt.Valid && winner.IsSystem && seedEqual(winner.Record, input) {
+		if errors.Is(readErr, sql.ErrNoRows) {
+			return false, nil
+		}
+		if readErr != nil {
+			return false, fmt.Errorf("read concurrent permission seed: %w", readErr)
+		}
+		if !winner.DeletedAt.Valid && winner.IsSystem && seedEqual(winner.Record, input) {
 			seeded = winner.Record
 			changed = false
-			return true
+			return true, nil
 		}
-		return false
+		return false, nil
 	})
 	if err != nil {
 		return Record{}, false, err
@@ -951,36 +957,66 @@ func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int,
 	return 0, nil
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
-	return s.mutateWithUniqueRecovery(ctx, operation, id, request, fn, nil)
+	return s.mutateWithSeedRecovery(ctx, operation, id, request, fn, nil, nil)
 }
 
-func (s *Service) mutateWithUniqueRecovery(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error, recoverUnique func() bool) error {
+func (s *Service) mutateWithSeedRecovery(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error, shouldRecord func() bool, recoverSeed func() (bool, error)) error {
 	started := time.Now()
 	resourceName := permissionMutationName(request, id)
 	operationEntry := operationlog.Entry{Operation: operation, ResourceType: "permission", ResourceID: id, ResourceName: resourceName, Source: "backend", Protocol: "service", Request: request}
 	securityEntry := securitylog.Entry{EventType: securitylog.EventPermissionChanged, SubjectID: id, SubjectName: resourceName, SubjectType: "permission", Metadata: map[string]any{"operation": operation}}
-	err := s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		operationEntry.Duration = time.Since(started)
-		operationEntry.Succeeded = true
-		if s.operations != nil {
-			if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = s.transactor.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+			if err := fn(tx); err != nil {
 				return err
 			}
-		}
-		securityEntry.Succeeded = true
-		if s.security != nil {
-			return s.security.RecordTx(ctx, tx, securityEntry)
-		}
-		return nil
-	})
-	if database.IsUniqueViolation(err) {
-		if recoverUnique != nil && recoverUnique() {
+			if shouldRecord != nil && !shouldRecord() {
+				return nil
+			}
+			operationEntry.Duration = time.Since(started)
+			operationEntry.Succeeded = true
+			if s.operations != nil {
+				if err := s.operations.RecordTx(ctx, tx, operationEntry); err != nil {
+					return err
+				}
+			}
+			securityEntry.Succeeded = true
+			if s.security != nil {
+				return s.security.RecordTx(ctx, tx, securityEntry)
+			}
+			return nil
+		})
+		if err == nil {
 			return nil
 		}
-		err = ErrConflict
+		unique := database.IsUniqueViolation(err)
+		retryable := database.IsRetryableTransaction(err)
+		if recoverSeed != nil && (unique || retryable || errors.Is(err, ErrConflict)) {
+			recovered, readErr := recoverSeed()
+			if readErr != nil {
+				err = readErr
+				break
+			}
+			if recovered {
+				return nil
+			}
+		}
+		if unique {
+			err = ErrConflict
+			break
+		}
+		if retryable && recoverSeed != nil && attempt < 2 {
+			timer := time.NewTimer(time.Duration(1<<attempt) * 10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				err = ctx.Err()
+			case <-timer.C:
+				continue
+			}
+		}
+		break
 	}
 	if err != nil {
 		operationEntry.Duration = time.Since(started)
@@ -996,9 +1032,8 @@ func (s *Service) mutateWithUniqueRecovery(ctx context.Context, operation, id st
 		if s.security != nil {
 			_ = s.security.Record(ctx, securityEntry)
 		}
-		return err
 	}
-	return nil
+	return err
 }
 
 func permissionMutationName(request any, fallback string) string {
