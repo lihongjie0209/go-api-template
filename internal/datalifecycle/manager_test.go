@@ -253,19 +253,75 @@ func TestMaintainUsesBoundedSystemContextAndSkipsContention(t *testing.T) {
 			if id, ok := requestid.FromContext(ctx); !ok || id == "" {
 				t.Fatalf("request ID = %q, %t", id, ok)
 			}
-			if _, ok := ctx.Deadline(); !ok || key != "data-lifecycle:maintenance" || ttl != time.Second {
+			if _, ok := ctx.Deadline(); !ok || key != "data-lifecycle:maintenance:mysql:orders:platform:orders" || ttl != time.Second {
 				t.Fatalf("lock context/key/ttl = %t/%q/%s", ok, key, ttl)
 			}
 			return nil, false, nil
 		}},
 		appName: "orders",
 		lockTTL: time.Second,
+		lockKey: "data-lifecycle:maintenance:mysql:orders:platform:orders",
 	}
 	if err := manager.Maintain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !lockCalled {
 		t.Fatal("distributed lock was not attempted")
+	}
+}
+
+func TestMaintenanceLockIsScopedToServiceAndDatabase(t *testing.T) {
+	t.Parallel()
+	raw, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	base := config.Config{
+		App:             config.App{Name: "orders"},
+		Database:        config.Database{Type: "mysql", Name: "platform", Schema: "orders"},
+		DataLifecycle:   config.DataLifecycle{Enabled: true, Timeout: time.Second},
+		DistributedLock: config.DistributedLock{TTL: time.Second},
+	}
+	configs := []struct {
+		name   string
+		change func(*config.Config)
+	}{
+		{name: "same target"},
+		{name: "same target replica"},
+		{name: "another service", change: func(cfg *config.Config) { cfg.App.Name = "billing" }},
+		{name: "another database", change: func(cfg *config.Config) { cfg.Database.Name = "billing" }},
+		{name: "another schema", change: func(cfg *config.Config) { cfg.Database.Schema = "billing" }},
+		{name: "another dialect", change: func(cfg *config.Config) { cfg.Database.Type = "postgres" }},
+	}
+	keys := make(map[string]string, len(configs))
+	for _, test := range configs {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base
+			if test.change != nil {
+				test.change(&cfg)
+			}
+			manager := New(db, cfg, logger, nil, lifecycleLockerStub{try: func(_ context.Context, key string, _ time.Duration) (cache.Lock, bool, error) {
+				keys[test.name] = key
+				return nil, false, nil
+			}})
+			if err := manager.Maintain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if keys["same target"] == "" {
+		t.Fatal("maintenance did not attempt the distributed lock")
+	}
+	if keys["same target replica"] != keys["same target"] {
+		t.Errorf("replicas of the same storage target use different maintenance locks: %q and %q", keys["same target"], keys["same target replica"])
+	}
+	for _, test := range configs[2:] {
+		if keys[test.name] == keys["same target"] {
+			t.Errorf("%s shares maintenance lock key %q with another storage target", test.name, keys[test.name])
+		}
 	}
 }
 

@@ -36,11 +36,23 @@ type Manager struct {
 	locker          cache.Locker
 	appName         string
 	lockTTL         time.Duration
+	lockKey         string
 	advisoryLockKey string
 }
 
 func New(db *sqlx.DB, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics, locker cache.Locker) *Manager {
-	return &Manager{db: db, dialect: cfg.Database.Type, cfg: cfg.DataLifecycle, logger: logger, metrics: metrics, locker: locker, appName: cfg.App.Name, lockTTL: cfg.DistributedLock.TTL, advisoryLockKey: cfg.App.Name + ":" + cfg.Database.Name + ":" + cfg.Database.Schema + ":data-lifecycle"}
+	return &Manager{
+		db:              db,
+		dialect:         cfg.Database.Type,
+		cfg:             cfg.DataLifecycle,
+		logger:          logger,
+		metrics:         metrics,
+		locker:          locker,
+		appName:         cfg.App.Name,
+		lockTTL:         cfg.DistributedLock.TTL,
+		lockKey:         "data-lifecycle:maintenance:" + cfg.Database.Type + ":" + cfg.App.Name + ":" + cfg.Database.Name + ":" + cfg.Database.Schema,
+		advisoryLockKey: cfg.App.Name + ":" + cfg.Database.Name + ":" + cfg.Database.Schema + ":data-lifecycle",
+	}
 }
 
 func (m *Manager) Maintain(ctx context.Context) error {
@@ -52,7 +64,7 @@ func (m *Manager) Maintain(ctx context.Context) error {
 	ctx = requestid.WithContext(platformprincipal.SystemContext(ctx, actorID), requestid.Generate())
 	ctx, cancel := context.WithTimeout(ctx, m.cfg.Timeout)
 	defer cancel()
-	acquired, err := cache.TryWithLock(ctx, m.locker, "data-lifecycle:maintenance", m.lockTTL, func(leaseCtx context.Context) error {
+	acquired, err := cache.TryWithLock(ctx, m.locker, m.lockKey, m.lockTTL, func(leaseCtx context.Context) error {
 		if m.dialect == "mysql" {
 			return m.maintainMySQL(leaseCtx, time.Now())
 		}
