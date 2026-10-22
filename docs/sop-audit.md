@@ -682,3 +682,15 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Optimistic lock and audit | Update keeps `WHERE id=? AND version=?`, while audit triggers maintain actor, timestamps and next version. Both mutations read the trigger-maintained result before commit; a read failure rolls back the entire transaction. |
 | Presentation | Principal and permission display fields are joined from owned tables; timestamp values remain timezone-aware for RFC 3339 serialization. No opaque related ID is returned without its display value. |
 | Tests and shared capability | Unit tests pin read-before-commit on create/update and rollback on result-read failure. Service-local Testcontainers compare returned audit fields with the committed row. The existing shared transactor, principal context and recorders are reused. |
+
+## Tenant role mutation response consistency
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract | Existing POST+JSON role create/update contracts and global errors remain. Both return the role row read inside the write transaction, including trigger-maintained audit fields and version. If this required read fails, the entire role mutation rolls back instead of reporting failure after a committed change. |
+| Authentication and authorization | Existing JWT Resource/Action interception and tenant principal remain mandatory. Create checks assignable permissions; update checks the current row against compiled tenant/data scope, validates its proposed state, and rechecks assignability before writing. The response row remains tenant-scoped; role grants are sensitive transactional data, not a public dictionary provider. |
+| Operation and security logs | Existing operation and privilege-change security events are written transactionally with the role and its permission links. Read failure rolls back those records. No credential or policy text is added to logs. |
+| Cache and distributed lock | Existing per-tenant role-code/role-ID locks are retained at their narrow key granularity; no response cache is added. Database constraints, tenant predicates and optimistic version remain authoritative. |
+| Optimistic lock and audit | Update continues to require the expected version in SQL. The audit trigger supplies timestamps, actors and next version, which are read before commit. Association rows stay in the same transaction. |
+| Presentation | Actor display-name resolution after commit is best-effort for mutation responses; resolver failure falls back to stable actor IDs and cannot turn an effective grant into a failed API response. Times use the shared Asia/Shanghai presentation helper. Regular role reads still propagate resolver errors. |
+| Tests and shared capability | Unit tests verify read-before-commit, rollback on read failure, and display-name outage fallback. Service-local Testcontainers compare create/update return values with the committed audited row. Existing shared transactor, lock lifecycle, principal context and log recorders are reused. |

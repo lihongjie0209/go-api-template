@@ -122,6 +122,18 @@ type actorResolverStub struct {
 	ids   []string
 }
 
+type unavailableRoleActors struct{}
+
+func (unavailableRoleActors) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
+	return nil, errors.New("identity unavailable")
+}
+
+func tenantRoleRows(roleID, name string, version int64) *sqlmock.Rows {
+	stamp := time.Date(2026, time.October, 22, 0, 0, 0, 0, time.UTC)
+	return sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow(roleID, "tenant-1", "auditor", name, "", "active", stamp, "creator-1", stamp, "actor-1", version)
+}
+
 func (s *actorResolverStub) ResolveUserIDs(_ context.Context, ids []string) (map[string]string, error) {
 	s.calls++
 	s.ids = append([]string(nil), ids...)
@@ -1058,15 +1070,123 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
 	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
 	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).
 		WithArgs("tenant-1", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
 			AddRow("role-1", "tenant-1", "auditor", "Auditor", "", "active", now, "user-1", now, "user-1", 1))
+	mock.ExpectCommit()
 
 	role, err := service.CreateRole(ctx, "auditor", "Auditor", "", nil)
 	require.NoError(t, err)
 	require.Equal(t, "role-1", role.ID)
 	require.NoError(t, ctx.Err())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateRoleRollsBackWhenAuditedReadFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := NewTenantAuthorizationService(db, database.NewTransactor(db), nil, nil, nil, nil, config.Config{}, nil)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1"})
+	want := errors.New("read role unavailable")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", sqlmock.AnyArg()).WillReturnError(want)
+	mock.ExpectRollback()
+	_, err = service.CreateRole(ctx, "auditor", "Auditor", "", nil)
+	require.ErrorIs(t, err, want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateRoleSurvivesActorDisplayOutage(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := NewTenantAuthorizationService(db, database.NewTransactor(db), nil, nil, nil, unavailableRoleActors{}, config.Config{}, nil)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1"})
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", sqlmock.AnyArg()).
+		WillReturnRows(tenantRoleRows("role-1", "Auditor", 1))
+	mock.ExpectCommit()
+	role, err := service.CreateRole(ctx, "auditor", "Auditor", "", nil)
+	require.NoError(t, err)
+	require.Equal(t, "role-1", role.ID)
+	require.Equal(t, "creator-1", role.CreatedByName)
+	require.Equal(t, "actor-1", role.UpdatedByName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateRoleReadsAuditedResultBeforeCommit(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		readErr error
+		version int64
+	}{
+		{name: "success", version: 2},
+		{name: "read failure rolls back", readErr: errors.New("read role unavailable"), version: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			service := NewTenantAuthorizationService(db, database.NewTransactor(db), nil, nil, nil, nil, config.Config{}, nil)
+			ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1"})
+			mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", "role-1").
+				WillReturnRows(tenantRoleRows("role-1", "Auditor", 1))
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT permission_id FROM tenant_role_permissions`).WithArgs("tenant-1", "role-1").
+				WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+			mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_roles`).WithArgs("tenant-1", "role-1").
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).WithArgs("tenant-1", "member-1").
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).WithArgs("tenant-1", "member-1").
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).WithArgs("tenant-1").
+				WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+			mock.ExpectExec(`UPDATE tenant_roles AS tr SET name=`).
+				WithArgs("Senior Auditor", "", "active", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1", int64(1)).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			result := mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", "role-1")
+			if tt.readErr != nil {
+				result.WillReturnError(tt.readErr)
+				mock.ExpectRollback()
+			} else {
+				result.WillReturnRows(tenantRoleRows("role-1", "Senior Auditor", 2))
+				mock.ExpectCommit()
+			}
+			role, err := service.UpdateRole(ctx, "role-1", "Senior Auditor", "", "active", 1)
+			if tt.readErr != nil {
+				require.ErrorIs(t, err, tt.readErr)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "Senior Auditor", role.Name)
+				require.Equal(t, tt.version, role.Version)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }

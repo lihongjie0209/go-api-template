@@ -551,6 +551,7 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 		}
 		return TenantRole{}, err
 	}
+	var created TenantRole
 	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role-code:"+code, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.create", role.ID, map[string]any{"name": role.Name, "permission_ids": permissionIDs}, actor.TenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 			if err := s.ensureAssignable(ctx, tx, actor, permissionIDs); err != nil {
@@ -564,13 +565,17 @@ func (s *TenantAuthorizationService) CreateRole(ctx context.Context, code, name,
 				}
 				return fmt.Errorf("insert tenant role: %w", err)
 			}
-			return replaceLinks(ctx, tx, "tenant_role_permissions", actor.TenantID, role.ID, "permission_id", permissionIDs, actor.ID)
+			if err := replaceLinks(ctx, tx, "tenant_role_permissions", actor.TenantID, role.ID, "permission_id", permissionIDs, actor.ID); err != nil {
+				return err
+			}
+			created, err = readRole(ctx, tx, actor.TenantID, role.ID, unrestrictedScope())
+			return err
 		})
 	})
 	if err != nil {
 		return TenantRole{}, err
 	}
-	return s.getRole(ctx, actor.TenantID, role.ID, unrestrictedScope())
+	return s.presentRoleMutation(ctx, created), nil
 }
 
 func (s *TenantAuthorizationService) SetRolePermissions(ctx context.Context, roleID string, version int64, permissionIDs []string) error {
@@ -788,20 +793,28 @@ func (s *TenantAuthorizationService) GetRole(ctx context.Context, roleID string)
 }
 
 func (s *TenantAuthorizationService) getRole(ctx context.Context, tenantID, roleID string, scope datapermission.SQLPredicate) (TenantRole, error) {
-	var role TenantRole
-	args := append([]any{tenantID, roleID}, scope.Args...)
-	err := s.db.GetContext(ctx, &role, s.db.Rebind(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status,tr.created_at,tr.created_by,tr.updated_at,tr.updated_by,tr.version FROM tenant_roles tr WHERE tr.tenant_id=? AND tr.id=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
-	if errors.Is(err, sql.ErrNoRows) {
-		return role, ErrTenantAuthorizationNotFound
-	}
+	role, err := readRole(ctx, s.db, tenantID, roleID, scope)
 	if err != nil {
-		return role, err
+		return TenantRole{}, err
 	}
 	roles := []TenantRole{role}
 	if err := s.presentRoles(ctx, roles); err != nil {
 		return TenantRole{}, err
 	}
 	return roles[0], nil
+}
+
+func readRole(ctx context.Context, db queryer, tenantID, roleID string, scope datapermission.SQLPredicate) (TenantRole, error) {
+	var role TenantRole
+	args := append([]any{tenantID, roleID}, scope.Args...)
+	err := db.GetContext(ctx, &role, db.Rebind(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status,tr.created_at,tr.created_by,tr.updated_at,tr.updated_by,tr.version FROM tenant_roles tr WHERE tr.tenant_id=? AND tr.id=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TenantRole{}, ErrTenantAuthorizationNotFound
+	}
+	if err != nil {
+		return TenantRole{}, fmt.Errorf("read tenant role: %w", err)
+	}
+	return role, nil
 }
 
 func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePageInput) (pagination.Result[TenantRole], error) {
@@ -988,6 +1001,16 @@ func (s *TenantAuthorizationService) presentRoles(ctx context.Context, roles []T
 		roles[index].UpdatedAt = presentation.Time(roles[index].UpdatedAt)
 	}
 	return nil
+}
+
+func (s *TenantAuthorizationService) presentRoleMutation(ctx context.Context, role TenantRole) TenantRole {
+	roles := []TenantRole{role}
+	if err := s.presentRoles(ctx, roles); err == nil {
+		return roles[0]
+	}
+	role.CreatedByName, role.UpdatedByName = role.CreatedBy, role.UpdatedBy
+	role.CreatedAt, role.UpdatedAt = presentation.Time(role.CreatedAt), presentation.Time(role.UpdatedAt)
+	return role
 }
 
 func (s *TenantAuthorizationService) RolePermissions(ctx context.Context, roleID string) ([]PermissionView, error) {
@@ -1226,6 +1249,7 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 			return TenantRole{}, err
 		}
 	}
+	var updated TenantRole
 	err = s.withLock(ctx, "tenant:"+actor.TenantID+":role:"+roleID, func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.role.update", roleID, map[string]any{"name": name, "status": status, "version": version}, actor.TenantID, nil, func(tx *sqlx.Tx) error {
 			if err := s.ensureRoleAssignable(ctx, tx, actor, roleID); err != nil {
@@ -1243,13 +1267,14 @@ func (s *TenantAuthorizationService) UpdateRole(ctx context.Context, roleID, nam
 			if rows != 1 {
 				return ErrTenantAuthorizationStaleVersion
 			}
-			return nil
+			updated, err = readRole(ctx, tx, actor.TenantID, roleID, unrestrictedScope())
+			return err
 		})
 	})
 	if err != nil {
 		return TenantRole{}, err
 	}
-	return s.getRole(ctx, actor.TenantID, roleID, unrestrictedScope())
+	return s.presentRoleMutation(ctx, updated), nil
 }
 
 func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID string, version int64) error {

@@ -1184,6 +1184,25 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err != nil || role.Version != 1 {
 		t.Fatalf("created tenant role=%+v err=%v", role, err)
 	}
+	assertRoleAudit := func(role authorization.TenantRole) {
+		t.Helper()
+		var stored struct {
+			CreatedAt time.Time `db:"created_at"`
+			CreatedBy string    `db:"created_by"`
+			UpdatedAt time.Time `db:"updated_at"`
+			UpdatedBy string    `db:"updated_by"`
+			Version   int64     `db:"version"`
+		}
+		query := db.Rebind(`SELECT created_at,created_by,updated_at,updated_by,version FROM tenant_roles WHERE tenant_id=? AND id=? AND deleted_at IS NULL`)
+		if err := db.GetContext(ctx, &stored, query, tenantID, role.ID); err != nil {
+			t.Fatalf("read tenant role audit: %v", err)
+		}
+		if !role.CreatedAt.Equal(stored.CreatedAt) || !role.UpdatedAt.Equal(stored.UpdatedAt) ||
+			role.CreatedBy != stored.CreatedBy || role.UpdatedBy != stored.UpdatedBy || role.Version != stored.Version {
+			t.Fatalf("tenant role audit differs from committed row: returned=%+v stored=%+v", role, stored)
+		}
+	}
+	assertRoleAudit(role)
 	permissions, err := service.RolePermissions(adminCtx, role.ID)
 	if err != nil || len(permissions) != 1 || permissions[0].ID != permissionID || permissions[0].Name == "" {
 		t.Fatalf("role permissions=%+v err=%v", permissions, err)
@@ -1250,6 +1269,7 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err != nil || updated.Version != role.Version+1 {
 		t.Fatalf("updated tenant role=%+v err=%v", updated, err)
 	}
+	assertRoleAudit(updated)
 	if _, err := service.UpdateRole(adminCtx, role.ID, "旧版本", role.Description, "active", role.Version); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale tenant role update error=%v", err)
 	}
