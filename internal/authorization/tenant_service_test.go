@@ -22,16 +22,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTenantAuthorizationLockPreservesInfrastructureAndLeaseLossErrors(t *testing.T) {
+func TestTenantAuthorizationLockDistinguishesCommitFromReleaseFailure(t *testing.T) {
 	t.Parallel()
+	callbackFailure := errors.New("transaction rolled back")
 	for _, test := range []struct {
-		name       string
-		locker     testutil.LockStub
-		want       error
-		wantCalled bool
+		name        string
+		locker      testutil.LockStub
+		callbackErr error
+		want        error
+		wantCalled  bool
 	}{
 		{name: "acquisition failure", locker: testutil.LockStub{AcquireErr: context.DeadlineExceeded}, want: context.DeadlineExceeded},
-		{name: "lease lost on release", locker: testutil.LockStub{ReleaseErr: cache.ErrLockLost}, want: cache.ErrLockLost, wantCalled: true},
+		{name: "release failure after commit", locker: testutil.LockStub{ReleaseErr: cache.ErrLockLost}, wantCalled: true},
+		{name: "callback failure before commit", locker: testutil.LockStub{ReleaseErr: cache.ErrLockLost}, callbackErr: callbackFailure, want: callbackFailure, wantCalled: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -39,9 +42,13 @@ func TestTenantAuthorizationLockPreservesInfrastructureAndLeaseLossErrors(t *tes
 			called := false
 			err := service.withLock(t.Context(), "tenant:tenant-1:grant", func(context.Context) error {
 				called = true
-				return nil
+				return test.callbackErr
 			})
-			require.ErrorIs(t, err, test.want)
+			if test.want == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, test.want)
+			}
 			require.NotErrorIs(t, err, ErrTenantAuthorizationConflict)
 			require.Equal(t, test.wantCalled, called)
 		})
