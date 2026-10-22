@@ -23,15 +23,17 @@ var (
 // authoritative database state. Pub/Sub reduces propagation latency; revision
 // polling is the correctness fallback because Redis notifications are lossy.
 type Sync struct {
-	redis        redis.UniversalClient
-	channel      string
-	pollInterval time.Duration
-	timeout      time.Duration
-	revision     func(context.Context) (string, error)
-	refresh      func(context.Context) error
-	logger       *slog.Logger
-	component    string
-	metrics      metricsObserver
+	redis            redis.UniversalClient
+	channel          string
+	pollInterval     time.Duration
+	timeout          time.Duration
+	revision         func(context.Context) (string, error)
+	refresh          func(context.Context) error
+	snapshotRefresh  func(context.Context) (string, error)
+	onRefreshFailure func()
+	logger           *slog.Logger
+	component        string
+	metrics          metricsObserver
 
 	mu           sync.Mutex
 	lastRevision string
@@ -52,6 +54,22 @@ func New(client redis.UniversalClient, channel, component string, pollInterval, 
 		logger = slog.Default()
 	}
 	return &Sync{redis: client, channel: channel, component: component, pollInterval: pollInterval, timeout: timeout, revision: revision, refresh: refresh, logger: logger, metrics: metrics}
+}
+
+// NewSnapshot uses one consistent database view for policies and revision.
+func NewSnapshot(client redis.UniversalClient, channel, component string, pollInterval, timeout time.Duration, revision func(context.Context) (string, error), refresh func(context.Context) (string, error), logger *slog.Logger, metrics metricsObserver) *Sync {
+	s := New(client, channel, component, pollInterval, timeout, revision, nil, logger, metrics)
+	s.snapshotRefresh = refresh
+	return s
+}
+
+// SetFailureHandler installs a fail-closed callback before the sync starts.
+// It runs while the refresh lock is held so a failed refresh cannot invalidate
+// a newer snapshot installed by a concurrent successful refresh.
+func (s *Sync) SetFailureHandler(handler func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onRefreshFailure = handler
 }
 
 // Revision returns the last database revision whose complete snapshot was
@@ -75,7 +93,7 @@ func (s *Sync) Refresh(ctx context.Context) error {
 			s.metrics.ObserveInfrastructure("policy_sync", s.component, "refresh", status, started)
 		}
 	}()
-	if s == nil || s.revision == nil || s.refresh == nil {
+	if s == nil || s.revision == nil || (s.refresh == nil && s.snapshotRefresh == nil) {
 		status = "error"
 		return errors.New("policy sync is not configured")
 	}
@@ -83,13 +101,21 @@ func (s *Sync) Refresh(ctx context.Context) error {
 	defer s.mu.Unlock()
 	refreshCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	if err := s.refresh(refreshCtx); err != nil {
-		status = "error"
-		return err
+	var revision string
+	var err error
+	if s.snapshotRefresh != nil {
+		revision, err = s.snapshotRefresh(refreshCtx)
+	} else {
+		err = s.refresh(refreshCtx)
+		if err == nil {
+			revision, err = s.revision(refreshCtx)
+		}
 	}
-	revision, err := s.revision(refreshCtx)
 	if err != nil {
 		status = "error"
+		if s.onRefreshFailure != nil {
+			s.onRefreshFailure()
+		}
 		return err
 	}
 	s.lastRevision = revision
@@ -100,9 +126,7 @@ func (s *Sync) Refresh(ctx context.Context) error {
 // invalidation hint. A failed publish is logged; database polling still
 // guarantees eventual convergence.
 func (s *Sync) Changed(ctx context.Context) error {
-	if err := s.Refresh(ctx); err != nil {
-		return err
-	}
+	refreshErr := s.Refresh(ctx)
 	if s.redis != nil && s.channel != "" {
 		started := time.Now()
 		if err := s.redis.Publish(ctx, s.channel, "changed").Err(); err != nil {
@@ -114,7 +138,7 @@ func (s *Sync) Changed(ctx context.Context) error {
 			s.metrics.ObserveInfrastructure("policy_sync", s.component, "publish", "success", started)
 		}
 	}
-	return nil
+	return refreshErr
 }
 
 // Run watches both Redis notifications and the authoritative database. It

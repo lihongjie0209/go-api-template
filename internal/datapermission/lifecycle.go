@@ -23,11 +23,12 @@ import (
 )
 
 var (
-	ErrPolicyNotFound        = errors.New("data permission: policy not found")
-	ErrPolicyConflict        = errors.New("data permission: policy conflict")
-	ErrVersionNotDraft       = errors.New("data permission: version is not draft")
-	ErrPolicyScope           = errors.New("data permission: policy scope denied")
-	errActorResolutionFailed = errors.New("data_permission_actor_resolution_failed")
+	ErrPolicyNotFound               = errors.New("data permission: policy not found")
+	ErrPolicyConflict               = errors.New("data permission: policy conflict")
+	ErrVersionNotDraft              = errors.New("data permission: version is not draft")
+	ErrPolicyScope                  = errors.New("data permission: policy scope denied")
+	errActorResolutionFailed        = errors.New("data_permission_actor_resolution_failed")
+	errCommittedPolicyRefreshFailed = errors.New("committed_policy_refresh_failed")
 )
 
 const (
@@ -154,6 +155,10 @@ type Repository struct{ db *sqlx.DB }
 func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
 func (r *Repository) LoadAllPublished(ctx context.Context) ([]Policy, error) {
+	return loadAllPublished(ctx, r.db)
+}
+
+func loadAllPublished(ctx context.Context, queryer sqlx.QueryerContext) ([]Policy, error) {
 	rows := []struct {
 		Code, Scope, Document string
 		TenantID              sql.NullString `db:"tenant_id"`
@@ -165,7 +170,7 @@ func (r *Repository) LoadAllPublished(ctx context.Context) ([]Policy, error) {
 		WHERE p.status='active' AND p.deleted_at IS NULL
 		 AND (p.scope='global' OR (p.scope='tenant' AND t.id IS NOT NULL))
 		ORDER BY p.scope,COALESCE(p.tenant_id,''),p.code`
-	if err := r.db.SelectContext(ctx, &rows, query); err != nil {
+	if err := sqlx.SelectContext(ctx, queryer, &rows, query); err != nil {
 		return nil, fmt.Errorf("load published data policies: %w", err)
 	}
 	policies := make([]Policy, 0, len(rows))
@@ -192,12 +197,18 @@ type dataRuntimeSync interface {
 	Refresh(context.Context) error
 	Changed(context.Context) error
 	Run(context.Context)
+	SetFailureHandler(func())
 }
 
 func NewRuntimeLoader(repository *Repository, engine *Engine) *RuntimeLoader {
 	return &RuntimeLoader{repository: repository, engine: engine}
 }
-func (l *RuntimeLoader) ConfigureSync(sync dataRuntimeSync) { l.sync = sync }
+func (l *RuntimeLoader) ConfigureSync(sync dataRuntimeSync) {
+	l.sync = sync
+	if sync != nil && l.engine != nil {
+		sync.SetFailureHandler(l.engine.Invalidate)
+	}
+}
 func (l *RuntimeLoader) Initialize(ctx context.Context) error {
 	if l.sync != nil {
 		return l.sync.Refresh(ctx)
@@ -208,7 +219,11 @@ func (l *RuntimeLoader) Changed(ctx context.Context) error {
 	if l.sync != nil {
 		return l.sync.Changed(ctx)
 	}
-	return l.Refresh(ctx)
+	err := l.Refresh(ctx)
+	if err != nil && l.engine != nil {
+		l.engine.Invalidate()
+	}
+	return err
 }
 func (l *RuntimeLoader) Run(ctx context.Context) {
 	if l.sync != nil {
@@ -236,6 +251,19 @@ func (l *RuntimeLoader) Refresh(ctx context.Context) error {
 		return err
 	}
 	return l.engine.Replace(policies)
+}
+
+// RefreshSnapshot installs policies and their matching database revision from
+// one repeatable-read view, avoiding a stale snapshot with a newer revision.
+func (l *RuntimeLoader) RefreshSnapshot(ctx context.Context) (string, error) {
+	policies, revision, err := l.repository.LoadPublishedSnapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := l.engine.Replace(policies); err != nil {
+		return "", err
+	}
+	return revision, nil
 }
 
 type LifecycleService struct {
@@ -473,7 +501,7 @@ func (s *LifecycleService) Publish(ctx context.Context, policyID string, number,
 	}
 	if s.runtime != nil {
 		if err := s.runtime.Changed(ctx); err != nil {
-			return PolicyRecord{}, fmt.Errorf("refresh published data permission policies: %w", err)
+			slog.Default().ErrorContext(ctx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
 		}
 	}
 	record, _, err := s.get(ctx, policyID, number, actor.TenantID)
@@ -525,7 +553,7 @@ func (s *LifecycleService) SetStatus(ctx context.Context, input SetPolicyStatusI
 	}
 	if s.runtime != nil {
 		if err := s.runtime.Changed(ctx); err != nil {
-			return PolicyRecord{}, fmt.Errorf("refresh published data permission policies: %w", err)
+			slog.Default().ErrorContext(ctx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
 		}
 	}
 	return s.Get(ctx, input.PolicyID)

@@ -55,6 +55,25 @@ func TestRepositoryRevisionIncludesPolicyTenantChanges(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLoadPublishedSnapshotReadsPoliciesAndRevisionInOneTransaction(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	updated := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT p.code,p.scope,p.tenant_id,v.document FROM data_permission_policies p`).
+		WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}))
+	mock.ExpectQuery(`SELECT max\(updated_at\) AS updated_at,count\(\*\) AS row_count`).
+		WillReturnRows(sqlmock.NewRows([]string{"updated_at", "row_count", "version_sum"}).AddRow(updated, 3, 8))
+	mock.ExpectCommit()
+	policies, revision, err := NewRepository(sqlx.NewDb(raw, "sqlmock")).LoadPublishedSnapshot(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, policies)
+	require.Equal(t, "2026-10-21T01:00:00Z:3:8", revision)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestRepositoryGetRestrictsTenantVisibilityInSQL(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()

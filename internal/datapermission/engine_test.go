@@ -119,6 +119,30 @@ func TestEnginePinnedSnapshotKeepsRevisionAndDecisionsTogether(t *testing.T) {
 	require.Equal(t, forwardRevision, reversedRevision)
 }
 
+func TestEngineInvalidationFailsClosedUntilCompleteReplacement(t *testing.T) {
+	t.Parallel()
+	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
+	require.NoError(t, err)
+	schemas, err := NewSchemaRegistry(schema)
+	require.NoError(t, err)
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	engine, err := NewRuntimeEngine(schemas, resources)
+	require.NoError(t, err)
+	_, _, err = engine.Pin(t.Context())
+	require.NoError(t, err)
+
+	engine.Invalidate()
+	_, _, err = engine.Pin(t.Context())
+	require.ErrorIs(t, err, ErrSnapshotUnavailable)
+	_, err = engine.CompileSQL(t.Context(), "tenant.member", "read", resourceaction.Subject{Authenticated: true, TenantID: "tenant-1"}, nil)
+	require.ErrorIs(t, err, ErrSnapshotUnavailable)
+
+	require.NoError(t, engine.Replace(nil))
+	_, _, err = engine.Pin(t.Context())
+	require.NoError(t, err)
+}
+
 func TestEngineReplaceDoesNotRetainCallerPolicyMemory(t *testing.T) {
 	schema, err := NewSchema("tenant.member", map[string]Field{"owner_id": {Column: "tm.user_id", Type: ValueTypeText}})
 	require.NoError(t, err)

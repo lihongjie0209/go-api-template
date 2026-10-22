@@ -26,6 +26,7 @@ import (
 var validCode = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 
 var errTenantCacheFailed = errors.New("tenant_cache_failed")
+var errTenantPolicyRefreshFailed = errors.New("tenant_policy_refresh_failed")
 
 const (
 	maxTenantIDLength          = 128
@@ -439,7 +440,9 @@ func (s *Service) afterTenantMutation(ctx context.Context, id string) error {
 		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout+time.Second)
 		defer cancel()
 		if err := s.policies.Changed(refreshCtx); err != nil {
-			return fmt.Errorf("refresh tenant data permission policies: %w", err)
+			if s.logger != nil {
+				s.logger.ErrorContext(refreshCtx, "refresh committed tenant policy snapshot failed", "tenant_id", id, "error", observability.SafeError(err, errTenantPolicyRefreshFailed))
+			}
 		}
 	}
 	return nil

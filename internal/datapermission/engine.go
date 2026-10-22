@@ -80,6 +80,15 @@ func (e *Engine) Replace(policies []Policy) error {
 	return nil
 }
 
+// Invalidate removes the active snapshot after an authoritative change cannot
+// be reloaded. New decisions fail closed until a complete replacement succeeds.
+// Requests that already pinned a snapshot retain their immutable view.
+func (e *Engine) Invalidate() {
+	if e != nil {
+		e.snapshot.Store(nil)
+	}
+}
+
 // Pin binds one immutable policy snapshot and its revision to a request. All
 // subsequent evaluations using this Engine and Context observe that snapshot,
 // even if a refresh publishes a new one concurrently.

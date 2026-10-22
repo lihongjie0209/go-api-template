@@ -207,12 +207,17 @@ func TestAdminDeleteRefreshesPoliciesOnlyAfterCommit(t *testing.T) {
 	}
 }
 
-func TestTenantDeletePolicyRefreshFailureIsVisible(t *testing.T) {
-	want := errors.New("policy runtime unavailable")
-	service := &Service{}
-	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error { return want }})
-	if err := service.afterTenantMutation(t.Context(), "tenant-1"); !errors.Is(err, want) {
-		t.Fatalf("refresh failure = %v, want wrapped runtime error", err)
+func TestTenantDeletePolicyRefreshFailureDoesNotHideCommittedMutation(t *testing.T) {
+	var output bytes.Buffer
+	service := &Service{logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	service.SetPolicyRuntime(policyRuntimeStub{changed: func(context.Context) error {
+		return errors.New("policy database password=secret-value")
+	}})
+	if err := service.afterTenantMutation(t.Context(), "tenant-1"); err != nil {
+		t.Fatalf("committed mutation returned refresh failure: %v", err)
+	}
+	if strings.Contains(output.String(), "secret-value") || !strings.Contains(output.String(), "tenant_policy_refresh_failed") {
+		t.Fatalf("policy refresh log leaked dependency details or omitted safe code: %s", output.String())
 	}
 }
 
@@ -259,11 +264,11 @@ func TestTenantAdminUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
 		}
 		return want
 	}})
-	_, err = service.AdminUpdate(platformprincipal.SystemContext(t.Context(), "platform-admin"), UpdateInput{
+	view, err := service.AdminUpdate(platformprincipal.SystemContext(t.Context(), "platform-admin"), UpdateInput{
 		ID: "tenant-1", Name: "Tenant One", Status: StatusDisabled, Version: 2,
 	})
-	if !errors.Is(err, want) {
-		t.Fatalf("post-commit policy refresh error = %v, want %v", err, want)
+	if err != nil || view.Version != 3 || view.Status != StatusDisabled {
+		t.Fatalf("committed update result = %+v, err = %v", view, err)
 	}
 }
 
@@ -293,9 +298,9 @@ func TestTenantScopedUpdateRefreshesPoliciesAfterCommit(t *testing.T) {
 		return want
 	}})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "tenant-admin", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
-	_, err = service.Update(ctx, UpdateInput{ID: "tenant-1", Name: "Tenant One", Status: StatusDisabled, Version: 2})
-	if !errors.Is(err, want) {
-		t.Fatalf("post-commit policy refresh error = %v, want %v", err, want)
+	view, err := service.Update(ctx, UpdateInput{ID: "tenant-1", Name: "Tenant One", Status: StatusDisabled, Version: 2})
+	if err != nil || view.Version != 3 || view.Status != StatusDisabled {
+		t.Fatalf("committed update result = %+v, err = %v", view, err)
 	}
 }
 

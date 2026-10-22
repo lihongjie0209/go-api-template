@@ -17,6 +17,16 @@ applicable contract, authentication, authorization, logging, cache, lock,
 optimistic-lock, audit, presentation, observability, unit-test, integration-test
 and shared-component decisions have direct evidence in this repository.
 
+Data-permission snapshot refresh reads published policies and their database
+revision in one read-only repeatable-read transaction. A refresh failure
+invalidates this instance's current snapshot under the refresh lock; new
+authorization checks fail closed until a complete replacement succeeds.
+After a tenant or policy mutation commits, a local refresh failure is logged
+with a safe error code rather than reported as a failed write. Redis
+notifications are attempted even when local refresh fails, and revision
+polling remains the recovery path for missed notifications. Requests that
+already pinned an immutable snapshot may finish with their pinned revision.
+
 Status values:
 
 - `pending`: not yet inspected against the complete SOP.

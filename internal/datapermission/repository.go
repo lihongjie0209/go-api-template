@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 )
@@ -18,6 +19,10 @@ func (r *Repository) Revision(ctx context.Context) (string, error) {
 	if r == nil || r.db == nil {
 		return "", errors.New("data permission: policy database is disabled")
 	}
+	return readRevision(ctx, r.db)
+}
+
+func readRevision(ctx context.Context, queryer sqlx.QueryerContext) (string, error) {
 	var revision struct {
 		UpdatedAt  sql.NullTime `db:"updated_at"`
 		RowCount   int64        `db:"row_count"`
@@ -30,10 +35,36 @@ func (r *Repository) Revision(ctx context.Context) (string, error) {
 		UNION ALL SELECT t.updated_at,t.version FROM tenants t WHERE EXISTS
 			(SELECT 1 FROM data_permission_policies p WHERE p.tenant_id=t.id AND p.scope='tenant' AND p.deleted_at IS NULL)
 	) data_permission_revisions`
-	if err := r.db.GetContext(ctx, &revision, query); err != nil {
+	if err := sqlx.GetContext(ctx, queryer, &revision, query); err != nil {
 		return "", fmt.Errorf("read data permission policy revision: %w", err)
 	}
 	return fmt.Sprintf("%s:%d:%d", revision.UpdatedAt.Time.UTC().Format(time.RFC3339Nano), revision.RowCount, revision.VersionSum), nil
+}
+
+// LoadPublishedSnapshot reads policies and their revision from one consistent
+// database view. A later commit can only make this revision older, which the
+// next revision poll will detect.
+func (r *Repository) LoadPublishedSnapshot(ctx context.Context) ([]Policy, string, error) {
+	if r == nil || r.db == nil {
+		return nil, "", errors.New("data permission: policy database is disabled")
+	}
+	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, "", fmt.Errorf("begin data permission snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	policies, err := loadAllPublished(ctx, tx)
+	if err != nil {
+		return nil, "", err
+	}
+	revision, err := readRevision(ctx, tx)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", fmt.Errorf("commit data permission snapshot: %w", err)
+	}
+	return policies, revision, nil
 }
 
 const (

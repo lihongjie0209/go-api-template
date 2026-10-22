@@ -143,6 +143,54 @@ func TestChangedRefreshesAndPublishesHint(t *testing.T) {
 	require.Equal(t, "changed", message.Payload)
 }
 
+func TestChangedPublishesHintEvenWhenLocalRefreshFails(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	subscriber := client.Subscribe(t.Context(), "policies")
+	t.Cleanup(func() { _ = subscriber.Close() })
+	_, err := subscriber.Receive(t.Context())
+	require.NoError(t, err)
+	want := errors.New("local policy refresh unavailable")
+	syncer := New(client, "policies", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "revision-2", nil },
+		func(context.Context) error { return want }, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	require.ErrorIs(t, syncer.Changed(t.Context()), want)
+	message, err := subscriber.ReceiveMessage(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "changed", message.Payload)
+}
+
+func TestSnapshotRefreshFailureCannotInvalidateNewerSuccess(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var attempts atomic.Int64
+	var invalidations atomic.Int64
+	syncer := NewSnapshot(nil, "", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "current", nil },
+		func(context.Context) (string, error) {
+			if attempts.Add(1) == 1 {
+				close(started)
+				<-release
+				return "", errors.New("refresh failed")
+			}
+			return "revision-2", nil
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	failed := make(chan error, 1)
+	go func() { failed <- syncer.Refresh(t.Context()) }()
+	<-started
+	succeeded := make(chan error, 1)
+	go func() { succeeded <- syncer.Refresh(t.Context()) }()
+	close(release)
+	require.Error(t, <-failed)
+	require.NoError(t, <-succeeded)
+	require.Equal(t, int64(1), invalidations.Load())
+	require.Equal(t, "revision-2", syncer.Revision())
+}
+
 func TestChangedDoesNotFailCommittedMutationWhenRedisIsUnavailable(t *testing.T) {
 	t.Parallel()
 	server := miniredis.RunT(t)

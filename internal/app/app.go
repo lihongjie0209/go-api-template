@@ -123,7 +123,7 @@ func startResourceCatalog(lc fx.Lifecycle, cfg config.Config, syncer *resourceca
 
 func newDataPermissionRuntimeLoader(repository *datapermission.Repository, engine *datapermission.Engine, client *redis.Client, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics) *datapermission.RuntimeLoader {
 	loader := datapermission.NewRuntimeLoader(repository, engine)
-	loader.ConfigureSync(policysync.New(client, cfg.RedisKeyPrefix()+"policy:data-permission:changed", "data_permission", cfg.PolicySync.PollInterval, cfg.PolicySync.Timeout, repository.Revision, loader.Refresh, logger, metrics))
+	loader.ConfigureSync(policysync.NewSnapshot(client, cfg.RedisKeyPrefix()+"policy:data-permission:changed", "data_permission", cfg.PolicySync.PollInterval, cfg.PolicySync.Timeout, repository.Revision, loader.RefreshSnapshot, logger, metrics))
 	return loader
 }
 
