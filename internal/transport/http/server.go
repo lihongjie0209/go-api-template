@@ -336,6 +336,9 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	if registrationErr != nil {
 		return nil, fmt.Errorf("register HTTP authorization descriptor: %w", registrationErr)
 	}
+	if err := validateHTTPIdempotencyRoutes(cfg.Idempotency.HTTPPaths, definitions); err != nil {
+		return nil, err
+	}
 	endpointRegistry, err := accesscontrol.NewEndpointRegistry(resources, definitions)
 	if err != nil {
 		return nil, fmt.Errorf("build HTTP authorization registry: %w", err)

@@ -490,6 +490,10 @@ message queue with an outbox.
 - Mutation endpoints explicitly opt in; query/list endpoints must not use an
   idempotency key as a cache substitute. HTTP and unary gRPC use the shared SDK
   state machine and the same semantic rules.
+- Configured HTTP idempotency patterns must match registered mutation routes at
+  startup. Wildcards must not silently include new query, target-preview, or
+  public routes; newly added mutation responses still require a secret-data
+  review before being selected.
 - Every replay must pass current authentication and operation authorization
   before the idempotency state is read or returned. HTTP idempotency middleware
   must follow route authorization, not precede it as API-group middleware.
