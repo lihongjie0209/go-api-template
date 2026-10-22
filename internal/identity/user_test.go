@@ -339,10 +339,10 @@ func TestUpdateSelfPreservesStatusAndUsesOptimisticVersion(t *testing.T) {
 	mock.ExpectExec(`UPDATE identity_users SET display_name=`).
 		WithArgs("Alice Updated", "alice.updated@example.com", "13900000000", sqlmock.AnyArg(), "user-self", "user-self", int64(7)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
 	mock.ExpectQuery(`SELECT .* FROM identity_users u`).WithArgs("user-self").WillReturnRows(
 		sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-self", StatusLocked, 8, now)...),
 	)
+	mock.ExpectCommit()
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-self", Type: platformprincipal.TypeUser})
 	profile, err := service.UpdateSelf(ctx, SelfUpdateInput{
 		DisplayName: "Alice Updated", Email: "alice.updated@example.com",
@@ -574,6 +574,8 @@ func TestCreateRollsBackWhenTransactionalOperationLogFails(t *testing.T) {
 	service := &Service{repository: NewRepository(db), transactor: database.NewTransactor(db), operations: operations, security: security, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO identity_users`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT .* FROM identity_users u WHERE id = \? AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows(userColumnNames()).AddRow(userRow("user-1", StatusActive, 1, time.Now())...))
 	mock.ExpectRollback()
 
 	ctx := platformprincipal.SystemContext(t.Context(), "admin")

@@ -1654,6 +1654,16 @@ func testIdentityUserLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err != nil || updated.Version != 2 {
 		t.Fatalf("updated=%+v err=%v", updated, err)
 	}
+	var committedUser struct {
+		DisplayName string `db:"display_name"`
+		Version     int64  `db:"version"`
+	}
+	if err := db.GetContext(actorCtx, &committedUser, db.Rebind(`SELECT display_name,version FROM identity_users WHERE id=?`), created.ID); err != nil || committedUser.DisplayName != updated.DisplayName || committedUser.Version != updated.Version {
+		t.Fatalf("user update response differs from committed row: %+v err=%v", committedUser, err)
+	}
+	if _, err := service.Update(actorCtx, identity.UpdateInput{ID: created.ID, DisplayName: updated.DisplayName, Status: identity.StatusClosed, Version: updated.Version}); !errors.Is(err, identity.ErrInvalid) {
+		t.Fatalf("closed status bypassed user deletion workflow: %v", err)
+	}
 	deleteTarget, err = service.DeleteTarget(actorCtx, created.ID)
 	if err != nil || deleteTarget.Version != updated.Version {
 		t.Fatalf("updated user delete target=%+v err=%v", deleteTarget, err)

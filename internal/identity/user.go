@@ -199,6 +199,18 @@ func (r *Repository) get(ctx context.Context, predicate string, args ...any) (Us
 	return user, nil
 }
 
+func (r *Repository) getTx(ctx context.Context, tx *sqlx.Tx, id string) (User, error) {
+	var user User
+	query := tx.Rebind(`SELECT ` + userColumns + ` FROM identity_users u WHERE id = ? AND deleted_at IS NULL`)
+	if err := tx.GetContext(ctx, &user, query, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("read mutated identity user: %w", err)
+	}
+	return user, nil
+}
+
 func (r *Repository) Page(ctx context.Context, input PageInput) ([]User, int64, error) {
 	where, args := "deleted_at IS NULL", []any{}
 	if input.Keyword != "" {
@@ -341,22 +353,25 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	}
 	id := uuid.NewString()
 	now := time.Now()
-	e = s.mutate(ctx, "identity.user.create", id, input, func(tx *sqlx.Tx) error {
+	request := map[string]any{"name": input.DisplayName, "fields": []string{"display_name", "email", "phone"}}
+	var user User
+	e = s.mutate(ctx, "identity.user.create", id, request, func(tx *sqlx.Tx) error {
 		q := tx.Rebind(`INSERT INTO identity_users (id,username,display_name,email,phone,status,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,1)`)
 		_, err := tx.ExecContext(ctx, q, id, input.Username, input.DisplayName, input.Email, input.Phone, StatusActive, now, a, now, a)
 		if uniqueViolation(err) {
 			return ErrConflict
 		}
+		if err != nil {
+			return err
+		}
+		user, err = s.repository.getTx(ctx, tx, id)
 		return err
 	})
 	if e != nil {
 		return User{}, fmt.Errorf("create user: %w", e)
 	}
-	user, e := s.repository.Get(ctx, id)
-	if e == nil {
-		s.cacheUser(ctx, user)
-	}
-	return user, e
+	s.cacheUser(ctx, user)
+	return user, nil
 }
 func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[User], error) {
 	if _, e := actor(ctx); e != nil {
@@ -402,11 +417,15 @@ func (s *Service) UpdateSelf(ctx context.Context, input SelfUpdateInput) (User, 
 	if err != nil {
 		return User{}, err
 	}
+	if existing.Status == StatusClosed {
+		return User{}, ErrNotFound
+	}
 	safeRequest := map[string]any{
 		"name":    input.DisplayName,
 		"fields":  []string{"display_name", "email", "phone"},
 		"version": input.Version,
 	}
+	var user User
 	err = s.mutate(ctx, "identity.profile.update", principal.ID, safeRequest, func(tx *sqlx.Tx) error {
 		query := tx.Rebind(`UPDATE identity_users SET display_name=?,email=?,phone=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		result, execErr := tx.ExecContext(ctx, query, input.DisplayName, input.Email, input.Phone, time.Now(), principal.ID, principal.ID, input.Version)
@@ -420,24 +439,22 @@ func (s *Service) UpdateSelf(ctx context.Context, input SelfUpdateInput) (User, 
 		if rows != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		user, execErr = s.repository.getTx(ctx, tx, principal.ID)
+		return execErr
 	})
 	if err != nil {
 		return User{}, err
 	}
 	s.invalidate(ctx, existing)
-	user, err := s.repository.Get(ctx, principal.ID)
-	if err == nil {
-		s.cacheUser(ctx, user)
-	}
-	return user, err
+	s.cacheUser(ctx, user)
+	return user, nil
 }
 func (s *Service) update(ctx context.Context, input UpdateInput, operation string) (User, error) {
 	a, e := actor(ctx)
 	if e != nil {
 		return User{}, e
 	}
-	if input.ID == "" || len(input.ID) > maxUserIDLength || input.Version <= 0 || !validUserProfile(input.DisplayName, input.Email, input.Phone) || !validStatus(input.Status) {
+	if input.ID == "" || len(input.ID) > maxUserIDLength || input.Version <= 0 || !validUserProfile(input.DisplayName, input.Email, input.Phone) || !validStatus(input.Status) || input.Status == StatusClosed {
 		return User{}, ErrInvalid
 	}
 	input.DisplayName, input.Email, input.Phone = strings.TrimSpace(input.DisplayName), strings.ToLower(strings.TrimSpace(input.Email)), strings.TrimSpace(input.Phone)
@@ -445,7 +462,12 @@ func (s *Service) update(ctx context.Context, input UpdateInput, operation strin
 	if e != nil {
 		return User{}, e
 	}
-	e = s.mutate(ctx, operation, input.ID, input, func(tx *sqlx.Tx) error {
+	if existing.Status == StatusClosed {
+		return User{}, ErrNotFound
+	}
+	request := map[string]any{"name": input.DisplayName, "status": input.Status, "fields": []string{"display_name", "email", "phone", "status"}, "version": input.Version}
+	var user User
+	e = s.mutate(ctx, operation, input.ID, request, func(tx *sqlx.Tx) error {
 		if input.Status != StatusActive {
 			now := time.Now()
 			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE identity_sessions SET revoked_at=?,revoke_reason='user_status_changed',updated_at=?,updated_by=?,version=version+1 WHERE user_id=? AND revoked_at IS NULL AND deleted_at IS NULL`), now, now, a, input.ID); err != nil {
@@ -464,17 +486,15 @@ func (s *Service) update(ctx context.Context, input UpdateInput, operation strin
 		if rows != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		user, err = s.repository.getTx(ctx, tx, input.ID)
+		return err
 	})
 	if e != nil {
 		return User{}, e
 	}
 	s.invalidate(ctx, existing)
-	user, e := s.repository.Get(ctx, input.ID)
-	if e == nil {
-		s.cacheUser(ctx, user)
-	}
-	return user, e
+	s.cacheUser(ctx, user)
+	return user, nil
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	a, e := actor(ctx)
@@ -606,15 +626,7 @@ func identityUserDisplayName(user User) string {
 }
 
 func identityMutationName(request any, fallback string) string {
-	switch value := request.(type) {
-	case CreateInput:
-		if value.DisplayName != "" {
-			return value.DisplayName
-		}
-		return value.Username
-	case UpdateInput:
-		return value.DisplayName
-	case map[string]any:
+	if value, ok := request.(map[string]any); ok {
 		if name, ok := value["name"].(string); ok && strings.TrimSpace(name) != "" {
 			return strings.TrimSpace(name)
 		}
