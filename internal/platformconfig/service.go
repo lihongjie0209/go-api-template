@@ -501,18 +501,21 @@ func (s *Service) GetPublic(ctx context.Context, key string) (PublicView, error)
 	if !keyPattern.MatchString(key) {
 		return PublicView{}, ErrInvalid
 	}
-	visibilityQuery := s.db.Rebind(`SELECT version FROM platform_configs WHERE LOWER(config_key)=? AND is_public=true AND status='active' AND deleted_at IS NULL`)
-	valueQuery := s.db.Rebind(`SELECT config_key,name,category,value_type,value FROM platform_configs WHERE LOWER(config_key)=? AND version=? AND is_public=true AND status='active' AND deleted_at IS NULL`)
+	visibilityQuery := s.db.Rebind(`SELECT id,version FROM platform_configs WHERE LOWER(config_key)=? AND is_public=true AND status='active' AND deleted_at IS NULL`)
+	valueQuery := s.db.Rebind(`SELECT config_key,name,category,value_type,value FROM platform_configs WHERE id=? AND LOWER(config_key)=? AND version=? AND is_public=true AND status='active' AND deleted_at IS NULL`)
 	for attempt := 0; attempt < 2; attempt++ {
 		// Anonymous reads must consult the authoritative visibility state before a cache hit.
-		var version int64
-		if err := s.db.GetContext(ctx, &version, visibilityQuery, key); err != nil {
+		var identity struct {
+			ID      string `db:"id"`
+			Version int64  `db:"version"`
+		}
+		if err := s.db.GetContext(ctx, &identity, visibilityQuery, key); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return PublicView{}, ErrNotFound
 			}
 			return PublicView{}, err
 		}
-		cacheKey := "platform-config:public:v2:" + key + ":" + strconv.FormatInt(version, 10)
+		cacheKey := "platform-config:public:v3:" + key + ":" + identity.ID + ":" + strconv.FormatInt(identity.Version, 10)
 		if s.cache != nil {
 			if data, err := s.cache.Get(ctx, cacheKey); err == nil {
 				var view PublicView
@@ -524,7 +527,7 @@ func (s *Service) GetPublic(ctx context.Context, key string) (PublicView, error)
 			}
 		}
 		var view PublicView
-		err := s.db.GetContext(ctx, &view, valueQuery, key, version)
+		err := s.db.GetContext(ctx, &view, valueQuery, identity.ID, key, identity.Version)
 		if errors.Is(err, sql.ErrNoRows) {
 			// A concurrent update changed the version or visibility between reads.
 			continue
