@@ -495,6 +495,9 @@ message queue with an outbox.
   public routes; newly added mutation responses still require a secret-data
   review and code-owned approval before being selected. Configuration can only
   select a subset of code-approved routes.
+- gRPC idempotency patterns must likewise match registered unary RPCs with
+  code-owned response-safety approval. Streaming, health/reflection, reads,
+  token issuance, and other sensitive responses must never be replay-cached.
 - Every replay must pass current authentication and operation authorization
   before the idempotency state is read or returned. HTTP idempotency middleware
   must follow route authorization, not precede it as API-group middleware.

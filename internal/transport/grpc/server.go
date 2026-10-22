@@ -86,6 +86,9 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, re
 	if cfg.GRPC.ReflectionEnabled {
 		reflection.Register(grpcServer)
 	}
+	if err := validateGRPCIdempotencyMethods(cfg.Idempotency.GRPCMethods, grpcServer.GetServiceInfo(), eligibleGRPCIdempotencyMethods); err != nil {
+		return nil, err
+	}
 	if err := endpointRegistry.ValidateCoverage(grpcBusinessOperations(grpcServer)); err != nil {
 		return nil, fmt.Errorf("validate grpc authorization descriptor coverage: %w", err)
 	}
