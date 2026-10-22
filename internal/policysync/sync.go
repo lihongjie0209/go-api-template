@@ -37,6 +37,7 @@ type Sync struct {
 
 	mu           sync.Mutex
 	lastRevision string
+	invalidated  bool
 }
 
 type metricsObserver interface {
@@ -70,6 +71,13 @@ func (s *Sync) SetFailureHandler(handler func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onRefreshFailure = handler
+}
+
+func (s *Sync) Timeout() time.Duration {
+	if s == nil {
+		return 0
+	}
+	return s.timeout
 }
 
 // Revision returns the last database revision whose complete snapshot was
@@ -113,13 +121,19 @@ func (s *Sync) Refresh(ctx context.Context) error {
 	}
 	if err != nil {
 		status = "error"
-		if s.onRefreshFailure != nil {
-			s.onRefreshFailure()
-		}
+		s.invalidateLocked()
 		return err
 	}
 	s.lastRevision = revision
+	s.invalidated = false
 	return nil
+}
+
+func (s *Sync) invalidateLocked() {
+	s.invalidated = true
+	if s.onRefreshFailure != nil {
+		s.onRefreshFailure()
+	}
 }
 
 // Changed refreshes the local instance synchronously, then publishes a lossy
@@ -177,11 +191,14 @@ func (s *Sync) poll(ctx context.Context) {
 	defer cancel()
 	revision, err := s.revision(checkCtx)
 	if err != nil {
+		s.mu.Lock()
+		s.invalidateLocked()
+		s.mu.Unlock()
 		s.logger.ErrorContext(ctx, "read policy snapshot revision failed", "channel", s.channel, "error", observability.SafeError(err, errPolicyRevisionReadFailed))
 		return
 	}
 	s.mu.Lock()
-	changed := revision != s.lastRevision
+	changed := revision != s.lastRevision || s.invalidated
 	s.mu.Unlock()
 	if changed {
 		s.refreshAndLog(ctx, "revision")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
@@ -12,17 +13,22 @@ import (
 type failingChangeSync struct {
 	err       error
 	onFailure func()
+	changed   func(context.Context) error
 }
 
 func (s *failingChangeSync) Refresh(context.Context) error { return nil }
-func (s *failingChangeSync) Changed(context.Context) error {
+func (s *failingChangeSync) Changed(ctx context.Context) error {
 	if s.onFailure != nil {
 		s.onFailure()
+	}
+	if s.changed != nil {
+		return s.changed(ctx)
 	}
 	return s.err
 }
 func (s *failingChangeSync) Run(context.Context)              {}
 func (s *failingChangeSync) SetFailureHandler(handler func()) { s.onFailure = handler }
+func (s *failingChangeSync) Timeout() time.Duration           { return time.Second }
 
 func TestRuntimeChangeFailureInvalidatesLocalDataPermissions(t *testing.T) {
 	t.Parallel()
@@ -43,4 +49,26 @@ func TestRuntimeChangeFailureInvalidatesLocalDataPermissions(t *testing.T) {
 	require.NoError(t, engine.Replace(nil))
 	_, _, err = loader.Pin(t.Context())
 	require.NoError(t, err)
+}
+
+type postCommitContextKey struct{}
+
+func TestPostCommitPolicySyncKeepsTraceValuesAfterCallerCancellation(t *testing.T) {
+	t.Parallel()
+	requestCtx, cancelRequest := context.WithCancel(context.WithValue(t.Context(), postCommitContextKey{}, "request-1"))
+	cancelRequest()
+	syncer := &failingChangeSync{changed: func(ctx context.Context) error {
+		require.NoError(t, ctx.Err())
+		require.Equal(t, "request-1", ctx.Value(postCommitContextKey{}))
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		require.WithinDuration(t, time.Now().Add(6*time.Second), deadline, time.Second)
+		return nil
+	}}
+	loader := NewRuntimeLoader(nil, nil)
+	loader.ConfigureSync(syncer)
+	service := &LifecycleService{runtime: loader}
+	postCtx, stop := service.postCommitContext(requestCtx)
+	defer stop()
+	require.NoError(t, loader.Changed(postCtx))
 }

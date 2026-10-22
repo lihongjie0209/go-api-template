@@ -198,6 +198,7 @@ type dataRuntimeSync interface {
 	Changed(context.Context) error
 	Run(context.Context)
 	SetFailureHandler(func())
+	Timeout() time.Duration
 }
 
 func NewRuntimeLoader(repository *Repository, engine *Engine) *RuntimeLoader {
@@ -499,12 +500,14 @@ func (s *LifecycleService) Publish(ctx context.Context, policyID string, number,
 		s.recordFailure(ctx, "data-permission.policy.publish", policyID, policy)
 		return PolicyRecord{}, err
 	}
+	postCtx, cancel := s.postCommitContext(ctx)
+	defer cancel()
 	if s.runtime != nil {
-		if err := s.runtime.Changed(ctx); err != nil {
-			slog.Default().ErrorContext(ctx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
+		if err := s.runtime.Changed(postCtx); err != nil {
+			slog.Default().ErrorContext(postCtx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
 		}
 	}
-	record, _, err := s.get(ctx, policyID, number, actor.TenantID)
+	record, _, err := s.get(postCtx, policyID, number, actor.TenantID)
 	return record, err
 }
 
@@ -551,12 +554,22 @@ func (s *LifecycleService) SetStatus(ctx context.Context, input SetPolicyStatusI
 		s.recordFailure(ctx, "data-permission.policy.status.set", input.PolicyID, policy)
 		return PolicyRecord{}, err
 	}
+	postCtx, cancel := s.postCommitContext(ctx)
+	defer cancel()
 	if s.runtime != nil {
-		if err := s.runtime.Changed(ctx); err != nil {
-			slog.Default().ErrorContext(ctx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
+		if err := s.runtime.Changed(postCtx); err != nil {
+			slog.Default().ErrorContext(postCtx, "refresh committed data permission policy failed", "error", observability.SafeError(err, errCommittedPolicyRefreshFailed))
 		}
 	}
-	return s.Get(ctx, input.PolicyID)
+	return s.Get(postCtx, input.PolicyID)
+}
+
+func (s *LifecycleService) postCommitContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := 10 * time.Second
+	if s.runtime != nil && s.runtime.sync != nil && s.runtime.sync.Timeout() > 0 {
+		timeout = s.runtime.sync.Timeout() + 5*time.Second
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }
 
 func (s *LifecycleService) get(ctx context.Context, id string, number int64, tenantID string) (PolicyRecord, VersionRecord, error) {

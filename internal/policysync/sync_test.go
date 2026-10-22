@@ -191,6 +191,57 @@ func TestSnapshotRefreshFailureCannotInvalidateNewerSuccess(t *testing.T) {
 	require.Equal(t, "revision-2", syncer.Revision())
 }
 
+func TestPollRetriesInvalidatedSnapshotWithoutRevisionChange(t *testing.T) {
+	t.Parallel()
+	var attempts atomic.Int64
+	var invalidations atomic.Int64
+	syncer := NewSnapshot(nil, "", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "revision-1", nil },
+		func(context.Context) (string, error) {
+			if attempts.Add(1) == 2 {
+				return "", errors.New("temporary refresh failure")
+			}
+			return "revision-1", nil
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	require.NoError(t, syncer.Refresh(t.Context()))
+	require.Error(t, syncer.Refresh(t.Context()))
+	require.Equal(t, int64(1), invalidations.Load())
+	syncer.poll(t.Context())
+	require.Equal(t, int64(3), attempts.Load())
+	require.Equal(t, "revision-1", syncer.Revision())
+	syncer.poll(t.Context())
+	require.Equal(t, int64(3), attempts.Load())
+}
+
+func TestRevisionReadFailureInvalidatesAndRecoversSameRevision(t *testing.T) {
+	t.Parallel()
+	var failRead atomic.Bool
+	var invalidations atomic.Int64
+	var refreshes atomic.Int64
+	syncer := NewSnapshot(nil, "", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) {
+			if failRead.Load() {
+				return "", errors.New("temporary revision read failure")
+			}
+			return "revision-1", nil
+		},
+		func(context.Context) (string, error) {
+			refreshes.Add(1)
+			return "revision-1", nil
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	require.NoError(t, syncer.Refresh(t.Context()))
+	failRead.Store(true)
+	syncer.poll(t.Context())
+	require.Equal(t, int64(1), invalidations.Load())
+	failRead.Store(false)
+	syncer.poll(t.Context())
+	require.Equal(t, int64(2), refreshes.Load())
+	syncer.poll(t.Context())
+	require.Equal(t, int64(2), refreshes.Load())
+}
+
 func TestChangedDoesNotFailCommittedMutationWhenRedisIsUnavailable(t *testing.T) {
 	t.Parallel()
 	server := miniredis.RunT(t)

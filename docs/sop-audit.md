@@ -26,6 +26,10 @@ with a safe error code rather than reported as a failed write. Redis
 notifications are attempted even when local refresh fails, and revision
 polling remains the recovery path for missed notifications. Requests that
 already pinned an immutable snapshot may finish with their pinned revision.
+Revision-read failures also invalidate the local snapshot; polling retries a
+full replacement after recovery even if the database revision did not change.
+Post-commit policy publication and status changes use a bounded Context that
+retains request metadata but is not cancelled when the client disconnects.
 
 Status values:
 
