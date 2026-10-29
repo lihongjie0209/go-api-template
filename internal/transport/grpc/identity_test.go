@@ -37,8 +37,8 @@ func TestIdentityValidateSession(t *testing.T) {
 		{name: "inactive", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, rows: sqlmock.NewRows([]string{"expires_at"})},
 		{name: "invalid input", request: &identityv1.ValidateSessionRequest{UserId: "user-1"}, wantCode: codes.InvalidArgument},
 		{name: "store unavailable", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: errors.New("private database error"), wantCode: codes.Unavailable},
-		{name: "request canceled", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: context.Canceled, wantCode: codes.Canceled},
-		{name: "deadline exceeded", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: context.DeadlineExceeded, wantCode: codes.DeadlineExceeded},
+		{name: "dependency canceled", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: context.Canceled, wantCode: codes.Unavailable},
+		{name: "dependency timed out", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: context.DeadlineExceeded, wantCode: codes.Unavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,19 +254,29 @@ func TestIdentityListUsersExactModeFailsClosedOnDatabaseError(t *testing.T) {
 	}
 }
 
-func TestIdentityErrorPreservesCancellation(t *testing.T) {
+func TestIdentityErrorUsesCallerContext(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name string
+		ctx  func() context.Context
 		err  error
 		want codes.Code
 	}{
-		{name: "canceled", err: fmt.Errorf("lookup user: %w", context.Canceled), want: codes.Canceled},
-		{name: "deadline", err: fmt.Errorf("lookup user: %w", context.DeadlineExceeded), want: codes.DeadlineExceeded},
+		{name: "canceled caller", ctx: func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, err: fmt.Errorf("lookup user: %w", context.Canceled), want: codes.Canceled},
+		{name: "expired caller", ctx: func() context.Context {
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			return ctx
+		}, err: fmt.Errorf("lookup user: %w", context.DeadlineExceeded), want: codes.DeadlineExceeded},
+		{name: "dependency timed out", err: fmt.Errorf("lookup user: %w", context.DeadlineExceeded), want: codes.Internal},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := status.Code(identityError(tt.err)); got != tt.want {
+			ctx := t.Context()
+			if tt.ctx != nil {
+				ctx = tt.ctx()
+			}
+			if got := status.Code(identityError(ctx, tt.err)); got != tt.want {
 				t.Fatalf("code=%v, want %v", got, tt.want)
 			}
 		})

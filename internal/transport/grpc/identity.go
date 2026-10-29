@@ -51,11 +51,8 @@ func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.Ge
 	if errors.Is(err, serviceaccount.ErrNotFound) {
 		return nil, status.Error(codes.NotFound, "service account not found")
 	}
-	if errors.Is(err, context.Canceled) {
-		return nil, status.Error(codes.Canceled, "request canceled")
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return nil, status.Error(codes.DeadlineExceeded, "request deadline exceeded")
+	if requestErr := callerContextStatus(ctx); requestErr != nil {
+		return nil, requestErr
 	}
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "service account state unavailable")
@@ -82,11 +79,8 @@ func (s *identityServer) ValidateSession(ctx context.Context, r *identityv1.Vali
 	if errors.Is(err, auth.ErrInvalidSessionLookup) {
 		return nil, status.Error(codes.InvalidArgument, "session id and user id are required")
 	}
-	if errors.Is(err, context.Canceled) {
-		return nil, status.Error(codes.Canceled, "request canceled")
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return nil, status.Error(codes.DeadlineExceeded, "request deadline exceeded")
+	if requestErr := callerContextStatus(ctx); requestErr != nil {
+		return nil, requestErr
 	}
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "session state unavailable")
@@ -104,7 +98,7 @@ func (s *identityServer) GetUser(ctx context.Context, r *identityv1.GetUserReque
 	}
 	u, e := s.service.Get(ctx, r.GetUserId())
 	if e != nil {
-		return nil, identityError(e)
+		return nil, identityError(ctx, e)
 	}
 	return &identityv1.GetUserResponse{User: toProtoUser(u)}, nil
 }
@@ -122,7 +116,7 @@ func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchG
 	}
 	result, e := s.service.Page(ctx, identity.PageInput{Request: pagination.Request{Page: 1, PageSize: 200}, IDs: ids})
 	if e != nil {
-		return nil, identityError(e)
+		return nil, identityError(ctx, e)
 	}
 	users := make([]*identityv1.User, len(result.Items))
 	for i := range result.Items {
@@ -142,7 +136,7 @@ func (s *identityServer) ListUsers(ctx context.Context, r *identityv1.ListUsersR
 			return &identityv1.ListUsersResponse{Users: []*identityv1.User{}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 0}}, nil
 		}
 		if e != nil {
-			return nil, identityError(e)
+			return nil, identityError(ctx, e)
 		}
 		return &identityv1.ListUsersResponse{Users: []*identityv1.User{toProtoUser(u)}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
 	}
@@ -157,7 +151,7 @@ func (s *identityServer) ListUsers(ctx context.Context, r *identityv1.ListUsersR
 	}
 	result, e := s.service.Page(ctx, input)
 	if e != nil {
-		return nil, identityError(e)
+		return nil, identityError(ctx, e)
 	}
 	users := make([]*identityv1.User, len(result.Items))
 	for i := range result.Items {
@@ -194,12 +188,22 @@ func fromProtoStatus(v identityv1.UserStatus) identity.Status {
 	}
 	return ""
 }
-func identityError(e error) error {
+func callerContextStatus(ctx context.Context) error {
 	switch {
-	case errors.Is(e, context.Canceled):
+	case errors.Is(ctx.Err(), context.Canceled):
 		return status.Error(codes.Canceled, "request canceled")
-	case errors.Is(e, context.DeadlineExceeded):
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, "request deadline exceeded")
+	default:
+		return nil
+	}
+}
+
+func identityError(ctx context.Context, e error) error {
+	if requestErr := callerContextStatus(ctx); requestErr != nil {
+		return requestErr
+	}
+	switch {
 	case errors.Is(e, identity.ErrInvalid):
 		return status.Error(codes.InvalidArgument, "invalid user request")
 	case errors.Is(e, identity.ErrNotFound):

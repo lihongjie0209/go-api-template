@@ -276,8 +276,8 @@ func TestAuthenticateGRPCDistinguishesStateOutageFromRevocation(t *testing.T) {
 		want     codes.Code
 	}{
 		{name: "database outage", queryErr: errors.New("database connection lost"), want: codes.Unavailable},
-		{name: "request canceled", queryErr: context.Canceled, want: codes.Canceled},
-		{name: "deadline exceeded", queryErr: context.DeadlineExceeded, want: codes.DeadlineExceeded},
+		{name: "dependency canceled", queryErr: context.Canceled, want: codes.Unavailable},
+		{name: "dependency timed out", queryErr: context.DeadlineExceeded, want: codes.Unavailable},
 		{name: "revoked session", want: codes.Unauthenticated},
 	} {
 		t.Run(test.name, func(t *testing.T) {

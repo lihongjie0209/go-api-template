@@ -38,8 +38,8 @@ func TestIdentityGetServiceAccount(t *testing.T) {
 		{name: "missing principal", id: "account-1", wantCode: codes.Unauthenticated},
 		{name: "user principal", id: "account-1", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}, wantCode: codes.PermissionDenied},
 		{name: "store failure", id: "account-1", principal: servicePrincipal(), queryErr: errors.New("private connection string"), wantCode: codes.Unavailable, query: true},
-		{name: "request canceled", id: "account-1", principal: servicePrincipal(), queryErr: context.Canceled, wantCode: codes.Canceled, query: true},
-		{name: "deadline exceeded", id: "account-1", principal: servicePrincipal(), queryErr: context.DeadlineExceeded, wantCode: codes.DeadlineExceeded, query: true},
+		{name: "dependency canceled", id: "account-1", principal: servicePrincipal(), queryErr: context.Canceled, wantCode: codes.Unavailable, query: true},
+		{name: "dependency timed out", id: "account-1", principal: servicePrincipal(), queryErr: context.DeadlineExceeded, wantCode: codes.Unavailable, query: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

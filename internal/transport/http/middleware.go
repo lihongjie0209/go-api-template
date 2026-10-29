@@ -528,11 +528,7 @@ func JWT(service *auth.Service, logger *slog.Logger) gin.HandlerFunc {
 		}
 		identity, err := service.Verify(c.Request.Context(), raw)
 		if err != nil {
-			if errors.Is(err, auth.ErrStateUnavailable) {
-				Fail(c, logger, apperror.Unavailable("authentication state unavailable", err))
-				return
-			}
-			Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
+			Fail(c, logger, bearerVerificationError(c.Request.Context(), err))
 			return
 		}
 		c.Set("subject", identity.ID)
@@ -562,11 +558,7 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 		case strings.EqualFold(scheme, "Bearer"):
 			verified, state, err := service.VerifyWithState(c.Request.Context(), raw)
 			if err != nil {
-				if errors.Is(err, auth.ErrStateUnavailable) {
-					Fail(c, logger, apperror.Unavailable("authentication state unavailable", err))
-					return
-				}
-				Fail(c, logger, apperror.Unauthorized("invalid or expired token"))
+				Fail(c, logger, bearerVerificationError(c.Request.Context(), err))
 				return
 			}
 			identity = verified
@@ -588,6 +580,16 @@ func DatabaseAuthentication(service *auth.Service, logger *slog.Logger, cfg conf
 		c.Request = c.Request.WithContext(platformauthz.WithCallerCredential(ctx, header))
 		c.Next()
 	}
+}
+
+func bearerVerificationError(ctx context.Context, err error) *apperror.Error {
+	if ctx.Err() != nil {
+		return apperror.RequestTimeout()
+	}
+	if errors.Is(err, auth.ErrStateUnavailable) {
+		return apperror.Unavailable("authentication state unavailable", err)
+	}
+	return apperror.Unauthorized("invalid or expired token")
 }
 
 const passwordChangeRequiredKey = "password_change_required"

@@ -651,18 +651,20 @@ func TestDatabaseAuthenticationDistinguishesStateOutageFromRevocation(t *testing
 	router.Use(RequestID(), DatabaseAuthentication(service, logger, config.Config{}))
 	router.POST("/test", func(c *gin.Context) { OK(c, nil) })
 	for _, test := range []struct {
-		name   string
-		outage bool
-		status int
-		code   int
+		name     string
+		queryErr error
+		status   int
+		code     int
 	}{
-		{name: "database outage", outage: true, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
+		{name: "database outage", queryErr: errors.New("database connection lost"), status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
+		{name: "dependency canceled", queryErr: context.Canceled, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
+		{name: "dependency timed out", queryErr: context.DeadlineExceeded, status: http.StatusServiceUnavailable, code: apperror.CodeDependencyUnavailable},
 		{name: "revoked session", status: http.StatusUnauthorized, code: apperror.CodeUnauthorized},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			query := mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions`)
-			if test.outage {
-				query.WillReturnError(errors.New("database connection lost"))
+			if test.queryErr != nil {
+				query.WillReturnError(test.queryErr)
 			} else {
 				query.WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
 			}
@@ -681,6 +683,37 @@ func TestDatabaseAuthenticationDistinguishesStateOutageFromRevocation(t *testing
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBearerVerificationErrorUsesCallerContext(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		ctx  func() context.Context
+		err  error
+		code int
+	}{
+		{name: "canceled caller", ctx: func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, err: auth.ErrStateUnavailable, code: apperror.CodeRequestTimeout},
+		{name: "expired caller", ctx: func() context.Context {
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			return ctx
+		}, err: auth.ErrStateUnavailable, code: apperror.CodeRequestTimeout},
+		{name: "dependency timed out", err: errors.Join(auth.ErrStateUnavailable, context.DeadlineExceeded), code: apperror.CodeDependencyUnavailable},
+		{name: "database unavailable", err: auth.ErrStateUnavailable, code: apperror.CodeDependencyUnavailable},
+		{name: "invalid token", err: errors.New("invalid signature"), code: apperror.CodeUnauthorized},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			if tt.ctx != nil {
+				ctx = tt.ctx()
+			}
+			if got := bearerVerificationError(ctx, tt.err).Code; got != tt.code {
+				t.Fatalf("code=%d, want %d", got, tt.code)
+			}
+		})
 	}
 }
 
