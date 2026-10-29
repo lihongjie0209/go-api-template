@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
@@ -26,24 +27,28 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/testutil"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"github.com/redis/go-redis/v9"
 )
 
 type fakeIdempotencyManager struct {
-	decision        idempotency.Decision
-	beginKey        string
-	fingerprint     string
-	completed       *Response
-	completedStatus int
-	completeErr     error
-	failureErr      error
-	abortErr        error
-	failed          *idempotency.Failure
-	leaseStarted    bool
-	leaseStopped    bool
-	aborted         bool
-	maxBytes        int
-	onComplete      func()
-	onBegin         func(context.Context)
+	decision          idempotency.Decision
+	beginKey          string
+	fingerprint       string
+	completed         *Response
+	completedStatus   int
+	completeErr       error
+	failureErr        error
+	abortErr          error
+	failed            *idempotency.Failure
+	leaseStarted      bool
+	leaseStopped      bool
+	cancelLeaseOnStop bool
+	leaseStopErr      error
+	aborted           bool
+	maxBytes          int
+	onComplete        func()
+	onBegin           func(context.Context)
+	onStartLease      func(context.Context)
 }
 
 func TestEnvironmentInjectsActiveProfile(t *testing.T) {
@@ -239,7 +244,93 @@ func (m *fakeIdempotencyManager) Abort(context.Context, string, string) error {
 }
 func (m *fakeIdempotencyManager) StartLease(ctx context.Context, _, _ string) (context.Context, func() error, error) {
 	m.leaseStarted = true
-	return ctx, func() error { m.leaseStopped = true; return nil }, nil
+	if m.onStartLease != nil {
+		m.onStartLease(ctx)
+	}
+	if m.cancelLeaseOnStop {
+		leaseCtx, cancel := context.WithCancel(ctx)
+		return leaseCtx, func() error { m.leaseStopped = true; cancel(); return m.leaseStopErr }, nil
+	}
+	return ctx, func() error { m.leaseStopped = true; return m.leaseStopErr }, nil
+}
+
+func TestIdempotencyExecutionAbortsWhenDeadlineExpiresDuringLeaseStart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := &fakeIdempotencyManager{
+		decision:     idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"},
+		onStartLease: func(ctx context.Context) { <-ctx.Done() },
+	}
+	called := false
+	router := gin.New()
+	router.Use(RequestID(), Timeout(50*time.Millisecond, logger), func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, logger))
+	router.POST("/test", func(c *gin.Context) { called = true; OK(c, "late") })
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusGatewayTimeout || body.Code != apperror.CodeRequestTimeout || called || !manager.leaseStarted || !manager.leaseStopped || !manager.aborted {
+		t.Fatalf("lease startup response=%d %s called=%t started=%t stopped=%t aborted=%t", response.Code, response.Body.String(), called, manager.leaseStarted, manager.leaseStopped, manager.aborted)
+	}
+}
+
+func TestIdempotencyExecutionUsesRequestContextAfterLeaseStop(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		stopErr    error
+		wantStatus int
+	}{
+		{name: "healthy lease stop", wantStatus: http.StatusOK},
+		{name: "lease stop failure", stopErr: errors.New("lease lost"), wantStatus: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}, cancelLeaseOnStop: true, leaseStopErr: test.stopErr}
+			calls := 0
+			router := idempotencyTestRouter(t, manager, &calls)
+			request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"name":"demo"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.wantStatus || calls != 1 || !manager.leaseStopped || response.Body.Len() == 0 {
+				t.Fatalf("lease stop response=%d body=%s calls=%d stopped=%t", response.Code, response.Body.String(), calls, manager.leaseStopped)
+			}
+		})
+	}
+}
+
+func TestIdempotencyExecutionRealRedisLeaseStopStillReturnsSuccessAndReplay(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	manager := idempotency.New(client, config.Config{
+		Runtime: config.Runtime{ActiveProfile: "test"},
+		App:     config.App{Name: "orders-service"},
+		Idempotency: config.Idempotency{
+			Enabled: true, ProcessingTTL: time.Minute, ResultTTL: time.Hour,
+			FailureTTL: time.Minute, MaxResponseBytes: 1024,
+		},
+	}, nil)
+	calls := 0
+	router := idempotencyTestRouter(t, manager, &calls)
+	for _, requestID := range []string{"first-request", "retry-request"} {
+		request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"name":"demo"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Request-ID", requestID)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var body Response
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || body.Code != apperror.CodeOK || body.RequestID != requestID || calls != 1 {
+			t.Fatalf("%s response=%d %s calls=%d", requestID, response.Code, response.Body.String(), calls)
+		}
+	}
 }
 
 func idempotencyTestRouter(t *testing.T, manager idempotencyManager, calls *int) *gin.Engine {

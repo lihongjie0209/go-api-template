@@ -538,6 +538,13 @@ message queue with an outbox.
 - Every replay must pass current authentication and operation authorization
   before the idempotency state is read or returned. HTTP idempotency middleware
   must follow route authorization, not precede it as API-group middleware.
+- The SDK idempotency lease Context is canceled by its normal stop function.
+  After stopping a lease, restore the original HTTP request Context before
+  deciding whether to emit a response; lease cancellation is not evidence of
+  client disconnect or request timeout. Unit fakes must reproduce this normal
+  stop behavior and a lease-loss error separately. If the request expires
+  during lease startup, stop the lease, abort the acquired state with bounded
+  detached cleanup, and do not invoke the handler.
 - HTTP/gRPC ingress must reject malformed `Idempotency-Key` values before
   business work. Internal callers that require idempotency must validate the
   key explicitly before placing it in Context; the local Context adapter drops

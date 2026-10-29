@@ -194,12 +194,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		}
 		if c.Request.Context().Err() != nil {
 			if decision.State == idempotency.StateAcquired {
-				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
-				abortErr := manager.Abort(cleanupCtx, key, decision.Owner)
-				cancel()
-				if abortErr != nil {
-					logger.WarnContext(c.Request.Context(), "abort expired idempotency execution", "error", observability.SafeError(abortErr, errIdempotencyStateFailed), "request_id", requestID(c))
-				}
+				abortExpiredIdempotency(c, manager, key, decision.Owner, logger)
 			}
 			responseContextEnded(c)
 			return
@@ -248,9 +243,26 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			Fail(c, logger, apperror.Unavailable("idempotency state is invalid", nil))
 			return
 		}
-		leaseCtx, stopLease, err := manager.StartLease(c.Request.Context(), key, decision.Owner)
+		requestCtx := c.Request.Context()
+		leaseCtx, stopLease, err := manager.StartLease(requestCtx, key, decision.Owner)
 		if err != nil {
 			Fail(c, logger, apperror.Unavailable("idempotency lease is unavailable", err))
+			return
+		}
+		if requestCtx.Err() != nil {
+			if stopErr := stopLease(); stopErr != nil {
+				logger.WarnContext(requestCtx, "stop expired idempotency lease", "error", observability.SafeError(stopErr, errIdempotencyStateFailed), "request_id", requestID(c))
+			}
+			abortExpiredIdempotency(c, manager, key, decision.Owner, logger)
+			responseContextEnded(c)
+			return
+		}
+		if leaseCtx.Err() != nil {
+			stopErr := stopLease()
+			if stopErr == nil {
+				stopErr = errIdempotencyStateFailed
+			}
+			Fail(c, logger, apperror.Unavailable("idempotency lease is unavailable", stopErr))
 			return
 		}
 		c.Request = c.Request.WithContext(leaseCtx)
@@ -275,7 +287,11 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		c.Next()
 		handlerReturned = true
 		c.Writer = originalWriter
-		if leaseErr := stopLease(); leaseErr != nil {
+		leaseErr := stopLease()
+		// The SDK's stop function cancels its lease Context even after a healthy
+		// run. Response and deadline decisions must use the original request.
+		c.Request = c.Request.WithContext(requestCtx)
+		if leaseErr != nil {
 			leaseStopped = true
 			failIdempotencyState(c, logger, originalHeaders, leaseErr)
 			return
@@ -324,6 +340,14 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		if _, err := originalWriter.Write(capture.body.Bytes()); err != nil {
 			logger.WarnContext(c.Request.Context(), "write idempotent response", "error", observability.SafeError(err, errHTTPRequestFailed), "request_id", requestID(c))
 		}
+	}
+}
+
+func abortExpiredIdempotency(c *gin.Context, manager idempotencyManager, key, owner string, logger *slog.Logger) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
+	defer cancel()
+	if err := manager.Abort(cleanupCtx, key, owner); err != nil {
+		logger.WarnContext(c.Request.Context(), "abort expired idempotency execution", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
 	}
 }
 
