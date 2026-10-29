@@ -643,7 +643,10 @@ rejects disabling rate limiting, while development and test may disable it.
 Idempotent JSON fingerprinting reads at most 16 MiB plus one sentinel byte even
 when the global HTTP body limit is higher for multipart uploads. Oversized
 mutations return the global invalid-argument envelope before Redis `Begin` or
-business execution; a unit regression verifies both boundaries.
+business execution; a unit regression verifies both boundaries. Bodyless POST
+commands such as logout-all use a canonical empty-body fingerprint distinct
+from explicit JSON `null` or `{}`. A real Redis simulator test verifies both
+the first execution and replay of an empty-body command.
 
 ### Service-account token revocation on secret rotation
 

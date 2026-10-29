@@ -374,6 +374,28 @@ func TestIdempotencyExecutionRealRedisLeaseStopStillReturnsSuccessAndReplay(t *t
 			t.Fatalf("%s response=%d %s calls=%d", requestID, response.Code, response.Body.String(), calls)
 		}
 	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	emptyCalls := 0
+	emptyRouter := gin.New()
+	emptyRouter.Use(RequestID(), func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "logout-all-key"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/logout-all"}, logger))
+	emptyRouter.POST("/logout-all", func(c *gin.Context) { emptyCalls++; OK(c, gin.H{}) })
+	for _, requestID := range []string{"empty-first", "empty-retry"} {
+		request := httptest.NewRequest(http.MethodPost, "/logout-all", nil)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Request-ID", requestID)
+		response := httptest.NewRecorder()
+		emptyRouter.ServeHTTP(response, request)
+		var body Response
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || body.Code != apperror.CodeOK || body.RequestID != requestID || emptyCalls != 1 {
+			t.Fatalf("bodyless %s response=%d %s calls=%d", requestID, response.Code, response.Body.String(), emptyCalls)
+		}
+	}
 }
 
 func idempotencyTestRouter(t *testing.T, manager idempotencyManager, calls *int) *gin.Engine {
@@ -436,6 +458,12 @@ func TestIdempotencyFingerprintCanonicalizesJSON(t *testing.T) {
 	}
 	if fingerprint(`{"name":"demo","count":1}`) != fingerprint("{\n  \"count\": 1, \"name\": \"demo\"\n}") {
 		t.Fatal("semantically equivalent JSON requests must have the same fingerprint")
+	}
+	if fingerprint("") != fingerprint(" \n\t ") {
+		t.Fatal("empty and whitespace-only command bodies must share one fingerprint")
+	}
+	if fingerprint("") == fingerprint("null") || fingerprint("") == fingerprint("{}") {
+		t.Fatal("empty command body must remain distinct from JSON values")
 	}
 }
 

@@ -405,6 +405,11 @@ func idempotencyFingerprint(c *gin.Context) (string, error) {
 }
 
 func canonicalJSON(body []byte) ([]byte, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		// Bodyless POST commands still require application/json but have no JSON
+		// value. Keep them distinct from the explicit JSON null value.
+		return []byte{}, nil
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var value any

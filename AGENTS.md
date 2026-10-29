@@ -556,6 +556,9 @@ message queue with an outbox.
   one sentinel byte, independent of the global body limit used for file
   upload. Reject an oversized JSON mutation before reading or creating any
   Redis idempotency state or invoking the handler.
+- Bodyless JSON POST commands may still opt into idempotency. Their empty or
+  whitespace-only body has one canonical fingerprint, distinct from explicit
+  JSON `null` and `{}`; Content-Type validation still applies before execution.
 - Fingerprints include service, transport operation, canonical request data,
   principal type/ID, tenant, membership, and session dimensions. Reusing a key
   across tenant or principal contexts must conflict rather than replay data.
