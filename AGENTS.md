@@ -400,6 +400,10 @@ TTL, and invalidation for its own data.
   upstream `error.Error()` into them; dependency errors can contain credentials,
   connection strings, payload fragments, or personal data. Keep event IDs,
   attempts, and bounded component names for correlation instead.
+- Operator queries over legacy failure columns must map unknown values to a
+  fixed safe code in SQL before fetching rows. Masking after materialization
+  still transfers potentially large or sensitive historical text into the
+  application process.
 - Fixed failure reasons passed to `observability.SafeError` must be code-owned
   lowercase ASCII identifiers (`[a-z][a-z0-9_]*`, at most 64 bytes). The helper
   rejects malformed reasons and falls back to `operation_failed`.

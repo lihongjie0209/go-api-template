@@ -63,7 +63,7 @@ func (s *RepairService) Dead(ctx context.Context, request pagination.Request) (D
 		return DeadPage{}, fmt.Errorf("count dead outbox events: %w", err)
 	}
 	items := []DeadRecord{}
-	query := s.db.Rebind("SELECT id,subject,attempts,last_error,created_at,dead_at,version FROM event_outbox WHERE " + where + " ORDER BY dead_at DESC,id LIMIT ? OFFSET ?")
+	query := s.db.Rebind("SELECT id,subject,attempts,CASE WHEN last_error IN ('', 'decode_failed', 'publish_failed') THEN last_error ELSE 'legacy_failure' END AS last_error,created_at,dead_at,version FROM event_outbox WHERE " + where + " ORDER BY dead_at DESC,id LIMIT ? OFFSET ?")
 	pageArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
 	if err := s.db.SelectContext(ctx, &items, query, pageArgs...); err != nil {
 		return DeadPage{}, fmt.Errorf("list dead outbox events: %w", err)

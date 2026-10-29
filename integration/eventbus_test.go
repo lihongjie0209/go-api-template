@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/stretchr/testify/require"
@@ -174,6 +176,25 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 			}
 		default:
 		}
+	})
+	t.Run("mask legacy dead-letter error before retrieval", func(t *testing.T) {
+		legacyID := "integration-legacy-error-1"
+		now := time.Now()
+		legacyError := "bearer secret-value " + strings.Repeat("x", 64<<10)
+		err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'',?,?,?,?,?,?,1)`)
+			_, err := tx.ExecContext(actorCtx, query, legacyID, "platform.integration.outbox.v1", []byte{}, "", "", now, cfg.EventBus.ConsumerMaxDeliver, legacyError, now, now, "integration-eventbus:test", now, "integration-eventbus:test")
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		repair := eventbus.NewRepairService(db, transactor)
+		page, err := repair.Dead(actorCtx, pagination.Request{Keyword: legacyID})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), page.Total)
+		require.Len(t, page.Items, 1)
+		require.Equal(t, "legacy_failure", page.Items[0].LastError)
 	})
 }
 
