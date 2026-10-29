@@ -24,7 +24,7 @@ func TestRepairServiceDeadScopesAndBoundsPage(t *testing.T) {
 	mock.ExpectQuery(`SELECT count\(\*\) FROM event_outbox WHERE dead_at IS NOT NULL`).
 		WithArgs("%platform%", "%platform%").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`SELECT id,subject,attempts,CASE WHEN last_error IN \('', 'decode_failed', 'publish_failed'\) THEN last_error ELSE 'legacy_failure' END AS last_error,created_at,dead_at,version FROM event_outbox WHERE dead_at IS NOT NULL`).
+	mock.ExpectQuery(`SELECT id,subject,attempts,CASE WHEN OCTET_LENGTH\(last_error\) <= 14 AND last_error IN \('', 'decode_failed', 'publish_failed'\) THEN last_error ELSE 'legacy_failure' END AS last_error,created_at,dead_at,version FROM event_outbox WHERE dead_at IS NOT NULL`).
 		WithArgs("%platform%", "%platform%", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "attempts", "last_error", "created_at", "dead_at", "version"}).
 			AddRow("event-1", "platform.event.v1", 10, "publish failed: bearer secret-value", created, dead, 3))
