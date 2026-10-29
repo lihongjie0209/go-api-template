@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -188,9 +189,15 @@ func loadAllPublished(ctx context.Context, queryer sqlx.QueryerContext) ([]Polic
 }
 
 type RuntimeLoader struct {
-	repository *Repository
+	repository publishedPolicyRepository
 	engine     *Engine
 	sync       dataRuntimeSync
+	refreshMu  sync.Mutex
+}
+
+type publishedPolicyRepository interface {
+	LoadAllPublished(context.Context) ([]Policy, error)
+	LoadPublishedSnapshot(context.Context) ([]Policy, string, error)
 }
 
 type dataRuntimeSync interface {
@@ -246,6 +253,8 @@ func (l *RuntimeLoader) Refresh(ctx context.Context) error {
 	if l.sync != nil {
 		return l.sync.Refresh(ctx)
 	}
+	l.refreshMu.Lock()
+	defer l.refreshMu.Unlock()
 	policies, err := l.repository.LoadAllPublished(ctx)
 	if err != nil {
 		if l.engine != nil {

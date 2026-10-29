@@ -3,6 +3,7 @@ package datapermission
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,6 +107,56 @@ func TestRuntimeRefreshUsesConfiguredSync(t *testing.T) {
 	}})
 	require.ErrorIs(t, loader.Refresh(t.Context()), want)
 	require.True(t, called)
+}
+
+type concurrentRefreshRepository struct {
+	calls   atomic.Int64
+	started chan struct{}
+	release chan struct{}
+	want    error
+}
+
+func (r *concurrentRefreshRepository) LoadAllPublished(context.Context) ([]Policy, error) {
+	if r.calls.Add(1) == 1 {
+		close(r.started)
+		<-r.release
+		return nil, r.want
+	}
+	return nil, nil
+}
+
+func (*concurrentRefreshRepository) LoadPublishedSnapshot(context.Context) ([]Policy, string, error) {
+	return nil, "", nil
+}
+
+func TestDirectRefreshFailureCannotInvalidateLaterSuccess(t *testing.T) {
+	t.Parallel()
+	service, _ := dataLifecycleFixture(t, true)
+	loader := service.runtime
+	require.NoError(t, loader.engine.Replace(nil))
+	want := errors.New("old refresh failed")
+	repository := &concurrentRefreshRepository{started: make(chan struct{}), release: make(chan struct{}), want: want}
+	loader.repository = repository
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	secondFinished := make(chan struct{})
+	go func() { first <- loader.Refresh(t.Context()) }()
+	<-repository.started
+	go func() {
+		second <- loader.Refresh(t.Context())
+		close(secondFinished)
+	}()
+	go func() {
+		select {
+		case <-secondFinished:
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(repository.release)
+	}()
+	require.ErrorIs(t, <-first, want)
+	require.NoError(t, <-second)
+	_, _, err := loader.Pin(t.Context())
+	require.NoError(t, err)
 }
 
 type postCommitContextKey struct{}
