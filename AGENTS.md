@@ -584,7 +584,13 @@ message queue with an outbox.
   return generic Unavailable without the handler response or raw dependency
   error. A lease that fails before handler execution must release its acquired
   processing record with bounded detached cleanup; never release an ambiguous
-  record after the handler has run.
+  record after the handler has run. Recheck caller and lease cancellation after
+  acquisition and before invoking the handler; aborted unstarted records use a
+  bounded detached Context. If the caller cancels after the handler, persist a
+  completed result before suppressing the response so a retry can replay it.
+  Reject corrupt cached gRPC failure codes or blank messages instead of
+  treating them as a successful RPC. Bound stored failure records by the same
+  size limit as completed responses.
 - The authoritative write commits before a result is published. Database unique
   constraints, transactions and optimistic versions must make a retry safe;
   Redis idempotency cannot create atomicity with the business database.
