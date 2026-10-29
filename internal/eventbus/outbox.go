@@ -111,8 +111,13 @@ func (o *Outbox) runDispatchLoop(ctx context.Context, dispatch func(context.Cont
 	ticker := time.NewTicker(o.cfg.DispatchInterval)
 	defer ticker.Stop()
 	for {
-		if err := dispatchSafely(ctx, dispatch); err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
-			o.logDispatchFailure(ctx, err)
+		if err := dispatchSafely(ctx, dispatch); err != nil && ctx.Err() == nil {
+			if errors.Is(err, errOutboxDispatchPanicked) {
+				o.metrics.ObserveOutboxOutcome("panic_retry")
+			}
+			if !errors.Is(err, context.Canceled) {
+				o.logDispatchFailure(ctx, err)
+			}
 		}
 		select {
 		case <-ctx.Done():

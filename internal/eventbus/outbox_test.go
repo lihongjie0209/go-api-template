@@ -34,9 +34,11 @@ func TestOutboxDispatchRecoversPanicAndRetries(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		var output bytes.Buffer
+		metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
 		outbox := &Outbox{
-			cfg:    config.EventBus{DispatchInterval: time.Second},
-			logger: slog.New(slog.NewJSONHandler(&output, nil)),
+			cfg:     config.EventBus{DispatchInterval: time.Second},
+			logger:  slog.New(slog.NewJSONHandler(&output, nil)),
+			metrics: metrics,
 		}
 		var attempts atomic.Int32
 		done := make(chan struct{})
@@ -56,6 +58,9 @@ func TestOutboxDispatchRecoversPanicAndRetries(t *testing.T) {
 		require.Equal(t, int32(2), attempts.Load())
 		require.NotContains(t, output.String(), "secret-value")
 		require.Contains(t, output.String(), "outbox_dispatch_panicked")
+		metricResponse := httptest.NewRecorder()
+		metrics.Handler().ServeHTTP(metricResponse, httptest.NewRequest("GET", "/metrics", nil))
+		require.Contains(t, metricResponse.Body.String(), `event_outbox_dispatch_outcomes_total{outcome="panic_retry"} 1`)
 	})
 }
 

@@ -92,7 +92,7 @@ func (m *Metrics) ObserveOutboxOutcome(outcome string) {
 		return
 	}
 	switch outcome {
-	case "published", "publish_retry", "invalid_retry", "dead_letter", "persistence_error":
+	case "published", "publish_retry", "invalid_retry", "dead_letter", "persistence_error", "panic_retry":
 		m.EventOutboxOutcomes.WithLabelValues(outcome).Inc()
 	}
 }
