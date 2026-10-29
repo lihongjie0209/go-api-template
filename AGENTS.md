@@ -462,6 +462,9 @@ TTL, and invalidation for its own data.
   Failed invalidation or database unavailability must not expose a deleted or
   older profile, including email and phone.
 - Never put IDs, cache keys, or unbounded values into metric labels.
+- Optional metrics observers must accept a nil metrics handle as disabled so
+  instrumentation cannot crash a worker or turn a recoverable dependency error
+  into a process-level panic. Public metric labels still require fixed bounds.
 
 ## Redis and message queue decision SOP
 

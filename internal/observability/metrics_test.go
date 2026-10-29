@@ -37,6 +37,18 @@ func TestMetrics_Collect(t *testing.T) {
 	}
 }
 
+func TestOptionalMetricObserversAcceptNilReceiver(t *testing.T) {
+	t.Parallel()
+	var metrics *Metrics
+	if metrics.Enabled() {
+		t.Fatal("nil metrics must be disabled")
+	}
+	metrics.ObserveInfrastructure("cache", "redis", "get", "error", time.Now())
+	metrics.ObserveCron("sample", "error", time.Now())
+	metrics.ObserveEventConsumerRestart("operation-log")
+	metrics.ObserveOutboxOutcome("panic_retry")
+}
+
 func TestMetrics_CollectDatabaseAndRedisPoolStats(t *testing.T) {
 	t.Parallel()
 	rawDB, _, err := sqlmock.New()

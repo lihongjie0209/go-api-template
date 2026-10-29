@@ -73,7 +73,7 @@ func NewMetrics(cfg config.Config, db *sqlx.DB, client *redis.Client) *Metrics {
 }
 
 func (m *Metrics) ObserveInfrastructure(component, backend, operation, status string, started time.Time) {
-	if !m.enabled {
+	if m == nil || !m.enabled {
 		return
 	}
 	m.InfrastructureOperations.WithLabelValues(component, backend, operation, status).Inc()
@@ -97,12 +97,12 @@ func (m *Metrics) ObserveOutboxOutcome(outcome string) {
 	}
 }
 
-func (m *Metrics) Enabled() bool { return m.enabled }
+func (m *Metrics) Enabled() bool { return m != nil && m.enabled }
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 }
 func (m *Metrics) ObserveCron(job, status string, started time.Time) {
-	if !m.enabled {
+	if m == nil || !m.enabled {
 		return
 	}
 	m.CronRuns.WithLabelValues(job, status).Inc()
