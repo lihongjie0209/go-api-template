@@ -9,12 +9,12 @@
 | Authorization | Possession of this refresh token permits revocation of that token's session only. It cannot enumerate or revoke another session by ID. |
 | Operation log | No general operation log; this credential action uses the independent security log. |
 | Security log | Successful and failed logout attempts record a security event; raw refresh tokens are converted to keyed digests, not stored in logs. Security-event enqueue remains fail-closed for a successful revocation. |
-| Cache | No response cache. Session revocation is authoritative in PostgreSQL; normal session validation observes it. |
+| Cache | No response cache or idempotency replay. Even with `Idempotency-Key`, each attempt must check the refresh token's current database state and record a failed security event for a revoked token. |
 | Distributed lock | None; row locking and the conditional database update serialize revocation of one session. |
 | Optimistic lock | The service selects the session `FOR UPDATE` and updates it with the expected row version. A repeated revoke is rejected. |
 | Audit | The transaction uses an explicit `identity-service:logout` system actor; audit triggers maintain mandatory fields. |
 | Presentation | The response contains no token or session data. The UI clears local credentials even when the revocation request fails. |
-| Tests | Unit tests cover credential-client selection, local cleanup, hashed-token revocation, and duplicate/invalid token behavior; normal integration gates remain in CI. |
+| Tests | Unit tests cover credential-client selection, local cleanup, hashed-token revocation, duplicate/invalid token behavior, and repeated keyed HTTP attempts reaching the handler; normal integration gates remain in CI. |
 | Shared capability | Reuses the shared response, error, security-log, transaction, and authentication middleware facilities. |
 
 The session record is security-sensitive transactional data and is not exposed as a data-dictionary provider. The rate limiter and common request timeout still apply to this public route.

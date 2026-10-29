@@ -540,6 +540,9 @@ message queue with an outbox.
 - gRPC idempotency patterns must likewise match registered unary RPCs with
   code-owned response-safety approval. Streaming, health/reflection, reads,
   token issuance, and other sensitive responses must never be replay-cached.
+- Public logout uses the refresh token itself as a request credential. It must
+  not enter the idempotency replay set: each attempt must check current token
+  state and record a failed security event when the credential is revoked.
 - Every replay must pass current authentication and operation authorization
   before the idempotency state is read or returned. HTTP idempotency middleware
   must follow route authorization, not precede it as API-group middleware.

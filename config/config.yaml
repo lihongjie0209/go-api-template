@@ -164,7 +164,6 @@ idempotency:
   # signed-URL, multipart upload, arbitrary configuration-value and query routes
   # are intentionally excluded.
   http_paths:
-    - /api/v1/auth/logout
     - /api/v1/auth/password/reset
     - /api/v1/auth/password/change
     - /api/v1/auth/sessions/revoke

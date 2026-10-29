@@ -12,7 +12,6 @@ import (
 // deployment can select a subset through configuration, but config wildcards
 // cannot opt a newly added route in without an explicit code change.
 var idempotencyEligibleHTTPRoutes = map[string]struct{}{
-	"/api/v1/auth/logout":                                      {},
 	"/api/v1/auth/password/reset":                              {},
 	"/api/v1/auth/password/change":                             {},
 	"/api/v1/auth/sessions/revoke":                             {},
@@ -80,7 +79,7 @@ func validateHTTPIdempotencyRoutes(patterns []string, endpoints []accesscontrol.
 				continue
 			}
 			matched = true
-			if endpoint.Authentication == accesscontrol.AuthenticationPublic && route != "/api/v1/auth/logout" {
+			if endpoint.Authentication == accesscontrol.AuthenticationPublic {
 				return fmt.Errorf("idempotency.http_paths pattern %q includes public route %q", pattern, route)
 			}
 			if idempotencyQueryAction(endpoint.Action) || idempotencyQueryRoute(route) {
