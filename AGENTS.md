@@ -544,7 +544,10 @@ message queue with an outbox.
   client disconnect or request timeout. Unit fakes must reproduce this normal
   stop behavior and a lease-loss error separately. If the request expires
   during lease startup, stop the lease, abort the acquired state with bounded
-  detached cleanup, and do not invoke the handler.
+  detached cleanup, and do not invoke the handler. A failed or already-canceled
+  lease startup likewise aborts the unstarted acquisition. Once a handler has
+  run, do not abort merely because renewal failed: its business outcome may
+  already have committed.
 - HTTP/gRPC ingress must reject malformed `Idempotency-Key` values before
   business work. Internal callers that require idempotency must validate the
   key explicitly before placing it in Context; the local Context adapter drops

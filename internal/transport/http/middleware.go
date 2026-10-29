@@ -194,7 +194,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		}
 		if c.Request.Context().Err() != nil {
 			if decision.State == idempotency.StateAcquired {
-				abortExpiredIdempotency(c, manager, key, decision.Owner, logger)
+				abortAcquiredIdempotency(c, manager, key, decision.Owner, logger)
 			}
 			responseContextEnded(c)
 			return
@@ -246,6 +246,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		requestCtx := c.Request.Context()
 		leaseCtx, stopLease, err := manager.StartLease(requestCtx, key, decision.Owner)
 		if err != nil {
+			abortAcquiredIdempotency(c, manager, key, decision.Owner, logger)
 			Fail(c, logger, apperror.Unavailable("idempotency lease is unavailable", err))
 			return
 		}
@@ -253,12 +254,13 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			if stopErr := stopLease(); stopErr != nil {
 				logger.WarnContext(requestCtx, "stop expired idempotency lease", "error", observability.SafeError(stopErr, errIdempotencyStateFailed), "request_id", requestID(c))
 			}
-			abortExpiredIdempotency(c, manager, key, decision.Owner, logger)
+			abortAcquiredIdempotency(c, manager, key, decision.Owner, logger)
 			responseContextEnded(c)
 			return
 		}
 		if leaseCtx.Err() != nil {
 			stopErr := stopLease()
+			abortAcquiredIdempotency(c, manager, key, decision.Owner, logger)
 			if stopErr == nil {
 				stopErr = errIdempotencyStateFailed
 			}
@@ -343,11 +345,11 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 	}
 }
 
-func abortExpiredIdempotency(c *gin.Context, manager idempotencyManager, key, owner string, logger *slog.Logger) {
+func abortAcquiredIdempotency(c *gin.Context, manager idempotencyManager, key, owner string, logger *slog.Logger) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
 	defer cancel()
 	if err := manager.Abort(cleanupCtx, key, owner); err != nil {
-		logger.WarnContext(c.Request.Context(), "abort expired idempotency execution", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
+		logger.WarnContext(c.Request.Context(), "abort unstarted idempotency execution", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
 	}
 }
 

@@ -31,24 +31,26 @@ import (
 )
 
 type fakeIdempotencyManager struct {
-	decision          idempotency.Decision
-	beginKey          string
-	fingerprint       string
-	completed         *Response
-	completedStatus   int
-	completeErr       error
-	failureErr        error
-	abortErr          error
-	failed            *idempotency.Failure
-	leaseStarted      bool
-	leaseStopped      bool
-	cancelLeaseOnStop bool
-	leaseStopErr      error
-	aborted           bool
-	maxBytes          int
-	onComplete        func()
-	onBegin           func(context.Context)
-	onStartLease      func(context.Context)
+	decision                idempotency.Decision
+	beginKey                string
+	fingerprint             string
+	completed               *Response
+	completedStatus         int
+	completeErr             error
+	failureErr              error
+	abortErr                error
+	failed                  *idempotency.Failure
+	leaseStarted            bool
+	leaseStopped            bool
+	cancelLeaseOnStop       bool
+	leaseStopErr            error
+	leaseStartErr           error
+	cancelLeaseBeforeReturn bool
+	aborted                 bool
+	maxBytes                int
+	onComplete              func()
+	onBegin                 func(context.Context)
+	onStartLease            func(context.Context)
 }
 
 func TestEnvironmentInjectsActiveProfile(t *testing.T) {
@@ -247,11 +249,52 @@ func (m *fakeIdempotencyManager) StartLease(ctx context.Context, _, _ string) (c
 	if m.onStartLease != nil {
 		m.onStartLease(ctx)
 	}
+	if m.leaseStartErr != nil {
+		return nil, nil, m.leaseStartErr
+	}
+	if m.cancelLeaseBeforeReturn {
+		leaseCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		return leaseCtx, func() error { m.leaseStopped = true; return nil }, nil
+	}
 	if m.cancelLeaseOnStop {
 		leaseCtx, cancel := context.WithCancel(ctx)
 		return leaseCtx, func() error { m.leaseStopped = true; cancel(); return m.leaseStopErr }, nil
 	}
 	return ctx, func() error { m.leaseStopped = true; return m.leaseStopErr }, nil
+}
+
+func TestIdempotencyExecutionReleasesAcquisitionWhenLeaseCannotStart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, test := range []struct {
+		name               string
+		startErr           error
+		cancelBeforeReturn bool
+	}{
+		{name: "lease start failed", startErr: errors.New("redis lease unavailable")},
+		{name: "lease canceled before handler", cancelBeforeReturn: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}, leaseStartErr: test.startErr, cancelLeaseBeforeReturn: test.cancelBeforeReturn}
+			called := false
+			router := gin.New()
+			router.Use(RequestID(), func(c *gin.Context) {
+				c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+				c.Next()
+			}, IdempotencyExecution(manager, []string{"/test"}, logger))
+			router.POST("/test", func(c *gin.Context) { called = true; OK(c, "late") })
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			var body Response
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusServiceUnavailable || body.Code != apperror.CodeDependencyUnavailable || called || !manager.aborted || manager.leaseStopped != test.cancelBeforeReturn {
+				t.Fatalf("failed lease start response=%d %s called=%t aborted=%t stopped=%t", response.Code, response.Body.String(), called, manager.aborted, manager.leaseStopped)
+			}
+		})
+	}
 }
 
 func TestIdempotencyExecutionAbortsWhenDeadlineExpiresDuringLeaseStart(t *testing.T) {
