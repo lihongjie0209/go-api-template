@@ -64,6 +64,10 @@ func TestDirectRuntimeRefreshFailureInvalidatesLocalDataPermissions(t *testing.T
 	require.ErrorIs(t, loader.Refresh(t.Context()), want)
 	_, _, err = loader.Pin(t.Context())
 	require.ErrorIs(t, err, ErrSnapshotUnavailable)
+	mock.ExpectQuery("SELECT p.code,p.scope").WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}))
+	require.NoError(t, loader.Refresh(t.Context()))
+	_, _, err = loader.Pin(t.Context())
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
