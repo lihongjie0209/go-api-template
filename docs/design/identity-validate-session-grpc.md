@@ -21,7 +21,7 @@ a service principal; the operation authorization interceptor fails closed.
 | Shared capability | Reuses the configured auth service, gRPC resource/action descriptor and interceptors; no local authentication framework. |
 | Dictionary provider | None: sessions are sensitive, ephemeral transactional data and unsuitable for a dictionary. |
 
-The other generated IdentityService methods `RevokeTenantSessions`,
-`IssueTenantToken`, and `GetServiceAccount` remain unimplemented. They require
-separate domain authorization, audit and token-issuance designs; registering
-their transport descriptors does not make their behavior available.
+The generated IdentityService methods `RevokeTenantSessions` and
+`IssueTenantToken` remain unimplemented. They require separate domain
+authorization, audit and token-issuance designs; registering their transport
+descriptors does not make their behavior available.

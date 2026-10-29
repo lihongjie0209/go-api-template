@@ -26,6 +26,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
+	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformidempotency "github.com/lihongjie0209/microservice-platform-go/idempotency"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -53,7 +54,7 @@ type Server struct {
 
 var errGRPCServerStopped = errors.New("grpc_server_stopped")
 
-func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, healthService *apphealth.Service, identityService *identity.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
+func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, healthService *apphealth.Service, identityService *identity.Service, accounts *serviceaccount.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	definitions := grpcEndpointDefinitions()
 	for _, endpoint := range definitions {
 		if err := schemas.ValidateEndpoint(endpoint); err != nil {
@@ -80,7 +81,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, re
 	}
 	grpcServer := grpc.NewServer(options...)
 	hellov1.RegisterHelloServiceServer(grpcServer, &helloServer{})
-	identityv1.RegisterIdentityServiceServer(grpcServer, &identityServer{service: identityService, auth: authService})
+	identityv1.RegisterIdentityServiceServer(grpcServer, &identityServer{service: identityService, auth: authService, accounts: accounts, jwtAudience: cfg.JWT.Audience})
 	healthPublisher := newGRPCHealthPublisher(healthService, cfg.App.Name)
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthPublisher.server)
 	if cfg.GRPC.ReflectionEnabled {

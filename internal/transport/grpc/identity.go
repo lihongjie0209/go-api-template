@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
@@ -18,8 +20,40 @@ import (
 
 type identityServer struct {
 	identityv1.UnimplementedIdentityServiceServer
-	service *identity.Service
-	auth    *auth.Service
+	service     *identity.Service
+	auth        *auth.Service
+	accounts    *serviceaccount.Service
+	jwtAudience string
+}
+
+func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.GetServiceAccountRequest) (*identityv1.GetServiceAccountResponse, error) {
+	principal, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "authentication required")
+	}
+	if principal.Type != platformprincipal.TypeServiceAccount {
+		return nil, status.Error(codes.PermissionDenied, "service authentication required")
+	}
+	if s.accounts == nil {
+		return nil, status.Error(codes.Unavailable, "service account state unavailable")
+	}
+	account, err := s.accounts.Get(ctx, r.GetServiceAccountId())
+	if errors.Is(err, serviceaccount.ErrInvalid) {
+		return nil, status.Error(codes.InvalidArgument, "invalid service account id")
+	}
+	if errors.Is(err, serviceaccount.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "service account not found")
+	}
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "service account state unavailable")
+	}
+	now := time.Now()
+	enabled := account.Status == serviceaccount.StatusActive && (account.ExpiresAt == nil || account.ExpiresAt.After(now)) && (account.LockedUntil == nil || !account.LockedUntil.After(now))
+	response := &identityv1.GetServiceAccountResponse{Id: account.ID, Name: account.Name, Enabled: enabled}
+	if s.jwtAudience != "" {
+		response.Audiences = []string{s.jwtAudience}
+	}
+	return response, nil
 }
 
 func (s *identityServer) ValidateSession(ctx context.Context, r *identityv1.ValidateSessionRequest) (*identityv1.ValidateSessionResponse, error) {
