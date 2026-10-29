@@ -19,6 +19,17 @@ import (
 
 type failingPublishClient struct{ redis.UniversalClient }
 
+type recordingSubscribeClient struct {
+	redis.UniversalClient
+	subscriptions chan *redis.PubSub
+}
+
+func (c *recordingSubscribeClient) Subscribe(ctx context.Context, channels ...string) *redis.PubSub {
+	subscription := c.UniversalClient.Subscribe(ctx, channels...)
+	c.subscriptions <- subscription
+	return subscription
+}
+
 func (failingPublishClient) Publish(ctx context.Context, _ string, _ any) *redis.IntCmd {
 	command := redis.NewIntCmd(ctx)
 	command.SetErr(errors.New("redis password=secret-value"))
@@ -117,6 +128,42 @@ func TestPollingRecoversLostNotification(t *testing.T) {
 	require.Eventually(t, func() bool { return syncer.Revision() == "revision-2" }, time.Second, 10*time.Millisecond)
 	cancel()
 	<-done
+}
+
+func TestRunResubscribesAfterPubSubChannelCloses(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	base := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = base.Close() })
+	client := &recordingSubscribeClient{UniversalClient: base, subscriptions: make(chan *redis.PubSub, 2)}
+	var refreshes atomic.Int64
+	syncer := New(client, "policies", "data_permission", 10*time.Millisecond, time.Second,
+		func(context.Context) (string, error) { return "revision-1", nil },
+		func(context.Context) error { refreshes.Add(1); return nil },
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	require.NoError(t, syncer.Refresh(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); syncer.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	var first *redis.PubSub
+	select {
+	case first = <-client.subscriptions:
+	case <-time.After(time.Second):
+		t.Fatal("initial subscription was not created")
+	}
+	require.NoError(t, first.Close())
+	select {
+	case <-client.subscriptions:
+	case <-time.After(time.Second):
+		t.Fatal("closed subscription was not replaced")
+	}
+	require.Eventually(t, func() bool {
+		if err := base.Publish(t.Context(), "policies", "changed").Err(); err != nil {
+			return false
+		}
+		return refreshes.Load() >= 2
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestChangedRefreshesAndPublishesHint(t *testing.T) {

@@ -479,7 +479,10 @@ available. A feature must not introduce a second transport for the same event.
 - Cache invalidation within instances of one service uses Redis Pub/Sub for
   low-latency refresh plus a database revision/version poll for lost-message
   recovery. The database remains authoritative; refresh builds a complete new
-  snapshot and swaps it atomically only after validation succeeds.
+  snapshot and swaps it atomically only after validation succeeds. If the
+  Pub/Sub channel closes, retry subscription at a bounded interval while the
+  revision poll continues; do not silently lose low-latency invalidation for
+  the rest of the process lifetime or spin in a reconnect loop.
 - A durable cross-service notification must use a transactional outbox written
   in the same database transaction as the business change and then be published
   to the message queue. Do not dual-write the database and queue directly.

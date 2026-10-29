@@ -168,19 +168,32 @@ func (s *Sync) Run(ctx context.Context) {
 	if s.redis != nil && s.channel != "" {
 		subscription = s.redis.Subscribe(ctx, s.channel)
 		messages = subscription.Channel()
-		defer func() { _ = subscription.Close() }()
 	}
+	defer func() {
+		if subscription != nil {
+			_ = subscription.Close()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case _, ok := <-messages:
 			if !ok {
+				_ = subscription.Close()
+				subscription = nil
 				messages = nil
 				continue
 			}
 			s.refreshAndLog(ctx, "notification")
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
+			if subscription == nil && s.redis != nil && s.channel != "" {
+				subscription = s.redis.Subscribe(ctx, s.channel)
+				messages = subscription.Channel()
+			}
 			s.poll(ctx)
 		}
 	}
