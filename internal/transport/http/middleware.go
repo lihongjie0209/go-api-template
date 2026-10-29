@@ -76,6 +76,10 @@ func Environment(profile string) gin.HandlerFunc {
 
 func IdempotencyKey(logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !strings.HasPrefix(c.Request.URL.Path, "/api/v1/") {
+			c.Next()
+			return
+		}
 		key := c.GetHeader("Idempotency-Key")
 		if key == "" {
 			c.Next()

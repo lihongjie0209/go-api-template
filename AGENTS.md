@@ -563,7 +563,9 @@ message queue with an outbox.
 - Place HTTP key validation inside the global request ID, tracing, access-log,
   metrics, security-header, CORS, and timeout middleware. A rejected key is
   still an observable protected HTTP response, even though no business handler
-  or idempotency state executes.
+  or idempotency state executes. Apply this validation to `/api/v1/` business
+  routes; operational probes and other non-business paths ignore the header so
+  an unrelated client or proxy header cannot make liveness/readiness fail.
 - HTTP idempotency fingerprinting must stop reading after at most 16 MiB plus
   one sentinel byte, independent of the global body limit used for file
   upload. Reject an oversized JSON mutation before reading or creating any

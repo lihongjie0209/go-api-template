@@ -58,3 +58,28 @@ func TestGlobalMiddlewareKeepsInvalidIdempotencyKeyObservableAndProtected(t *tes
 		t.Fatalf("invalid-key response missing HTTP metric: %s", metricResponse.Body.String())
 	}
 }
+
+func TestOperationalProbeIgnoresBusinessIdempotencyHeader(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		App:  config.App{Name: "test-service"},
+		HTTP: config.HTTP{RequestTimeout: time.Second, MaxBodyBytes: 1 << 20},
+	}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	router := gin.New()
+	router.Use(globalHTTPMiddleware(cfg, &observability.Metrics{}, logger)...)
+	router.GET("/live", func(c *gin.Context) { OK(c, gin.H{"status": "up"}) })
+	router.POST("/ready", func(c *gin.Context) { OK(c, gin.H{"status": "up"}) })
+	for _, test := range []struct{ method, path string }{
+		{method: http.MethodGet, path: "/live"},
+		{method: http.MethodPost, path: "/ready"},
+	} {
+		request := httptest.NewRequest(test.method, test.path, nil)
+		request.Header.Set("Idempotency-Key", "bad key")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"up"`) {
+			t.Fatalf("%s %s status=%d body=%q", test.method, test.path, response.Code, response.Body.String())
+		}
+	}
+}
