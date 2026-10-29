@@ -27,9 +27,9 @@ func TestAuthorizerPlatformGrant(t *testing.T) {
 	a, mock := testAuthorizer(t)
 	p := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
 	r := platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}
-	mock.ExpectQuery(`SELECT count\(\*\) FROM platform_principal_permissions`).WithArgs("user", "user-1", "identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT 1 FROM platform_principal_permissions.*LIMIT 1`).WithArgs("user", "user-1", "identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"one"}).AddRow(1))
 	require.NoError(t, a.Authorize(t.Context(), p, r))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM platform_principal_permissions`).WithArgs("user", "user-1", "identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT 1 FROM platform_principal_permissions.*LIMIT 1`).WithArgs("user", "user-1", "identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"one"}))
 	require.ErrorIs(t, a.Authorize(t.Context(), p, r), platformauthz.ErrDenied)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -72,7 +72,7 @@ func TestAuthorizerFailsClosed(t *testing.T) {
 	p := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
 	require.ErrorIs(t, a.Authorize(t.Context(), p, platformauthz.Requirement{Resource: "unknown", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
 	require.ErrorIs(t, a.Authorize(t.Context(), p, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopeTenant}), platformauthz.ErrDecisionUnavailable)
-	mock.ExpectQuery(`SELECT count\(\*\) FROM platform_principal_permissions`).WillReturnError(errors.New("database unavailable"))
+	mock.ExpectQuery(`SELECT 1 FROM platform_principal_permissions.*LIMIT 1`).WillReturnError(errors.New("database unavailable"))
 	require.ErrorIs(t, a.Authorize(t.Context(), p, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

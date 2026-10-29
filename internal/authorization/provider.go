@@ -86,17 +86,21 @@ func scopeMatches(resourceScope resourceaction.ResourceScope, requirementScope p
 }
 
 func (a *Authorizer) hasPlatformGrant(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) (bool, error) {
-	query := a.db.Rebind(`SELECT count(*) FROM platform_principal_permissions g
+	query := a.db.Rebind(`SELECT 1 FROM platform_principal_permissions g
 		JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
 		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
 		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
 		JOIN authorization_resources res ON res.id=act.resource_id AND res.scope='platform' AND res.status='active' AND res.deleted_at IS NULL
-		WHERE g.principal_type=? AND g.principal_id=? AND g.deleted_at IS NULL AND res.resource_key=? AND act.action_key=?`)
-	var count int
-	if err := a.db.GetContext(ctx, &count, query, string(principal.Type), principal.ID, requirement.Resource, requirement.Action); err != nil {
+		WHERE g.principal_type=? AND g.principal_id=? AND g.deleted_at IS NULL AND res.resource_key=? AND act.action_key=? LIMIT 1`)
+	var found int
+	err := a.db.GetContext(ctx, &found, query, string(principal.Type), principal.ID, requirement.Resource, requirement.Action)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
 		return false, fmt.Errorf("resolve platform grant: %w", err)
 	}
-	return count > 0, nil
+	return found == 1, nil
 }
 
 func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) (bool, error) {
