@@ -588,6 +588,67 @@ func TestIdempotencyExecutionRejectsInvalidStoredStatus(t *testing.T) {
 	}
 }
 
+func TestIdempotencyExecutionRejectsInvalidStoredEnvelope(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		decision idempotency.Decision
+	}{
+		{name: "missing success message", decision: idempotency.Decision{State: idempotency.StateCompleted, Response: []byte(`{"http_status":200,"response":{"code":0}}`)}},
+		{name: "success status with error code", decision: idempotency.Decision{State: idempotency.StateCompleted, Response: []byte(`{"http_status":200,"response":{"code":10001,"message":"bad"}}`)}},
+		{name: "bodyless success status", decision: idempotency.Decision{State: idempotency.StateCompleted, Response: []byte(`{"http_status":204,"response":{"code":0,"message":"success"}}`)}},
+		{name: "failed status with success code", decision: idempotency.Decision{State: idempotency.StateFailed, Failure: idempotency.Failure{HTTPStatus: 400, Code: 0, Message: "bad"}}},
+		{name: "failed status without message", decision: idempotency.Decision{State: idempotency.StateFailed, Failure: idempotency.Failure{HTTPStatus: 400, Code: 10001}}},
+		{name: "retryable failed status", decision: idempotency.Decision{State: idempotency.StateFailed, Failure: idempotency.Failure{HTTPStatus: 429, Code: 10001, Message: "busy"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			manager := &fakeIdempotencyManager{decision: test.decision}
+			calls := 0
+			router := idempotencyTestRouter(t, manager, &calls)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			if recorder.Code != http.StatusServiceUnavailable || calls != 0 {
+				t.Fatalf("status=%d calls=%d body=%q", recorder.Code, calls, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestIdempotencyExecutionRejectsMalformedHandlerEnvelopeBeforePersistence(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "null success", status: http.StatusOK, body: `null`},
+		{name: "missing success message", status: http.StatusOK, body: `{"code":0}`},
+		{name: "success status with error code", status: http.StatusOK, body: `{"code":10001,"message":"bad"}`},
+		{name: "bodyless success status", status: http.StatusNoContent, body: `{"code":0,"message":"success"}`},
+		{name: "failure status with success code", status: http.StatusBadRequest, body: `{"code":0,"message":"bad"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+				c.Next()
+			}, IdempotencyExecution(manager, []string{"/test"}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			router.POST("/test", func(c *gin.Context) {
+				c.Header("Set-Cookie", "session=private")
+				c.Data(test.status, "application/json", []byte(test.body))
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			if recorder.Code != http.StatusServiceUnavailable || !manager.aborted || manager.completed != nil || manager.failed != nil || recorder.Header().Get("Set-Cookie") != "" {
+				t.Fatalf("status=%d aborted=%v completed=%v failed=%v cookie=%q", recorder.Code, manager.aborted, manager.completed, manager.failed, recorder.Header().Get("Set-Cookie"))
+			}
+		})
+	}
+}
+
 func TestIdempotencyExecutionReplaysWithCurrentRequestID(t *testing.T) {
 	t.Parallel()
 	stored, err := json.Marshal(Response{Code: 0, Message: "success", Body: map[string]any{"id": "result-1"}, RequestID: "old-request"})

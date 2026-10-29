@@ -222,6 +222,10 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 				Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", nil))
 				return
 			}
+			if !validIdempotencyResponse(saved.HTTPStatus, saved.Response) {
+				Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", nil))
+				return
+			}
 			if responseContextEnded(c) {
 				return
 			}
@@ -230,6 +234,10 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			c.JSON(saved.HTTPStatus, saved.Response)
 			return
 		case idempotency.StateFailed:
+			if !validIdempotencyFailure(decision.Failure) {
+				Fail(c, logger, apperror.Unavailable("idempotency failure is unavailable", nil))
+				return
+			}
 			if responseContextEnded(c) {
 				return
 			}
@@ -315,6 +323,11 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			failIdempotencyState(c, logger, originalHeaders, errors.Join(err, abortErr))
 			return
 		}
+		if !validIdempotencyResponse(capture.Status(), response) {
+			abortErr := manager.Abort(persistCtx, key, decision.Owner)
+			failIdempotencyState(c, logger, originalHeaders, errors.Join(errors.New("idempotent response violates unified envelope"), abortErr))
+			return
+		}
 		response.RequestID = ""
 		if retryableHTTPStatus(capture.Status()) {
 			err = manager.Abort(persistCtx, key, decision.Owner)
@@ -377,6 +390,29 @@ func failIdempotencyState(c *gin.Context, logger *slog.Logger, originalHeaders h
 
 func retryableHTTPStatus(status int) bool {
 	return status == http.StatusRequestTimeout || status == http.StatusTooEarly || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+func validIdempotencyResponse(status int, response Response) bool {
+	if strings.TrimSpace(response.Message) == "" {
+		return false
+	}
+	if status >= http.StatusOK && status < http.StatusMultipleChoices {
+		if status == http.StatusNoContent || status == http.StatusResetContent {
+			return false
+		}
+		return response.Code == apperror.CodeOK
+	}
+	if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+		return response.Code != apperror.CodeOK
+	}
+	return false
+}
+
+func validIdempotencyFailure(failure idempotency.Failure) bool {
+	return failure.HTTPStatus >= http.StatusBadRequest &&
+		failure.HTTPStatus < http.StatusInternalServerError &&
+		!retryableHTTPStatus(failure.HTTPStatus) &&
+		failure.Code != apperror.CodeOK && strings.TrimSpace(failure.Message) != ""
 }
 
 func idempotencyFingerprint(c *gin.Context) (string, error) {

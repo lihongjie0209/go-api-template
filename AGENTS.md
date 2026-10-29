@@ -574,7 +574,11 @@ message queue with an outbox.
   successful body before the completed result is saved. If the transition fails,
   return a generic unavailable response and discard handler-only headers such
   as Set-Cookie. Streaming, flushing, and connection hijacking are not supported
-  for idempotent HTTP routes.
+  for idempotent HTTP routes. Validate the unified envelope before saving and
+  again before replay: success status requires the global success code, error
+  status requires a non-success code, and both require a nonblank message.
+  Corrupt cached failure states must return generic unavailable instead of
+  passing an invalid status or error code to the HTTP writer.
 - An opted-in unary gRPC mutation must also withhold its response until the
   owner-fenced Complete/Fail/Abort transition succeeds. If persistence fails,
   return generic Unavailable without the handler response or raw dependency
