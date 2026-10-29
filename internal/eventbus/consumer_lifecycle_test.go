@@ -168,7 +168,8 @@ func TestRegisterConsumerStopsWithoutRetryingAfterShutdown(t *testing.T) {
 		lifecycle := new(captureLifecycle)
 		var attempts atomic.Int32
 		called := make(chan struct{})
-		RegisterConsumer(lifecycle, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func(context.Context) error {
+		metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+		RegisterConsumer(lifecycle, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), metrics, func(context.Context) error {
 			attempts.Add(1)
 			close(called)
 			return errors.New("subscription unavailable")
@@ -184,6 +185,11 @@ func TestRegisterConsumerStopsWithoutRetryingAfterShutdown(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		if got := attempts.Load(); got != 1 {
 			t.Fatalf("consumer attempts after shutdown = %d, want 1", got)
+		}
+		recorder := httptest.NewRecorder()
+		metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if strings.Contains(recorder.Body.String(), `event_consumer_restarts_total{consumer="test"}`) {
+			t.Fatalf("shutdown without a second attempt counted a restart: %s", recorder.Body.String())
 		}
 	})
 }

@@ -37,7 +37,12 @@ func RegisterConsumer(lifecycle fx.Lifecycle, name string, logger *slog.Logger, 
 
 func runConsumer(ctx context.Context, name string, logger *slog.Logger, metrics *observability.Metrics, consume func(context.Context) error) {
 	backoff := consumerRetryMin
+	restarting := false
 	for ctx.Err() == nil {
+		// Count the attempted resubscription, not a timer that merely expired.
+		if restarting {
+			metrics.ObserveEventConsumerRestart(name)
+		}
 		started := time.Now()
 		err := consumeSafely(ctx, consume)
 		if ctx.Err() != nil {
@@ -57,8 +62,8 @@ func runConsumer(ctx context.Context, name string, logger *slog.Logger, metrics 
 			return
 		case <-timer.C:
 		}
-		metrics.ObserveEventConsumerRestart(name)
 		backoff = min(backoff*2, consumerRetryMax)
+		restarting = true
 	}
 }
 
