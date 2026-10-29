@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -90,6 +91,23 @@ func TestService_SignedTokenVerifiesThroughSharedJWKSVerifier(t *testing.T) {
 	got, err := verifier.VerifyBearer(t.Context(), raw)
 	if err != nil || got != want {
 		t.Fatalf("VerifyBearer() principal=%+v error=%v, want %+v", got, err, want)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	consumer := NewWithDatabase(config.Config{}, sqlx.NewDb(db, "sqlmock"))
+	consumer.verifier = verifier
+	mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions.*AND EXISTS \(SELECT 1 FROM tenant_memberships`).
+		WithArgs("session-1", "user-1", sqlmock.AnyArg(), "member-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}).AddRow(false))
+	verified, state, err := consumer.VerifyWithState(t.Context(), raw)
+	if err != nil || verified != want || state.MustChangePassword {
+		t.Fatalf("remote VerifyWithState() = (%+v, %+v, %v), want live tenant principal", verified, state, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -405,6 +423,28 @@ func TestService_ValidatesRemotePrincipalShape(t *testing.T) {
 			service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
 				return test.principal, nil
 			})
+			if !test.wantError {
+				raw, mock, err := sqlmock.New()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = raw.Close() })
+				service.db = sqlx.NewDb(raw, "sqlmock")
+				if test.principal.Type == platformprincipal.TypeUser {
+					args := []driver.Value{test.principal.SessionID, test.principal.ID, sqlmock.AnyArg()}
+					if test.principal.TenantID != "" {
+						args = append(args, test.principal.MembershipID, test.principal.TenantID)
+					}
+					mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions`).WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}).AddRow(false))
+				} else {
+					mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs(test.principal.ID, sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				}
+				defer func() {
+					if err := mock.ExpectationsWereMet(); err != nil {
+						t.Fatal(err)
+					}
+				}()
+			}
 			got, _, err := service.VerifyWithState(t.Context(), "remote-token")
 			if test.wantError {
 				if err == nil || errors.Is(err, ErrStateUnavailable) {
@@ -416,6 +456,98 @@ func TestService_ValidatesRemotePrincipalShape(t *testing.T) {
 				t.Fatalf("VerifyWithState() principal=%+v error=%v, want %+v", got, err, test.principal)
 			}
 		})
+	}
+}
+
+func TestService_RemotePrincipalRequiresAuthoritativeState(t *testing.T) {
+	user := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}
+	tenantUser := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1", MembershipID: "member-1"}
+	account := platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}
+	for _, tt := range []struct {
+		name            string
+		principal       platformprincipal.Principal
+		query           string
+		args            []driver.Value
+		rows            *sqlmock.Rows
+		queryErr        error
+		wantInvalid     bool
+		wantUnavailable bool
+		wantChange      bool
+	}{
+		{name: "live user has current password requirement", principal: user, query: `SELECT c.must_change_password FROM identity_sessions`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"must_change_password"}).AddRow(true), wantChange: true},
+		{name: "revoked user session", principal: user, query: `SELECT c.must_change_password FROM identity_sessions`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"must_change_password"}), wantInvalid: true},
+		{name: "inactive tenant membership", principal: tenantUser, query: `SELECT c.must_change_password FROM identity_sessions.*AND EXISTS \(SELECT 1 FROM tenant_memberships`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg(), "member-1", "tenant-1"}, rows: sqlmock.NewRows([]string{"must_change_password"}), wantInvalid: true},
+		{name: "disabled service account", principal: account, query: `SELECT count\(\*\) FROM identity_service_accounts`, args: []driver.Value{"service-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"count"}).AddRow(0), wantInvalid: true},
+		{name: "state store unavailable", principal: user, query: `SELECT c.must_change_password FROM identity_sessions`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg()}, queryErr: errors.New("private database failure"), wantUnavailable: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			service := NewWithDatabase(config.Config{}, sqlx.NewDb(raw, "sqlmock"))
+			service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) { return tt.principal, nil })
+			query := mock.ExpectQuery(tt.query).WithArgs(tt.args...)
+			if tt.queryErr != nil {
+				query.WillReturnError(tt.queryErr)
+			} else {
+				query.WillReturnRows(tt.rows)
+			}
+			got, state, err := service.VerifyWithState(t.Context(), "remote-token")
+			switch {
+			case tt.wantUnavailable:
+				if !errors.Is(err, ErrStateUnavailable) || got.ID != "" {
+					t.Fatalf("VerifyWithState() = (%+v, %v), want unavailable", got, err)
+				}
+			case tt.wantInvalid:
+				if err == nil || errors.Is(err, ErrStateUnavailable) || got.ID != "" {
+					t.Fatalf("VerifyWithState() = (%+v, %v), want invalid state", got, err)
+				}
+			default:
+				if err != nil || got != tt.principal || state.MustChangePassword != tt.wantChange {
+					t.Fatalf("VerifyWithState() = (%+v, %+v, %v), want live principal with current state", got, state, err)
+				}
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	service := New(config.Config{})
+	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) { return user, nil })
+	if principal, _, err := service.VerifyWithState(t.Context(), "remote-token"); !errors.Is(err, ErrStateUnavailable) || principal.ID != "" {
+		t.Fatalf("missing state store = (%+v, %v), want dependency unavailable", principal, err)
+	}
+}
+
+func TestService_UnknownLocalKeyRemoteFallbackChecksAccountState(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := New(config.Config{JWT: jwtConfig})
+	foreign.active.id = "foreign-key"
+	rawToken, err := foreign.Issue("service-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+	service := NewWithDatabase(config.Config{JWT: jwtConfig}, sqlx.NewDb(rawDB, "sqlmock"))
+	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
+		return platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, nil
+	})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	if principal, _, err := service.VerifyWithState(t.Context(), rawToken); err == nil || errors.Is(err, ErrStateUnavailable) || principal.ID != "" {
+		t.Fatalf("unknown-key fallback = (%+v, %v), want disabled account rejection", principal, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -149,62 +149,81 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		if s.verifier == nil {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("jwt verification keys are not configured")
 		}
-		principal, err := s.verifyRemote(ctx, raw)
-		return principal, TokenState{}, err
+		return s.verifyRemoteWithState(ctx, raw)
 	}
 	claims, parseErr := s.Parse(raw)
 	if parseErr != nil {
 		if s.verifier != nil && !s.referencesLocalKey(raw) {
-			principal, err := s.verifyRemote(ctx, raw)
-			return principal, TokenState{}, err
+			return s.verifyRemoteWithState(ctx, raw)
 		}
 		return platformprincipal.Principal{}, TokenState{}, parseErr
 	}
-	t := claims.PrincipalType
-	state := TokenState{MustChangePassword: claims.MustChangePassword}
-	switch t {
+	principal := platformprincipal.Principal{ID: claims.Subject, Type: claims.PrincipalType, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}
+	state, err := s.verifyPrincipalState(ctx, principal)
+	if err != nil {
+		return platformprincipal.Principal{}, TokenState{}, err
+	}
+	return principal, state, nil
+}
+
+func (s *Service) verifyRemoteWithState(ctx context.Context, raw string) (platformprincipal.Principal, TokenState, error) {
+	principal, err := s.verifyRemote(ctx, raw)
+	if err != nil {
+		return platformprincipal.Principal{}, TokenState{}, err
+	}
+	state, err := s.verifyPrincipalState(ctx, principal)
+	if err != nil {
+		return platformprincipal.Principal{}, TokenState{}, err
+	}
+	return principal, state, nil
+}
+
+// verifyPrincipalState is the authoritative mutable-state boundary for both
+// locally signed and remotely verified bearer principals.
+func (s *Service) verifyPrincipalState(ctx context.Context, principal platformprincipal.Principal) (TokenState, error) {
+	if s.db == nil {
+		return TokenState{}, ErrStateUnavailable
+	}
+	var state TokenState
+	switch principal.Type {
 	case platformprincipal.TypeUser:
-		if s.db == nil {
-			return platformprincipal.Principal{}, TokenState{}, ErrStateUnavailable
-		}
 		query := `SELECT c.must_change_password ` + activeUserSessionSource
-		args := []any{claims.SessionID, claims.Subject, time.Now()}
-		if claims.TenantID != "" {
+		args := []any{principal.SessionID, principal.ID, time.Now()}
+		if principal.TenantID != "" {
 			query += ` AND EXISTS (SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE m.id=? AND m.tenant_id=? AND m.user_id=s.user_id AND m.status='active' AND m.deleted_at IS NULL)`
-			args = append(args, claims.MembershipID, claims.TenantID)
+			args = append(args, principal.MembershipID, principal.TenantID)
 		}
 		if err := s.db.GetContext(ctx, &state.MustChangePassword, s.db.Rebind(query), args...); err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
-				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
+				return TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
-				return platformprincipal.Principal{}, TokenState{}, errors.New("session is revoked or expired")
+				return TokenState{}, errors.New("session is revoked or expired")
 			}
-			return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
+			return TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 		}
 	case platformprincipal.TypeServiceAccount:
-		if s.db == nil {
-			return platformprincipal.Principal{}, TokenState{}, ErrStateUnavailable
-		}
 		var count int
 		query := s.db.Rebind(`SELECT count(*) FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
-		if err := s.db.GetContext(ctx, &count, query, claims.Subject, time.Now()); err != nil {
+		if err := s.db.GetContext(ctx, &count, query, principal.ID, time.Now()); err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
-				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
+				return TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
-				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
+				return TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 			}
-			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
+			return TokenState{}, errors.New("service account is disabled or expired")
 		}
 		if count != 1 {
-			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
+			return TokenState{}, errors.New("service account is disabled or expired")
 		}
+	default:
+		return TokenState{}, errors.New("unsupported principal type")
 	}
 	if err := ctx.Err(); err != nil {
-		return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, err)
+		return TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, err)
 	}
-	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, state, nil
+	return state, nil
 }
 
 func (s *Service) verifyRemote(ctx context.Context, raw string) (platformprincipal.Principal, error) {

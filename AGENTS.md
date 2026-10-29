@@ -89,9 +89,12 @@ The next domain work must keep identity and tenancy separate:
   when accepting local or remotely verified tokens; do not rely on downstream
   authorization to ignore unexpected context fields.
 - A signed access-token claim is not authoritative for mutable credential
-  state. User-token verification must recheck the active session, user, and
-  credential; every password reset path must revoke existing sessions in the
-  same transaction, including the path that creates a missing credential.
+  state. Both local and remotely verified user tokens must recheck the active
+  session, user, credential and any tenant membership before attaching the
+  principal; service-account tokens must recheck the active account. A missing
+  authoritative state source fails closed as dependency-unavailable. Every
+  password reset path must revoke existing sessions in the same transaction,
+  including the path that creates a missing credential.
 - Tenant isolation is a mandatory SQL/repository boundary, not only a service
   authorization check. Every query, update, delete, count, join, cache key, and
   uniqueness rule for a tenant-owned table must include the authenticated

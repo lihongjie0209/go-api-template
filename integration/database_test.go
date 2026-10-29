@@ -65,6 +65,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxtest"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -239,9 +240,37 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 		t.Fatal(err)
 	}
 	service := auth.NewWithDatabase(config.Config{}, db)
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := auth.New(config.Config{JWT: jwtConfig})
+	remoteToken, err := issuer.IssuePrincipal(platformprincipal.Principal{ID: "session-validation-user", Type: platformprincipal.TypeUser, SessionID: "session-validation-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(issuer.JWKS()); err != nil {
+			t.Errorf("encode JWKS: %v", err)
+		}
+	}))
+	defer jwksServer.Close()
+	lifecycle := fxtest.NewLifecycle(t)
+	remoteVerifier, err := auth.NewRuntime(lifecycle, config.Config{Auth: config.Auth{
+		JWKSURL: jwksServer.URL, Issuer: jwtConfig.Issuer, Audience: jwtConfig.Audience, JWKSTimeout: time.Second,
+	}}, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.RequireStart()
+	defer lifecycle.RequireStop()
 	_, valid, err := service.ValidateSession(ctx, "session-validation-session", "session-validation-user")
 	if err != nil || !valid {
 		t.Fatalf("active session valid=%v err=%v", valid, err)
+	}
+	if principal, err := remoteVerifier.Verify(ctx, remoteToken); err != nil || principal.ID != "session-validation-user" {
+		t.Fatalf("remote active session principal=%+v err=%v", principal, err)
 	}
 	_, valid, err = service.ValidateSession(ctx, "session-validation-expired", "session-validation-user")
 	if err != nil || valid {
@@ -261,6 +290,9 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 	if err != nil || valid {
 		t.Fatalf("revoked session valid=%v err=%v", valid, err)
 	}
+	if principal, err := remoteVerifier.Verify(ctx, remoteToken); err == nil || errors.Is(err, auth.ErrStateUnavailable) || principal.ID != "" {
+		t.Fatalf("remote revoked session principal=%+v err=%v, want invalid token", principal, err)
+	}
 	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
 		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_sessions(id,user_id,refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)`), "session-validation-second-session", "session-validation-user", "session-validation-second-refresh-hash", now.Add(time.Hour), now, "", "", "", now, "session-validation-integration", now, "session-validation-integration")
 		return err
@@ -270,6 +302,13 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 	_, valid, err = service.ValidateSession(ctx, "session-validation-second-session", "session-validation-user")
 	if err != nil || !valid {
 		t.Fatalf("second active session valid=%v err=%v", valid, err)
+	}
+	secondRemoteToken, err := issuer.IssuePrincipal(platformprincipal.Principal{ID: "session-validation-user", Type: platformprincipal.TypeUser, SessionID: "session-validation-second-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal, err := remoteVerifier.Verify(ctx, secondRemoteToken); err != nil || principal.ID != "session-validation-user" {
+		t.Fatalf("remote second active session principal=%+v err=%v", principal, err)
 	}
 	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
 		result, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE identity_users SET status='disabled' WHERE id=? AND version=? AND deleted_at IS NULL`), "session-validation-user", 1)
@@ -290,6 +329,9 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 	_, valid, err = service.ValidateSession(ctx, "session-validation-second-session", "session-validation-user")
 	if err != nil || valid {
 		t.Fatalf("disabled user session valid=%v err=%v", valid, err)
+	}
+	if principal, err := remoteVerifier.Verify(ctx, secondRemoteToken); err == nil || errors.Is(err, auth.ErrStateUnavailable) || principal.ID != "" {
+		t.Fatalf("remote disabled user principal=%+v err=%v, want invalid token", principal, err)
 	}
 }
 
