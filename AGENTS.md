@@ -100,6 +100,10 @@ The next domain work must keep identity and tenancy separate:
   a stale or missing generation is invalid, while a database outage remains an
   authentication-dependency failure. The general audit/optimistic version is
   unsuitable for this check because ordinary login also increments it.
+- Bearer JWTs must be bounded before local parsing, remote JWKS verification,
+  or database state checks. Oversized or empty tokens are invalid credentials,
+  not an authentication-dependency outage. The signer must not return a token
+  that the verifier's bound would reject.
 - A signed access-token claim is not authoritative for mutable credential
   state. Both local and remotely verified user tokens must recheck the active
   session, user, credential and any tenant membership before attaching the

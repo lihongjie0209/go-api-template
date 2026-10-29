@@ -201,6 +201,7 @@ func TestAuthenticateGRPC_PSKWildcard(t *testing.T) {
 		{name: "valid", header: "PSK " + key, code: codes.OK},
 		{name: "missing credential remains anonymous", code: codes.OK},
 		{name: "bearer rejected", header: "Bearer " + key, code: codes.Unauthenticated},
+		{name: "oversized bearer rejected", header: "Bearer " + strings.Repeat("x", 16*1024+1), code: codes.Unauthenticated},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

@@ -599,6 +599,7 @@ func TestDatabaseAuthenticationVerifiesSuppliedCredentials(t *testing.T) {
 		{name: "valid PSK", header: "PSK " + key, status: http.StatusOK},
 		{name: "missing credential remains anonymous", status: http.StatusOK},
 		{name: "bearer cannot access PSK route", header: "Bearer invalid", status: http.StatusUnauthorized},
+		{name: "oversized bearer is unauthorized", header: "Bearer " + strings.Repeat("x", 16*1024+1), status: http.StatusUnauthorized},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

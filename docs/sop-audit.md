@@ -619,7 +619,14 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 
 ## Service-account login failure classification
 
+### Bearer JWT input bound
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Bearer input bound | HTTP and gRPC keep their current authentication and global error contracts. The shared JWT verifier rejects empty or greater than 16 KiB bearers before local parsing, remote JWKS refresh, or database state lookup; the signer also rejects output above that limit. This bounds parsing work and prevents issuance of an unusable token. Malformed input is an invalid credential rather than a dependency outage. No operation/security event, cache, lock, database mutation, presentation change, or dictionary provider is introduced. Unit tests prove both local and remote verification stop before dependency work and oversized signing fails; integration tests retain the existing signed-token flows. |
+
 ### Service-account token revocation on secret rotation
+
 
 | Concern | Decision and rationale |
 | --- | --- |

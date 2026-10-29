@@ -11,8 +11,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +35,36 @@ func (f verifierFunc) VerifyBearer(ctx context.Context, raw string) (platformpri
 }
 
 func (verifierFunc) Close() {}
+
+func TestService_RejectsUnboundedBearerBeforeVerification(t *testing.T) {
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{"", strings.Repeat("x", maxBearerTokenBytes+1)} {
+		t.Run(fmt.Sprintf("length_%d", len(raw)), func(t *testing.T) {
+			local := New(config.Config{JWT: jwtConfig})
+			if _, err := local.Parse(raw); err == nil || errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("Parse length=%d error=%v, want invalid token", len(raw), err)
+			}
+			if _, _, err := local.VerifyWithState(t.Context(), raw); err == nil || errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("local VerifyWithState length=%d error=%v, want invalid token", len(raw), err)
+			}
+			remote := New(config.Config{})
+			remote.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
+				t.Fatal("oversized bearer reached remote JWKS verifier")
+				return platformprincipal.Principal{}, nil
+			})
+			if _, _, err := remote.VerifyWithState(t.Context(), raw); err == nil || errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("remote VerifyWithState length=%d error=%v, want invalid token", len(raw), err)
+			}
+		})
+	}
+	issuer := New(config.Config{JWT: jwtConfig})
+	if token, err := issuer.IssueServiceAccount(strings.Repeat("x", maxBearerTokenBytes), 1); err == nil || token != "" {
+		t.Fatalf("oversized issued token = (%d bytes, %v), want signing rejection", len(token), err)
+	}
+}
 
 func signedServiceAccountToken(t *testing.T, generation int64) string {
 	t.Helper()

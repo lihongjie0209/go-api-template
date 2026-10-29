@@ -43,6 +43,8 @@ type TokenState struct {
 // authoritative session or account store. Callers must not treat it as revocation.
 var ErrStateUnavailable = errors.New("authentication state unavailable")
 
+const maxBearerTokenBytes = 16 * 1024
+
 type signingKey struct {
 	id, algorithm   string
 	private, public any
@@ -146,6 +148,9 @@ func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Pri
 func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprincipal.Principal, TokenState, error) {
 	if err := ctx.Err(); err != nil {
 		return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, err)
+	}
+	if len(raw) == 0 || len(raw) > maxBearerTokenBytes {
+		return platformprincipal.Principal{}, TokenState{}, errors.New("invalid bearer token length")
 	}
 	if len(s.verification) == 0 {
 		if s.verifier == nil {
@@ -328,9 +333,19 @@ func (s *Service) issuePrincipalWithGeneration(principal platformprincipal.Princ
 	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: s.issuer, Audience: jwt.ClaimStrings{s.audience}, Subject: principal.ID, ID: jti, IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl))}, PrincipalType: principal.Type, SessionID: principal.SessionID, TenantID: principal.TenantID, MembershipID: principal.MembershipID, MustChangePassword: state.MustChangePassword, CredentialGeneration: generation}
 	token := jwt.NewWithClaims(jwt.GetSigningMethod(s.active.algorithm), claims)
 	token.Header["kid"] = s.active.id
-	return token.SignedString(s.active.private)
+	encoded, err := token.SignedString(s.active.private)
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) > maxBearerTokenBytes {
+		return "", errors.New("issued bearer token exceeds maximum length")
+	}
+	return encoded, nil
 }
 func (s *Service) Parse(raw string) (*Claims, error) {
+	if len(raw) == 0 || len(raw) > maxBearerTokenBytes {
+		return nil, errors.New("invalid bearer token length")
+	}
 	if len(s.verification) == 0 || s.initErr != nil {
 		return nil, errors.New("jwt verification keys are not configured")
 	}
