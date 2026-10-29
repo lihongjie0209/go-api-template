@@ -125,6 +125,9 @@ func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchG
 	return &identityv1.BatchGetUsersResponse{Users: users}, nil
 }
 func (s *identityServer) ListUsers(ctx context.Context, r *identityv1.ListUsersRequest) (*identityv1.ListUsersResponse, error) {
+	if _, err := platformprincipal.Require(ctx); err != nil {
+		return nil, status.Error(codes.Unauthenticated, "authentication required")
+	}
 	if username, exact := strings.CutPrefix(strings.TrimSpace(r.GetKeyword()), "="); exact {
 		// Exact user resolution can gate membership creation. Never decide active
 		// eligibility from a cache that may survive failed invalidation.
