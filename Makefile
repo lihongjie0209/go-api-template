@@ -41,9 +41,11 @@ modules-check:
 
 test-integration:
 	go test -tags=integration -run '^$$' ./integration/...
+	go test -tags=integration -run '^$$' ./internal/operationlog ./internal/securitylog
 
 ci-test-integration:
 	go test -tags=integration -count=1 -timeout=15m ./integration/...
+	go test -tags=integration -count=1 -timeout=5m ./internal/operationlog ./internal/securitylog
 
 integration-policy-check:
 	sh scripts/test-integration-policy.sh
