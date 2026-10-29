@@ -640,6 +640,11 @@ rejects disabling rate limiting, while development and test may disable it.
 | Contract and authentication | Existing POST+JSON business endpoints and authentication descriptors are unchanged. Shared `OK`/`Fail` helpers turn an elapsed request deadline into the global 504/request-timeout envelope with Request ID before a late handler can write success or another error. A canceled client receives no late response attempt. |
 | Logs, cache, lock, audit and tests | No new storage, event, cache, lock, version or dictionary provider is involved. Domain operations continue to receive the request Context and must stop before writing. Idempotency middleware checks the deadline before replay, after lease startup, and before flushing a captured response; an acquired state whose lease cannot start is aborted with a bounded detached cleanup Context before any handler runs. A lease failure after business work does not trigger an immediate abort because the write may have committed. The normal SDK lease stop cancels its own child Context, so middleware restores the parent request Context before deciding whether to respond. Unit tests run handlers and idempotency decisions past the deadline, verify the timeout envelope, confirm canceled clients receive no late helper response, and reproduce healthy lease cancellation, failed/canceled startup, timeout, lease-loss errors and real Redis replay. |
 
+Idempotent JSON fingerprinting reads at most 16 MiB plus one sentinel byte even
+when the global HTTP body limit is higher for multipart uploads. Oversized
+mutations return the global invalid-argument envelope before Redis `Begin` or
+business execution; a unit regression verifies both boundaries.
+
 ### Service-account token revocation on secret rotation
 
 | Concern | Decision and rationale |

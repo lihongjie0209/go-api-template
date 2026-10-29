@@ -552,6 +552,10 @@ message queue with an outbox.
   business work. Internal callers that require idempotency must validate the
   key explicitly before placing it in Context; the local Context adapter drops
   malformed keys so they cannot propagate upstream or enable automatic retries.
+- HTTP idempotency fingerprinting must stop reading after at most 16 MiB plus
+  one sentinel byte, independent of the global body limit used for file
+  upload. Reject an oversized JSON mutation before reading or creating any
+  Redis idempotency state or invoking the handler.
 - Fingerprints include service, transport operation, canonical request data,
   principal type/ID, tenant, membership, and session dimensions. Reusing a key
   across tenant or principal contexts must conflict rather than replay data.

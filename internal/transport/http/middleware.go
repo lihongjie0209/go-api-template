@@ -36,11 +36,14 @@ import (
 const requestIDKey = "request_id"
 
 var (
-	errIdempotencyStateFailed  = errors.New("idempotency_state_failed")
-	errIdempotencyHijack       = errors.New("idempotent response cannot be hijacked")
-	errRateLimitCheckFailed    = errors.New("rate_limit_check_failed")
-	errRateLimitKeyUnavailable = errors.New("rate_limit_key_unavailable")
+	errIdempotencyStateFailed     = errors.New("idempotency_state_failed")
+	errIdempotencyHijack          = errors.New("idempotent response cannot be hijacked")
+	errRateLimitCheckFailed       = errors.New("rate_limit_check_failed")
+	errRateLimitKeyUnavailable    = errors.New("rate_limit_key_unavailable")
+	errIdempotencyRequestTooLarge = errors.New("idempotency_request_too_large")
 )
+
+const maxIdempotencyRequestBytes = 16 << 20
 
 func SecurityClientContext() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -377,9 +380,12 @@ func retryableHTTPStatus(status int) bool {
 }
 
 func idempotencyFingerprint(c *gin.Context) (string, error) {
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxIdempotencyRequestBytes+1))
 	if err != nil {
 		return "", err
+	}
+	if len(body) > maxIdempotencyRequestBytes {
+		return "", errIdempotencyRequestTooLarge
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	canonicalBody, err := canonicalJSON(body)

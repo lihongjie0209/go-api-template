@@ -439,6 +439,23 @@ func TestIdempotencyFingerprintCanonicalizesJSON(t *testing.T) {
 	}
 }
 
+func TestIdempotencyExecutionBoundsRequestBeforeRedisAndHandler(t *testing.T) {
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	calls := 0
+	router := idempotencyTestRouter(t, manager, &calls)
+	request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(strings.Repeat("x", maxIdempotencyRequestBytes+1)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusBadRequest || body.Code != apperror.CodeInvalidArgument || body.RequestID == "" || calls != 0 || manager.beginKey != "" {
+		t.Fatalf("oversized idempotent request=%d %s calls=%d begin=%q", response.Code, response.Body.String(), calls, manager.beginKey)
+	}
+}
+
 func TestIdempotencyExecutionCompletesUnifiedResponse(t *testing.T) {
 	t.Parallel()
 	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
