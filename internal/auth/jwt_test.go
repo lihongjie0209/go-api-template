@@ -103,6 +103,26 @@ func TestService_ServiceAccountCredentialGenerationLocalAndRemote(t *testing.T) 
 			if _, _, err := service.VerifyWithState(t.Context(), legacyRaw); err == nil || errors.Is(err, ErrStateUnavailable) {
 				t.Fatalf("missing generation result = %v, want invalid token", err)
 			}
+			for _, forbidden := range []struct {
+				key   string
+				value any
+			}{{"must_change_password", true}, {"must_change_password", false}, {"must_change_password", nil}, {"MUST_CHANGE_PASSWORD", false}} {
+				claims := jwtlib.MapClaims{
+					"iss": jwtConfig.Issuer, "aud": jwtConfig.Audience, "sub": "service-1",
+					"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "principal_type": "service_account",
+					"credential_generation": 2,
+				}
+				claims[forbidden.key] = forbidden.value
+				userState := jwtlib.NewWithClaims(jwtlib.GetSigningMethod(issuer.active.algorithm), claims)
+				userState.Header["kid"] = issuer.active.id
+				userStateRaw, err := userState.SignedString(issuer.active.private)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := service.VerifyWithState(t.Context(), userStateRaw); err == nil || errors.Is(err, ErrStateUnavailable) {
+					t.Fatalf("service-account user state %s=%v result = %v, want invalid token", forbidden.key, forbidden.value, err)
+				}
+			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
 			}

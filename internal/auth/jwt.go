@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -174,17 +175,12 @@ func (s *Service) verifyRemoteWithState(ctx context.Context, raw string) (platfo
 	}
 	var generation int64
 	if principal.Type == platformprincipal.TypeServiceAccount {
-		// The shared verifier has already authenticated this exact token but its
-		// Principal deliberately contains no application-specific JWT claims.
-		parsed, _, parseErr := jwt.NewParser().ParseUnverified(raw, &Claims{})
-		if parseErr != nil {
-			return platformprincipal.Principal{}, TokenState{}, errors.New("invalid service account token claims")
+		// The shared verifier authenticated this token but its Principal contains
+		// no application-specific claims. Inspect only that verified token.
+		generation, err = serviceAccountGeneration(raw)
+		if err != nil {
+			return platformprincipal.Principal{}, TokenState{}, err
 		}
-		claims, ok := parsed.Claims.(*Claims)
-		if !ok {
-			return platformprincipal.Principal{}, TokenState{}, errors.New("invalid service account token claims")
-		}
-		generation = claims.CredentialGeneration
 	}
 	state, err := s.verifyPrincipalState(ctx, principal, generation)
 	if err != nil {
@@ -375,10 +371,44 @@ func (s *Service) Parse(raw string) (*Claims, error) {
 	if claims.PrincipalType == platformprincipal.TypeServiceAccount && claims.CredentialGeneration <= 0 {
 		return nil, errors.New("service account credential generation is required")
 	}
+	if claims.PrincipalType == platformprincipal.TypeServiceAccount {
+		generation, err := serviceAccountGeneration(raw)
+		if err != nil || generation != claims.CredentialGeneration {
+			return nil, errors.New("invalid service account token claims")
+		}
+	}
 	if claims.PrincipalType == platformprincipal.TypeUser && claims.CredentialGeneration != 0 {
 		return nil, errors.New("user jwt cannot carry service account credential generation")
 	}
 	return claims, nil
+}
+
+// serviceAccountGeneration reads extra claims only after the caller has
+// verified the signature. A present password-change claim is forbidden even
+// when its JSON value is false or null.
+func serviceAccountGeneration(raw string) (int64, error) {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return 0, errors.New("invalid service account token claims")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, errors.New("invalid service account token claims")
+	}
+	var claims map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return 0, errors.New("invalid service account token claims")
+	}
+	for key := range claims {
+		if strings.EqualFold(key, "must_change_password") {
+			return 0, errors.New("service account token cannot carry password-change state")
+		}
+	}
+	var generation int64
+	if err := json.Unmarshal(claims["credential_generation"], &generation); err != nil || generation <= 0 {
+		return 0, errors.New("service account credential generation is required")
+	}
+	return generation, nil
 }
 
 func (s *Service) referencesLocalKey(raw string) bool {

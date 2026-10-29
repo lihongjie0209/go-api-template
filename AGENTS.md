@@ -87,7 +87,10 @@ The next domain work must keep identity and tenancy separate:
 - Service-account bearer tokens must not carry user session, tenant-membership,
   or password-change claims. Enforce this both when signing local tokens and
   when accepting local or remotely verified tokens; do not rely on downstream
-  authorization to ignore unexpected context fields.
+  authorization to ignore unexpected context fields. The shared remote JWKS
+  verifier returns only a normalized principal; after successful signature
+  verification, inspect the authenticated token for service-account-specific
+  claims that are absent from that principal.
 - Service-account bearer tokens must carry a positive credential generation.
   Secret rotation increments the authoritative account generation in the same
   transaction as the secret hash update. Status or expiry changes also increment
