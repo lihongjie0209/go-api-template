@@ -228,7 +228,11 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_user_credentials(id,user_id,password_hash,password_changed_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), "session-validation-credentials", "session-validation-user", "integration-only-hash", now, now, "session-validation-integration", now, "session-validation-integration"); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_sessions(id,user_id,refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)`), "session-validation-session", "session-validation-user", "session-validation-refresh-hash", now.Add(time.Hour), now, "", "", "", now, "session-validation-integration", now, "session-validation-integration")
+		query := tx.Rebind(`INSERT INTO identity_sessions(id,user_id,refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)`)
+		if _, err := tx.ExecContext(actorCtx, query, "session-validation-session", "session-validation-user", "session-validation-refresh-hash", now.Add(time.Hour), now, "", "", "", now, "session-validation-integration", now, "session-validation-integration"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(actorCtx, query, "session-validation-expired", "session-validation-user", "session-validation-expired-refresh-hash", now.Add(-time.Hour), now, "", "", "", now, "session-validation-integration", now, "session-validation-integration")
 		return err
 	})
 	if err != nil {
@@ -238,6 +242,10 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 	_, valid, err := service.ValidateSession(ctx, "session-validation-session", "session-validation-user")
 	if err != nil || !valid {
 		t.Fatalf("active session valid=%v err=%v", valid, err)
+	}
+	_, valid, err = service.ValidateSession(ctx, "session-validation-expired", "session-validation-user")
+	if err != nil || valid {
+		t.Fatalf("expired session valid=%v err=%v", valid, err)
 	}
 	_, valid, err = service.ValidateSession(ctx, "session-validation-session", "another-user")
 	if err != nil || valid {
