@@ -138,7 +138,8 @@ func TestRegisterConsumerRecoversPanickedSubscriptionAndRetries(t *testing.T) {
 		lifecycle := new(captureLifecycle)
 		var attempts atomic.Int32
 		var output bytes.Buffer
-		RegisterConsumer(lifecycle, "test", slog.New(slog.NewJSONHandler(&output, nil)), nil, func(ctx context.Context) error {
+		metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+		RegisterConsumer(lifecycle, "test", slog.New(slog.NewJSONHandler(&output, nil)), metrics, func(ctx context.Context) error {
 			if attempts.Add(1) == 1 {
 				panic("token=secret-value")
 			}
@@ -158,6 +159,11 @@ func TestRegisterConsumerRecoversPanickedSubscriptionAndRetries(t *testing.T) {
 		}
 		if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte("event_consumer_panicked")) {
 			t.Fatalf("consumer panic log leaked value or omitted safe code: %s", output.String())
+		}
+		recorder := httptest.NewRecorder()
+		metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if !strings.Contains(recorder.Body.String(), `event_consumer_restarts_total{consumer="test"} 1`) {
+			t.Fatalf("consumer panic retry metric missing: %s", recorder.Body.String())
 		}
 	})
 }

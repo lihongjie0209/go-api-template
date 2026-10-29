@@ -170,6 +170,13 @@ func (o *Outbox) dispatchRecord(ctx context.Context, record outboxRecord) error 
 	started := time.Now()
 	dispatchCtx, span := outboxTracer.Start(extractTraceContext(ctx, record.TraceParent, record.TraceState), "event_outbox.dispatch", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", record.Subject)))
 	defer span.End()
+	defer func() {
+		if recover() != nil {
+			observability.RecordSafeError(span, errOutboxDispatchPanicked, errOutboxDispatchPanicked)
+			span.SetStatus(codes.Error, "outbox dispatch panicked")
+			panic(errOutboxDispatchPanicked)
+		}
+	}()
 	envelope, err := decodeClaimedEnvelope(record)
 	if err != nil {
 		span.RecordError(errDecodeEnvelope)

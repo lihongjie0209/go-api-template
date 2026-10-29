@@ -22,6 +22,7 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -72,11 +73,15 @@ func TestOutboxDispatchEndsSpanWhenBatchPanics(t *testing.T) {
 	outboxTracer = provider.Tracer("outbox-panic-test")
 	t.Cleanup(func() { outboxTracer = previous })
 	outbox := &Outbox{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	err := dispatchSafely(t.Context(), func(ctx context.Context) error {
-		return outbox.dispatchRecord(ctx, outboxRecord{ID: "event-1", Subject: "invalid subject"})
+	envelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "event-1"})
+	require.NoError(t, err)
+	err = dispatchSafely(t.Context(), func(ctx context.Context) error {
+		return outbox.dispatchRecord(ctx, outboxRecord{ID: "event-1", Subject: "platform.test", Envelope: envelope})
 	})
 	require.ErrorIs(t, err, errOutboxDispatchPanicked)
 	require.Len(t, recorder.Ended(), 1)
+	require.Equal(t, codes.Error, recorder.Ended()[0].Status().Code)
+	require.Equal(t, "outbox dispatch panicked", recorder.Ended()[0].Status().Description)
 }
 
 func TestOutboxPersistenceErrorDoesNotLeakThroughLogOrTrace(t *testing.T) {
