@@ -137,6 +137,14 @@ func TestConsumeRejectsNilEnvelopeWithoutPanic(t *testing.T) {
 	}
 }
 
+func TestConsumeRejectsUnexpectedEventType(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	if err := service.consume(t.Context(), &commonv1.EventEnvelope{EventType: "platform.other.recorded.v1"}); !errors.Is(err, ErrInvalidEntry) {
+		t.Fatalf("consume unexpected event type = %v, want invalid entry", err)
+	}
+}
+
 func TestValidateEntryRejectsUnboundedFields(t *testing.T) {
 	t.Parallel()
 	entry := Entry{Operation: strings.Repeat("x", 257), Source: "backend", Protocol: "service"}

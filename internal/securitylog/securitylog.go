@@ -220,7 +220,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 		return fmt.Errorf("%w: nil security log envelope", ErrInvalidEntry)
 	}
 	if envelope.EventType != envelopeType {
-		return nil
+		return fmt.Errorf("%w: unexpected security log event type", ErrInvalidEntry)
 	}
 	var value payload
 	if err := json.Unmarshal(envelope.Payload, &value); err != nil {

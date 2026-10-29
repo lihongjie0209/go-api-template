@@ -337,6 +337,9 @@ TTL, and invalidation for its own data.
   persisted; coercion, truncation, trigger and connectivity failures must
   propagate so the queue can retry or dead-letter. Do not use MySQL
   `INSERT IGNORE` or an untargeted conflict handler on durable log writes.
+- An audit consumer subscribed to a dedicated event subject must reject an
+  envelope with the wrong event type. Returning success would acknowledge and
+  discard a malformed durable event before the queue can retry or dead-letter it.
 - Queue consumer error callbacks must use the shared safe-error logger; SDK
   callbacks may carry handler errors, event identifiers, or connection details.
   Never forward their raw error text to application logs or traces.
