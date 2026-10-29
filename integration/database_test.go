@@ -253,6 +253,36 @@ func testAuthoritativeSessionValidation(t *testing.T, ctx context.Context, db *s
 	if err != nil || valid {
 		t.Fatalf("revoked session valid=%v err=%v", valid, err)
 	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO identity_sessions(id,user_id,refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)`), "session-validation-second-session", "session-validation-user", "session-validation-second-refresh-hash", now.Add(time.Hour), now, "", "", "", now, "session-validation-integration", now, "session-validation-integration")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, valid, err = service.ValidateSession(ctx, "session-validation-second-session", "session-validation-user")
+	if err != nil || !valid {
+		t.Fatalf("second active session valid=%v err=%v", valid, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		result, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE identity_users SET status='disabled' WHERE id=? AND version=? AND deleted_at IS NULL`), "session-validation-user", 1)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return fmt.Errorf("disable session validation user affected %d rows", rows)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, valid, err = service.ValidateSession(ctx, "session-validation-second-session", "session-validation-user")
+	if err != nil || valid {
+		t.Fatalf("disabled user session valid=%v err=%v", valid, err)
+	}
 }
 
 func testPostgresMigrationLockTimeout(t *testing.T, ctx context.Context, db *sqlx.DB, cfg config.Migration) {
