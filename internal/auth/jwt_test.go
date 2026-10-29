@@ -235,6 +235,39 @@ func TestService_VerifyRejectsDisabledServiceAccount(t *testing.T) {
 	}
 }
 
+func TestService_VerifyPreservesCanceledCallerWithoutStateStore(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewWithDatabase(config.Config{JWT: jwtConfig}, nil)
+	raw, err := service.IssuePrincipal(platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name string
+		ctx  func() context.Context
+		want error
+	}{
+		{name: "canceled", ctx: func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, want: context.Canceled},
+		{name: "deadline", ctx: func() context.Context {
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			return ctx
+		}, want: context.DeadlineExceeded},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := service.VerifyWithState(tt.ctx(), raw)
+			if !errors.Is(err, tt.want) || !errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("VerifyWithState error = %v, want caller cancellation and state unavailable", err)
+			}
+		})
+	}
+}
+
 func TestService_VerifyDistinguishesStateStoreFailureFromInactiveToken(t *testing.T) {
 	for _, test := range []struct {
 		name      string

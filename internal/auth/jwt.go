@@ -142,6 +142,9 @@ func (s *Service) Verify(ctx context.Context, raw string) (platformprincipal.Pri
 }
 
 func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprincipal.Principal, TokenState, error) {
+	if err := ctx.Err(); err != nil {
+		return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, err)
+	}
 	if len(s.verification) == 0 {
 		if s.verifier == nil {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("jwt verification keys are not configured")
@@ -171,6 +174,9 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 			args = append(args, claims.MembershipID, claims.TenantID)
 		}
 		if err := s.db.GetContext(ctx, &state.MustChangePassword, s.db.Rebind(query), args...); err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				return platformprincipal.Principal{}, TokenState{}, errors.New("session is revoked or expired")
 			}
@@ -183,6 +189,9 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		var count int
 		query := s.db.Rebind(`SELECT count(*) FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
 		if err := s.db.GetContext(ctx, &count, query, claims.Subject, time.Now()); err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
+			}
 			if !errors.Is(err, sql.ErrNoRows) {
 				return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 			}
@@ -191,6 +200,9 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		if count != 1 {
 			return platformprincipal.Principal{}, TokenState{}, errors.New("service account is disabled or expired")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return platformprincipal.Principal{}, TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, err)
 	}
 	return platformprincipal.Principal{ID: claims.Subject, Type: t, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}, state, nil
 }
