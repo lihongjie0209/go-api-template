@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -15,6 +16,8 @@ import (
 )
 
 type grantSnapshotKey struct{}
+
+const maxEffectiveGrantActions = 10_000
 
 type grantSnapshot struct {
 	principal platformprincipal.Principal
@@ -60,18 +63,21 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 }
 
 func (a *Authorizer) platformGrants(ctx context.Context, reader grantReader, principal platformprincipal.Principal) (map[string]struct{}, error) {
-	query := reader.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions g
+	query := reader.Rebind(fmt.Sprintf(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions g
 		JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
 		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
 		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
 		JOIN authorization_resources res ON res.id=act.resource_id AND res.scope='platform' AND res.status='active' AND res.deleted_at IS NULL
-		WHERE g.principal_type=? AND g.principal_id=? AND g.deleted_at IS NULL`)
+		WHERE g.principal_type=? AND g.principal_id=? AND g.deleted_at IS NULL LIMIT %d`, maxEffectiveGrantActions+1))
 	rows := []struct {
 		Resource string `db:"resource_key"`
 		Action   string `db:"action_key"`
 	}{}
 	if err := reader.SelectContext(ctx, &rows, query, string(principal.Type), principal.ID); err != nil {
 		return nil, fmt.Errorf("resolve platform grants: %w", err)
+	}
+	if len(rows) > maxEffectiveGrantActions {
+		return nil, errors.New("platform grant set exceeds maximum")
 	}
 	grants := make(map[string]struct{}, len(rows))
 	for _, row := range rows {

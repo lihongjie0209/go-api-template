@@ -2,6 +2,8 @@ package authorization
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
@@ -101,16 +103,19 @@ func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platfo
 	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
 		return false, nil
 	}
-	grants, err := a.managedTenantGrants(ctx, a.db, principal)
-	if err != nil {
-		return false, err
+	query := a.db.Rebind(`SELECT 1 ` + managedTenantGrantSource + ` AND res.resource_key=? AND act.action_key=? LIMIT 1`)
+	var found int
+	err := a.db.GetContext(ctx, &found, query, principal.TenantID, principal.MembershipID, principal.ID, requirement.Resource, requirement.Action)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	_, allowed := grants[requirement.Resource+"\x00"+requirement.Action]
-	return allowed, nil
+	if err != nil {
+		return false, fmt.Errorf("resolve managed tenant grant: %w", err)
+	}
+	return found == 1, nil
 }
 
-func (a *Authorizer) managedTenantGrants(ctx context.Context, reader grantReader, principal platformprincipal.Principal) (map[string]struct{}, error) {
-	query := reader.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions p
+const managedTenantGrantSource = `FROM permissions p
 		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
 		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
 		JOIN authorization_resources res ON res.id=act.resource_id AND res.scope='tenant' AND res.status='active' AND res.deleted_at IS NULL
@@ -121,13 +126,19 @@ func (a *Authorizer) managedTenantGrants(ctx context.Context, reader grantReader
 		AND (EXISTS (SELECT 1 FROM tenant_administrators a WHERE a.tenant_id=g.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL)
 		OR EXISTS (SELECT 1 FROM tenant_member_roles mr JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id AND r.status='active' AND r.deleted_at IS NULL
 		JOIN tenant_role_permissions rp ON rp.tenant_id=mr.tenant_id AND rp.role_id=mr.role_id AND rp.permission_id=p.id AND rp.deleted_at IS NULL
-		WHERE mr.tenant_id=g.tenant_id AND mr.membership_id=m.id AND mr.deleted_at IS NULL))`)
+		WHERE mr.tenant_id=g.tenant_id AND mr.membership_id=m.id AND mr.deleted_at IS NULL))`
+
+func (a *Authorizer) managedTenantGrants(ctx context.Context, reader grantReader, principal platformprincipal.Principal) (map[string]struct{}, error) {
+	query := reader.Rebind(fmt.Sprintf(`SELECT DISTINCT res.resource_key,act.action_key `+managedTenantGrantSource+` LIMIT %d`, maxEffectiveGrantActions+1))
 	rows := []struct {
 		Resource string `db:"resource_key"`
 		Action   string `db:"action_key"`
 	}{}
 	if err := reader.SelectContext(ctx, &rows, query, principal.TenantID, principal.MembershipID, principal.ID); err != nil {
 		return nil, fmt.Errorf("resolve managed tenant grants: %w", err)
+	}
+	if len(rows) > maxEffectiveGrantActions {
+		return nil, errors.New("tenant grant set exceeds maximum")
 	}
 	result := make(map[string]struct{}, len(rows))
 	for _, row := range rows {

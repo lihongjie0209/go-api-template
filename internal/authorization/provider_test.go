@@ -2,6 +2,7 @@ package authorization
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -44,6 +45,25 @@ func TestAuthorizerTenantGrantSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, a.Authorize(ctx, p, platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant}))
 	require.ErrorIs(t, a.Authorize(ctx, p, platformauthz.Requirement{Resource: "tenant.member", Action: "update", Scope: platformauthz.ScopeTenant}), platformauthz.ErrDenied)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAuthorizerTenantGrantChecksOnlyRequestedAction(t *testing.T) {
+	a, mock := testAuthorizer(t)
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
+	requirement := platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant}
+	mock.ExpectQuery(`SELECT 1 FROM permissions p.*res.resource_key=\? AND act.action_key=\? LIMIT 1`).
+		WithArgs("tenant-1", "member-1", "user-1", "tenant.member", "read").
+		WillReturnRows(sqlmock.NewRows([]string{"one"}).AddRow(1))
+	require.NoError(t, a.Authorize(t.Context(), principal, requirement))
+	mock.ExpectQuery(`SELECT 1 FROM permissions p.*res.resource_key=\? AND act.action_key=\? LIMIT 1`).
+		WithArgs("tenant-1", "member-1", "user-1", "tenant.member", "read").
+		WillReturnRows(sqlmock.NewRows([]string{"one"}))
+	require.ErrorIs(t, a.Authorize(t.Context(), principal, requirement), platformauthz.ErrDenied)
+	mock.ExpectQuery(`SELECT 1 FROM permissions p.*res.resource_key=\? AND act.action_key=\? LIMIT 1`).
+		WithArgs("tenant-1", "member-1", "user-1", "tenant.member", "read").
+		WillReturnError(errors.New("database unavailable"))
+	require.ErrorIs(t, a.Authorize(t.Context(), principal, requirement), platformauthz.ErrDecisionUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -181,4 +201,32 @@ func TestAuthorizerSnapshotFailsClosedOnTenantReadAndTransactionCommit(t *testin
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
 	require.Empty(t, revision)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAuthorizerSnapshotRejectsOversizedGrantSets(t *testing.T) {
+	for _, scope := range []string{"platform", "tenant"} {
+		t.Run(scope, func(t *testing.T) {
+			a, mock := testAuthorizer(t)
+			principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
+			rows := sqlmock.NewRows([]string{"resource_key", "action_key"})
+			for index := range maxEffectiveGrantActions + 1 {
+				rows.AddRow(fmt.Sprintf("resource.%d", index), "read")
+			}
+			mock.ExpectBegin()
+			if scope == "platform" {
+				mock.ExpectQuery(`FROM platform_principal_permissions.*LIMIT 10001`).WillReturnRows(rows)
+			} else {
+				principal.TenantID = "tenant-1"
+				principal.MembershipID = "member-1"
+				mock.ExpectQuery(`FROM platform_principal_permissions.*LIMIT 10001`).
+					WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}))
+				mock.ExpectQuery(`FROM permissions.*LIMIT 10001`).WillReturnRows(rows)
+			}
+			mock.ExpectRollback()
+			_, revision, err := a.Snapshot(t.Context(), principal)
+			require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+			require.Empty(t, revision)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }

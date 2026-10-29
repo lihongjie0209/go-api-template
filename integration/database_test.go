@@ -1383,6 +1383,16 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true, 1); err != nil {
 		t.Fatalf("set tenant administrator: %v", err)
 	}
+	authorizer := authorization.New(db, registry)
+	requirement := platformauthz.Requirement{Resource: "integration.permissions", Action: "read", Scope: platformauthz.ScopeTenant}
+	adminPrincipal := platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: adminMemberID}
+	if err := authorizer.Authorize(ctx, adminPrincipal, requirement); err != nil {
+		t.Fatalf("targeted tenant grant denied administrator: %v", err)
+	}
+	targetPrincipal := platformprincipal.Principal{ID: "authorization-target", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: targetMemberID}
+	if err := authorizer.Authorize(ctx, targetPrincipal, requirement); !errors.Is(err, platformauthz.ErrDenied) {
+		t.Fatalf("targeted tenant grant for unassigned member: %v", err)
+	}
 	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false, 1); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale tenant administrator version error=%v", err)
 	}
@@ -1421,6 +1431,9 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); err != nil {
 		t.Fatalf("set member roles: %v", err)
+	}
+	if err := authorizer.Authorize(ctx, targetPrincipal, requirement); err != nil {
+		t.Fatalf("targeted tenant grant denied assigned member: %v", err)
 	}
 	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale member roles error=%v", err)
