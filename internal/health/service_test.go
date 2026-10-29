@@ -46,7 +46,7 @@ func TestService_ReadyUsesIndependentDependencyTimeouts(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	service := New(sqlx.NewDb(database, "sqlmock"), client, config.Config{Health: config.Health{DatabaseTimeout: 10 * time.Millisecond, RedisTimeout: time.Second}})
+	service := New(sqlx.NewDb(database, "sqlmock"), client, config.Config{Database: config.Database{Enabled: true}, Health: config.Health{DatabaseTimeout: 10 * time.Millisecond, RedisTimeout: time.Second}})
 
 	started := time.Now()
 	status, ready := service.Ready(t.Context())
@@ -110,6 +110,29 @@ func TestService_ReadyFailsWhenEnabledDatabaseHandleIsMissing(t *testing.T) {
 	}
 }
 
+func TestService_ReadyReportsExplicitlyDisabledDatabaseEvenWithHandle(t *testing.T) {
+	t.Parallel()
+	database, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := New(sqlx.NewDb(database, "sqlmock"), client, config.Config{
+		Database: config.Database{Enabled: false},
+		Health:   config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second},
+	})
+	status, ready := service.Ready(t.Context())
+	if !ready || status.Dependencies["database"].Status != "disabled" || status.Dependencies["redis"].Status != "up" {
+		t.Fatalf("Ready() = %#v, %t", status, ready)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestService_ReadyHonorsParentCancellation(t *testing.T) {
 	t.Parallel()
 	database, _, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
@@ -119,7 +142,7 @@ func TestService_ReadyHonorsParentCancellation(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	client := redis.NewClient(&redis.Options{Addr: "192.0.2.1:6379", DialTimeout: time.Second})
 	t.Cleanup(func() { _ = client.Close() })
-	service := New(sqlx.NewDb(database, "sqlmock"), client, config.Config{Health: config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}})
+	service := New(sqlx.NewDb(database, "sqlmock"), client, config.Config{Database: config.Database{Enabled: true}, Health: config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second}})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 

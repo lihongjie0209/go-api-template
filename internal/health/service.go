@@ -54,12 +54,12 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 }
 
 func (s *Service) checkDatabase(parent context.Context, results chan<- result) {
-	if s.db == nil {
-		if s.databaseEnabled {
-			results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
-			return
-		}
+	if !s.databaseEnabled {
 		results <- result{name: "database", dependency: Dependency{Status: "disabled"}, ready: true}
+		return
+	}
+	if s.db == nil {
+		results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, s.cfg.DatabaseTimeout)
