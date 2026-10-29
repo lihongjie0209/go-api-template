@@ -110,6 +110,12 @@ The next domain work must keep identity and tenancy separate:
   or database state checks. Oversized or empty tokens are invalid credentials,
   not an authentication-dependency outage. The signer must not return a token
   that the verifier's bound would reject.
+- HTTP business handlers must use the shared response helpers. They must not
+  write a success or dependency error after their request Context expires;
+  an elapsed deadline becomes the global request-timeout envelope, and a
+  disconnected client receives no attempted late response. Middleware that
+  writes a saved or captured response, especially idempotency replay, must
+  enforce the same deadline before writing it.
 - gRPC ingress must keep a bounded receive-message size and metadata/header
   list. Configuration overrides cannot raise the receive size above 64 MiB;
   the server accepts at most 64 KiB of uncompressed header metadata.

@@ -192,6 +192,18 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			Fail(c, logger, apperror.Unavailable("idempotency is unavailable", err))
 			return
 		}
+		if c.Request.Context().Err() != nil {
+			if decision.State == idempotency.StateAcquired {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 2*time.Second)
+				abortErr := manager.Abort(cleanupCtx, key, decision.Owner)
+				cancel()
+				if abortErr != nil {
+					logger.WarnContext(c.Request.Context(), "abort expired idempotency execution", "error", observability.SafeError(abortErr, errIdempotencyStateFailed), "request_id", requestID(c))
+				}
+			}
+			responseContextEnded(c)
+			return
+		}
 		switch decision.State {
 		case idempotency.StateCompleted:
 			var saved idempotentHTTPResult
@@ -212,11 +224,17 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 				Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", nil))
 				return
 			}
+			if responseContextEnded(c) {
+				return
+			}
 			saved.Response.RequestID = requestID(c)
 			c.Abort()
 			c.JSON(saved.HTTPStatus, saved.Response)
 			return
 		case idempotency.StateFailed:
+			if responseContextEnded(c) {
+				return
+			}
 			c.AbortWithStatusJSON(decision.Failure.HTTPStatus, Response{Code: decision.Failure.Code, Message: decision.Failure.Message, Body: nil, RequestID: requestID(c)})
 			return
 		case idempotency.StateProcessing:
@@ -293,6 +311,11 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			failIdempotencyState(c, logger, originalHeaders, err)
 			return
 		}
+		if c.Request.Context().Err() != nil {
+			restoreResponseHeaders(originalWriter.Header(), originalHeaders)
+			responseContextEnded(c)
+			return
+		}
 		originalWriter.WriteHeader(capture.Status())
 		if capture.body.Len() == 0 {
 			originalWriter.WriteHeaderNow()
@@ -316,6 +339,9 @@ func restoreResponseHeaders(target, original http.Header) {
 func failIdempotencyState(c *gin.Context, logger *slog.Logger, originalHeaders http.Header, err error) {
 	restoreResponseHeaders(c.Writer.Header(), originalHeaders)
 	logger.ErrorContext(c.Request.Context(), "idempotency state unavailable", "error", observability.SafeError(err, errIdempotencyStateFailed), "request_id", requestID(c))
+	if responseContextEnded(c) {
+		return
+	}
 	appErr := apperror.Unavailable("idempotency state is unavailable", nil)
 	c.AbortWithStatusJSON(appErr.HTTPStatus, Response{Code: appErr.Code, Message: appErr.Message, Body: nil, RequestID: requestID(c)})
 }

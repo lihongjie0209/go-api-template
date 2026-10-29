@@ -43,6 +43,7 @@ type fakeIdempotencyManager struct {
 	aborted         bool
 	maxBytes        int
 	onComplete      func()
+	onBegin         func(context.Context)
 }
 
 func TestEnvironmentInjectsActiveProfile(t *testing.T) {
@@ -108,10 +109,74 @@ func (m *fakeIdempotencyManager) MaxResponseBytes() int {
 	}
 	return 1 << 20
 }
-func (m *fakeIdempotencyManager) Begin(_ context.Context, key, fingerprint string) (idempotency.Decision, error) {
+func (m *fakeIdempotencyManager) Begin(ctx context.Context, key, fingerprint string) (idempotency.Decision, error) {
 	m.beginKey = key
 	m.fingerprint = fingerprint
+	if m.onBegin != nil {
+		m.onBegin(ctx)
+	}
 	return m.decision, nil
+}
+
+func TestIdempotencyExecutionDoesNotReplayAfterDeadline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	saved, err := json.Marshal(idempotentHTTPResult{HTTPStatus: http.StatusOK, Response: Response{Code: apperror.CodeOK, Message: "success", Body: "stale"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name     string
+		decision idempotency.Decision
+		aborted  bool
+	}{
+		{name: "completed replay", decision: idempotency.Decision{State: idempotency.StateCompleted, Response: saved}},
+		{name: "acquired execution", decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}, aborted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := &fakeIdempotencyManager{decision: test.decision, onBegin: func(ctx context.Context) { <-ctx.Done() }}
+			called := false
+			router := gin.New()
+			router.Use(RequestID(), Timeout(time.Millisecond, logger), func(c *gin.Context) {
+				c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+				c.Next()
+			}, IdempotencyExecution(manager, []string{"/test"}, logger))
+			router.POST("/test", func(c *gin.Context) { called = true; OK(c, "late") })
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+			var body Response
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusGatewayTimeout || body.Code != apperror.CodeRequestTimeout || body.RequestID == "" || called || manager.aborted != test.aborted || strings.Contains(response.Body.String(), "stale") {
+				t.Fatalf("late decision response=%d %s called=%t aborted=%t", response.Code, response.Body.String(), called, manager.aborted)
+			}
+		})
+	}
+}
+
+func TestIdempotencyExecutionDoesNotFlushLateSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	router := gin.New()
+	router.Use(RequestID(), Timeout(time.Millisecond, logger), func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "operation-1"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, logger))
+	router.POST("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, Response{Code: apperror.CodeOK, Message: "success", Body: "late", RequestID: requestID(c)})
+		<-c.Request.Context().Done()
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusGatewayTimeout || body.Code != apperror.CodeRequestTimeout || body.RequestID == "" || strings.Contains(response.Body.String(), "late") || manager.completed == nil {
+		t.Fatalf("late captured response=%d %s completed=%+v", response.Code, response.Body.String(), manager.completed)
+	}
 }
 func (m *fakeIdempotencyManager) Complete(_ context.Context, _, _ string, response any) error {
 	if m.onComplete != nil {

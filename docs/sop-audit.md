@@ -617,7 +617,7 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 | Logging, cache, lock and audit | This read-only authentication boundary emits no operation/security event or audited write and uses no business cache or distributed lock. Key caching and refresh remain inside the shared SDK. Authentication errors stay generic at HTTP/gRPC boundaries and must not expose token bytes or JWK material. |
 | Presentation, tests and shared capability | No response or dictionary contract changes. SDK unit tests cover RS256/ES256/EdDSA, conflicting and incomplete claims, first-fetch failures and bounded timeouts; template unit tests exercise its real signer/JWKS through SDK verification and configured startup timeout. The fix lives in the shared SDK rather than copying a local remote-verification stack into the template. |
 
-## Service-account login failure classification
+## Authentication and HTTP ingress hardening
 
 Both HTTP login routes register the dedicated `LoginRateLimit` boundary. Its
 fail-closed behavior is independent of the Redis key dimension (`login` or
@@ -633,8 +633,14 @@ rejects disabling rate limiting, while development and test may disable it.
 | --- | --- |
 | Bearer input bound | HTTP and gRPC keep their current authentication and global error contracts. The shared JWT verifier rejects empty or greater than 16 KiB bearers before local parsing, remote JWKS refresh, or database state lookup; the signer also rejects output above that limit. This bounds parsing work and prevents issuance of an unusable token. Malformed input is an invalid credential rather than a dependency outage. No operation/security event, cache, lock, database mutation, presentation change, or dictionary provider is introduced. Unit tests prove both local and remote verification stop before dependency work and oversized signing fails; integration tests retain the existing signed-token flows. |
 
-### Service-account token revocation on secret rotation
+### HTTP response after cancellation
 
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract and authentication | Existing POST+JSON business endpoints and authentication descriptors are unchanged. Shared `OK`/`Fail` helpers turn an elapsed request deadline into the global 504/request-timeout envelope with Request ID before a late handler can write success or another error. A canceled client receives no late response attempt. |
+| Logs, cache, lock, audit and tests | No new storage, event, cache, lock, version or dictionary provider is involved. Domain operations continue to receive the request Context and must stop before writing. Idempotency middleware checks the deadline before replay and before flushing a captured response; an expired newly acquired state is aborted with a bounded detached cleanup Context. Unit tests run handlers and idempotency decisions past the deadline, verify the timeout envelope, and confirm canceled clients receive no late helper response. |
+
+### Service-account token revocation on secret rotation
 
 | Concern | Decision and rationale |
 | --- | --- |
@@ -642,6 +648,8 @@ rejects disabling rate limiting, while development and test may disable it.
 | Authorization and logs | Existing login and secret-rotation permission descriptors, security events and operation events apply. Rotation keeps its expected-version update and transactional audit record. |
 | Cache/lock/audit | No cache or distributed lock is added: one account-row generation check is required for every bearer request. Rotation increments the generation in the same audited SQL update as the secret hash. A status or expiry change also increments it, so disabling and later re-enabling an account cannot resurrect an old token; presentation-only edits leave it unchanged. The generation is independent of the general optimistic `version`, which also changes on login and profile updates. |
 | Presentation/tests | The generation is internal and is not returned in account management responses. Unit tests cover current, rotated, missing, and unavailable state through both local and remote signature paths; PostgreSQL/MySQL integration tests verify rotation invalidates an earlier token. |
+
+### Service-account login failure classification
 
 | Concern | Decision and rationale |
 | --- | --- |
