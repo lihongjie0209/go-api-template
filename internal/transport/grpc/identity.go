@@ -190,6 +190,10 @@ func fromProtoStatus(v identityv1.UserStatus) identity.Status {
 }
 func identityError(e error) error {
 	switch {
+	case errors.Is(e, context.Canceled):
+		return status.Error(codes.Canceled, "request canceled")
+	case errors.Is(e, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "request deadline exceeded")
 	case errors.Is(e, identity.ErrInvalid):
 		return status.Error(codes.InvalidArgument, "invalid user request")
 	case errors.Is(e, identity.ErrNotFound):

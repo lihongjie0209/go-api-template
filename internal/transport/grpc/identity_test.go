@@ -212,6 +212,25 @@ func TestIdentityListUsersExactModeFailsClosedOnDatabaseError(t *testing.T) {
 	}
 }
 
+func TestIdentityErrorPreservesCancellation(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{name: "canceled", err: fmt.Errorf("lookup user: %w", context.Canceled), want: codes.Canceled},
+		{name: "deadline", err: fmt.Errorf("lookup user: %w", context.DeadlineExceeded), want: codes.DeadlineExceeded},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := status.Code(identityError(tt.err)); got != tt.want {
+				t.Fatalf("code=%v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIdentityBatchGetUsersEmptyIDsReturnsNoUsersWithoutQuery(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
