@@ -491,7 +491,10 @@ available. A feature must not introduce a second transport for the same event.
   not invalidate the snapshot or log a dependency failure; either operation's
   own timeout while the lifecycle remains active must still fail closed.
   A post-mutation refresh uses a separate failure policy: cancellation may
-  leave the local snapshot stale, so it must invalidate that snapshot.
+  leave the local snapshot stale, so it must invalidate that snapshot. A
+  directly invoked runtime refresh without the sync wrapper must also
+  invalidate its prior snapshot after either a database read or policy
+  compilation failure.
 - A durable cross-service notification must use a transactional outbox written
   in the same database transaction as the business change and then be published
   to the message queue. Do not dual-write the database and queue directly.

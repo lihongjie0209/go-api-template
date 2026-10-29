@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +50,39 @@ func TestRuntimeChangeFailureInvalidatesLocalDataPermissions(t *testing.T) {
 	require.NoError(t, engine.Replace(nil))
 	_, _, err = loader.Pin(t.Context())
 	require.NoError(t, err)
+}
+
+func TestDirectRuntimeRefreshFailureInvalidatesLocalDataPermissions(t *testing.T) {
+	t.Parallel()
+	service, mock := dataLifecycleFixture(t, true)
+	loader := service.runtime
+	require.NoError(t, loader.engine.Replace(nil))
+	_, _, err := loader.Pin(t.Context())
+	require.NoError(t, err)
+	want := errors.New("policy database unavailable")
+	mock.ExpectQuery("SELECT p.code,p.scope").WillReturnError(want)
+	require.ErrorIs(t, loader.Refresh(t.Context()), want)
+	_, _, err = loader.Pin(t.Context())
+	require.ErrorIs(t, err, ErrSnapshotUnavailable)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDirectRuntimeCompileFailureInvalidatesLocalDataPermissions(t *testing.T) {
+	t.Parallel()
+	service, mock := dataLifecycleFixture(t, true)
+	loader := service.runtime
+	require.NoError(t, loader.engine.Replace(nil))
+	policy := dataPolicyFixture()
+	policy.Scope = PolicyBoundary{Type: PolicyScopeGlobal}
+	policy.Spec.Resource = "unknown.resource"
+	document, err := MarshalPolicy(policy)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT p.code,p.scope").WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}).
+		AddRow(policy.Metadata.Code, string(policy.Scope.Type), nil, string(document)))
+	require.Error(t, loader.Refresh(t.Context()))
+	_, _, err = loader.Pin(t.Context())
+	require.ErrorIs(t, err, ErrSnapshotUnavailable)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 type postCommitContextKey struct{}

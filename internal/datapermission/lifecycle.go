@@ -220,11 +220,7 @@ func (l *RuntimeLoader) Changed(ctx context.Context) error {
 	if l.sync != nil {
 		return l.sync.Changed(ctx)
 	}
-	err := l.Refresh(ctx)
-	if err != nil && l.engine != nil {
-		l.engine.Invalidate()
-	}
-	return err
+	return l.Refresh(ctx)
 }
 func (l *RuntimeLoader) Run(ctx context.Context) {
 	if l.sync != nil {
@@ -249,9 +245,16 @@ func (l *RuntimeLoader) Pin(ctx context.Context) (context.Context, string, error
 func (l *RuntimeLoader) Refresh(ctx context.Context) error {
 	policies, err := l.repository.LoadAllPublished(ctx)
 	if err != nil {
+		if l.engine != nil {
+			l.engine.Invalidate()
+		}
 		return err
 	}
-	return l.engine.Replace(policies)
+	if err := l.engine.Replace(policies); err != nil {
+		l.engine.Invalidate()
+		return err
+	}
+	return nil
 }
 
 // RefreshSnapshot installs policies and their matching database revision from
