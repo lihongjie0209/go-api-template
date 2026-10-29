@@ -65,6 +65,19 @@ func TestOutboxDispatchRecoversPanicAndRetries(t *testing.T) {
 	})
 }
 
+func TestOutboxDispatchDoesNotStartAfterCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	outbox := &Outbox{cfg: config.EventBus{DispatchInterval: time.Second}}
+	attempts := 0
+	outbox.runDispatchLoop(ctx, func(context.Context) error {
+		attempts++
+		return nil
+	})
+	require.Zero(t, attempts)
+}
+
 func TestOutboxDispatchEndsSpanWhenBatchPanics(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

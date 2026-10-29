@@ -110,7 +110,7 @@ func (o *Outbox) Run(ctx context.Context) {
 func (o *Outbox) runDispatchLoop(ctx context.Context, dispatch func(context.Context) error) {
 	ticker := time.NewTicker(o.cfg.DispatchInterval)
 	defer ticker.Stop()
-	for {
+	for ctx.Err() == nil {
 		if err := dispatchSafely(ctx, dispatch); err != nil && ctx.Err() == nil {
 			if errors.Is(err, errOutboxDispatchPanicked) {
 				o.metrics.ObserveOutboxOutcome("panic_retry")

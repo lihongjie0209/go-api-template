@@ -522,7 +522,8 @@ available. A feature must not introduce a second transport for the same event.
   cron and manual runs must persist a terminal failure and operation log;
   recovery logging must never include panic values or stack contents.
 - The transactional outbox dispatcher must recover a batch panic into a fixed
-  safe reason and continue scanning on the next interval. A claimed row keeps
+  safe reason and continue scanning on the next interval. It must check its
+  lifecycle Context before each new claim cycle. A claimed row keeps
   its bounded database lease so another attempt can reclaim it; panic values
   must not enter logs, traces, or durable failure fields. Count panic retries
   with a fixed metric outcome label, without event IDs or panic data. End the
