@@ -792,16 +792,28 @@ func TestLoginRateLimitNeverFailsOpen(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		dimension string
+		login     bool
+		key       string
 		status    int
 		called    bool
 	}{
-		{name: "login fails closed", dimension: "login", status: http.StatusServiceUnavailable},
-		{name: "ordinary API follows fail open", dimension: "api", status: http.StatusOK, called: true},
+		{name: "service-account login fails closed", dimension: "login", login: true, key: "key", status: http.StatusServiceUnavailable},
+		{name: "user login fails closed", dimension: "user-login", login: true, key: "key", status: http.StatusServiceUnavailable},
+		{name: "new login dimension fails closed", dimension: "future-signin", login: true, key: "key", status: http.StatusServiceUnavailable},
+		{name: "service-account login without key fails closed", dimension: "login", login: true, status: http.StatusServiceUnavailable},
+		{name: "user login without key fails closed", dimension: "user-login", login: true, status: http.StatusServiceUnavailable},
+		{name: "ordinary API follows fail open", dimension: "api", key: "key", status: http.StatusOK, called: true},
+		{name: "ordinary API without key remains available", dimension: "api", status: http.StatusOK, called: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			called := false
 			router := gin.New()
-			router.Use(RequestID(), RateLimit(limiter, rule, test.dimension, func(*gin.Context) string { return "key" }, logger))
+			keyFunc := func(*gin.Context) string { return test.key }
+			middleware := RateLimit(limiter, rule, test.dimension, keyFunc, logger)
+			if test.login {
+				middleware = LoginRateLimit(limiter, rule, test.dimension, keyFunc, logger)
+			}
+			router.Use(RequestID(), middleware)
 			router.POST("/test", func(c *gin.Context) { called = true; OK(c, nil) })
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))

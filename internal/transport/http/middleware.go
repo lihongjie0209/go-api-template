@@ -36,9 +36,10 @@ import (
 const requestIDKey = "request_id"
 
 var (
-	errIdempotencyStateFailed = errors.New("idempotency_state_failed")
-	errIdempotencyHijack      = errors.New("idempotent response cannot be hijacked")
-	errRateLimitCheckFailed   = errors.New("rate_limit_check_failed")
+	errIdempotencyStateFailed  = errors.New("idempotency_state_failed")
+	errIdempotencyHijack       = errors.New("idempotent response cannot be hijacked")
+	errRateLimitCheckFailed    = errors.New("rate_limit_check_failed")
+	errRateLimitKeyUnavailable = errors.New("rate_limit_key_unavailable")
 )
 
 func SecurityClientContext() gin.HandlerFunc {
@@ -484,6 +485,16 @@ func CORS(cfg config.CORS) gin.HandlerFunc {
 type RateKeyFunc func(*gin.Context) string
 
 func RateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension string, keyFunc RateKeyFunc, logger *slog.Logger) gin.HandlerFunc {
+	return rateLimit(limiter, rule, dimension, keyFunc, logger, false)
+}
+
+// LoginRateLimit is the fail-closed rate-limit boundary for authentication
+// routes, regardless of the dimension name used for Redis key separation.
+func LoginRateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension string, keyFunc RateKeyFunc, logger *slog.Logger) gin.HandlerFunc {
+	return rateLimit(limiter, rule, dimension, keyFunc, logger, true)
+}
+
+func rateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension string, keyFunc RateKeyFunc, logger *slog.Logger, failClosed bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !limiter.Enabled() {
 			c.Next()
@@ -491,6 +502,10 @@ func RateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension s
 		}
 		key := keyFunc(c)
 		if key == "" {
+			if failClosed {
+				Fail(c, logger, apperror.Unavailable("rate limiter unavailable", errRateLimitKeyUnavailable))
+				return
+			}
 			c.Next()
 			return
 		}
@@ -498,7 +513,7 @@ func RateLimit(limiter *appLimit.Limiter, rule config.RateLimitRule, dimension s
 		if err != nil {
 			// Login throttling is an account-protection boundary and must never
 			// inherit the availability-oriented fail-open policy.
-			if limiter.FailOpen() && dimension != "login" {
+			if limiter.FailOpen() && !failClosed {
 				logger.WarnContext(c.Request.Context(), "rate limit check failed open", "request_id", requestID(c), "dimension", dimension, "error", observability.SafeError(err, errRateLimitCheckFailed))
 				c.Next()
 				return

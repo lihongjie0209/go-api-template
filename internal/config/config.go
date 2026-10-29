@@ -771,6 +771,9 @@ func (c Config) Validate() error {
 	if c.Health.DatabaseTimeout <= 0 || c.Health.DatabaseTimeout > 30*time.Second || c.Health.RedisTimeout <= 0 || c.Health.RedisTimeout > 30*time.Second {
 		return errors.New("health dependency timeouts must be positive and no greater than 30 seconds")
 	}
+	if c.App.Env == "production" && !c.RateLimit.Enabled {
+		return errors.New("production requires rate_limit.enabled for login protection")
+	}
 	if c.RateLimit.Enabled {
 		for name, rule := range map[string]RateLimitRule{"ip": c.RateLimit.IP, "api": c.RateLimit.API, "user": c.RateLimit.User, "login": c.RateLimit.Login} {
 			if rule.Rate <= 0 || rule.Rate > 1_000_000 || rule.Burst <= 0 || rule.Burst > 1_000_000 || rule.Period < time.Second || rule.Period > 24*time.Hour {

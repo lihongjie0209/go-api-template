@@ -77,6 +77,12 @@ The next domain work must keep identity and tenancy separate:
   simultaneous wrong attempts count while preventing an attempt against an
   old password/secret from locking a newly rotated credential. A skipped
   increment still records the failed authentication security event.
+- Both service-account and user-login rate-limit dimensions fail closed when
+  Redis is unavailable or the client key cannot be established, even if the
+  general API limiter is configured to fail open. Authentication routes must
+  register the dedicated `LoginRateLimit` middleware; the fail-closed choice
+  must not depend on the dimension's spelling.
+  Production configuration must require the limiter to remain enabled.
 - Signed-token state checks must fail closed while distinguishing an inactive
   session/account from an unavailable authoritative store. An infrastructure
   outage returns dependency-unavailable (HTTP 503 / gRPC Unavailable), not an

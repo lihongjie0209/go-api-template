@@ -853,6 +853,7 @@ func TestConfig_ProductionSecurityRequirementsFailClosed(t *testing.T) {
 		{name: "identity verifier", want: "production authentication requires identity JWKS", mutate: func(cfg *Config) { cfg.Auth.JWKSURL = "" }},
 		{name: "jwt signing key", want: "asymmetric JWT signing key", mutate: func(cfg *Config) { cfg.JWT.KeyID, cfg.JWT.PrivateKey = "", "" }},
 		{name: "durable security logs", want: "event_bus, operation_log, and security_log", mutate: func(cfg *Config) { cfg.SecurityLog.Enabled = false }},
+		{name: "login rate limit", want: "production requires rate_limit.enabled", mutate: func(cfg *Config) { cfg.RateLimit.Enabled = false }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -887,6 +888,7 @@ func validProductionConfig(t *testing.T) Config {
 	cfg.OperationLog.Enabled = true
 	cfg.SecurityLog.Enabled = true
 	cfg.SecurityLog.HashKey = strings.Repeat("h", 32)
+	cfg.RateLimit.Enabled = true
 	return cfg
 }
 

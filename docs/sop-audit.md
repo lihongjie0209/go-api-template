@@ -619,6 +619,14 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 
 ## Service-account login failure classification
 
+Both HTTP login routes register the dedicated `LoginRateLimit` boundary. Its
+fail-closed behavior is independent of the Redis key dimension (`login` or
+`user-login`): a Redis failure or missing client key returns dependency-unavailable
+before either login handler runs, regardless of the general API `fail_open`
+setting. Ordinary API dimensions retain their configured fallback. Unit tests
+cover both login dimensions and both failure sources. Production configuration
+rejects disabling rate limiting, while development and test may disable it.
+
 ### Bearer JWT input bound
 
 | Concern | Decision and rationale |
