@@ -328,7 +328,7 @@ func TestOutboxDispatchDeadLettersMismatchedEnvelopeWithoutPublishing(t *testing
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	storedEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "unexpected-event"})
+	storedEnvelope, err := proto.Marshal(completeOutboxEnvelope("unexpected-event"))
 	require.NoError(t, err)
 	now := time.Now()
 	mock.ExpectBegin()
