@@ -48,7 +48,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		return nil, fmt.Errorf("configure trusted proxies: %w", err)
 	}
 	_ = tracing
-	router.Use(RequestID(), IdempotencyKey(logger), Environment(cfg.Runtime.ActiveProfile), otelgin.Middleware(cfg.App.Name), RequestLogger(logger), Recovery(logger), HTTPMetrics(metrics), SecurityHeaders(), CORS(cfg.HTTP.CORS), MaxBody(cfg.HTTP.MaxBodyBytes), Timeout(cfg.HTTP.RequestTimeout, logger), RequireJSON(), SecurityClientContext())
+	router.Use(globalHTTPMiddleware(cfg, metrics, logger)...)
 	configureRouterContract(router, logger)
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		router.Handle(method, "/live", handler.Live)
@@ -360,6 +360,15 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 		return nil
 	}, OnStop: server.Shutdown})
 	return server, nil
+}
+
+func globalHTTPMiddleware(cfg config.Config, metrics *observability.Metrics, logger *slog.Logger) []gin.HandlerFunc {
+	return []gin.HandlerFunc{
+		RequestID(), Environment(cfg.Runtime.ActiveProfile), otelgin.Middleware(cfg.App.Name),
+		RequestLogger(logger), Recovery(logger), HTTPMetrics(metrics), SecurityHeaders(),
+		CORS(cfg.HTTP.CORS), MaxBody(cfg.HTTP.MaxBodyBytes), Timeout(cfg.HTTP.RequestTimeout, logger),
+		RequireJSON(), SecurityClientContext(), IdempotencyKey(logger),
+	}
 }
 
 func serveHTTP(server *http.Server, listener net.Listener, logger *slog.Logger) {

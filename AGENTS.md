@@ -560,6 +560,10 @@ message queue with an outbox.
   business work. Internal callers that require idempotency must validate the
   key explicitly before placing it in Context; the local Context adapter drops
   malformed keys so they cannot propagate upstream or enable automatic retries.
+- Place HTTP key validation inside the global request ID, tracing, access-log,
+  metrics, security-header, CORS, and timeout middleware. A rejected key is
+  still an observable protected HTTP response, even though no business handler
+  or idempotency state executes.
 - HTTP idempotency fingerprinting must stop reading after at most 16 MiB plus
   one sentinel byte, independent of the global body limit used for file
   upload. Reject an oversized JSON mutation before reading or creating any
