@@ -1606,6 +1606,9 @@ func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil || updated.Version != 3 {
 		t.Fatalf("updated service account=%+v err=%v", updated, err)
 	}
+	if _, _, err := verifier.VerifyWithState(ctx, oldToken); err != nil {
+		t.Fatalf("presentation edit revoked service account token: %v", err)
+	}
 	if _, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: current.ID, Name: "Stale", Status: serviceaccount.StatusActive, Version: current.Version}); !errors.Is(err, serviceaccount.ErrStaleVersion) {
 		t.Fatalf("stale service account update error=%v", err)
 	}
@@ -1633,6 +1636,36 @@ func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
+	disabled, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: current.ID, Name: current.Name, Description: current.Description, Status: serviceaccount.StatusDisabled, Version: current.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, newToken); err == nil || errors.Is(err, auth.ErrStateUnavailable) {
+		t.Fatalf("disabled service account token result = %v", err)
+	}
+	reenabled, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: disabled.ID, Name: disabled.Name, Description: disabled.Description, Status: serviceaccount.StatusActive, Version: disabled.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, newToken); err == nil || errors.Is(err, auth.ErrStateUnavailable) {
+		t.Fatalf("reenabled service account revived old token: %v", err)
+	}
+	reenabledToken, err := verifier.IssueServiceAccount(created.Account.ID, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, reenabledToken); err != nil {
+		t.Fatalf("verify reenabled service account token: %v", err)
+	}
+	expiresAt := time.Now().Add(time.Hour)
+	changedExpiry, err := service.Update(actorCtx, serviceaccount.UpdateInput{ID: reenabled.ID, Name: reenabled.Name, Description: reenabled.Description, Status: serviceaccount.StatusActive, ExpiresAt: &expiresAt, Version: reenabled.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, reenabledToken); err == nil || errors.Is(err, auth.ErrStateUnavailable) {
+		t.Fatalf("expiry change retained old service account token: %v", err)
+	}
+	current = changedExpiry
 	if err := service.Delete(actorCtx, current.ID, current.Version); err != nil {
 		t.Fatal(err)
 	}

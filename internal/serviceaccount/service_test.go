@@ -277,7 +277,9 @@ func TestService_UpdateRollsBackWhenResultReadFails(t *testing.T) {
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser})
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE identity_service_accounts SET name=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET credential_generation=credential_generation\+CASE WHEN status=`).
+		WithArgs(StatusActive, 1, time.Unix(0, 0).UTC(), 1, "Billing Worker", "", StatusActive, nil, sqlmock.AnyArg(), "admin-1", "account-1", int64(2)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnError(errors.New("result read unavailable"))
 	mock.ExpectRollback()
 

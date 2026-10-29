@@ -236,10 +236,18 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Account, error
 	if input.ID == "" || len(input.ID) > maxAccountIDLength || input.Version <= 0 || input.Name == "" || len(input.Name) > 256 || len(input.Description) > 4096 || !validStatus(input.Status) || expired(input.ExpiresAt, time.Now()) {
 		return Account{}, ErrInvalid
 	}
+	expiryIsNull := 1
+	expiryComparison := time.Unix(0, 0).UTC()
+	if input.ExpiresAt != nil {
+		expiryIsNull = 0
+		expiryComparison = *input.ExpiresAt
+	}
 	var account Account
 	err = s.mutate(ctx, "identity.service-account.update", input.ID, safeRequest(input), func(tx *sqlx.Tx) error {
-		query := tx.Rebind(`UPDATE identity_service_accounts SET name=?,description=?,status=?,expires_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
-		result, execErr := tx.ExecContext(ctx, query, input.Name, input.Description, input.Status, input.ExpiresAt, time.Now(), actor.ID, input.ID, input.Version)
+		// Evaluate the old status/expiry before assigning their new values. MySQL
+		// evaluates single-table SET assignments from left to right.
+		query := tx.Rebind(`UPDATE identity_service_accounts SET credential_generation=credential_generation+CASE WHEN status=? AND ((expires_at IS NULL AND ?=1) OR (expires_at=? AND ?=0)) THEN 0 ELSE 1 END,name=?,description=?,status=?,expires_at=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
+		result, execErr := tx.ExecContext(ctx, query, input.Status, expiryIsNull, expiryComparison, expiryIsNull, input.Name, input.Description, input.Status, input.ExpiresAt, time.Now(), actor.ID, input.ID, input.Version)
 		if err := oneRow(result, execErr); err != nil {
 			return err
 		}

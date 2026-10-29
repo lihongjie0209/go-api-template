@@ -90,7 +90,9 @@ The next domain work must keep identity and tenancy separate:
   authorization to ignore unexpected context fields.
 - Service-account bearer tokens must carry a positive credential generation.
   Secret rotation increments the authoritative account generation in the same
-  transaction as the secret hash update. Local and remote signature paths must
+  transaction as the secret hash update. Status or expiry changes also increment
+  it so re-enabling an account cannot revive an old bearer token; presentation
+  edits do not. Local and remote signature paths must
   compare the signed generation with the active account row on every request;
   a stale or missing generation is invalid, while a database outage remains an
   authentication-dependency failure. The general audit/optimistic version is
