@@ -15,9 +15,15 @@ type failingChangeSync struct {
 	err       error
 	onFailure func()
 	changed   func(context.Context) error
+	refresh   func(context.Context) error
 }
 
-func (s *failingChangeSync) Refresh(context.Context) error { return nil }
+func (s *failingChangeSync) Refresh(ctx context.Context) error {
+	if s.refresh != nil {
+		return s.refresh(ctx)
+	}
+	return nil
+}
 func (s *failingChangeSync) Changed(ctx context.Context) error {
 	if s.onFailure != nil {
 		s.onFailure()
@@ -87,6 +93,19 @@ func TestDirectRuntimeCompileFailureInvalidatesLocalDataPermissions(t *testing.T
 	_, _, err = loader.Pin(t.Context())
 	require.ErrorIs(t, err, ErrSnapshotUnavailable)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRuntimeRefreshUsesConfiguredSync(t *testing.T) {
+	t.Parallel()
+	want := errors.New("sync refresh unavailable")
+	called := false
+	loader := NewRuntimeLoader(nil, nil)
+	loader.ConfigureSync(&failingChangeSync{refresh: func(context.Context) error {
+		called = true
+		return want
+	}})
+	require.ErrorIs(t, loader.Refresh(t.Context()), want)
+	require.True(t, called)
 }
 
 type postCommitContextKey struct{}

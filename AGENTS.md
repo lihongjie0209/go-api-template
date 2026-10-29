@@ -494,7 +494,9 @@ available. A feature must not introduce a second transport for the same event.
   leave the local snapshot stale, so it must invalidate that snapshot. A
   directly invoked runtime refresh without the sync wrapper must also
   invalidate its prior snapshot after either a database read or policy
-  compilation failure.
+  compilation failure. When a runtime sync wrapper is configured, direct
+  refresh calls must delegate to it so the installed snapshot and its
+  revision advance together.
 - A durable cross-service notification must use a transactional outbox written
   in the same database transaction as the business change and then be published
   to the message queue. Do not dual-write the database and queue directly.

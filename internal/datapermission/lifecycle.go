@@ -243,6 +243,9 @@ func (l *RuntimeLoader) Pin(ctx context.Context) (context.Context, string, error
 	return l.engine.Pin(ctx)
 }
 func (l *RuntimeLoader) Refresh(ctx context.Context) error {
+	if l.sync != nil {
+		return l.sync.Refresh(ctx)
+	}
 	policies, err := l.repository.LoadAllPublished(ctx)
 	if err != nil {
 		if l.engine != nil {
