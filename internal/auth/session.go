@@ -21,6 +21,9 @@ func (s *Service) ValidateSession(ctx context.Context, sessionID, userID string)
 	if sessionID == "" || userID == "" || strings.TrimSpace(sessionID) != sessionID || strings.TrimSpace(userID) != userID || len(sessionID) > 256 || len(userID) > 256 {
 		return time.Time{}, false, ErrInvalidSessionLookup
 	}
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, false, fmt.Errorf("%w: validate session: %w", ErrStateUnavailable, err)
+	}
 	if s == nil || s.db == nil {
 		return time.Time{}, false, ErrStateUnavailable
 	}

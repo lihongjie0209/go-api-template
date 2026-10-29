@@ -17,7 +17,7 @@ a service principal; the operation authorization interceptor fails closed.
 | Optimistic lock | Not applicable: no write. |
 | Audit | No fields are changed; existing session and user audit triggers remain authoritative. |
 | Presentation | Protobuf timestamp is UTC instant; clients format using their configured timezone. No related IDs are returned. |
-| Tests | Unit tests cover active/inactive state, bad IDs, unavailable state store, and non-disclosure of database errors. The Testcontainers integration suite verifies active, expired, mismatched-user, revoked, and disabled-user sessions against migrated PostgreSQL and MySQL. |
+| Tests | Unit tests cover active/inactive state, bad IDs, unavailable state store, canceled context before state lookup, and non-disclosure of database errors. The Testcontainers integration suite verifies active, expired, mismatched-user, revoked, and disabled-user sessions against migrated PostgreSQL and MySQL. |
 | Shared capability | Reuses the configured auth service, the same authoritative SQL session scope as bearer validation, and gRPC resource/action descriptor and interceptors; no local authentication framework. |
 | Dictionary provider | None: sessions are sensitive, ephemeral transactional data and unsuitable for a dictionary. |
 

@@ -82,3 +82,13 @@ func TestService_ValidateSessionRequiresStateStore(t *testing.T) {
 		t.Fatalf("valid=%v err=%v", valid, err)
 	}
 }
+
+func TestService_ValidateSessionPreservesCanceledRequestWithoutStateStore(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, valid, err := (&Service{}).ValidateSession(ctx, "session-1", "user-1")
+	if valid || !errors.Is(err, context.Canceled) || !errors.Is(err, ErrStateUnavailable) {
+		t.Fatalf("valid=%v err=%v, want canceled state lookup", valid, err)
+	}
+}
