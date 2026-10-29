@@ -575,6 +575,12 @@ message queue with an outbox.
   return a generic unavailable response and discard handler-only headers such
   as Set-Cookie. Streaming, flushing, and connection hijacking are not supported
   for idempotent HTTP routes.
+- An opted-in unary gRPC mutation must also withhold its response until the
+  owner-fenced Complete/Fail/Abort transition succeeds. If persistence fails,
+  return generic Unavailable without the handler response or raw dependency
+  error. A lease that fails before handler execution must release its acquired
+  processing record with bounded detached cleanup; never release an ambiguous
+  record after the handler has run.
 - The authoritative write commits before a result is published. Database unique
   constraints, transactions and optimistic versions must make a retry safe;
   Redis idempotency cannot create atomicity with the business database.
