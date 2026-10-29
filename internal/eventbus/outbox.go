@@ -76,8 +76,11 @@ func (o *Outbox) Store(ctx context.Context, tx *sqlx.Tx, subject string, envelop
 	if o == nil || !o.cfg.Enabled || o.bus == nil {
 		return errors.New("transactional outbox is unavailable")
 	}
-	if tx == nil || envelope == nil || !validOutboxIdentity(subject, envelope.EventId) {
-		return errors.New("transaction, subject and event envelope are required")
+	if tx == nil {
+		return errors.New("outbox transaction is required")
+	}
+	if !validOutboxEnvelope(subject, envelope) {
+		return errors.New("invalid outbox envelope")
 	}
 	data, err := proto.Marshal(envelope)
 	if err != nil {
@@ -230,10 +233,20 @@ func decodeClaimedEnvelope(record outboxRecord) (*commonv1.EventEnvelope, error)
 	if err := proto.Unmarshal(record.Envelope, &envelope); err != nil {
 		return nil, fmt.Errorf("%w: invalid protobuf", errDecodeEnvelope)
 	}
-	if record.ID == "" || envelope.EventId != record.ID {
-		return nil, fmt.Errorf("%w: event identity mismatch", errDecodeEnvelope)
+	if envelope.EventId != record.ID || !validOutboxEnvelope(record.Subject, &envelope) {
+		return nil, fmt.Errorf("%w: invalid event metadata or identity", errDecodeEnvelope)
 	}
 	return &envelope, nil
+}
+
+func validOutboxEnvelope(subject string, envelope *commonv1.EventEnvelope) bool {
+	if envelope == nil || !validOutboxIdentity(subject, envelope.EventId) || !validOutboxIdentity(envelope.EventType, envelope.EventId) {
+		return false
+	}
+	if strings.TrimSpace(envelope.AggregateType) == "" || len(envelope.AggregateType) > 128 || envelope.SchemaVersion == 0 {
+		return false
+	}
+	return envelope.OccurredAt != nil && envelope.OccurredAt.CheckValid() == nil
 }
 
 func validOutboxIdentity(subject, eventID string) bool {

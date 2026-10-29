@@ -27,7 +27,15 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func completeOutboxEnvelope(id string) *commonv1.EventEnvelope {
+	return &commonv1.EventEnvelope{
+		EventId: id, EventType: "platform.event.v1", AggregateType: "test", SchemaVersion: 1,
+		OccurredAt: timestamppb.Now(),
+	}
+}
 
 func TestOutboxDispatchRecoversPanicAndRetries(t *testing.T) {
 	t.Parallel()
@@ -86,7 +94,7 @@ func TestOutboxDispatchEndsSpanWhenBatchPanics(t *testing.T) {
 	outboxTracer = provider.Tracer("outbox-panic-test")
 	t.Cleanup(func() { outboxTracer = previous })
 	outbox := &Outbox{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	envelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "event-1"})
+	envelope, err := proto.Marshal(completeOutboxEnvelope("event-1"))
 	require.NoError(t, err)
 	err = dispatchSafely(t.Context(), func(ctx context.Context) error {
 		return outbox.dispatchRecord(ctx, outboxRecord{ID: "event-1", Subject: "platform.test", Envelope: envelope})
@@ -141,9 +149,69 @@ func TestOutboxStoreUsesCallerTransaction(t *testing.T) {
 
 	outbox := &Outbox{cfg: config.EventBus{Enabled: true}, bus: &Bus{}}
 	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
-	require.NoError(t, outbox.Store(ctx, tx, "platform.security.recorded.v1", &commonv1.EventEnvelope{EventId: "event-1"}))
+	require.NoError(t, outbox.Store(ctx, tx, "platform.security.recorded.v1", completeOutboxEnvelope("event-1")))
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOutboxStoreRejectsIncompleteEventBeforeSQL(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	require.NoError(t, err)
+	outbox := &Outbox{cfg: config.EventBus{Enabled: true}, bus: &Bus{}}
+	actorCtx := platformprincipal.SystemContext(t.Context(), "actor-1")
+	for _, test := range []struct {
+		name   string
+		mutate func(*commonv1.EventEnvelope)
+	}{
+		{name: "missing event type", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "" }},
+		{name: "event type outside stream", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "orders.created.v1" }},
+		{name: "missing aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = "" }},
+		{name: "oversized aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = strings.Repeat("a", 129) }},
+		{name: "zero schema version", mutate: func(value *commonv1.EventEnvelope) { value.SchemaVersion = 0 }},
+		{name: "missing occurrence time", mutate: func(value *commonv1.EventEnvelope) { value.OccurredAt = nil }},
+		{name: "invalid occurrence time", mutate: func(value *commonv1.EventEnvelope) { value.OccurredAt = &timestamppb.Timestamp{Seconds: 253402300800} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			envelope := completeOutboxEnvelope("event-1")
+			test.mutate(envelope)
+			require.ErrorContains(t, outbox.Store(actorCtx, tx, "platform.event.v1", envelope), "invalid outbox envelope")
+		})
+	}
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDecodeClaimedEnvelopeRejectsIncompleteMetadata(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		mutate func(*commonv1.EventEnvelope)
+	}{
+		{name: "missing event type", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "" }},
+		{name: "event type outside stream", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "orders.created.v1" }},
+		{name: "missing aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = "" }},
+		{name: "oversized aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = strings.Repeat("a", 129) }},
+		{name: "zero schema version", mutate: func(value *commonv1.EventEnvelope) { value.SchemaVersion = 0 }},
+		{name: "missing occurrence time", mutate: func(value *commonv1.EventEnvelope) { value.OccurredAt = nil }},
+		{name: "invalid occurrence time", mutate: func(value *commonv1.EventEnvelope) { value.OccurredAt = &timestamppb.Timestamp{Seconds: 253402300800} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			envelope := completeOutboxEnvelope("event-1")
+			test.mutate(envelope)
+			encoded, err := proto.Marshal(envelope)
+			require.NoError(t, err)
+			_, err = decodeClaimedEnvelope(outboxRecord{ID: "event-1", Subject: "platform.event.v1", Envelope: encoded})
+			require.ErrorIs(t, err, errDecodeEnvelope)
+		})
+	}
 }
 
 func TestOutboxTraceContextRoundTrip(t *testing.T) {
@@ -205,7 +273,7 @@ func TestDecodeClaimedEnvelopeRequiresStoredEventIdentity(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			data, err := proto.Marshal(&commonv1.EventEnvelope{EventId: test.envelopeID})
+			data, err := proto.Marshal(completeOutboxEnvelope(test.envelopeID))
 			require.NoError(t, err)
 			envelope, err := decodeClaimedEnvelope(outboxRecord{ID: test.storedID, Subject: "platform.event.v1", Envelope: data})
 			if test.wantError {
@@ -226,12 +294,14 @@ func TestDecodeClaimedEnvelopeRejectsMalformedProtobuf(t *testing.T) {
 
 func TestDecodeClaimedEnvelopeRejectsInvalidStoredRecord(t *testing.T) {
 	t.Parallel()
-	validEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "event-1"})
+	validEnvelope, err := proto.Marshal(completeOutboxEnvelope("event-1"))
 	require.NoError(t, err)
 	oversizedID := strings.Repeat("e", 65)
-	oversizedIDEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: oversizedID})
+	oversizedIDEnvelope, err := proto.Marshal(completeOutboxEnvelope(oversizedID))
 	require.NoError(t, err)
-	oversizedEnvelope, err := proto.Marshal(&commonv1.EventEnvelope{EventId: "event-1", Payload: make([]byte, maxOutboxEnvelopeBytes)})
+	large := completeOutboxEnvelope("event-1")
+	large.Payload = make([]byte, maxOutboxEnvelopeBytes)
+	oversizedEnvelope, err := proto.Marshal(large)
 	require.NoError(t, err)
 	require.Greater(t, len(oversizedEnvelope), maxOutboxEnvelopeBytes)
 	for _, test := range []struct {
