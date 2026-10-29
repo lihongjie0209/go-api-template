@@ -298,6 +298,40 @@ func TestAuthenticateGRPCDistinguishesStateOutageFromRevocation(t *testing.T) {
 	}
 }
 
+func TestAuthenticateGRPCUsesCallerCancellationBeforeStoreAvailability(t *testing.T) {
+	t.Parallel()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, nil)
+	token, err := service.IssuePrincipal(platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name string
+		ctx  func() context.Context
+		want codes.Code
+	}{
+		{name: "canceled", ctx: func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }, want: codes.Canceled},
+		{name: "deadline", ctx: func() context.Context {
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			return ctx
+		}, want: codes.DeadlineExceeded},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := metadata.NewIncomingContext(tt.ctx(), metadata.Pairs("authorization", "Bearer "+token))
+			_, err := authenticateGRPCOptional(ctx, "/hello.v1.UserService/GetUser", service, config.Auth{})
+			if got := status.Code(err); got != tt.want {
+				t.Fatalf("code=%s, want %s: %v", got, tt.want, err)
+			}
+		})
+	}
+}
+
 func TestGRPCPasswordChangeRequirementBlocksBusinessCalls(t *testing.T) {
 	for _, test := range []struct {
 		name     string
