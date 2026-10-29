@@ -183,6 +183,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			}
 			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
 			assertOutboxDeadListIndex(t, ctx, db, databaseType)
+			assertOutboxLegacyErrorProjection(t, ctx, db)
 			if databaseType == "postgres" {
 				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
 				testPostgresAuditInfrastructure(t, ctx, db)
@@ -238,6 +239,25 @@ func assertOutboxDeadListIndex(t *testing.T, ctx context.Context, db *sqlx.DB, d
 	}
 	if definition != "deleted_at,published_at,dead_at,id" {
 		t.Fatalf("unexpected MySQL outbox dead-list index: %s", definition)
+	}
+}
+
+func assertOutboxLegacyErrorProjection(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	id := "legacy-outbox-" + uuid.NewString()
+	now := time.Now()
+	actorCtx := platformprincipal.SystemContext(ctx, "outbox-legacy-integration")
+	err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'',?,?,?,?,?,?,1)`)
+		_, err := tx.ExecContext(actorCtx, query, id, "platform.integration.legacy.v1", []byte{}, "", "", now, 3, "bearer secret-value "+strings.Repeat("x", 32<<10), now, now, "outbox-legacy-integration", now, "outbox-legacy-integration")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("insert legacy dead outbox event: %v", err)
+	}
+	page, err := eventbus.NewRepairService(db, appdb.NewTransactor(db)).Dead(actorCtx, pagination.Request{Keyword: id})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != id || page.Items[0].LastError != "legacy_failure" {
+		t.Fatalf("legacy dead outbox projection: page=%+v err=%v", page, err)
 	}
 }
 
