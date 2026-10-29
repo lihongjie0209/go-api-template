@@ -287,10 +287,10 @@ func insert(ctx context.Context, tx *sqlx.Tx, id string, value payload, auditAct
 	}
 	query = tx.Rebind(query)
 	_, err := tx.ExecContext(ctx, query, id, value.TenantID, value.ActorID, truncate(actorName, 512), value.ActorType, value.SubjectID, truncate(subjectName, 512), value.SubjectType, value.EventType, value.Succeeded, value.Reason, value.ErrorCode, value.ErrorMessage, value.IdentifierHash, value.TokenIDHash, value.SessionID, value.RequestID, value.TraceID, value.ClientIP, value.UserAgent, string(value.Metadata), value.OccurredAt, now, auditActor, now, auditActor, 1)
-	// MySQL has only the event ID as a unique key. Ignore its duplicate error,
-	// not other write failures or coercion warnings hidden by INSERT IGNORE.
+	// Confirm that a MySQL uniqueness error belongs to this event ID before
+	// acknowledging the queue message. Other constraints must remain failures.
 	if mysql && database.IsUniqueViolation(err) {
-		return nil
+		err = database.ConfirmDuplicateID(ctx, tx, `SELECT id FROM security_logs WHERE id=?`, id, err)
 	}
 	if err != nil {
 		return fmt.Errorf("insert security log: %w", err)

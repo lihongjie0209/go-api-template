@@ -255,13 +255,18 @@ func TestRecordTxUsesCallerTransaction(t *testing.T) {
 func TestMySQLInsertOnlyIgnoresDuplicateEventID(t *testing.T) {
 	t.Parallel()
 	dbFailure := errors.New("database unavailable")
+	lookupFailure := errors.New("lookup unavailable")
 	for _, test := range []struct {
 		name          string
 		dbError       error
+		lookupID      string
+		lookupErr     error
 		wantMySQLCode uint16
 	}{
 		{name: "inserted"},
-		{name: "duplicate event", dbError: &mysqlDriver.MySQLError{Number: 1062, Message: "duplicate primary key"}},
+		{name: "duplicate event", dbError: &mysqlDriver.MySQLError{Number: 1062, Message: "duplicate primary key"}, lookupID: "event-1"},
+		{name: "other unique conflict", dbError: &mysqlDriver.MySQLError{Number: 1062, Message: "duplicate other key"}, wantMySQLCode: 1062},
+		{name: "duplicate lookup failure", dbError: &mysqlDriver.MySQLError{Number: 1062, Message: "duplicate primary key"}, lookupErr: lookupFailure},
 		{name: "invalid value", dbError: &mysqlDriver.MySQLError{Number: 1406, Message: "data too long"}, wantMySQLCode: 1406},
 		{name: "database failure", dbError: dbFailure},
 	} {
@@ -284,9 +289,23 @@ func TestMySQLInsertOnlyIgnoresDuplicateEventID(t *testing.T) {
 			} else {
 				operation.WillReturnResult(sqlmock.NewResult(0, 1))
 			}
+			if test.dbError != nil && database.IsUniqueViolation(test.dbError) {
+				lookup := mock.ExpectQuery(`SELECT id FROM operation_logs WHERE id=\?`).WithArgs("event-1")
+				if test.lookupErr != nil {
+					lookup.WillReturnError(test.lookupErr)
+				} else if test.lookupID != "" {
+					lookup.WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(test.lookupID))
+				} else {
+					lookup.WillReturnRows(sqlmock.NewRows([]string{"id"}))
+				}
+			}
 			service := &Service{}
 			err = service.insert(t.Context(), tx, "event-1", eventPayload{Entry: Entry{Operation: "order.create"}, Extension: json.RawMessage(`{}`)}, "actor")
 			switch {
+			case test.lookupErr != nil:
+				if !errors.Is(err, test.lookupErr) {
+					t.Fatalf("insert() error = %v, want lookup failure", err)
+				}
 			case test.wantMySQLCode != 0:
 				var mysqlErr *mysqlDriver.MySQLError
 				if !errors.As(err, &mysqlErr) || mysqlErr.Number != test.wantMySQLCode {

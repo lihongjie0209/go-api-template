@@ -1145,16 +1145,20 @@ func testMySQLLogRetention(t *testing.T, ctx context.Context, db *sqlx.DB) {
 			return err
 		}
 		for _, record := range []struct {
-			name  string
-			query string
-			args  []any
+			name   string
+			query  string
+			lookup string
+			args   []any
 		}{
-			{name: "operation", query: operationInsert, args: operationArgs},
-			{name: "security", query: securityInsert, args: securityArgs},
+			{name: "operation", query: operationInsert, lookup: `SELECT id FROM operation_logs WHERE id=?`, args: operationArgs},
+			{name: "security", query: securityInsert, lookup: `SELECT id FROM security_logs WHERE id=?`, args: securityArgs},
 		} {
 			_, duplicateErr := tx.ExecContext(actorCtx, record.query, record.args...)
 			if !appdb.IsUniqueViolation(duplicateErr) {
 				return fmt.Errorf("%s log duplicate ID error = %v, want unique violation", record.name, duplicateErr)
+			}
+			if confirmErr := appdb.ConfirmDuplicateID(actorCtx, tx, record.lookup, record.args[0].(string), duplicateErr); confirmErr != nil {
+				return fmt.Errorf("%s log duplicate ID confirmation: %w", record.name, confirmErr)
 			}
 			invalidArgs := append([]any(nil), record.args...)
 			invalidArgs[0] = strings.Repeat("x", 65)
