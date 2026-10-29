@@ -107,6 +107,35 @@ func TestMySQLInsertOnlyIgnoresDuplicateEventID(t *testing.T) {
 	}
 }
 
+func TestConsumeDoesNotAcknowledgeConfirmedDuplicateWhenCommitFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	service := &Service{appName: "security-log-test", cfg: config.SecurityLog{MaxPayloadBytes: 4096}, transactor: database.NewTransactor(db)}
+	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
+	event, err := service.envelope(ctx, Entry{EventType: EventLogin, SubjectID: "user-1", SubjectType: "user", Succeeded: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitErr := errors.New("commit unavailable")
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET @app_actor_id = \?`).WithArgs("actor-1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`^INSERT INTO security_logs `).WillReturnError(&mysqlDriver.MySQLError{Number: 1062, Message: "duplicate primary key"})
+	mock.ExpectQuery(`SELECT id FROM security_logs WHERE id=\?`).WithArgs(event.EventId).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(event.EventId))
+	mock.ExpectExec(`SET @app_actor_id = NULL`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit().WillReturnError(commitErr)
+	if err := service.consume(ctx, event); !errors.Is(err, commitErr) {
+		t.Fatalf("consume error = %v, want commit failure", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHashIsKeyedAndStable(t *testing.T) {
 	t.Parallel()
 	first := (&Service{cfg: config.SecurityLog{HashKey: strings.Repeat("a", 32)}}).hash("alice@example.com")
