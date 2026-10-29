@@ -271,17 +271,19 @@ func TestAuthenticateGRPCDistinguishesStateOutageFromRevocation(t *testing.T) {
 	}
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token))
 	for _, test := range []struct {
-		name   string
-		outage bool
-		want   codes.Code
+		name     string
+		queryErr error
+		want     codes.Code
 	}{
-		{name: "database outage", outage: true, want: codes.Unavailable},
+		{name: "database outage", queryErr: errors.New("database connection lost"), want: codes.Unavailable},
+		{name: "request canceled", queryErr: context.Canceled, want: codes.Canceled},
+		{name: "deadline exceeded", queryErr: context.DeadlineExceeded, want: codes.DeadlineExceeded},
 		{name: "revoked session", want: codes.Unauthenticated},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			query := mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions`)
-			if test.outage {
-				query.WillReturnError(errors.New("database connection lost"))
+			if test.queryErr != nil {
+				query.WillReturnError(test.queryErr)
 			} else {
 				query.WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}))
 			}
