@@ -11,6 +11,10 @@ import (
 
 var ErrInvalidSessionLookup = errors.New("invalid session lookup")
 
+// Both bearer validation and the internal session probe must use the same
+// authoritative account, credential, revocation, expiry, and deletion scope.
+const activeUserSessionSource = `FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
+
 // ValidateSession checks authoritative state, never a potentially stale cache.
 // An absent, revoked, expired, or disabled session is invalid rather than an error.
 func (s *Service) ValidateSession(ctx context.Context, sessionID, userID string) (time.Time, bool, error) {
@@ -21,10 +25,7 @@ func (s *Service) ValidateSession(ctx context.Context, sessionID, userID string)
 		return time.Time{}, false, ErrStateUnavailable
 	}
 	var expiresAt time.Time
-	query := s.db.Rebind(`SELECT s.expires_at FROM identity_sessions s
-		JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL
-		JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL
-		WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`)
+	query := s.db.Rebind(`SELECT s.expires_at ` + activeUserSessionSource)
 	err := s.db.GetContext(ctx, &expiresAt, query, sessionID, userID, time.Now())
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil

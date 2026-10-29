@@ -164,7 +164,7 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		if s.db == nil {
 			return platformprincipal.Principal{}, TokenState{}, ErrStateUnavailable
 		}
-		query := `SELECT c.must_change_password FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL WHERE s.id=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL`
+		query := `SELECT c.must_change_password ` + activeUserSessionSource
 		args := []any{claims.SessionID, claims.Subject, time.Now()}
 		if claims.TenantID != "" {
 			query += ` AND EXISTS (SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE m.id=? AND m.tenant_id=? AND m.user_id=s.user_id AND m.status='active' AND m.deleted_at IS NULL)`
