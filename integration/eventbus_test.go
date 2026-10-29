@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -123,6 +125,52 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	t.Run("dead letter invalid stored metadata", func(t *testing.T) {
+		invalidID := "integration-invalid-metadata-1"
+		encoded, err := proto.Marshal(&commonv1.EventEnvelope{
+			EventId: invalidID, AggregateType: "integration", SchemaVersion: 1, OccurredAt: timestamppb.Now(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		err = transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'','',?,?,?,?,1)`)
+			_, err := tx.ExecContext(actorCtx, query, invalidID, "platform.integration.outbox.v1", encoded, "", "", now, cfg.EventBus.ConsumerMaxDeliver-1, now, "integration-eventbus:test", now, "integration-eventbus:test")
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var row struct {
+				DeadAt    sql.NullTime `db:"dead_at"`
+				LastError string       `db:"last_error"`
+				Attempts  int64        `db:"attempts"`
+			}
+			if err := db.GetContext(ctx, &row, `SELECT dead_at,last_error,attempts FROM event_outbox WHERE id=$1`, invalidID); err != nil {
+				t.Fatal(err)
+			}
+			if row.DeadAt.Valid {
+				if row.LastError != "decode_failed" || row.Attempts != int64(cfg.EventBus.ConsumerMaxDeliver) {
+					t.Fatalf("invalid event dead letter = %+v", row)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("invalid event was not dead-lettered")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		select {
+		case event := <-received:
+			if event.GetEventId() == invalidID {
+				t.Fatalf("invalid event was published: %s", event.GetEventId())
+			}
+		default:
+		}
+	})
 }
 
 func startNATS(t *testing.T, ctx context.Context) string {
