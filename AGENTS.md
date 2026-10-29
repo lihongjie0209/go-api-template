@@ -365,6 +365,11 @@ TTL, and invalidation for its own data.
   example refresh-token reuse), the transport must not enqueue a duplicate.
 - Log persistence is asynchronous through the configured queue. Business code
   must not write operation/security log tables directly.
+- Operation/security log tables retain the mandatory audit and logical-delete
+  columns. Only the reviewed data-lifecycle maintenance path may physically
+  purge expired MySQL log rows in bounded batches or detach/archive/drop
+  expired PostgreSQL/Kingbase log partitions after the configured retention
+  cutoff. Business APIs and queue consumers must not physically delete logs.
 - Audit-log consumers must distinguish duplicate event IDs from all other
   database errors. A duplicate may be acknowledged only when a specific
   database uniqueness constraint proves that the same event was already
