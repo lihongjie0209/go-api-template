@@ -54,6 +54,8 @@ type Server struct {
 
 var errGRPCServerStopped = errors.New("grpc_server_stopped")
 
+const maxGRPCHeaderListBytes = 64 << 10
+
 func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, healthService *apphealth.Service, identityService *identity.Service, accounts *serviceaccount.Service, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
 	definitions := grpcEndpointDefinitions()
 	for _, endpoint := range definitions {
@@ -68,6 +70,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, authService *auth.Service, re
 	enforcer := accesscontrol.NewEnforcer(endpointRegistry, authorizer)
 	options := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(cfg.GRPC.MaxReceiveBytes),
+		grpc.MaxHeaderListSize(maxGRPCHeaderListBytes),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(environmentInterceptor(cfg.Runtime.ActiveProfile), requestIDInterceptor, idempotencyInterceptor, recoveryInterceptor(logger), optionalAuthInterceptor(authService, cfg.Auth), operationAuthorizationInterceptor(enforcer), platformidempotency.UnaryServerInterceptor(idempotencyManager, cfg.Idempotency.GRPCMethods, logger), metricsInterceptor(metrics, logger)),
 		grpc.ChainStreamInterceptor(environmentStreamInterceptor(cfg.Runtime.ActiveProfile), requestIDStreamInterceptor, idempotencyStreamInterceptor, recoveryStreamInterceptor(logger), optionalAuthStreamInterceptor(authService, cfg.Auth), operationAuthorizationStreamInterceptor(enforcer), metricsStreamInterceptor(metrics, logger)),

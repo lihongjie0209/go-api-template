@@ -104,6 +104,9 @@ The next domain work must keep identity and tenancy separate:
   or database state checks. Oversized or empty tokens are invalid credentials,
   not an authentication-dependency outage. The signer must not return a token
   that the verifier's bound would reject.
+- gRPC ingress must keep a bounded receive-message size and metadata/header
+  list. Configuration overrides cannot raise the receive size above 64 MiB;
+  the server accepts at most 64 KiB of uncompressed header metadata.
 - A signed access-token claim is not authoritative for mutable credential
   state. Both local and remotely verified user tokens must recheck the active
   session, user, credential and any tenant membership before attaching the

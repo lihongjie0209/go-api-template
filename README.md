@@ -60,6 +60,8 @@ curl -sS -X POST http://127.0.0.1:8080/api/v1/version
 
 The Compose `compose` profile runs the API against PostgreSQL while also migrating MySQL for compatibility work. The development stack intentionally does not start Prometheus, Grafana, Jaeger or an OTel Collector.
 
+gRPC request messages are configurable up to 64 MiB (`grpc.max_receive_bytes`, 16 MiB by default). The server also bounds uncompressed request metadata to 64 KiB; bearer JWTs are limited to 16 KiB across HTTP and gRPC.
+
 ## Container publishing and Kubernetes
 
 After unit and integration tests pass, CI builds `linux/amd64` and `linux/arm64` images and publishes `main`, `sha-*`, and semantic-version tags to `ghcr.io/lihongjie0209/go-api-template`. Images include Git metadata, an SBOM, and build provenance. Pull requests build both architectures without publishing.

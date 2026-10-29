@@ -88,6 +88,9 @@ type GRPC struct {
 	MaxReceiveBytes   int     `mapstructure:"max_receive_bytes"`
 	TLS               GRPCTLS `mapstructure:"tls"`
 }
+
+const MaxGRPCReceiveBytes = 64 << 20
+
 type GRPCTLS struct {
 	Enabled      bool   `mapstructure:"enabled"`
 	CertFile     string `mapstructure:"cert_file"`
@@ -738,8 +741,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Log.File) == "" || c.Log.MaxSizeMB <= 0 || c.Log.MaxSizeMB > 10240 || c.Log.MaxBackups <= 0 || c.Log.MaxBackups > 1000 || c.Log.MaxAgeDays <= 0 || c.Log.MaxAgeDays > 3650 {
 		return errors.New("log requires a file and bounded positive rotation settings")
 	}
-	if c.GRPC.Enabled && (c.GRPC.Address == "" || c.GRPC.MaxReceiveBytes <= 0) {
-		return errors.New("enabled grpc requires address and positive max_receive_bytes")
+	if c.GRPC.Enabled && (c.GRPC.Address == "" || c.GRPC.MaxReceiveBytes <= 0 || c.GRPC.MaxReceiveBytes > MaxGRPCReceiveBytes) {
+		return errors.New("enabled grpc requires address and max_receive_bytes between 1 and 64 MiB")
 	}
 	if c.GRPC.TLS.Enabled && (c.GRPC.TLS.CertFile == "" || c.GRPC.TLS.KeyFile == "") {
 		return errors.New("grpc tls requires cert_file and key_file")

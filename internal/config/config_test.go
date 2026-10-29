@@ -527,6 +527,23 @@ func TestConfig_RejectsInvalidHTTPBounds(t *testing.T) {
 	}
 }
 
+func TestConfig_RejectsUnboundedGRPCReceiveSize(t *testing.T) {
+	for _, size := range []int{0, MaxGRPCReceiveBytes + 1} {
+		cfg := validDevelopmentConfig(t)
+		cfg.GRPC.Enabled = true
+		cfg.GRPC.MaxReceiveBytes = size
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "max_receive_bytes between 1 and 64 MiB") {
+			t.Fatalf("max_receive_bytes=%d Validate() error=%v", size, err)
+		}
+	}
+	cfg := validDevelopmentConfig(t)
+	cfg.GRPC.Enabled = true
+	cfg.GRPC.MaxReceiveBytes = MaxGRPCReceiveBytes
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("maximum bounded gRPC receive size rejected: %v", err)
+	}
+}
+
 func TestConfig_RejectsUnsafeOutboxBounds(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
