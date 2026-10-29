@@ -17,6 +17,7 @@ var (
 	errPolicyInvalidationPublishFailed = errors.New("policy_invalidation_publish_failed")
 	errPolicyRevisionReadFailed        = errors.New("policy_revision_read_failed")
 	errPolicySnapshotRefreshFailed     = errors.New("policy_snapshot_refresh_failed")
+	errPolicySubscriptionFailed        = errors.New("policy_subscription_failed")
 )
 
 // Sync keeps an immutable in-process policy snapshot aligned with its
@@ -165,15 +166,18 @@ func (s *Sync) Run(ctx context.Context) {
 	defer ticker.Stop()
 	var messages <-chan *redis.Message
 	var subscription *redis.PubSub
-	if s.redis != nil && s.channel != "" {
-		subscription = s.redis.Subscribe(ctx, s.channel)
-		messages = subscription.Channel()
-	}
+	subscription, messages = s.subscribe(ctx)
 	defer func() {
 		if subscription != nil {
 			_ = subscription.Close()
 		}
 	}()
+	if ctx.Err() != nil {
+		return
+	}
+	// A change between startup Refresh and a confirmed subscription cannot be
+	// observed through Pub/Sub. Check the authoritative revision immediately.
+	s.poll(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -190,13 +194,42 @@ func (s *Sync) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if subscription == nil && s.redis != nil && s.channel != "" {
-				subscription = s.redis.Subscribe(ctx, s.channel)
-				messages = subscription.Channel()
+			if subscription == nil {
+				subscription, messages = s.subscribe(ctx)
 			}
 			s.poll(ctx)
 		}
 	}
+}
+
+func (s *Sync) subscribe(ctx context.Context) (*redis.PubSub, <-chan *redis.Message) {
+	if s.redis == nil || s.channel == "" || ctx.Err() != nil {
+		return nil, nil
+	}
+	started := time.Now()
+	subscription := s.redis.Subscribe(ctx, s.channel)
+	ackCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	ack, err := subscription.Receive(ackCtx)
+	confirmation, ok := ack.(*redis.Subscription)
+	if err != nil || !ok || confirmation.Kind != "subscribe" || confirmation.Channel != s.channel {
+		_ = subscription.Close()
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		if err == nil {
+			err = errPolicySubscriptionFailed
+		}
+		if s.metrics != nil {
+			s.metrics.ObserveInfrastructure("policy_sync", s.component, "subscribe", "error", started)
+		}
+		s.logger.WarnContext(ctx, "subscribe policy invalidation failed", "channel", s.channel, "error", observability.SafeError(err, errPolicySubscriptionFailed))
+		return nil, nil
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveInfrastructure("policy_sync", s.component, "subscribe", "success", started)
+	}
+	return subscription, subscription.Channel()
 }
 
 func (s *Sync) poll(ctx context.Context) {

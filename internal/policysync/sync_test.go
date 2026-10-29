@@ -130,6 +130,59 @@ func TestPollingRecoversLostNotification(t *testing.T) {
 	<-done
 }
 
+func TestRunChecksRevisionImmediatelyAfterStartup(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	revision := "revision-1"
+	var refreshes atomic.Int64
+	syncer := New(nil, "", "data_permission", time.Minute, time.Second,
+		func(context.Context) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return revision, nil
+		},
+		func(context.Context) error { refreshes.Add(1); return nil },
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	require.NoError(t, syncer.Refresh(t.Context()))
+	mu.Lock()
+	revision = "revision-2"
+	mu.Unlock()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); syncer.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	require.Eventually(t, func() bool { return refreshes.Load() >= 2 && syncer.Revision() == "revision-2" }, time.Second, 10*time.Millisecond)
+}
+
+func TestRunPollsAuthoritativeRevisionWhenInitialSubscriptionFails(t *testing.T) {
+	t.Parallel()
+	server := miniredis.RunT(t)
+	address := server.Addr()
+	server.Close()
+	client := redis.NewClient(&redis.Options{Addr: address, DialTimeout: 10 * time.Millisecond, MaxRetries: 0})
+	t.Cleanup(func() { _ = client.Close() })
+	var revision atomic.Value
+	revision.Store("revision-1")
+	var refreshes atomic.Int64
+	var logs bytes.Buffer
+	syncer := New(client, "policies", "data_permission", time.Minute, 100*time.Millisecond,
+		func(context.Context) (string, error) { return revision.Load().(string), nil },
+		func(context.Context) error { refreshes.Add(1); return nil },
+		slog.New(slog.NewJSONHandler(&logs, nil)), nil)
+	require.NoError(t, syncer.Refresh(t.Context()))
+	revision.Store("revision-2")
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); syncer.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	require.Eventually(t, func() bool { return refreshes.Load() >= 2 && syncer.Revision() == "revision-2" }, time.Second, 10*time.Millisecond)
+	cancel()
+	<-done
+	if !strings.Contains(logs.String(), "policy_subscription_failed") || strings.Contains(logs.String(), address) {
+		t.Fatalf("subscription failure log exposed address or omitted reason: %s", logs.String())
+	}
+}
+
 func TestRunResubscribesAfterPubSubChannelCloses(t *testing.T) {
 	t.Parallel()
 	server := miniredis.RunT(t)
