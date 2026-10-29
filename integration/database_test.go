@@ -182,6 +182,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatal("generic template migration must not create a users table")
 			}
 			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
+			assertOutboxDeadListIndex(t, ctx, db, databaseType)
 			if databaseType == "postgres" {
 				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
 				testPostgresAuditInfrastructure(t, ctx, db)
@@ -215,6 +216,28 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func assertOutboxDeadListIndex(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string) {
+	t.Helper()
+	var definition string
+	if databaseType == "postgres" {
+		err := db.GetContext(ctx, &definition, `SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='event_outbox' AND indexname='event_outbox_dead_list_idx'`)
+		if err != nil {
+			t.Fatalf("inspect PostgreSQL outbox dead-list index: %v", err)
+		}
+		if !strings.Contains(definition, "dead_at DESC") || !strings.Contains(definition, "published_at IS NULL") || !strings.Contains(definition, "deleted_at IS NULL") {
+			t.Fatalf("unexpected PostgreSQL outbox dead-list index: %s", definition)
+		}
+		return
+	}
+	err := db.GetContext(ctx, &definition, `SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='event_outbox' AND index_name='event_outbox_dead_list_idx'`)
+	if err != nil {
+		t.Fatalf("inspect MySQL outbox dead-list index: %v", err)
+	}
+	if definition != "deleted_at,published_at,dead_at,id" {
+		t.Fatalf("unexpected MySQL outbox dead-list index: %s", definition)
 	}
 }
 
