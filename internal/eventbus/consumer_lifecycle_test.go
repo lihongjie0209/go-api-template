@@ -106,6 +106,62 @@ func TestRegisterConsumerRetriesTransientSubscriptionFailure(t *testing.T) {
 	})
 }
 
+func TestRegisterConsumerRetriesWithoutMetrics(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		lifecycle := new(captureLifecycle)
+		var attempts atomic.Int32
+		RegisterConsumer(lifecycle, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), nil, func(ctx context.Context) error {
+			if attempts.Add(1) == 1 {
+				return errors.New("subscription unavailable")
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		})
+		if err := lifecycle.hook.OnStart(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if got := attempts.Load(); got != 2 {
+			t.Fatalf("consumer attempts = %d, want retry without metrics", got)
+		}
+		if err := lifecycle.hook.OnStop(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestRegisterConsumerRecoversPanickedSubscriptionAndRetries(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		lifecycle := new(captureLifecycle)
+		var attempts atomic.Int32
+		var output bytes.Buffer
+		RegisterConsumer(lifecycle, "test", slog.New(slog.NewJSONHandler(&output, nil)), nil, func(ctx context.Context) error {
+			if attempts.Add(1) == 1 {
+				panic("token=secret-value")
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		})
+		if err := lifecycle.hook.OnStart(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if got := attempts.Load(); got != 2 {
+			t.Fatalf("consumer attempts = %d, want retry after panic", got)
+		}
+		if err := lifecycle.hook.OnStop(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(output.Bytes(), []byte("secret-value")) || !bytes.Contains(output.Bytes(), []byte("event_consumer_panicked")) {
+			t.Fatalf("consumer panic log leaked value or omitted safe code: %s", output.String())
+		}
+	})
+}
+
 func TestRegisterConsumerStopsWithoutRetryingAfterShutdown(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

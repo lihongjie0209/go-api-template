@@ -390,7 +390,9 @@ TTL, and invalidation for its own data.
   canceled. A transient broker or subscription failure must not permanently
   disable operation, security, or scheduled-job event consumption. Count actual
   restart attempts with code-owned, bounded consumer names; do not turn an
-  unproven subscription attempt into a healthy readiness signal.
+  unproven subscription attempt into a healthy readiness signal. Recover a
+  panic at the subscription-loop boundary into a fixed, non-sensitive reason
+  and retry with the same bounded backoff; never log the panic value.
 - Never record passwords, secrets, bearer tokens, refresh tokens, cookies, or
   raw credentials. Use the shared sanitization and keyed digest facilities.
 - Persisted failure fields such as outbox `last_error`, dead-letter metadata,

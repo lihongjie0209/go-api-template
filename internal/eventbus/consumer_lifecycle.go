@@ -13,6 +13,7 @@ import (
 )
 
 var errEventConsumerFailed = errors.New("event_consumer_failed")
+var errEventConsumerPanicked = errors.New("event_consumer_panicked")
 var errEventConsumerStopped = errors.New("event_consumer_stopped")
 
 const consumerRetryMin = time.Second
@@ -38,7 +39,7 @@ func runConsumer(ctx context.Context, name string, logger *slog.Logger, metrics 
 	backoff := consumerRetryMin
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := consume(ctx)
+		err := consumeSafely(ctx, consume)
 		if ctx.Err() != nil {
 			return
 		}
@@ -61,13 +62,26 @@ func runConsumer(ctx context.Context, name string, logger *slog.Logger, metrics 
 	}
 }
 
+func consumeSafely(ctx context.Context, consume func(context.Context) error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errEventConsumerPanicked
+		}
+	}()
+	return consume(ctx)
+}
+
 func jitterConsumerDelay(backoff time.Duration) time.Duration {
 	half := backoff / 2
 	return half + time.Duration(rand.Int64N(int64(backoff-half)+1))
 }
 
 func logConsumerFailure(ctx context.Context, logger *slog.Logger, name string, err error) {
-	logger.ErrorContext(ctx, "event consumer retrying", "consumer", name, "error", observability.SafeError(err, errEventConsumerFailed))
+	reason := errEventConsumerFailed
+	if errors.Is(err, errEventConsumerPanicked) {
+		reason = errEventConsumerPanicked
+	}
+	logger.ErrorContext(ctx, "event consumer retrying", "consumer", name, "error", observability.SafeError(err, reason))
 }
 
 // ConsumerErrorHandler logs asynchronous consumer failures without exposing
