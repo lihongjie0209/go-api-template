@@ -70,6 +70,9 @@ func (h *Handler) JWKSAPI(c *gin.Context) { OK(c, h.auth.JWKS()) }
 // @Router /ready [post]
 func (h *Handler) Ready(c *gin.Context) {
 	status, ready := h.health.Ready(c.Request.Context())
+	if responseContextEnded(c) {
+		return
+	}
 	if !ready {
 		c.JSON(503, Response{Code: apperror.CodeDependencyUnavailable, Message: "service is not ready", Body: status, RequestID: requestID(c)})
 		return

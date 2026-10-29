@@ -218,7 +218,10 @@ Health probes must fail closed for configured mandatory dependencies: a missing
 client handle is `down`, not `disabled`. Report `disabled` only when the
 dependency is explicitly disabled by configuration. Never infer queue consumer
 readiness merely from a retry loop; it requires an authoritative subscription
-ready signal from the transport.
+ready signal from the transport. After a readiness check, honor the caller's
+ended Context before writing a dependency response: cancellation writes no
+body, and an expired deadline uses the shared timeout envelope rather than a
+misleading dependency-down result.
 
 ## Mandatory per-interface design review
 
