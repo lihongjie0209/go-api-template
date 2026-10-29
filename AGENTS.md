@@ -518,6 +518,10 @@ available. A feature must not introduce a second transport for the same event.
   non-sensitive failure reason before releasing their distributed lease. Both
   cron and manual runs must persist a terminal failure and operation log;
   recovery logging must never include panic values or stack contents.
+- The transactional outbox dispatcher must recover a batch panic into a fixed
+  safe reason and continue scanning on the next interval. A claimed row keeps
+  its bounded database lease so another attempt can reclaim it; panic values
+  must not enter logs, traces, or durable failure fields.
 - A handler returning `nil` after its execution Context was canceled or its
   deadline elapsed is not a successful run. Cron and manual paths must check
   the Context after the callback before recording status, metrics, and logs.

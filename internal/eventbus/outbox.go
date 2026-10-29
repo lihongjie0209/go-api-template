@@ -55,6 +55,7 @@ var publishSubjectPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-
 var errDecodeEnvelope = errors.New("decode_failed")
 var errPublishEvent = errors.New("publish_failed")
 var errOutboxPersistenceFailed = errors.New("outbox_persistence_failed")
+var errOutboxDispatchPanicked = errors.New("outbox_dispatch_panicked")
 
 func NewOutbox(cfg config.Config, bus *Bus, transactor *database.Transactor, metrics *observability.Metrics, logger *slog.Logger) *Outbox {
 	return &Outbox{
@@ -103,10 +104,14 @@ func (o *Outbox) Run(ctx context.Context) {
 	if o == nil || !o.cfg.Enabled || o.bus == nil {
 		return
 	}
+	o.runDispatchLoop(ctx, o.dispatchBatch)
+}
+
+func (o *Outbox) runDispatchLoop(ctx context.Context, dispatch func(context.Context) error) {
 	ticker := time.NewTicker(o.cfg.DispatchInterval)
 	defer ticker.Stop()
 	for {
-		if err := o.dispatchBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if err := dispatchSafely(ctx, dispatch); err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 			o.logDispatchFailure(ctx, err)
 		}
 		select {
@@ -117,8 +122,21 @@ func (o *Outbox) Run(ctx context.Context) {
 	}
 }
 
+func dispatchSafely(ctx context.Context, dispatch func(context.Context) error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errOutboxDispatchPanicked
+		}
+	}()
+	return dispatch(ctx)
+}
+
 func (o *Outbox) logDispatchFailure(ctx context.Context, err error) {
-	o.logger.ErrorContext(ctx, "dispatch transactional outbox", "error", observability.SafeError(err, errOutboxPersistenceFailed))
+	reason := errOutboxPersistenceFailed
+	if errors.Is(err, errOutboxDispatchPanicked) {
+		reason = errOutboxDispatchPanicked
+	}
+	o.logger.ErrorContext(ctx, "dispatch transactional outbox", "error", observability.SafeError(err, reason))
 }
 
 func recordOutboxPersistenceFailure(span trace.Span, err error) {
@@ -136,55 +154,57 @@ func (o *Outbox) dispatchBatch(ctx context.Context) error {
 		if !found {
 			return nil
 		}
-		started := time.Now()
-		dispatchCtx, span := outboxTracer.Start(extractTraceContext(ctx, record.TraceParent, record.TraceState), "event_outbox.dispatch", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", record.Subject)))
-		envelope, err := decodeClaimedEnvelope(record)
-		if err != nil {
-			span.RecordError(errDecodeEnvelope)
-			span.SetStatus(codes.Error, "decode envelope")
-			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errDecodeEnvelope); releaseErr != nil {
-				o.metrics.ObserveOutboxOutcome("persistence_error")
-				recordOutboxPersistenceFailure(span, releaseErr)
-				span.End()
-				return fmt.Errorf("release undecodable outbox event: %w", releaseErr)
-			}
-			if record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
-				o.metrics.ObserveOutboxOutcome("dead_letter")
-			} else {
-				o.metrics.ObserveOutboxOutcome("invalid_retry")
-			}
-			span.End()
-			continue
-		}
-		err = Publish(dispatchCtx, o.bus, record.Subject, envelope)
-		status := "success"
-		if err != nil {
-			status = "error"
-			span.RecordError(errPublishEvent)
-			span.SetStatus(codes.Error, "publish failed")
-		}
-		o.metrics.ObserveInfrastructure("event_outbox", "jetstream", "dispatch", status, started)
-		if err != nil {
-			o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "reason", errPublishEvent.Error())
-			if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errPublishEvent); releaseErr != nil {
-				o.metrics.ObserveOutboxOutcome("persistence_error")
-				recordOutboxPersistenceFailure(span, releaseErr)
-				span.End()
-				return fmt.Errorf("release unpublished outbox event: %w", releaseErr)
-			}
-			o.metrics.ObserveOutboxOutcome("publish_retry")
-			span.End()
-			continue
-		}
-		if err := o.markPublished(dispatchCtx, record.ID); err != nil {
-			o.metrics.ObserveOutboxOutcome("persistence_error")
-			recordOutboxPersistenceFailure(span, err)
-			span.End()
+		if err := o.dispatchRecord(ctx, record); err != nil {
 			return err
 		}
-		o.metrics.ObserveOutboxOutcome("published")
-		span.End()
 	}
+	return nil
+}
+
+func (o *Outbox) dispatchRecord(ctx context.Context, record outboxRecord) error {
+	started := time.Now()
+	dispatchCtx, span := outboxTracer.Start(extractTraceContext(ctx, record.TraceParent, record.TraceState), "event_outbox.dispatch", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.system", "nats"), attribute.String("messaging.destination.name", record.Subject)))
+	defer span.End()
+	envelope, err := decodeClaimedEnvelope(record)
+	if err != nil {
+		span.RecordError(errDecodeEnvelope)
+		span.SetStatus(codes.Error, "decode envelope")
+		if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errDecodeEnvelope); releaseErr != nil {
+			o.metrics.ObserveOutboxOutcome("persistence_error")
+			recordOutboxPersistenceFailure(span, releaseErr)
+			return fmt.Errorf("release undecodable outbox event: %w", releaseErr)
+		}
+		if record.Attempts+1 >= int64(o.cfg.ConsumerMaxDeliver) {
+			o.metrics.ObserveOutboxOutcome("dead_letter")
+		} else {
+			o.metrics.ObserveOutboxOutcome("invalid_retry")
+		}
+		return nil
+	}
+	err = Publish(dispatchCtx, o.bus, record.Subject, envelope)
+	status := "success"
+	if err != nil {
+		status = "error"
+		span.RecordError(errPublishEvent)
+		span.SetStatus(codes.Error, "publish failed")
+	}
+	o.metrics.ObserveInfrastructure("event_outbox", "jetstream", "dispatch", status, started)
+	if err != nil {
+		o.logger.WarnContext(dispatchCtx, "outbox event publish failed", "event_id", record.ID, "attempt", record.Attempts+1, "reason", errPublishEvent.Error())
+		if releaseErr := o.release(dispatchCtx, record.ID, record.Attempts, errPublishEvent); releaseErr != nil {
+			o.metrics.ObserveOutboxOutcome("persistence_error")
+			recordOutboxPersistenceFailure(span, releaseErr)
+			return fmt.Errorf("release unpublished outbox event: %w", releaseErr)
+		}
+		o.metrics.ObserveOutboxOutcome("publish_retry")
+		return nil
+	}
+	if err := o.markPublished(dispatchCtx, record.ID); err != nil {
+		o.metrics.ObserveOutboxOutcome("persistence_error")
+		recordOutboxPersistenceFailure(span, err)
+		return err
+	}
+	o.metrics.ObserveOutboxOutcome("published")
 	return nil
 }
 

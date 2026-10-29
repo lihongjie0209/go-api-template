@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -25,6 +27,52 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestOutboxDispatchRecoversPanicAndRetries(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var output bytes.Buffer
+		outbox := &Outbox{
+			cfg:    config.EventBus{DispatchInterval: time.Second},
+			logger: slog.New(slog.NewJSONHandler(&output, nil)),
+		}
+		var attempts atomic.Int32
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			outbox.runDispatchLoop(ctx, func(context.Context) error {
+				if attempts.Add(1) == 1 {
+					panic("token=secret-value")
+				}
+				cancel()
+				return nil
+			})
+		}()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		<-done
+		require.Equal(t, int32(2), attempts.Load())
+		require.NotContains(t, output.String(), "secret-value")
+		require.Contains(t, output.String(), "outbox_dispatch_panicked")
+	})
+}
+
+func TestOutboxDispatchEndsSpanWhenBatchPanics(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	previous := outboxTracer
+	outboxTracer = provider.Tracer("outbox-panic-test")
+	t.Cleanup(func() { outboxTracer = previous })
+	outbox := &Outbox{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	err := dispatchSafely(t.Context(), func(ctx context.Context) error {
+		return outbox.dispatchRecord(ctx, outboxRecord{ID: "event-1", Subject: "invalid subject"})
+	})
+	require.ErrorIs(t, err, errOutboxDispatchPanicked)
+	require.Len(t, recorder.Ended(), 1)
+}
 
 func TestOutboxPersistenceErrorDoesNotLeakThroughLogOrTrace(t *testing.T) {
 	t.Parallel()
