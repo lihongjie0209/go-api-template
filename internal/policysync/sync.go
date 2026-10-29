@@ -95,6 +95,10 @@ func (s *Sync) Revision() string {
 // Refresh rebuilds the entire snapshot and advances the observed database
 // revision under one process-local lock.
 func (s *Sync) Refresh(ctx context.Context) error {
+	return s.refreshWithPolicy(ctx, true)
+}
+
+func (s *Sync) refreshWithPolicy(ctx context.Context, invalidateOnCancellation bool) error {
 	started := time.Now()
 	status := "success"
 	defer func() {
@@ -121,6 +125,10 @@ func (s *Sync) Refresh(ctx context.Context) error {
 		}
 	}
 	if err != nil {
+		if ctx.Err() != nil && !invalidateOnCancellation {
+			status = "cancelled"
+			return err
+		}
 		status = "error"
 		s.invalidateLocked()
 		return err
@@ -261,7 +269,10 @@ func (s *Sync) poll(ctx context.Context) {
 }
 
 func (s *Sync) refreshAndLog(ctx context.Context, source string) {
-	if err := s.Refresh(ctx); err != nil {
+	if ctx.Err() != nil {
+		return
+	}
+	if err := s.refreshWithPolicy(ctx, false); err != nil && ctx.Err() == nil {
 		s.logger.ErrorContext(ctx, "refresh policy snapshot failed", "channel", s.channel, "source", source, "error", observability.SafeError(err, errPolicySnapshotRefreshFailed))
 	}
 }

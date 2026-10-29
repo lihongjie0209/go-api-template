@@ -123,6 +123,56 @@ func TestPollingRevisionDeadlineInvalidatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestBackgroundRefreshShutdownDoesNotInvalidateSnapshot(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	var invalidations atomic.Int64
+	var calls atomic.Int64
+	ctx, cancel := context.WithCancel(t.Context())
+	syncer := NewSnapshot(nil, "policies", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "revision-1", nil },
+		func(context.Context) (string, error) {
+			if calls.Add(1) == 1 {
+				return "revision-1", nil
+			}
+			cancel()
+			return "", context.Canceled
+		}, slog.New(slog.NewJSONHandler(&output, nil)), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	require.NoError(t, syncer.Refresh(t.Context()))
+	syncer.refreshAndLog(ctx, "notification")
+	require.Equal(t, int64(0), invalidations.Load())
+	require.Equal(t, "revision-1", syncer.Revision())
+	require.Empty(t, output.String())
+}
+
+func TestChangedCancellationStillInvalidatesSnapshot(t *testing.T) {
+	t.Parallel()
+	var invalidations atomic.Int64
+	ctx, cancel := context.WithCancel(t.Context())
+	syncer := NewSnapshot(nil, "", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "revision-1", nil },
+		func(context.Context) (string, error) {
+			cancel()
+			return "", context.Canceled
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	require.ErrorIs(t, syncer.Changed(ctx), context.Canceled)
+	require.Equal(t, int64(1), invalidations.Load())
+}
+
+func TestBackgroundRefreshDeadlineInvalidatesSnapshot(t *testing.T) {
+	t.Parallel()
+	var invalidations atomic.Int64
+	syncer := NewSnapshot(nil, "", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "revision-1", nil },
+		func(context.Context) (string, error) { return "", context.DeadlineExceeded },
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	syncer.refreshAndLog(t.Context(), "notification")
+	require.Equal(t, int64(1), invalidations.Load())
+}
+
 type metricsStub struct {
 	mu      sync.Mutex
 	entries []string
