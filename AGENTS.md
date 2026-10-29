@@ -486,7 +486,10 @@ available. A feature must not introduce a second transport for the same event.
   Redis subscription before treating it as active, then immediately check the
   database revision to cover changes between initial snapshot load and the
   subscription acknowledgement. A subscription failure must still allow that
-  authoritative revision check to run.
+  authoritative revision check to run. Lifecycle Context cancellation during
+  a revision read is normal shutdown and must not invalidate the snapshot or
+  log a dependency failure; a revision read's own timeout while the lifecycle
+  remains active must still fail closed.
 - A durable cross-service notification must use a transactional outbox written
   in the same database transaction as the business change and then be published
   to the message queue. Do not dual-write the database and queue directly.

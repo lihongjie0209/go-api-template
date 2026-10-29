@@ -156,8 +156,8 @@ func (s *Sync) Changed(ctx context.Context) error {
 	return refreshErr
 }
 
-// Run watches both Redis notifications and the authoritative database. It
-// returns only when ctx is cancelled or the subscription is closed.
+// Run watches Redis notifications and the authoritative database until ctx is
+// cancelled. A closed subscription is retried at the next polling interval.
 func (s *Sync) Run(ctx context.Context) {
 	if s == nil {
 		return
@@ -233,14 +233,23 @@ func (s *Sync) subscribe(ctx context.Context) (*redis.PubSub, <-chan *redis.Mess
 }
 
 func (s *Sync) poll(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	revision, err := s.revision(checkCtx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		s.mu.Lock()
 		s.invalidateLocked()
 		s.mu.Unlock()
 		s.logger.ErrorContext(ctx, "read policy snapshot revision failed", "channel", s.channel, "error", observability.SafeError(err, errPolicyRevisionReadFailed))
+		return
+	}
+	if ctx.Err() != nil {
 		return
 	}
 	s.mu.Lock()

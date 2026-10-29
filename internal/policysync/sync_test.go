@@ -91,6 +91,38 @@ func TestPolicySyncFailureLogsDoNotExposeDependencyDetails(t *testing.T) {
 	}
 }
 
+func TestPollingShutdownCancellationDoesNotInvalidateSnapshot(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	var invalidations atomic.Int64
+	ctx, cancel := context.WithCancel(t.Context())
+	syncer := New(nil, "policies", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) {
+			cancel()
+			return "", context.Canceled
+		},
+		func(context.Context) error { return nil }, logger, nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	syncer.poll(ctx)
+	if invalidations.Load() != 0 || output.Len() != 0 {
+		t.Fatalf("shutdown cancellation invalidated=%d log=%q", invalidations.Load(), output.String())
+	}
+}
+
+func TestPollingRevisionDeadlineInvalidatesSnapshot(t *testing.T) {
+	t.Parallel()
+	var invalidations atomic.Int64
+	syncer := New(nil, "policies", "data_permission", time.Second, time.Second,
+		func(context.Context) (string, error) { return "", context.DeadlineExceeded },
+		func(context.Context) error { return nil }, slog.Default(), nil)
+	syncer.SetFailureHandler(func() { invalidations.Add(1) })
+	syncer.poll(t.Context())
+	if invalidations.Load() != 1 {
+		t.Fatalf("dependency deadline invalidations=%d, want 1", invalidations.Load())
+	}
+}
+
 type metricsStub struct {
 	mu      sync.Mutex
 	entries []string
