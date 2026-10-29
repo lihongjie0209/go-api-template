@@ -732,10 +732,12 @@ deleted_by text
 - Local development runs ordinary unit tests. GitHub CI runs Testcontainers
   integration tests. Do not block unrelated development waiting for CI; check
   results later and fix failures promptly.
-- After editing an `integration`-tagged Go test, locally compile its package
-  with `go test -tags=integration -run '^$' ./integration` without running any
-  integration case. This catches test-only type errors before the CI batch;
-  container-backed execution still belongs exclusively to GitHub CI.
+- After editing an `integration`-tagged Go test, locally compile its own package
+  with `go test -tags=integration -run '^$' ./path/to/package` without running
+  any integration case. Every package with such a test must be included in both
+  `make test-integration` and `make ci-test-integration`; the policy gate scans
+  tagged test files to detect omissions. Container-backed execution still
+  belongs exclusively to GitHub CI.
 - Do not push incremental changes merely to trigger CI. Run the full CI suite
   after a substantial feature is complete; during normal local work, run only
   relevant unit tests.
