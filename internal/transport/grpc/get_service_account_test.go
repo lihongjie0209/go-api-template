@@ -1,6 +1,7 @@
 package grpctransport
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -31,12 +32,14 @@ func TestIdentityGetServiceAccount(t *testing.T) {
 		{name: "active", id: "account-1", principal: servicePrincipal(), rows: serviceAccountRows("active", nil, nil), wantOn: true, query: true},
 		{name: "disabled", id: "account-1", principal: servicePrincipal(), rows: serviceAccountRows("disabled", nil, nil), query: true},
 		{name: "expired", id: "account-1", principal: servicePrincipal(), rows: serviceAccountRows("active", timePointer(now.Add(-time.Hour)), nil), query: true},
-		{name: "locked", id: "account-1", principal: servicePrincipal(), rows: serviceAccountRows("active", nil, timePointer(now.Add(time.Hour))), query: true},
+		{name: "secret login locked but bearer still enabled", id: "account-1", principal: servicePrincipal(), rows: serviceAccountRows("active", nil, timePointer(now.Add(time.Hour))), wantOn: true, query: true},
 		{name: "missing", id: "account-1", principal: servicePrincipal(), rows: sqlmock.NewRows([]string{"id", "name", "status", "expires_at", "locked_until"}), wantCode: codes.NotFound, query: true},
 		{name: "invalid id", principal: servicePrincipal(), wantCode: codes.InvalidArgument},
 		{name: "missing principal", id: "account-1", wantCode: codes.Unauthenticated},
 		{name: "user principal", id: "account-1", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}, wantCode: codes.PermissionDenied},
 		{name: "store failure", id: "account-1", principal: servicePrincipal(), queryErr: errors.New("private connection string"), wantCode: codes.Unavailable, query: true},
+		{name: "request canceled", id: "account-1", principal: servicePrincipal(), queryErr: context.Canceled, wantCode: codes.Canceled, query: true},
+		{name: "deadline exceeded", id: "account-1", principal: servicePrincipal(), queryErr: context.DeadlineExceeded, wantCode: codes.DeadlineExceeded, query: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

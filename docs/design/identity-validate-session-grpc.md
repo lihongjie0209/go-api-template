@@ -7,8 +7,8 @@ a service principal; the operation authorization interceptor fails closed.
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Request `session_id` and `user_id` are required and bounded to 256 bytes. Response is `valid` plus `expires_at` only when valid. Invalid/revoked/expired sessions return `valid=false`; malformed input returns `InvalidArgument`, state-store failure returns `Unavailable`. No pagination or sorting. |
-| Authentication | Internal service principal over the configured gRPC authentication channel; not public and not a JWT-only user endpoint. |
+| Contract | Request `session_id` and `user_id` are required and bounded to 256 bytes. Response is `valid` plus `expires_at` only when valid. Invalid/revoked/expired sessions return `valid=false`; malformed input returns `InvalidArgument`, state-store failure returns `Unavailable`, and cancellation/deadline retains its gRPC code. No pagination or sorting. |
+| Authentication | Internal service principal over the configured gRPC authentication channel; the handler also rejects missing and user principals before state lookup. Not public and not a JWT-only user endpoint. |
 | Authorization | `identity.internal-authentication:validate-session`, platform scope. No tenant data is returned. The caller must have the operation grant; the handler does not infer permission from a session ID. |
 | Operation log | None: a high-volume, read-only internal probe with no state transition. |
 | Security log | None per probe: probing is not a login, token issue, or credential change. Suspicious caller behavior belongs to the gateway/rate-limit security flow. |

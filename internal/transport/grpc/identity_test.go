@@ -1,6 +1,7 @@
 package grpctransport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -36,6 +37,8 @@ func TestIdentityValidateSession(t *testing.T) {
 		{name: "inactive", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, rows: sqlmock.NewRows([]string{"expires_at"})},
 		{name: "invalid input", request: &identityv1.ValidateSessionRequest{UserId: "user-1"}, wantCode: codes.InvalidArgument},
 		{name: "store unavailable", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: errors.New("private database error"), wantCode: codes.Unavailable},
+		{name: "request canceled", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: context.Canceled, wantCode: codes.Canceled},
+		{name: "deadline exceeded", request: &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"}, queryErr: context.DeadlineExceeded, wantCode: codes.DeadlineExceeded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,7 +57,8 @@ func TestIdentityValidateSession(t *testing.T) {
 				}
 			}
 			server := &identityServer{auth: auth.NewWithDatabase(config.Config{}, sqlx.NewDb(raw, "sqlmock"))}
-			response, err := server.ValidateSession(t.Context(), tt.request)
+			ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "client", Type: platformprincipal.TypeServiceAccount})
+			response, err := server.ValidateSession(ctx, tt.request)
 			if status.Code(err) != tt.wantCode {
 				t.Fatalf("code = %v, want %v: %v", status.Code(err), tt.wantCode, err)
 			}
@@ -71,6 +75,30 @@ func TestIdentityValidateSession(t *testing.T) {
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestIdentityValidateSessionRequiresServicePrincipalBeforeLookup(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		principal platformprincipal.Principal
+		want      codes.Code
+	}{
+		{name: "missing principal", want: codes.Unauthenticated},
+		{name: "user principal", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}, want: codes.PermissionDenied},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			if tt.principal.ID != "" {
+				ctx = platformprincipal.WithContext(ctx, tt.principal)
+			}
+			_, err := (&identityServer{}).ValidateSession(ctx, &identityv1.ValidateSessionRequest{SessionId: "session-1", UserId: "user-1"})
+			if status.Code(err) != tt.want {
+				t.Fatalf("code=%v, want %v", status.Code(err), tt.want)
 			}
 		})
 	}

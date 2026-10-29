@@ -44,11 +44,19 @@ func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.Ge
 	if errors.Is(err, serviceaccount.ErrNotFound) {
 		return nil, status.Error(codes.NotFound, "service account not found")
 	}
+	if errors.Is(err, context.Canceled) {
+		return nil, status.Error(codes.Canceled, "request canceled")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil, status.Error(codes.DeadlineExceeded, "request deadline exceeded")
+	}
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "service account state unavailable")
 	}
 	now := time.Now()
-	enabled := account.Status == serviceaccount.StatusActive && (account.ExpiresAt == nil || account.ExpiresAt.After(now)) && (account.LockedUntil == nil || !account.LockedUntil.After(now))
+	// A temporary secret-login lock does not invalidate previously issued
+	// bearer tokens; the authoritative bearer verifier checks status/expiry.
+	enabled := account.Status == serviceaccount.StatusActive && (account.ExpiresAt == nil || account.ExpiresAt.After(now))
 	response := &identityv1.GetServiceAccountResponse{Id: account.ID, Name: account.Name, Enabled: enabled}
 	if s.jwtAudience != "" {
 		response.Audiences = []string{s.jwtAudience}
@@ -57,12 +65,25 @@ func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.Ge
 }
 
 func (s *identityServer) ValidateSession(ctx context.Context, r *identityv1.ValidateSessionRequest) (*identityv1.ValidateSessionResponse, error) {
+	principal, err := platformprincipal.Require(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "authentication required")
+	}
+	if principal.Type != platformprincipal.TypeServiceAccount {
+		return nil, status.Error(codes.PermissionDenied, "service authentication required")
+	}
 	if s.auth == nil {
 		return nil, status.Error(codes.Unavailable, "session state unavailable")
 	}
 	expiresAt, valid, err := s.auth.ValidateSession(ctx, r.GetSessionId(), r.GetUserId())
 	if errors.Is(err, auth.ErrInvalidSessionLookup) {
 		return nil, status.Error(codes.InvalidArgument, "session id and user id are required")
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil, status.Error(codes.Canceled, "request canceled")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil, status.Error(codes.DeadlineExceeded, "request deadline exceeded")
 	}
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "session state unavailable")
