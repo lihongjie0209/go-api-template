@@ -18,9 +18,13 @@ optimistic-lock, audit, presentation, observability, unit-test, integration-test
 and shared-component decisions have direct evidence in this repository.
 
 Data-permission snapshot refresh reads published policies and their database
-revision in one read-only repeatable-read transaction. A refresh failure
-invalidates this instance's current snapshot under the refresh lock; new
-authorization checks fail closed until a complete replacement succeeds.
+revision in one read-only repeatable-read transaction. A refresh failure while
+the service is running invalidates this instance's current snapshot under the
+refresh lock; new authorization checks fail closed until a complete replacement
+succeeds. Lifecycle cancellation during a background revision read or refresh
+is normal shutdown and does not invalidate the snapshot or record a dependency
+failure. Post-mutation refresh failure, including cancellation after commit,
+still invalidates the snapshot.
 After a tenant or policy mutation commits, a local refresh failure is logged
 with a safe error code rather than reported as a failed write. Redis
 notifications are attempted even when local refresh fails, and revision
