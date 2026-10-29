@@ -20,6 +20,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
+	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"google.golang.org/protobuf/proto"
@@ -148,14 +149,17 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 				DeadAt    sql.NullTime `db:"dead_at"`
 				LastError string       `db:"last_error"`
 				Attempts  int64        `db:"attempts"`
+				Version   int64        `db:"version"`
 			}
-			if err := db.GetContext(ctx, &row, `SELECT dead_at,last_error,attempts FROM event_outbox WHERE id=$1`, invalidID); err != nil {
+			if err := db.GetContext(ctx, &row, `SELECT dead_at,last_error,attempts,version FROM event_outbox WHERE id=$1`, invalidID); err != nil {
 				t.Fatal(err)
 			}
 			if row.DeadAt.Valid {
 				if row.LastError != "decode_failed" || row.Attempts != int64(cfg.EventBus.ConsumerMaxDeliver) {
 					t.Fatalf("invalid event dead letter = %+v", row)
 				}
+				repair := eventbus.NewRepairService(db, transactor)
+				require.ErrorIs(t, repair.Replay(actorCtx, invalidID, row.Version), eventbus.ErrRepairConflict)
 				break
 			}
 			if time.Now().After(deadline) {
