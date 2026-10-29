@@ -88,6 +88,13 @@ The next domain work must keep identity and tenancy separate:
   or password-change claims. Enforce this both when signing local tokens and
   when accepting local or remotely verified tokens; do not rely on downstream
   authorization to ignore unexpected context fields.
+- Service-account bearer tokens must carry a positive credential generation.
+  Secret rotation increments the authoritative account generation in the same
+  transaction as the secret hash update. Local and remote signature paths must
+  compare the signed generation with the active account row on every request;
+  a stale or missing generation is invalid, while a database outage remains an
+  authentication-dependency failure. The general audit/optimistic version is
+  unsuitable for this check because ordinary login also increments it.
 - A signed access-token claim is not authoritative for mutable credential
   state. Both local and remotely verified user tokens must recheck the active
   session, user, credential and any tenant membership before attaching the

@@ -129,7 +129,7 @@ func TestHelloServer_PingThroughGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("client", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs("client", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}).AddRow(1))
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer(grpc.ChainUnaryInterceptor(requestIDInterceptor, authInterceptor(authService, config.Auth{})))
 	hellov1.RegisterHelloServiceServer(server, &helloServer{})
@@ -239,7 +239,7 @@ func TestAuthenticateGRPC_JWTInjectsPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("user-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs("user-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}).AddRow(1))
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token))
 	ctx, err = authenticateGRPC(ctx, "/hello.v1.UserService/GetUser", service, config.Auth{})
 	if err != nil {

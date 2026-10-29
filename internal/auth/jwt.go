@@ -26,11 +26,12 @@ import (
 
 type Claims struct {
 	jwt.RegisteredClaims
-	PrincipalType      platformprincipal.Type `json:"principal_type,omitempty"`
-	SessionID          string                 `json:"session_id,omitempty"`
-	TenantID           string                 `json:"tenant_id,omitempty"`
-	MembershipID       string                 `json:"membership_id,omitempty"`
-	MustChangePassword bool                   `json:"must_change_password,omitempty"`
+	PrincipalType        platformprincipal.Type `json:"principal_type,omitempty"`
+	SessionID            string                 `json:"session_id,omitempty"`
+	TenantID             string                 `json:"tenant_id,omitempty"`
+	MembershipID         string                 `json:"membership_id,omitempty"`
+	MustChangePassword   bool                   `json:"must_change_password,omitempty"`
+	CredentialGeneration int64                  `json:"credential_generation,omitempty"`
 }
 
 type TokenState struct {
@@ -159,7 +160,7 @@ func (s *Service) VerifyWithState(ctx context.Context, raw string) (platformprin
 		return platformprincipal.Principal{}, TokenState{}, parseErr
 	}
 	principal := platformprincipal.Principal{ID: claims.Subject, Type: claims.PrincipalType, SessionID: claims.SessionID, TenantID: claims.TenantID, MembershipID: claims.MembershipID}
-	state, err := s.verifyPrincipalState(ctx, principal)
+	state, err := s.verifyPrincipalState(ctx, principal, claims.CredentialGeneration)
 	if err != nil {
 		return platformprincipal.Principal{}, TokenState{}, err
 	}
@@ -171,7 +172,21 @@ func (s *Service) verifyRemoteWithState(ctx context.Context, raw string) (platfo
 	if err != nil {
 		return platformprincipal.Principal{}, TokenState{}, err
 	}
-	state, err := s.verifyPrincipalState(ctx, principal)
+	var generation int64
+	if principal.Type == platformprincipal.TypeServiceAccount {
+		// The shared verifier has already authenticated this exact token but its
+		// Principal deliberately contains no application-specific JWT claims.
+		parsed, _, parseErr := jwt.NewParser().ParseUnverified(raw, &Claims{})
+		if parseErr != nil {
+			return platformprincipal.Principal{}, TokenState{}, errors.New("invalid service account token claims")
+		}
+		claims, ok := parsed.Claims.(*Claims)
+		if !ok {
+			return platformprincipal.Principal{}, TokenState{}, errors.New("invalid service account token claims")
+		}
+		generation = claims.CredentialGeneration
+	}
+	state, err := s.verifyPrincipalState(ctx, principal, generation)
 	if err != nil {
 		return platformprincipal.Principal{}, TokenState{}, err
 	}
@@ -180,7 +195,7 @@ func (s *Service) verifyRemoteWithState(ctx context.Context, raw string) (platfo
 
 // verifyPrincipalState is the authoritative mutable-state boundary for both
 // locally signed and remotely verified bearer principals.
-func (s *Service) verifyPrincipalState(ctx context.Context, principal platformprincipal.Principal) (TokenState, error) {
+func (s *Service) verifyPrincipalState(ctx context.Context, principal platformprincipal.Principal, generation int64) (TokenState, error) {
 	if s.db == nil {
 		return TokenState{}, ErrStateUnavailable
 	}
@@ -203,9 +218,12 @@ func (s *Service) verifyPrincipalState(ctx context.Context, principal platformpr
 			return TokenState{}, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 		}
 	case platformprincipal.TypeServiceAccount:
-		var count int
-		query := s.db.Rebind(`SELECT count(*) FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
-		if err := s.db.GetContext(ctx, &count, query, principal.ID, time.Now()); err != nil {
+		if generation <= 0 {
+			return TokenState{}, errors.New("service account token credential generation is required")
+		}
+		var currentGeneration int64
+		query := s.db.Rebind(`SELECT credential_generation FROM identity_service_accounts WHERE id=? AND status='active' AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
+		if err := s.db.GetContext(ctx, &currentGeneration, query, principal.ID, time.Now()); err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return TokenState{}, fmt.Errorf("%w: verify token: %w", ErrStateUnavailable, contextErr)
 			}
@@ -214,8 +232,8 @@ func (s *Service) verifyPrincipalState(ctx context.Context, principal platformpr
 			}
 			return TokenState{}, errors.New("service account is disabled or expired")
 		}
-		if count != 1 {
-			return TokenState{}, errors.New("service account is disabled or expired")
+		if currentGeneration != generation {
+			return TokenState{}, errors.New("service account credential has been rotated")
 		}
 	default:
 		return TokenState{}, errors.New("unsupported principal type")
@@ -264,13 +282,24 @@ func (s *Service) verifyRemote(ctx context.Context, raw string) (platformprincip
 }
 func (s *Service) Enabled() bool { return s.active != nil && s.initErr == nil }
 func (s *Service) Issue(subject string) (string, error) {
-	return s.IssuePrincipal(platformprincipal.Principal{ID: subject, Type: platformprincipal.TypeServiceAccount})
+	return s.IssueServiceAccount(subject, 1)
+}
+func (s *Service) IssueServiceAccount(subject string, generation int64) (string, error) {
+	return s.issuePrincipalWithGeneration(platformprincipal.Principal{ID: subject, Type: platformprincipal.TypeServiceAccount}, TokenState{}, generation)
 }
 func (s *Service) IssuePrincipal(principal platformprincipal.Principal) (string, error) {
 	return s.IssuePrincipalWithState(principal, TokenState{})
 }
 
 func (s *Service) IssuePrincipalWithState(principal platformprincipal.Principal, state TokenState) (string, error) {
+	generation := int64(0)
+	if principal.Type == platformprincipal.TypeServiceAccount {
+		generation = 1
+	}
+	return s.issuePrincipalWithGeneration(principal, state, generation)
+}
+
+func (s *Service) issuePrincipalWithGeneration(principal platformprincipal.Principal, state TokenState, generation int64) (string, error) {
 	if !s.Enabled() {
 		return "", errors.New("asymmetric jwt signing is not configured")
 	}
@@ -289,6 +318,9 @@ func (s *Service) IssuePrincipalWithState(principal platformprincipal.Principal,
 	if principal.Type == platformprincipal.TypeServiceAccount && (principal.SessionID != "" || principal.TenantID != "" || principal.MembershipID != "" || state.MustChangePassword) {
 		return "", errors.New("service account jwt cannot carry user session or tenant context")
 	}
+	if principal.Type == platformprincipal.TypeServiceAccount && generation <= 0 {
+		return "", errors.New("service account credential generation must be positive")
+	}
 	if s.ttl < config.MinAccessTokenTTL || s.ttl > config.MaxAccessTokenTTL {
 		return "", errors.New("jwt.ttl must be between 1 minute and 24 hours")
 	}
@@ -297,7 +329,7 @@ func (s *Service) IssuePrincipalWithState(principal platformprincipal.Principal,
 	if err != nil {
 		return "", fmt.Errorf("create token id: %w", err)
 	}
-	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: s.issuer, Audience: jwt.ClaimStrings{s.audience}, Subject: principal.ID, ID: jti, IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl))}, PrincipalType: principal.Type, SessionID: principal.SessionID, TenantID: principal.TenantID, MembershipID: principal.MembershipID, MustChangePassword: state.MustChangePassword}
+	claims := Claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: s.issuer, Audience: jwt.ClaimStrings{s.audience}, Subject: principal.ID, ID: jti, IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl))}, PrincipalType: principal.Type, SessionID: principal.SessionID, TenantID: principal.TenantID, MembershipID: principal.MembershipID, MustChangePassword: state.MustChangePassword, CredentialGeneration: generation}
 	token := jwt.NewWithClaims(jwt.GetSigningMethod(s.active.algorithm), claims)
 	token.Header["kid"] = s.active.id
 	return token.SignedString(s.active.private)
@@ -339,6 +371,12 @@ func (s *Service) Parse(raw string) (*Claims, error) {
 	}
 	if claims.PrincipalType == platformprincipal.TypeServiceAccount && (claims.SessionID != "" || claims.TenantID != "" || claims.MembershipID != "" || claims.MustChangePassword) {
 		return nil, errors.New("service account jwt cannot carry user session or tenant context")
+	}
+	if claims.PrincipalType == platformprincipal.TypeServiceAccount && claims.CredentialGeneration <= 0 {
+		return nil, errors.New("service account credential generation is required")
+	}
+	if claims.PrincipalType == platformprincipal.TypeUser && claims.CredentialGeneration != 0 {
+		return nil, errors.New("user jwt cannot carry service account credential generation")
 	}
 	return claims, nil
 }

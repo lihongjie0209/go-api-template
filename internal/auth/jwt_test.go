@@ -34,6 +34,85 @@ func (f verifierFunc) VerifyBearer(ctx context.Context, raw string) (platformpri
 
 func (verifierFunc) Close() {}
 
+func signedServiceAccountToken(t *testing.T, generation int64) string {
+	t.Helper()
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := New(config.Config{JWT: jwtConfig}).IssueServiceAccount("service-1", generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestService_ServiceAccountCredentialGenerationLocalAndRemote(t *testing.T) {
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := New(config.Config{JWT: jwtConfig})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(issuer.JWKS())
+	}))
+	defer server.Close()
+	for _, mode := range []string{"local", "remote"} {
+		t.Run(mode, func(t *testing.T) {
+			rawDB, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = rawDB.Close() })
+			db := sqlx.NewDb(rawDB, "sqlmock")
+			var service *Service
+			if mode == "local" {
+				service = NewWithDatabase(config.Config{JWT: jwtConfig}, db)
+			} else {
+				lifecycle := fxtest.NewLifecycle(t)
+				service, err = NewRuntime(lifecycle, config.Config{Auth: config.Auth{JWKSURL: server.URL, Issuer: jwtConfig.Issuer, Audience: jwtConfig.Audience}, JWT: config.JWT{TTL: jwtConfig.TTL}}, db)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lifecycle.RequireStart()
+				defer lifecycle.RequireStop()
+			}
+			raw, err := issuer.IssueServiceAccount("service-1", 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}).AddRow(2))
+			if _, _, err := service.VerifyWithState(t.Context(), raw); err != nil {
+				t.Fatalf("current generation rejected: %v", err)
+			}
+			mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}).AddRow(3))
+			if _, _, err := service.VerifyWithState(t.Context(), raw); err == nil || errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("rotated generation result = %v, want invalid token", err)
+			}
+			now := time.Now()
+			legacy := jwtlib.NewWithClaims(jwtlib.GetSigningMethod(issuer.active.algorithm), jwtlib.MapClaims{
+				"iss": jwtConfig.Issuer, "aud": jwtConfig.Audience, "sub": "service-1",
+				"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "principal_type": "service_account",
+			})
+			legacy.Header["kid"] = issuer.active.id
+			legacyRaw, err := legacy.SignedString(issuer.active.private)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := service.VerifyWithState(t.Context(), legacyRaw); err == nil || errors.Is(err, ErrStateUnavailable) {
+				t.Fatalf("missing generation result = %v, want invalid token", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if _, err := issuer.IssueServiceAccount("service-1", 0); err == nil {
+		t.Fatal("issued service account token without credential generation")
+	}
+}
+
 func TestService_ES256IssueParseAndJWKS(t *testing.T) {
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -244,7 +323,7 @@ func TestService_VerifyRejectsDisabledServiceAccount(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	service.db = sqlx.NewDb(db, "sqlmock")
-	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}))
 	if _, err := service.Verify(t.Context(), raw); err == nil {
 		t.Fatal("Verify() accepted a disabled service account")
 	}
@@ -294,7 +373,7 @@ func TestService_VerifyDistinguishesStateStoreFailureFromInactiveToken(t *testin
 		columns   []string
 	}{
 		{name: "user session", principal: platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}, query: `SELECT c.must_change_password FROM identity_sessions`, columns: []string{"must_change_password"}},
-		{name: "service account", principal: platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, query: `SELECT count\(\*\) FROM identity_service_accounts`, columns: []string{"count"}},
+		{name: "service account", principal: platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, query: `SELECT credential_generation FROM identity_service_accounts`, columns: []string{"credential_generation"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			jwtConfig, err := testutil.JWTConfig()
@@ -437,7 +516,7 @@ func TestService_ValidatesRemotePrincipalShape(t *testing.T) {
 					}
 					mock.ExpectQuery(`SELECT c.must_change_password FROM identity_sessions`).WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"must_change_password"}).AddRow(false))
 				} else {
-					mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs(test.principal.ID, sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+					mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs(test.principal.ID, sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}).AddRow(1))
 				}
 				defer func() {
 					if err := mock.ExpectationsWereMet(); err != nil {
@@ -445,7 +524,11 @@ func TestService_ValidatesRemotePrincipalShape(t *testing.T) {
 					}
 				}()
 			}
-			got, _, err := service.VerifyWithState(t.Context(), "remote-token")
+			rawToken := "remote-token"
+			if test.principal.Type == platformprincipal.TypeServiceAccount {
+				rawToken = signedServiceAccountToken(t, 1)
+			}
+			got, _, err := service.VerifyWithState(t.Context(), rawToken)
 			if test.wantError {
 				if err == nil || errors.Is(err, ErrStateUnavailable) {
 					t.Fatalf("VerifyWithState() principal=%+v error=%v, want invalid claims", got, err)
@@ -477,7 +560,7 @@ func TestService_RemotePrincipalRequiresAuthoritativeState(t *testing.T) {
 		{name: "live user has current password requirement", principal: user, query: `SELECT c.must_change_password FROM identity_sessions`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"must_change_password"}).AddRow(true), wantChange: true},
 		{name: "revoked user session", principal: user, query: `SELECT c.must_change_password FROM identity_sessions`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"must_change_password"}), wantInvalid: true},
 		{name: "inactive tenant membership", principal: tenantUser, query: `SELECT c.must_change_password FROM identity_sessions.*AND EXISTS \(SELECT 1 FROM tenant_memberships`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg(), "member-1", "tenant-1"}, rows: sqlmock.NewRows([]string{"must_change_password"}), wantInvalid: true},
-		{name: "disabled service account", principal: account, query: `SELECT count\(\*\) FROM identity_service_accounts`, args: []driver.Value{"service-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"count"}).AddRow(0), wantInvalid: true},
+		{name: "disabled service account", principal: account, query: `SELECT credential_generation FROM identity_service_accounts`, args: []driver.Value{"service-1", sqlmock.AnyArg()}, rows: sqlmock.NewRows([]string{"credential_generation"}), wantInvalid: true},
 		{name: "state store unavailable", principal: user, query: `SELECT c.must_change_password FROM identity_sessions`, args: []driver.Value{"session-1", "user-1", sqlmock.AnyArg()}, queryErr: errors.New("private database failure"), wantUnavailable: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -494,7 +577,11 @@ func TestService_RemotePrincipalRequiresAuthoritativeState(t *testing.T) {
 			} else {
 				query.WillReturnRows(tt.rows)
 			}
-			got, state, err := service.VerifyWithState(t.Context(), "remote-token")
+			rawToken := "remote-token"
+			if tt.principal.Type == platformprincipal.TypeServiceAccount {
+				rawToken = signedServiceAccountToken(t, 1)
+			}
+			got, state, err := service.VerifyWithState(t.Context(), rawToken)
 			switch {
 			case tt.wantUnavailable:
 				if !errors.Is(err, ErrStateUnavailable) || got.ID != "" {
@@ -542,7 +629,7 @@ func TestService_UnknownLocalKeyRemoteFallbackChecksAccountState(t *testing.T) {
 	service.verifier = verifierFunc(func(context.Context, string) (platformprincipal.Principal, error) {
 		return platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount}, nil
 	})
-	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT credential_generation FROM identity_service_accounts`).WithArgs("service-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"credential_generation"}))
 	if principal, _, err := service.VerifyWithState(t.Context(), rawToken); err == nil || errors.Is(err, ErrStateUnavailable) || principal.ID != "" {
 		t.Fatalf("unknown-key fallback = (%+v, %v), want disabled account rejection", principal, err)
 	}

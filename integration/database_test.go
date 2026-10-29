@@ -1586,6 +1586,18 @@ func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	if _, err := service.Authenticate(ctx, "INTEGRATION-WORKER", created.Secret); err != nil {
 		t.Fatalf("authenticate created service account: %v", err)
 	}
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := auth.NewWithDatabase(config.Config{JWT: jwtConfig}, db)
+	oldToken, err := verifier.IssueServiceAccount(created.Account.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, oldToken); err != nil {
+		t.Fatalf("verify current service account token: %v", err)
+	}
 	current, err := service.Get(actorCtx, created.Account.ID)
 	if err != nil || current.Version != 2 || current.LastUsedAt == nil {
 		t.Fatalf("service account after authentication=%+v err=%v", current, err)
@@ -1600,6 +1612,16 @@ func testServiceAccountLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB)
 	rotated, err := service.RotateSecret(actorCtx, updated.ID, updated.Version)
 	if err != nil || rotated.Secret == "" || rotated.Secret == created.Secret || rotated.Account.Version != 4 {
 		t.Fatalf("rotated service account=%+v err=%v", rotated, err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, oldToken); err == nil || errors.Is(err, auth.ErrStateUnavailable) {
+		t.Fatalf("rotated service account token remains valid or store failed: %v", err)
+	}
+	newToken, err := verifier.IssueServiceAccount(created.Account.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifier.VerifyWithState(ctx, newToken); err != nil {
+		t.Fatalf("verify rotated service account token: %v", err)
 	}
 	if _, err := service.Authenticate(ctx, created.Account.ClientID, created.Secret); !errors.Is(err, serviceaccount.ErrInvalidCredentials) {
 		t.Fatalf("old service account secret error=%v", err)

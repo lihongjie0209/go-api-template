@@ -1,0 +1,1 @@
+ALTER TABLE identity_service_accounts DROP COLUMN credential_generation;

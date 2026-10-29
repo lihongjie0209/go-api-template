@@ -99,8 +99,8 @@ func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *te
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("client", serviceaccount.StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "client", "Client", "", serviceaccount.StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 1, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "client", "Client", "", serviceaccount.StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 1, hash, 2))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", int64(1), sqlmock.AnyArg(), serviceaccount.StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -119,6 +119,16 @@ func TestAuthenticationHandler_LoginRecordsSecurityContextWithoutPrincipal(t *te
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var loginResult struct {
+		Body LoginResponseBody `json:"body"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &loginResult); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := authService.Parse(loginResult.Body.AccessToken)
+	if err != nil || claims.CredentialGeneration != 2 {
+		t.Fatalf("login credential generation = %v, parse error = %v", claims, err)
 	}
 	if recorder.entry.EventType != securitylog.EventLogin || !recorder.entry.Succeeded || recorder.entry.SubjectID != "account-1" || recorder.entry.Identifier != "client" || recorder.entry.TokenID == "" {
 		t.Fatalf("security entry = %+v", recorder.entry)

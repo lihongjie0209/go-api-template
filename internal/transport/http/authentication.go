@@ -47,8 +47,8 @@ func (h *AuthenticationHandler) Login(c *gin.Context) {
 		Fail(c, h.logger, apperror.Invalid("invalid login request", err))
 		return
 	}
-	_, token, authenticateErr := h.accounts.AuthenticateAndIssue(c.Request.Context(), request.ClientID, request.ClientSecret, func(accountID string) (string, string, error) {
-		issued, err := h.auth.Issue(accountID)
+	_, token, authenticateErr := h.accounts.AuthenticateAndIssue(c.Request.Context(), request.ClientID, request.ClientSecret, func(accountID string, generation int64) (string, string, error) {
+		issued, err := h.auth.IssueServiceAccount(accountID, generation)
 		if err != nil {
 			return "", "", err
 		}

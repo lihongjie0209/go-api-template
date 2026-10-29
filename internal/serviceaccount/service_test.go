@@ -207,7 +207,7 @@ func TestService_RotateSecretRollsBackAndDoesNotDeliverSecretWhenResultReadFails
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnRows(accountRow())
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE identity_service_accounts SET secret_hash=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET secret_hash=.*,credential_generation=credential_generation\+1`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnError(errors.New("result read unavailable"))
 	mock.ExpectRollback()
 
@@ -242,7 +242,7 @@ func TestService_RotateSecretDeliversCommittedSecretAndVersion(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnRows(accountRow(2))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE identity_service_accounts SET secret_hash=`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE identity_service_accounts SET secret_hash=.*,credential_generation=credential_generation\+1`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1`).WithArgs("account-1").WillReturnRows(accountRow(3))
 	mock.ExpectCommit()
 
@@ -304,8 +304,8 @@ func TestService_AuthenticateRejectsInvalidSecretWithoutLastUsedWrite(t *testing
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 1, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 1, hash, 1))
 
 	if _, err := service.Authenticate(t.Context(), "billing-worker", "wrong-secret-value"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("Authenticate() error = %v", err)
@@ -329,8 +329,8 @@ func TestService_AuthenticateAtomicallyTracksFailedAttempts(t *testing.T) {
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts\+1.*WHERE id=\$[0-9]+ AND secret_hash=\$[0-9]+ AND status=\$[0-9]+`).
@@ -361,8 +361,8 @@ func TestService_AuthenticateDoesNotCountOldSecretFailureAfterRotation(t *testin
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 1, nil, now, "admin", "Administrator", now, "admin", "Administrator", 2, hash, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET failed_attempts=failed_attempts\+1.*WHERE id=\$[0-9]+ AND secret_hash=\$[0-9]+ AND status=\$[0-9]+`).
@@ -409,8 +409,8 @@ func TestService_AuthenticateRejectsCredentialChangedAfterVerification(t *testin
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).
@@ -441,8 +441,8 @@ func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).
@@ -450,7 +450,7 @@ func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
 
-	account, credential, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string) (string, string, error) {
+	account, credential, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string, int64) (string, string, error) {
 		return "issued-but-not-returned", "token-1", nil
 	})
 	if !errors.Is(err, ErrSecurityUnavailable) || account.ID != "" || credential != "" {
@@ -515,15 +515,15 @@ func TestService_AuthenticateDistinguishesSuccessWriteFailure(t *testing.T) {
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("account-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_service_accounts SET last_used_at=`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "account-1", "account-1", int64(4), hash, StatusActive, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(errors.New("database write lost"))
 	mock.ExpectRollback()
-	account, token, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string) (string, string, error) {
+	account, token, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string, int64) (string, string, error) {
 		return "issued-but-not-returned", "token-1", nil
 	})
 	if !errors.Is(err, ErrAuthenticationUnavailable) || account.ID != "" || token != "" {
@@ -549,9 +549,9 @@ func TestService_AuthenticateDistinguishesIssuerFailure(t *testing.T) {
 	}
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash))
-	account, token, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string) (string, string, error) {
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, hash, 1))
+	account, token, err := service.AuthenticateAndIssue(t.Context(), "billing-worker", "correct-secret-value", func(string, int64) (string, string, error) {
 		return "", "", errors.New("signing key unavailable")
 	})
 	if !errors.Is(err, ErrAuthenticationUnavailable) || account.ID != "" || token != "" {
@@ -576,8 +576,8 @@ func TestService_AuthenticateRejectsCorruptStoredHashAsUnavailable(t *testing.T)
 	service := New(db, database.NewTransactor(db), nil, security, config.Config{})
 	now := time.Now()
 	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts`).WithArgs("billing-worker", StatusActive, sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash"}).
-			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, "not-a-valid-argon2-hash"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version", "secret_hash", "credential_generation"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, nil, nil, 0, nil, now, "admin", "Administrator", now, "admin", "Administrator", 4, "not-a-valid-argon2-hash", 1))
 	_, err = service.Authenticate(t.Context(), "billing-worker", "present-secret")
 	if !errors.Is(err, ErrAuthenticationUnavailable) || errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("Authenticate error = %v, want unavailable for stored-hash corruption", err)

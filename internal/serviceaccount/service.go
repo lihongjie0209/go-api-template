@@ -94,7 +94,8 @@ type PageInput struct {
 
 type credential struct {
 	Account
-	SecretHash string `db:"secret_hash"`
+	SecretHash           string `db:"secret_hash"`
+	CredentialGeneration int64  `db:"credential_generation"`
 }
 
 type Service struct {
@@ -272,7 +273,7 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 		return Created{}, err
 	}
 	err = s.mutate(ctx, "identity.service-account.secret.rotate", id, map[string]any{"name": account.Name, "version": version}, func(tx *sqlx.Tx) error {
-		query := tx.Rebind(`UPDATE identity_service_accounts SET secret_hash=?,last_used_at=NULL,failed_attempts=0,locked_until=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
+		query := tx.Rebind(`UPDATE identity_service_accounts SET secret_hash=?,credential_generation=credential_generation+1,last_used_at=NULL,failed_attempts=0,locked_until=NULL,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL`)
 		result, execErr := tx.ExecContext(ctx, query, hash, time.Now(), actor.ID, id, version)
 		if err := oneRow(result, execErr); err != nil {
 			return err
@@ -314,18 +315,18 @@ func (s *Service) Authenticate(ctx context.Context, clientID, secret string) (Ac
 // AuthenticateAndIssue verifies a service account, creates its stateless
 // credential, then atomically records both successful use and the security
 // event before the credential can be returned to the caller.
-func (s *Service) AuthenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string) (string, string, error)) (Account, string, error) {
+func (s *Service) AuthenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string, int64) (string, string, error)) (Account, string, error) {
 	return s.authenticateAndIssue(ctx, clientID, secret, issue)
 }
 
-func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string) (string, string, error)) (Account, string, error) {
+func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string, int64) (string, string, error)) (Account, string, error) {
 	clientID = normalizeClientID(clientID)
 	failedEntry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: clientID, SubjectType: string(platformprincipal.TypeServiceAccount), Succeeded: false, Reason: "invalid_credentials", ErrorCode: "invalid_credentials"}
 	if !clientIDPattern.MatchString(clientID) || secret == "" || len(secret) > 1024 {
 		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrInvalidCredentials)
 	}
 	var value credential
-	query := s.db.Rebind(`SELECT ` + accountColumns + `,a.secret_hash FROM identity_service_accounts a WHERE client_id=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
+	query := s.db.Rebind(`SELECT ` + accountColumns + `,a.secret_hash,a.credential_generation FROM identity_service_accounts a WHERE client_id=? AND status=? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>?)`)
 	if err := s.db.GetContext(ctx, &value, query, clientID, StatusActive, time.Now()); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			failedEntry.Reason = "authentication_store_unavailable"
@@ -350,9 +351,14 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		}
 		return Account{}, "", ErrInvalidCredentials
 	}
+	if value.CredentialGeneration <= 0 {
+		failedEntry.Reason = "credential_state_invalid"
+		failedEntry.ErrorCode = "credential_state_invalid"
+		return Account{}, "", s.rejectAuthentication(ctx, failedEntry, ErrAuthenticationUnavailable)
+	}
 	issuedCredential, tokenID := "", ""
 	if issue != nil {
-		issuedCredential, tokenID, err = issue(value.ID)
+		issuedCredential, tokenID, err = issue(value.ID, value.CredentialGeneration)
 		if err != nil {
 			failedEntry.Reason = "credential_issue_failed"
 			failedEntry.ErrorCode = "credential_issue_failed"

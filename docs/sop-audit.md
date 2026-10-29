@@ -619,6 +619,15 @@ contract. Deployments must seed application navigations with stable UUIDv5 IDs.
 
 ## Service-account login failure classification
 
+### Service-account token revocation on secret rotation
+
+| Concern | Decision and rationale |
+| --- | --- |
+| Contract/authentication | Login remains POST+JSON and returns the existing bearer response. Service-account JWTs carry a positive `credential_generation`; both local and JWKS verification require it and compare it with the active account's authoritative generation. A missing or stale generation is an invalid token; a store failure is dependency-unavailable. |
+| Authorization and logs | Existing login and secret-rotation permission descriptors, security events and operation events apply. Rotation keeps its expected-version update and transactional audit record. |
+| Cache/lock/audit | No cache or distributed lock is added: one account-row generation check is required for every bearer request. Rotation increments the generation in the same audited SQL update as the secret hash. The generation is independent of the general optimistic `version`, which also changes on login and profile updates. |
+| Presentation/tests | The generation is internal and is not returned in account management responses. Unit tests cover current, rotated, missing, and unavailable state through both local and remote signature paths; PostgreSQL/MySQL integration tests verify rotation invalidates an earlier token. |
+
 | Concern | Decision and rationale |
 | --- | --- |
 | Contract | `POST /api/v1/auth/login` retains `client_id`/`client_secret` JSON input and a bearer-token response. Unknown, invalid, locked, expired, or concurrently changed credentials remain global unauthorized (401). Database lookup/write, credential-hash verifier, and signer failures are dependency-unavailable (503); security-event enqueue failure retains its separate 503 result. Every HTTP failure uses `{code,message,body,request_id}` without exposing technical errors. |
