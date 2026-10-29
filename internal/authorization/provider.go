@@ -16,6 +16,11 @@ type Authorizer struct {
 	registry *resourceaction.Registry
 }
 
+type grantReader interface {
+	SelectContext(context.Context, any, string, ...any) error
+	Rebind(string) string
+}
+
 func New(db *sqlx.DB, registry *resourceaction.Registry) platformauthz.Authorizer {
 	return &Authorizer{db: db, registry: registry}
 }
@@ -96,7 +101,7 @@ func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platfo
 	if principal.Type != platformprincipal.TypeUser || principal.TenantID == "" || principal.MembershipID == "" {
 		return false, nil
 	}
-	grants, err := a.managedTenantGrants(ctx, principal)
+	grants, err := a.managedTenantGrants(ctx, a.db, principal)
 	if err != nil {
 		return false, err
 	}
@@ -104,8 +109,8 @@ func (a *Authorizer) hasManagedTenantGrant(ctx context.Context, principal platfo
 	return allowed, nil
 }
 
-func (a *Authorizer) managedTenantGrants(ctx context.Context, principal platformprincipal.Principal) (map[string]struct{}, error) {
-	query := a.db.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions p
+func (a *Authorizer) managedTenantGrants(ctx context.Context, reader grantReader, principal platformprincipal.Principal) (map[string]struct{}, error) {
+	query := reader.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions p
 		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
 		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
 		JOIN authorization_resources res ON res.id=act.resource_id AND res.scope='tenant' AND res.status='active' AND res.deleted_at IS NULL
@@ -121,7 +126,7 @@ func (a *Authorizer) managedTenantGrants(ctx context.Context, principal platform
 		Resource string `db:"resource_key"`
 		Action   string `db:"action_key"`
 	}{}
-	if err := a.db.SelectContext(ctx, &rows, query, principal.TenantID, principal.MembershipID, principal.ID); err != nil {
+	if err := reader.SelectContext(ctx, &rows, query, principal.TenantID, principal.MembershipID, principal.ID); err != nil {
 		return nil, fmt.Errorf("resolve managed tenant grants: %w", err)
 	}
 	result := make(map[string]struct{}, len(rows))

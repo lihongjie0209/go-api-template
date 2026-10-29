@@ -3,6 +3,7 @@ package authorization
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"slices"
@@ -33,16 +34,24 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 	case platformprincipal.TypeSystem:
 		// System principals bypass operation grants, but remain a distinct revision scope.
 	case platformprincipal.TypeUser, platformprincipal.TypeServiceAccount:
-		var err error
-		snapshot.platform, err = a.platformGrants(ctx, principal)
+		// The platform and tenant grant sets must come from one database view.
+		tx, err := a.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+		if err != nil {
+			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		snapshot.platform, err = a.platformGrants(ctx, tx, principal)
 		if err != nil {
 			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 		}
 		if principal.Type == platformprincipal.TypeUser && principal.TenantID != "" && principal.MembershipID != "" {
-			snapshot.tenant, err = a.managedTenantGrants(ctx, principal)
+			snapshot.tenant, err = a.managedTenantGrants(ctx, tx, principal)
 			if err != nil {
 				return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 		}
 	default:
 		return ctx, "", platformauthz.ErrDecisionUnavailable
@@ -50,8 +59,8 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 	return context.WithValue(ctx, grantSnapshotKey{}, snapshot), snapshot.revision(), nil
 }
 
-func (a *Authorizer) platformGrants(ctx context.Context, principal platformprincipal.Principal) (map[string]struct{}, error) {
-	query := a.db.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions g
+func (a *Authorizer) platformGrants(ctx context.Context, reader grantReader, principal platformprincipal.Principal) (map[string]struct{}, error) {
+	query := reader.Rebind(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions g
 		JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL
 		JOIN permission_resource_actions link ON link.permission_id=p.id AND link.deleted_at IS NULL
 		JOIN authorization_resource_actions act ON act.id=link.action_id AND act.status='active' AND act.deleted_at IS NULL
@@ -61,7 +70,7 @@ func (a *Authorizer) platformGrants(ctx context.Context, principal platformprinc
 		Resource string `db:"resource_key"`
 		Action   string `db:"action_key"`
 	}{}
-	if err := a.db.SelectContext(ctx, &rows, query, string(principal.Type), principal.ID); err != nil {
+	if err := reader.SelectContext(ctx, &rows, query, string(principal.Type), principal.ID); err != nil {
 		return nil, fmt.Errorf("resolve platform grants: %w", err)
 	}
 	grants := make(map[string]struct{}, len(rows))

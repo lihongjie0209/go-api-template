@@ -36,8 +36,10 @@ func TestAuthorizerPlatformGrant(t *testing.T) {
 func TestAuthorizerTenantGrantSnapshot(t *testing.T) {
 	a, mock := testAuthorizer(t)
 	p := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).WithArgs("user", "user-1").WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}))
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key`).WithArgs("tenant-1", "member-1", "user-1").WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("tenant.member", "read"))
+	mock.ExpectCommit()
 	ctx, _, err := a.Snapshot(t.Context(), p)
 	require.NoError(t, err)
 	require.NoError(t, a.Authorize(ctx, p, platformauthz.Requirement{Resource: "tenant.member", Action: "read", Scope: platformauthz.ScopeTenant}))
@@ -65,9 +67,11 @@ func TestAuthorizerPrincipalScope(t *testing.T) {
 func TestAuthorizerSnapshotTracksPlatformGrantsAndReusesSnapshot(t *testing.T) {
 	a, mock := testAuthorizer(t)
 	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read"))
+	mock.ExpectCommit()
 	ctx, revision, err := a.Snapshot(t.Context(), principal)
 	require.NoError(t, err)
 	require.NotEmpty(t, revision)
@@ -75,9 +79,11 @@ func TestAuthorizerSnapshotTracksPlatformGrantsAndReusesSnapshot(t *testing.T) {
 	require.ErrorIs(t, a.Authorize(ctx, principal, platformauthz.Requirement{Resource: "identity.user", Action: "update", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDenied)
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "update"))
+	mock.ExpectCommit()
 	_, changed, err := a.Snapshot(t.Context(), principal)
 	require.NoError(t, err)
 	require.NotEqual(t, revision, changed)
@@ -89,12 +95,14 @@ func TestAuthorizerSnapshotTracksTenantGrants(t *testing.T) {
 	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
 	var firstRevision string
 	for _, action := range []string{"read", "update"} {
+		mock.ExpectBegin()
 		mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 			WithArgs("user", "user-1").
 			WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}))
 		mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions`).
 			WithArgs("tenant-1", "member-1", "user-1").
 			WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("tenant.member", action))
+		mock.ExpectCommit()
 		_, revision, err := a.Snapshot(t.Context(), principal)
 		require.NoError(t, err)
 		if action == "read" {
@@ -109,14 +117,18 @@ func TestAuthorizerSnapshotTracksTenantGrants(t *testing.T) {
 func TestAuthorizerSnapshotIsBoundToPrincipalAndIndependentOfRowOrder(t *testing.T) {
 	a, mock := testAuthorizer(t)
 	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read").AddRow("identity.user", "update"))
+	mock.ExpectCommit()
 	ctx, first, err := a.Snapshot(t.Context(), principal)
 	require.NoError(t, err)
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "update").AddRow("identity.user", "read"))
+	mock.ExpectCommit()
 	_, second, err := a.Snapshot(t.Context(), principal)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
@@ -124,9 +136,11 @@ func TestAuthorizerSnapshotIsBoundToPrincipalAndIndependentOfRowOrder(t *testing
 	otherSession := principal
 	otherSession.SessionID = "session-2"
 	require.ErrorIs(t, a.Authorize(ctx, otherSession, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WithArgs("user", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read").AddRow("identity.user", "update"))
+	mock.ExpectCommit()
 	_, otherSessionRevision, err := a.Snapshot(t.Context(), otherSession)
 	require.NoError(t, err)
 	require.NotEqual(t, first, otherSessionRevision)
@@ -135,9 +149,36 @@ func TestAuthorizerSnapshotIsBoundToPrincipalAndIndependentOfRowOrder(t *testing
 
 func TestAuthorizerSnapshotFailsClosedWhenDatabaseIsUnavailable(t *testing.T) {
 	a, mock := testAuthorizer(t)
+	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
 		WillReturnError(errors.New("database unavailable"))
+	mock.ExpectRollback()
 	_, _, err := a.Snapshot(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAuthorizerSnapshotFailsClosedOnTenantReadAndTransactionCommit(t *testing.T) {
+	a, mock := testAuthorizer(t)
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read"))
+	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions`).
+		WillReturnError(errors.New("tenant grants unavailable"))
+	mock.ExpectRollback()
+	_, revision, err := a.Snapshot(t.Context(), principal)
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}))
+	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM permissions`).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}))
+	mock.ExpectCommit().WillReturnError(errors.New("commit unavailable"))
+	_, revision, err = a.Snapshot(t.Context(), principal)
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

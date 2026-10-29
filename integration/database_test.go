@@ -2269,6 +2269,12 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil {
 		t.Fatal(err)
 	}
+	tenantPrincipal := principal
+	tenantPrincipal.TenantID = "missing-tenant"
+	tenantPrincipal.MembershipID = "missing-membership"
+	if _, _, err := snapshotter.Snapshot(ctx, tenantPrincipal); err != nil {
+		t.Fatalf("read platform and tenant grants in one database snapshot: %v", err)
+	}
 	grants := authorization.NewPlatformGrantService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
 	platformOptions, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.platform.catalog.read"}})
 	if err != nil || platformOptions.Total != 1 || len(platformOptions.Items) != 1 || platformOptions.Items[0].ID != grantPermission.ID {

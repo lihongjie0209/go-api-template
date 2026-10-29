@@ -339,8 +339,11 @@ TTL, and invalidation for its own data.
   hints with a principal-, session-, and tenant-bound revision covering
   effective operation grants and the published data-permission snapshot, plus
   a short expiry. The operation decision and revision must use the same grant
-  snapshot. The data-policy revision and every row-action decision in a batch
-  must likewise use one pinned immutable policy snapshot, even during a
+  snapshot. Platform and tenant grants used to build that snapshot must be
+  read in one read-only repeatable-read transaction so concurrent grant changes
+  cannot produce a mixed revision. The data-policy revision and every
+  row-action decision in a batch must likewise use one pinned immutable policy
+  snapshot, even during a
   concurrent refresh; a failed authoritative grant read fails closed. A missing
   grant-snapshot provider must fail startup,
   including in generated services and test compositions; do not pass a typed
