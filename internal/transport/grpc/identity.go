@@ -26,13 +26,20 @@ type identityServer struct {
 	jwtAudience string
 }
 
-func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.GetServiceAccountRequest) (*identityv1.GetServiceAccountResponse, error) {
+func requireIdentityServiceCaller(ctx context.Context) error {
 	principal, err := platformprincipal.Require(ctx)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "authentication required")
+		return status.Error(codes.Unauthenticated, "authentication required")
 	}
 	if principal.Type != platformprincipal.TypeServiceAccount {
-		return nil, status.Error(codes.PermissionDenied, "service authentication required")
+		return status.Error(codes.PermissionDenied, "service authentication required")
+	}
+	return nil
+}
+
+func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.GetServiceAccountRequest) (*identityv1.GetServiceAccountResponse, error) {
+	if err := requireIdentityServiceCaller(ctx); err != nil {
+		return nil, err
 	}
 	if s.accounts == nil {
 		return nil, status.Error(codes.Unavailable, "service account state unavailable")
@@ -65,12 +72,8 @@ func (s *identityServer) GetServiceAccount(ctx context.Context, r *identityv1.Ge
 }
 
 func (s *identityServer) ValidateSession(ctx context.Context, r *identityv1.ValidateSessionRequest) (*identityv1.ValidateSessionResponse, error) {
-	principal, err := platformprincipal.Require(ctx)
-	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "authentication required")
-	}
-	if principal.Type != platformprincipal.TypeServiceAccount {
-		return nil, status.Error(codes.PermissionDenied, "service authentication required")
+	if err := requireIdentityServiceCaller(ctx); err != nil {
+		return nil, err
 	}
 	if s.auth == nil {
 		return nil, status.Error(codes.Unavailable, "session state unavailable")
@@ -96,6 +99,9 @@ func (s *identityServer) ValidateSession(ctx context.Context, r *identityv1.Vali
 }
 
 func (s *identityServer) GetUser(ctx context.Context, r *identityv1.GetUserRequest) (*identityv1.GetUserResponse, error) {
+	if err := requireIdentityServiceCaller(ctx); err != nil {
+		return nil, err
+	}
 	u, e := s.service.Get(ctx, r.GetUserId())
 	if e != nil {
 		return nil, identityError(e)
@@ -103,8 +109,8 @@ func (s *identityServer) GetUser(ctx context.Context, r *identityv1.GetUserReque
 	return &identityv1.GetUserResponse{User: toProtoUser(u)}, nil
 }
 func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchGetUsersRequest) (*identityv1.BatchGetUsersResponse, error) {
-	if _, err := platformprincipal.Require(ctx); err != nil {
-		return nil, status.Error(codes.Unauthenticated, "authentication required")
+	if err := requireIdentityServiceCaller(ctx); err != nil {
+		return nil, err
 	}
 	ids := r.GetUserIds()
 	if len(ids) > 200 {
@@ -125,8 +131,8 @@ func (s *identityServer) BatchGetUsers(ctx context.Context, r *identityv1.BatchG
 	return &identityv1.BatchGetUsersResponse{Users: users}, nil
 }
 func (s *identityServer) ListUsers(ctx context.Context, r *identityv1.ListUsersRequest) (*identityv1.ListUsersResponse, error) {
-	if _, err := platformprincipal.Require(ctx); err != nil {
-		return nil, status.Error(codes.Unauthenticated, "authentication required")
+	if err := requireIdentityServiceCaller(ctx); err != nil {
+		return nil, err
 	}
 	if username, exact := strings.CutPrefix(strings.TrimSpace(r.GetKeyword()), "="); exact {
 		// Exact user resolution can gate membership creation. Never decide active

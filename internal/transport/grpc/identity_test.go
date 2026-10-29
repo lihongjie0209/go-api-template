@@ -104,6 +104,48 @@ func TestIdentityValidateSessionRequiresServicePrincipalBeforeLookup(t *testing.
 	}
 }
 
+func TestIdentityUserQueriesRequireServicePrincipal(t *testing.T) {
+	t.Parallel()
+	server := &identityServer{}
+	methods := []struct {
+		name string
+		call func(context.Context) error
+	}{
+		{name: "get", call: func(ctx context.Context) error {
+			_, err := server.GetUser(ctx, &identityv1.GetUserRequest{UserId: "user-1"})
+			return err
+		}},
+		{name: "batch", call: func(ctx context.Context) error {
+			_, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{})
+			return err
+		}},
+		{name: "list", call: func(ctx context.Context) error {
+			_, err := server.ListUsers(ctx, &identityv1.ListUsersRequest{Keyword: "=alice"})
+			return err
+		}},
+	}
+	for _, method := range methods {
+		t.Run(method.name, func(t *testing.T) {
+			t.Parallel()
+			for _, caller := range []struct {
+				name string
+				ctx  context.Context
+				want codes.Code
+			}{
+				{name: "missing", ctx: t.Context(), want: codes.Unauthenticated},
+				{name: "user", ctx: platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"}), want: codes.PermissionDenied},
+			} {
+				t.Run(caller.name, func(t *testing.T) {
+					t.Parallel()
+					if got := status.Code(method.call(caller.ctx)); got != caller.want {
+						t.Fatalf("code=%v, want %v", got, caller.want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestIdentityListUsersExactModeUsesUniqueUsernameLookup(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
@@ -239,7 +281,7 @@ func TestIdentityBatchGetUsersEmptyIDsReturnsNoUsersWithoutQuery(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = raw.Close() })
 	server := &identityServer{service: identity.New(identity.NewRepository(sqlx.NewDb(raw, "sqlmock")), nil, nil, nil, nil, nil, config.Config{})}
-	ctx := platformprincipal.SystemContext(t.Context(), "identity-batch-test")
+	ctx := platformprincipal.WithContext(t.Context(), servicePrincipal())
 	response, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{})
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +320,7 @@ func TestIdentityBatchGetUsersReturnsFullMaximumBatch(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(len(ids)))
 	mock.ExpectQuery(`FROM identity_users u WHERE deleted_at IS NULL AND id IN`).WillReturnRows(rows)
 	server := &identityServer{service: identity.New(identity.NewRepository(sqlx.NewDb(raw, "sqlmock")), nil, nil, nil, nil, nil, config.Config{})}
-	ctx := platformprincipal.SystemContext(t.Context(), "identity-batch-test")
+	ctx := platformprincipal.WithContext(t.Context(), servicePrincipal())
 	response, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: ids})
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +336,7 @@ func TestIdentityBatchGetUsersReturnsFullMaximumBatch(t *testing.T) {
 func TestIdentityBatchGetUsersRejectsOversizedBatch(t *testing.T) {
 	t.Parallel()
 	server := &identityServer{}
-	ctx := platformprincipal.SystemContext(t.Context(), "identity-batch-test")
+	ctx := platformprincipal.WithContext(t.Context(), servicePrincipal())
 	_, err := server.BatchGetUsers(ctx, &identityv1.BatchGetUsersRequest{UserIds: make([]string, 201)})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("oversized batch code=%v, want invalid argument", status.Code(err))

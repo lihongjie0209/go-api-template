@@ -8,7 +8,7 @@ identity eligible.
 | Concern | Decision and rationale |
 | --- | --- |
 | Contract | Exact mode returns zero or one user with matching page metadata. Invalid usernames return `InvalidArgument`; missing caller returns `Unauthenticated`. Canceled requests and exceeded deadlines retain their gRPC codes across all user-query modes. Normal pagination remains unchanged. |
-| Authentication | Service-only gRPC descriptor, with an additional handler entry check before either exact or paginated dispatch. The login module's separate anonymous authoritative lookup is unchanged. |
+| Authentication | Service-only gRPC descriptor, with an additional service-principal handler entry check before either exact or paginated dispatch. The login module's separate anonymous authoritative lookup is unchanged. |
 | Authorization | Existing `identity.user:list` platform resource/action interceptor remains authoritative. The handler check does not replace it. |
 | Operation log | None: bounded read-only lookup. |
 | Security log | None: this RPC does not authenticate the target user or change security state. |
