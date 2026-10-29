@@ -578,7 +578,10 @@ message queue with an outbox.
   again before replay: success status requires the global success code, error
   status requires a non-success code, and both require a nonblank message.
   Corrupt cached failure states must return generic unavailable instead of
-  passing an invalid status or error code to the HTTP writer.
+  passing an invalid status or error code to the HTTP writer. Decode captured
+  and replayed JSON with number-preserving semantics; routing through float64
+  must not change large integer IDs or amounts on replay, including legacy
+  cached envelope formats.
 - An opted-in unary gRPC mutation must also withhold its response until the
   owner-fenced Complete/Fail/Abort transition succeeds. If persistence fails,
   return generic Unavailable without the handler response or raw dependency

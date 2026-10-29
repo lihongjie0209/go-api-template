@@ -205,14 +205,14 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 		switch decision.State {
 		case idempotency.StateCompleted:
 			var saved idempotentHTTPResult
-			if err := json.Unmarshal(decision.Response, &saved); err != nil {
+			if err := decodeIdempotencyJSON(decision.Response, &saved); err != nil {
 				Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", err))
 				return
 			}
 			if saved.HTTPStatus == 0 {
 				// Results written before the status-aware format used the response
 				// envelope directly, and every such success had HTTP 200.
-				if err := json.Unmarshal(decision.Response, &saved.Response); err != nil {
+				if err := decodeIdempotencyJSON(decision.Response, &saved.Response); err != nil {
 					Fail(c, logger, apperror.Unavailable("idempotency response is unavailable", err))
 					return
 				}
@@ -318,7 +318,7 @@ func IdempotencyExecution(manager idempotencyManager, paths []string, logger *sl
 			return
 		}
 		var response Response
-		if err := json.Unmarshal(capture.body.Bytes(), &response); err != nil {
+		if err := decodeIdempotencyJSON(capture.body.Bytes(), &response); err != nil {
 			abortErr := manager.Abort(persistCtx, key, decision.Owner)
 			failIdempotencyState(c, logger, originalHeaders, errors.Join(err, abortErr))
 			return
@@ -413,6 +413,21 @@ func validIdempotencyFailure(failure idempotency.Failure) bool {
 		failure.HTTPStatus < http.StatusInternalServerError &&
 		!retryableHTTPStatus(failure.HTTPStatus) &&
 		failure.Code != apperror.CodeOK && strings.TrimSpace(failure.Message) != ""
+}
+
+func decodeIdempotencyJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("idempotency response contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func idempotencyFingerprint(c *gin.Context) (string, error) {

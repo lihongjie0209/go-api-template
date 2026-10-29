@@ -546,6 +546,54 @@ func TestIdempotencyExecutionPreservesCreatedStatusOnReplay(t *testing.T) {
 	}
 }
 
+func TestIdempotencyExecutionPreservesLargeIntegerOnReplay(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{State: idempotency.StateAcquired, Owner: "owner-1"}}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(idempotency.WithContext(c.Request.Context(), "large-number-key"))
+		c.Next()
+	}, IdempotencyExecution(manager, []string{"/test"}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	calls := 0
+	router.POST("/test", func(c *gin.Context) {
+		calls++
+		c.Data(http.StatusOK, "application/json", []byte(`{"code":0,"message":"success","body":{"sequence":9007199254740993}}`))
+	})
+	request := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+		return recorder
+	}
+	first := request()
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), "9007199254740993") || manager.completed == nil {
+		t.Fatalf("first status=%d body=%q completed=%v", first.Code, first.Body.String(), manager.completed)
+	}
+	stored, err := json.Marshal(idempotentHTTPResult{HTTPStatus: manager.completedStatus, Response: *manager.completed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.decision = idempotency.Decision{State: idempotency.StateCompleted, Response: stored}
+	replayed := request()
+	if replayed.Code != http.StatusOK || calls != 1 || !strings.Contains(replayed.Body.String(), "9007199254740993") {
+		t.Fatalf("replayed status=%d calls=%d body=%q", replayed.Code, calls, replayed.Body.String())
+	}
+}
+
+func TestIdempotencyExecutionPreservesLargeIntegerInLegacyReplay(t *testing.T) {
+	t.Parallel()
+	manager := &fakeIdempotencyManager{decision: idempotency.Decision{
+		State:    idempotency.StateCompleted,
+		Response: []byte(`{"code":0,"message":"success","body":{"sequence":9007199254740993}}`),
+	}}
+	calls := 0
+	router := idempotencyTestRouter(t, manager, &calls)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{}`)))
+	if recorder.Code != http.StatusOK || calls != 0 || !strings.Contains(recorder.Body.String(), "9007199254740993") {
+		t.Fatalf("status=%d calls=%d body=%q", recorder.Code, calls, recorder.Body.String())
+	}
+}
+
 func TestIdempotencyExecutionRejectsUnreplayableStatus(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
