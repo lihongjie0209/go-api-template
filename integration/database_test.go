@@ -1384,14 +1384,43 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 		t.Fatalf("set tenant administrator: %v", err)
 	}
 	authorizer := authorization.New(db, registry)
+	snapshotter, ok := authorizer.(interface {
+		Snapshot(context.Context, platformprincipal.Principal) (context.Context, string, error)
+	})
+	if !ok {
+		t.Fatal("authorizer does not support grant snapshots")
+	}
 	requirement := platformauthz.Requirement{Resource: "integration.permissions", Action: "read", Scope: platformauthz.ScopeTenant}
 	adminPrincipal := platformprincipal.Principal{ID: "authorization-admin", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: adminMemberID}
 	if err := authorizer.Authorize(ctx, adminPrincipal, requirement); err != nil {
 		t.Fatalf("targeted tenant grant denied administrator: %v", err)
 	}
+	adminSnapshotCtx, adminRevision, err := snapshotter.Snapshot(ctx, adminPrincipal)
+	if err != nil || adminRevision == "" {
+		t.Fatalf("read administrator grant snapshot: revision=%q err=%v", adminRevision, err)
+	}
+	if err := authorizer.Authorize(adminSnapshotCtx, adminPrincipal, requirement); err != nil {
+		t.Fatalf("administrator grant snapshot denied action: %v", err)
+	}
 	targetPrincipal := platformprincipal.Principal{ID: "authorization-target", Type: platformprincipal.TypeUser, TenantID: tenantID, MembershipID: targetMemberID}
 	if err := authorizer.Authorize(ctx, targetPrincipal, requirement); !errors.Is(err, platformauthz.ErrDenied) {
 		t.Fatalf("targeted tenant grant for unassigned member: %v", err)
+	}
+	targetSnapshotCtx, _, err := snapshotter.Snapshot(ctx, targetPrincipal)
+	if err != nil {
+		t.Fatalf("read unassigned member grant snapshot: %v", err)
+	}
+	if err := authorizer.Authorize(targetSnapshotCtx, targetPrincipal, requirement); !errors.Is(err, platformauthz.ErrDenied) {
+		t.Fatalf("unassigned member grant snapshot: %v", err)
+	}
+	wrongTenant := adminPrincipal
+	wrongTenant.TenantID = "other-tenant"
+	wrongTenantCtx, _, err := snapshotter.Snapshot(ctx, wrongTenant)
+	if err != nil {
+		t.Fatalf("read wrong-tenant grant snapshot: %v", err)
+	}
+	if err := authorizer.Authorize(wrongTenantCtx, wrongTenant, requirement); !errors.Is(err, platformauthz.ErrDenied) {
+		t.Fatalf("wrong-tenant grant snapshot: %v", err)
 	}
 	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, false, 1); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale tenant administrator version error=%v", err)
@@ -1434,6 +1463,13 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 	if err := authorizer.Authorize(ctx, targetPrincipal, requirement); err != nil {
 		t.Fatalf("targeted tenant grant denied assigned member: %v", err)
+	}
+	assignedSnapshotCtx, assignedRevision, err := snapshotter.Snapshot(ctx, targetPrincipal)
+	if err != nil || assignedRevision == "" {
+		t.Fatalf("read assigned member grant snapshot: revision=%q err=%v", assignedRevision, err)
+	}
+	if err := authorizer.Authorize(assignedSnapshotCtx, targetPrincipal, requirement); err != nil {
+		t.Fatalf("assigned member grant snapshot denied action: %v", err)
 	}
 	if err := service.SetMemberRoles(adminCtx, targetMemberID, 1, []string{role.ID}); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale member roles error=%v", err)
@@ -2281,12 +2317,6 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	_, revisionBeforeGrant, err := snapshotter.Snapshot(ctx, principal)
 	if err != nil {
 		t.Fatal(err)
-	}
-	tenantPrincipal := principal
-	tenantPrincipal.TenantID = "missing-tenant"
-	tenantPrincipal.MembershipID = "missing-membership"
-	if _, _, err := snapshotter.Snapshot(ctx, tenantPrincipal); err != nil {
-		t.Fatalf("read platform and tenant grants in one database snapshot: %v", err)
 	}
 	grants := authorization.NewPlatformGrantService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
 	platformOptions, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.platform.catalog.read"}})
