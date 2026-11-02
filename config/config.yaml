@@ -248,6 +248,7 @@ data_lifecycle:
   interval: 1h
   timeout: 5m
   premake_months: 6
+  partition_max_per_run: 12
   purge_batch_size: 1000
   purge_max_batches: 10
   operation_log_retention_months: 12

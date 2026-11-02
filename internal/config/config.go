@@ -331,6 +331,7 @@ type DataLifecycle struct {
 	Interval                    time.Duration `mapstructure:"interval"`
 	Timeout                     time.Duration `mapstructure:"timeout"`
 	PremakeMonths               int           `mapstructure:"premake_months"`
+	PartitionMaxPerRun          int           `mapstructure:"partition_max_per_run"`
 	PurgeBatchSize              int           `mapstructure:"purge_batch_size"`
 	PurgeMaxBatches             int           `mapstructure:"purge_max_batches"`
 	OperationLogRetentionMonths int           `mapstructure:"operation_log_retention_months"`
@@ -727,6 +728,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("data_lifecycle.interval", "1h")
 	v.SetDefault("data_lifecycle.timeout", "5m")
 	v.SetDefault("data_lifecycle.premake_months", 6)
+	v.SetDefault("data_lifecycle.partition_max_per_run", 12)
 	v.SetDefault("data_lifecycle.purge_batch_size", 1000)
 	v.SetDefault("data_lifecycle.purge_max_batches", 10)
 	v.SetDefault("data_lifecycle.operation_log_retention_months", 12)
@@ -971,8 +973,8 @@ func (c Config) Validate() error {
 		if !c.Database.Enabled {
 			return errors.New("data_lifecycle requires an enabled database")
 		}
-		if c.DataLifecycle.Interval < time.Minute || c.DataLifecycle.Interval > 24*time.Hour || c.DataLifecycle.Timeout < time.Second || c.DataLifecycle.Timeout > 30*time.Minute || c.DataLifecycle.Timeout >= c.DataLifecycle.Interval || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.PurgeMaxBatches < 1 || c.DataLifecycle.PurgeMaxBatches > 100 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 || c.DataLifecycle.OutboxPublishedRetention < time.Hour || c.DataLifecycle.OutboxPublishedRetention > 365*24*time.Hour || c.DataLifecycle.OutboxDeadRetention < c.DataLifecycle.OutboxPublishedRetention || c.DataLifecycle.OutboxDeadRetention > 5*365*24*time.Hour {
-			return errors.New("data_lifecycle requires interval between 1m and 24h, timeout between 1s and 30m below interval, positive log retention, outbox published retention between 1h and 365d, outbox dead retention no shorter and at most 5y, premake_months 1-24, purge_batch_size 1-10000, and purge_max_batches 1-100")
+		if c.DataLifecycle.Interval < time.Minute || c.DataLifecycle.Interval > 24*time.Hour || c.DataLifecycle.Timeout < time.Second || c.DataLifecycle.Timeout > 30*time.Minute || c.DataLifecycle.Timeout >= c.DataLifecycle.Interval || c.DataLifecycle.PremakeMonths < 1 || c.DataLifecycle.PremakeMonths > 24 || c.DataLifecycle.PartitionMaxPerRun < 1 || c.DataLifecycle.PartitionMaxPerRun > 120 || c.DataLifecycle.PurgeBatchSize < 1 || c.DataLifecycle.PurgeBatchSize > 10000 || c.DataLifecycle.PurgeMaxBatches < 1 || c.DataLifecycle.PurgeMaxBatches > 100 || c.DataLifecycle.OperationLogRetentionMonths < 1 || c.DataLifecycle.SecurityLogRetentionMonths < 1 || c.DataLifecycle.OutboxPublishedRetention < time.Hour || c.DataLifecycle.OutboxPublishedRetention > 365*24*time.Hour || c.DataLifecycle.OutboxDeadRetention < c.DataLifecycle.OutboxPublishedRetention || c.DataLifecycle.OutboxDeadRetention > 5*365*24*time.Hour {
+			return errors.New("data_lifecycle requires interval between 1m and 24h, timeout between 1s and 30m below interval, positive log retention, outbox published retention between 1h and 365d, outbox dead retention no shorter and at most 5y, premake_months 1-24, partition_max_per_run 1-120, purge_batch_size 1-10000, and purge_max_batches 1-100")
 		}
 		if c.DataLifecycle.ArchiveSchema != "" && !validMigrationTable.MatchString(c.DataLifecycle.ArchiveSchema) {
 			return errors.New("data_lifecycle.archive_schema must contain lowercase letters, digits, or underscores and be at most 63 characters")

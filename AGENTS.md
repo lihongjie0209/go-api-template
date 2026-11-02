@@ -464,6 +464,30 @@ TTL, and invalidation for its own data.
   purge expired MySQL log rows in bounded batches or detach/archive/drop
   expired PostgreSQL/Kingbase log partitions after the configured retention
   cutoff. Business APIs and queue consumers must not physically delete logs.
+- When multiple service schemas can share a PostgreSQL/Kingbase archive schema,
+  archived partition names must include a stable source-schema identity within
+  the database identifier limit. Detach, rename, and move must commit together;
+  a failed move must leave the original partition attached.
+- PostgreSQL/Kingbase partition retirement must be bounded per log table and
+  advance from the oldest expired month. A backlog must make progress across
+  runs without forcing every historical partition into one transaction.
+- An enabled lifecycle worker must fail startup when its database dependency
+  is absent. A missing client handle must not silently disable configured
+  retention work.
+- Premake checks must prove that a named monthly child is attached to the
+  expected parent. A same-named unattached table must fail maintenance rather
+  than count as an active partition and silently route writes to the default.
+- Partition retirement must use each child's schema from the database catalog
+  and schema-qualified DDL. A child in another schema must never cause a
+  same-named relation in the current schema to be renamed or dropped.
+- High-volume retention and cleanup queries must have an index or partition
+  pruning path matching their active/deleted predicate, cutoff column, and
+  batch order. Logically deleted history must not accumulate ahead of every
+  future active-row scan. Different durable states with different retention
+  windows, such as published and dead outbox events, need independent bounded
+  batch budgets so one class cannot starve the other. Unit tests must cover
+  cutoff/batch semantics; service-local Testcontainers tests must verify the
+  migrated index definitions and actual keep/delete behavior.
 - Audit-log consumers must distinguish duplicate event IDs from all other
   database errors. A duplicate may be acknowledged only when a specific
   database uniqueness constraint proves that the same event was already

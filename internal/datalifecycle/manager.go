@@ -2,6 +2,7 @@ package datalifecycle
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,6 +26,8 @@ var partitionNamePattern = regexp.MustCompile(`^(operation_logs|security_logs)_y
 var platformLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 var ErrDefaultPartitionOccupied = errors.New("default partition contains rows for a partition that must be created")
+var ErrPartitionNameOccupied = errors.New("partition name is occupied by an unattached table")
+var ErrLifecycleDatabaseUnavailable = errors.New("data lifecycle database is unavailable")
 var errDataLifecycleMaintenanceFailed = errors.New("data_lifecycle_maintenance_failed")
 
 type Manager struct {
@@ -56,8 +59,11 @@ func New(db *sqlx.DB, cfg config.Config, logger *slog.Logger, metrics *observabi
 }
 
 func (m *Manager) Maintain(ctx context.Context) error {
-	if !m.cfg.Enabled || m.db == nil {
+	if !m.cfg.Enabled {
 		return nil
+	}
+	if m.db == nil {
+		return ErrLifecycleDatabaseUnavailable
 	}
 	started := time.Now()
 	actorID := m.appName + ":data-lifecycle"
@@ -127,6 +133,12 @@ func (m *Manager) maintain(ctx context.Context, now time.Time) error {
 			}
 		}
 		month := monthStart(now)
+		partitionLimit := m.cfg.PartitionMaxPerRun
+		if partitionLimit <= 0 {
+			partitionLimit = 12
+		} else if partitionLimit > 120 {
+			partitionLimit = 120
+		}
 		for _, policy := range []struct {
 			table           string
 			retentionMonths int
@@ -139,7 +151,7 @@ func (m *Manager) maintain(ctx context.Context, now time.Time) error {
 					return err
 				}
 			}
-			if err := retainPartitions(ctx, tx, policy.table, month.AddDate(0, -policy.retentionMonths, 0), m.cfg.ArchiveSchema); err != nil {
+			if err := retainPartitions(ctx, tx, policy.table, month.AddDate(0, -policy.retentionMonths, 0), m.cfg.ArchiveSchema, partitionLimit); err != nil {
 				return err
 			}
 		}
@@ -207,22 +219,29 @@ func (m *Manager) cleanupOutboxMySQL(ctx context.Context, now time.Time) error {
 	if m.cfg.OutboxPublishedRetention <= 0 || m.cfg.OutboxDeadRetention <= 0 {
 		return nil
 	}
-	query := `UPDATE event_outbox SET envelope=?,trace_parent='',trace_state='',last_error='',deleted_at=?,deleted_by=? WHERE deleted_at IS NULL AND ((published_at IS NOT NULL AND published_at<?) OR (dead_at IS NOT NULL AND dead_at<?)) ORDER BY created_at,id LIMIT ?`
-	for range m.cfg.PurgeMaxBatches {
-		var rows int64
-		err := database.NewTransactor(m.db).Within(ctx, nil, func(tx *sqlx.Tx) error {
-			result, err := tx.ExecContext(ctx, query, []byte{}, now, m.appName+":data-lifecycle", now.Add(-m.cfg.OutboxPublishedRetention), now.Add(-m.cfg.OutboxDeadRetention), m.cfg.PurgeBatchSize)
-			if err != nil {
+	for _, policy := range []struct {
+		query  string
+		cutoff time.Time
+	}{
+		{query: `UPDATE event_outbox SET envelope=?,trace_parent='',trace_state='',last_error='',deleted_at=?,deleted_by=? WHERE deleted_at IS NULL AND published_at IS NOT NULL AND published_at<? ORDER BY published_at,id LIMIT ?`, cutoff: now.Add(-m.cfg.OutboxPublishedRetention)},
+		{query: `UPDATE event_outbox SET envelope=?,trace_parent='',trace_state='',last_error='',deleted_at=?,deleted_by=? WHERE deleted_at IS NULL AND dead_at IS NOT NULL AND dead_at<? ORDER BY dead_at,id LIMIT ?`, cutoff: now.Add(-m.cfg.OutboxDeadRetention)},
+	} {
+		for range m.cfg.PurgeMaxBatches {
+			var rows int64
+			err := database.NewTransactor(m.db).Within(ctx, nil, func(tx *sqlx.Tx) error {
+				result, err := tx.ExecContext(ctx, policy.query, []byte{}, now, m.appName+":data-lifecycle", policy.cutoff, m.cfg.PurgeBatchSize)
+				if err != nil {
+					return err
+				}
+				rows, err = result.RowsAffected()
 				return err
+			})
+			if err != nil {
+				return fmt.Errorf("clean retained event outbox rows: %w", err)
 			}
-			rows, err = result.RowsAffected()
-			return err
-		})
-		if err != nil {
-			return fmt.Errorf("clean retained event outbox rows: %w", err)
-		}
-		if rows < int64(m.cfg.PurgeBatchSize) {
-			break
+			if rows < int64(m.cfg.PurgeBatchSize) {
+				break
+			}
 		}
 	}
 	return nil
@@ -232,24 +251,32 @@ func (m *Manager) cleanupOutboxPostgres(ctx context.Context, tx *sqlx.Tx, now ti
 	if m.cfg.OutboxPublishedRetention <= 0 || m.cfg.OutboxDeadRetention <= 0 {
 		return nil
 	}
-	query := `WITH expired AS (
-		SELECT id FROM event_outbox
-		WHERE deleted_at IS NULL AND ((published_at IS NOT NULL AND published_at<$1) OR (dead_at IS NOT NULL AND dead_at<$2))
-		ORDER BY created_at,id LIMIT $3 FOR UPDATE SKIP LOCKED
-	)
-	UPDATE event_outbox target SET envelope=''::bytea,trace_parent='',trace_state='',last_error='',deleted_at=$4,deleted_by=$5
-	FROM expired WHERE target.id=expired.id`
-	for range m.cfg.PurgeMaxBatches {
-		result, err := tx.ExecContext(ctx, query, now.Add(-m.cfg.OutboxPublishedRetention), now.Add(-m.cfg.OutboxDeadRetention), m.cfg.PurgeBatchSize, now, m.appName+":data-lifecycle")
-		if err != nil {
-			return fmt.Errorf("clean retained event outbox rows: %w", err)
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read cleaned event outbox row count: %w", err)
-		}
-		if rows < int64(m.cfg.PurgeBatchSize) {
-			break
+	for _, policy := range []struct {
+		column string
+		cutoff time.Time
+	}{
+		{column: "published_at", cutoff: now.Add(-m.cfg.OutboxPublishedRetention)},
+		{column: "dead_at", cutoff: now.Add(-m.cfg.OutboxDeadRetention)},
+	} {
+		query := `WITH expired AS (
+			SELECT id FROM event_outbox
+			WHERE deleted_at IS NULL AND ` + policy.column + ` IS NOT NULL AND ` + policy.column + `<$1
+			ORDER BY ` + policy.column + `,id LIMIT $2 FOR UPDATE SKIP LOCKED
+		)
+		UPDATE event_outbox target SET envelope=''::bytea,trace_parent='',trace_state='',last_error='',deleted_at=$3,deleted_by=$4
+		FROM expired WHERE target.id=expired.id`
+		for range m.cfg.PurgeMaxBatches {
+			result, err := tx.ExecContext(ctx, query, policy.cutoff, m.cfg.PurgeBatchSize, now, m.appName+":data-lifecycle")
+			if err != nil {
+				return fmt.Errorf("clean retained event outbox rows: %w", err)
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("read cleaned event outbox row count: %w", err)
+			}
+			if rows < int64(m.cfg.PurgeBatchSize) {
+				break
+			}
 		}
 	}
 	return nil
@@ -257,12 +284,25 @@ func (m *Manager) cleanupOutboxPostgres(ctx context.Context, tx *sqlx.Tx, now ti
 
 func ensurePartition(ctx context.Context, tx *sqlx.Tx, parent string, start time.Time) error {
 	name := partitionName(parent, start)
-	var exists bool
-	if err := tx.GetContext(ctx, &exists, `SELECT to_regclass(current_schema() || '.' || $1) IS NOT NULL`, name); err != nil {
+	var state struct {
+		Attached bool `db:"attached"`
+		Occupied bool `db:"occupied"`
+	}
+	query := `SELECT EXISTS (
+		SELECT 1 FROM pg_inherits inheritance
+		JOIN pg_class parent ON parent.oid=inheritance.inhparent
+		JOIN pg_namespace parent_namespace ON parent_namespace.oid=parent.relnamespace
+		JOIN pg_class child ON child.oid=inheritance.inhrelid
+		WHERE parent_namespace.nspname=current_schema() AND parent.relname=$1 AND child.relname=$2
+	) AS attached,to_regclass(current_schema() || '.' || $2) IS NOT NULL AS occupied`
+	if err := tx.GetContext(ctx, &state, query, parent, name); err != nil {
 		return fmt.Errorf("inspect partition %s: %w", name, err)
 	}
-	if exists {
+	if state.Attached {
 		return nil
+	}
+	if state.Occupied {
+		return fmt.Errorf("%w: %s", ErrPartitionNameOccupied, name)
 	}
 	end := start.AddDate(0, 1, 0)
 	defaultTable := parent + "_default"
@@ -284,36 +324,57 @@ func ensurePartition(ctx context.Context, tx *sqlx.Tx, parent string, start time
 	return nil
 }
 
-func retainPartitions(ctx context.Context, tx *sqlx.Tx, parent string, cutoff time.Time, archiveSchema string) error {
-	children := []string{}
-	query := `SELECT child.relname
+func retainPartitions(ctx context.Context, tx *sqlx.Tx, parent string, cutoff time.Time, archiveSchema string, limit int) error {
+	children := []struct {
+		Schema string `db:"schema_name"`
+		Name   string `db:"name"`
+	}{}
+	query := `SELECT child_namespace.nspname AS schema_name,child.relname AS name
 		FROM pg_inherits inheritance
 		JOIN pg_class parent ON parent.oid=inheritance.inhparent
 		JOIN pg_namespace parent_namespace ON parent_namespace.oid=parent.relnamespace
 		JOIN pg_class child ON child.oid=inheritance.inhrelid
-		WHERE parent_namespace.nspname=current_schema() AND parent.relname=$1`
+		JOIN pg_namespace child_namespace ON child_namespace.oid=child.relnamespace
+		WHERE parent_namespace.nspname=current_schema() AND parent.relname=$1
+		ORDER BY child.relname,child_namespace.nspname`
 	if err := tx.SelectContext(ctx, &children, query, parent); err != nil {
 		return fmt.Errorf("list partitions for %s: %w", parent, err)
 	}
+	retained := 0
 	for _, child := range children {
-		start, ok := parsePartitionName(parent, child)
+		start, ok := parsePartitionName(parent, child.Name)
 		if !ok || start.AddDate(0, 1, 0).After(cutoff) {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdentifier(parent)+` DETACH PARTITION `+quoteIdentifier(child)); err != nil {
-			return fmt.Errorf("detach expired partition %s: %w", child, err)
+		if retained >= limit {
+			break
+		}
+		qualifiedChild := quoteIdentifier(child.Schema) + `.` + quoteIdentifier(child.Name)
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdentifier(parent)+` DETACH PARTITION `+qualifiedChild); err != nil {
+			return fmt.Errorf("detach expired partition %s: %w", child.Name, err)
 		}
 		if archiveSchema == "" {
-			if _, err := tx.ExecContext(ctx, `DROP TABLE `+quoteIdentifier(child)); err != nil {
-				return fmt.Errorf("drop expired partition %s: %w", child, err)
+			if _, err := tx.ExecContext(ctx, `DROP TABLE `+qualifiedChild); err != nil {
+				return fmt.Errorf("drop expired partition %s: %w", child.Name, err)
 			}
+			retained++
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdentifier(child)+` SET SCHEMA `+quoteIdentifier(archiveSchema)); err != nil {
-			return fmt.Errorf("archive expired partition %s: %w", child, err)
+		archivedName := archivePartitionName(child.Schema, child.Name)
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+qualifiedChild+` RENAME TO `+quoteIdentifier(archivedName)); err != nil {
+			return fmt.Errorf("rename expired partition %s for archive: %w", child.Name, err)
 		}
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdentifier(child.Schema)+`.`+quoteIdentifier(archivedName)+` SET SCHEMA `+quoteIdentifier(archiveSchema)); err != nil {
+			return fmt.Errorf("archive expired partition %s: %w", child.Name, err)
+		}
+		retained++
 	}
 	return nil
+}
+
+func archivePartitionName(sourceSchema, partition string) string {
+	digest := sha256.Sum256([]byte(sourceSchema))
+	return fmt.Sprintf("%s_%x", partition, digest[:8])
 }
 
 func monthStart(value time.Time) time.Time {
@@ -347,7 +408,7 @@ func quoteMySQLIdentifier(value string) string {
 }
 
 func start(lifecycle fx.Lifecycle, manager *Manager) {
-	if !manager.cfg.Enabled || manager.db == nil {
+	if !manager.cfg.Enabled {
 		return
 	}
 	worker := background.New(manager.run)

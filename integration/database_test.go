@@ -178,6 +178,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 					t.Fatalf("mysql session sql_mode=%q err=%v", sqlMode, err)
 				}
 				testMySQLStrictModeOverride(t, ctx, dsn)
+				assertMySQLRetentionIndexes(t, ctx, db)
 			}
 			if userTables != 0 {
 				t.Fatal("generic template migration must not create a users table")
@@ -189,13 +190,17 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			assertTenantSelectionIndex(t, ctx, db, databaseType)
 			assertOutboxLegacyErrorProjection(t, ctx, db)
 			if databaseType == "postgres" {
+				assertPostgresOutboxCleanupIndexes(t, ctx, db)
 				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
+				testPostgresUnattachedPartitionFails(t, ctx, db)
 				testPostgresAuditInfrastructure(t, ctx, db)
 				testPostgresLogPartitions(t, ctx, db)
+				testPostgresArchivePartition(t, ctx, db)
 			} else {
 				testMySQLAuditInfrastructure(t, ctx, db)
 				testMySQLLogRetention(t, ctx, db)
 			}
+			testOutboxRetention(t, ctx, db, databaseType)
 			testTenantLifecycle(t, ctx, db)
 			testIdentityUserLifecycle(t, ctx, db)
 			testAuthoritativeSessionValidation(t, ctx, db)
@@ -221,6 +226,44 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatalf("migration down: %v", err)
 			}
 		})
+	}
+}
+
+func assertPostgresOutboxCleanupIndexes(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	for _, test := range []struct {
+		name   string
+		column string
+	}{
+		{name: "event_outbox_published_cleanup_idx", column: "published_at"},
+		{name: "event_outbox_dead_cleanup_idx", column: "dead_at"},
+	} {
+		var definition string
+		err := db.GetContext(ctx, &definition, `SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='event_outbox' AND indexname=$1`, test.name)
+		if err != nil || !strings.Contains(definition, "("+test.column+", id)") || !strings.Contains(definition, test.column+" IS NOT NULL") || !strings.Contains(definition, "deleted_at IS NULL") {
+			t.Fatalf("%s definition=%q err=%v", test.name, definition, err)
+		}
+	}
+}
+
+func assertMySQLRetentionIndexes(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	for _, test := range []struct {
+		table   string
+		index   string
+		columns string
+	}{
+		{table: "operation_logs", index: "operation_logs_retention_idx", columns: "occurred_at,id"},
+		{table: "security_logs", index: "security_logs_retention_idx", columns: "occurred_at,id"},
+		{table: "event_outbox", index: "event_outbox_published_cleanup_idx", columns: "deleted_at,published_at,id"},
+		{table: "event_outbox", index: "event_outbox_dead_cleanup_idx", columns: "deleted_at,dead_at,id"},
+		{table: "identity_refresh_token_history", index: "identity_refresh_token_history_active_expiry_idx", columns: "deleted_at,expires_at,token_hash"},
+	} {
+		var columns string
+		err := db.GetContext(ctx, &columns, `SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?`, test.table, test.index)
+		if err != nil || columns != test.columns {
+			t.Fatalf("%s retention index columns=%q err=%v", test.table, columns, err)
+		}
 	}
 }
 
@@ -1327,6 +1370,64 @@ func testMySQLLogRetention(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 }
 
+func testOutboxRetention(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string) {
+	t.Helper()
+	now := time.Now()
+	type outboxCase struct {
+		name      string
+		published any
+		dead      any
+		removed   bool
+		id        string
+	}
+	oldPublished := now.Add(-15 * 24 * time.Hour)
+	oldDead := now.Add(-100 * 24 * time.Hour)
+	recent := now.Add(-24 * time.Hour)
+	cases := []outboxCase{
+		{name: "published-one", published: oldPublished, removed: true},
+		{name: "published-two", published: oldPublished, removed: true},
+		{name: "dead-one", dead: oldDead, removed: true},
+		{name: "dead-two", dead: oldDead, removed: true},
+		{name: "pending"},
+		{name: "recent-published", published: recent},
+		{name: "recent-dead", dead: recent},
+	}
+	actorCtx := platformprincipal.SystemContext(ctx, "outbox-retention-integration")
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		query := tx.Rebind(`INSERT INTO event_outbox(id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,published_at,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`)
+		for i := range cases {
+			cases[i].id = uuid.NewString()
+			if _, err := tx.ExecContext(actorCtx, query, cases[i].id, "platform.integration.retention.v1", []byte("payload"), "", "", now, 0, "", "", cases[i].published, cases[i].dead, now, "ignored", now, "ignored"); err != nil {
+				return fmt.Errorf("insert %s outbox retention record: %w", cases[i].name, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := datalifecycle.New(db, config.Config{App: config.App{Name: "integration"}, Database: config.Database{Type: databaseType}, DistributedLock: config.DistributedLock{TTL: time.Second}, DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PurgeBatchSize: 2, PurgeMaxBatches: 1,
+		OperationLogRetentionMonths: 120, SecurityLogRetentionMonths: 120,
+		OutboxPublishedRetention: 7 * 24 * time.Hour, OutboxDeadRetention: 90 * 24 * time.Hour,
+	}}, slog.Default(), nil, integrationLifecycleLocker{})
+	if err := manager.Maintain(ctx); err != nil {
+		t.Fatalf("maintain %s outbox retention: %v", databaseType, err)
+	}
+	for _, test := range cases {
+		var stored struct {
+			DeletedAt sql.NullTime `db:"deleted_at"`
+			Bytes     int64        `db:"payload_bytes"`
+		}
+		query := db.Rebind(`SELECT deleted_at,OCTET_LENGTH(envelope) AS payload_bytes FROM event_outbox WHERE id=?`)
+		if err := db.GetContext(ctx, &stored, query, test.id); err != nil {
+			t.Fatalf("read %s outbox retention record: %v", test.name, err)
+		}
+		if stored.DeletedAt.Valid != test.removed || test.removed && stored.Bytes != 0 || !test.removed && stored.Bytes == 0 {
+			t.Fatalf("%s outbox retention state=%+v want removed=%t", test.name, stored, test.removed)
+		}
+	}
+}
+
 func testPostgresLogPartitions(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	for _, table := range []string{"operation_logs", "security_logs"} {
@@ -1392,6 +1493,71 @@ func testPostgresLogPartitions(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	var exists bool
 	if err := db.GetContext(ctx, &exists, `SELECT to_regclass(current_schema() || '.' || $1) IS NOT NULL`, partition); err != nil || !exists {
 		t.Fatalf("future partition %s exists=%v err=%v", partition, exists, err)
+	}
+}
+
+func testPostgresUnattachedPartitionFails(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	now := time.Now().In(time.FixedZone("UTC+8", 8*60*60))
+	name := fmt.Sprintf("operation_logs_y%04dm%02d", now.Year(), int(now.Month()))
+	if _, err := db.ExecContext(ctx, `CREATE TABLE "`+name+`" (id text)`); err != nil {
+		t.Fatalf("create unattached partition-name table: %v", err)
+	}
+	defer func() {
+		if _, err := db.ExecContext(ctx, `DROP TABLE "`+name+`"`); err != nil {
+			t.Errorf("drop unattached partition-name table: %v", err)
+		}
+	}()
+	manager := datalifecycle.New(db, config.Config{App: config.App{Name: "integration"}, Database: config.Database{Type: "postgres"}, DistributedLock: config.DistributedLock{TTL: time.Second}, DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PremakeMonths: 1, PartitionMaxPerRun: 1,
+	}}, slog.Default(), nil, integrationLifecycleLocker{})
+	if err := manager.Maintain(ctx); !errors.Is(err, datalifecycle.ErrPartitionNameOccupied) {
+		t.Fatalf("unattached partition name error=%v, want occupied", err)
+	}
+}
+
+func testPostgresArchivePartition(t *testing.T, ctx context.Context, db *sqlx.DB) {
+	t.Helper()
+	var sourceSchema string
+	if err := db.GetContext(ctx, &sourceSchema, `SELECT current_schema()`); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE operation_logs_y2020m01 PARTITION OF operation_logs FOR VALUES FROM ('2020-01-01 00:00:00+08') TO ('2020-02-01 00:00:00+08')`,
+		`CREATE TABLE operation_logs_y2020m02 PARTITION OF operation_logs FOR VALUES FROM ('2020-02-01 00:00:00+08') TO ('2020-03-01 00:00:00+08')`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("create expired partition: %v", err)
+		}
+	}
+	manager := datalifecycle.New(db, config.Config{App: config.App{Name: "integration"}, Database: config.Database{Type: "postgres", Schema: sourceSchema}, DistributedLock: config.DistributedLock{TTL: time.Second}, DataLifecycle: config.DataLifecycle{
+		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PremakeMonths: 1, PartitionMaxPerRun: 1, PurgeBatchSize: 1, PurgeMaxBatches: 1,
+		OperationLogRetentionMonths: 12, SecurityLogRetentionMonths: 12, ArchiveSchema: "integration_archive",
+	}}, slog.Default(), nil, integrationLifecycleLocker{})
+	if err := manager.Maintain(ctx); err != nil {
+		t.Fatalf("archive expired partition: %v", err)
+	}
+	for _, partition := range []string{"operation_logs_y2020m01", "operation_logs_y2020m02"} {
+		var archived string
+		archiveErr := db.GetContext(ctx, &archived, `SELECT tablename FROM pg_tables WHERE schemaname='integration_archive' AND tablename LIKE $1`, partition+"_%")
+		var remains bool
+		if err := db.GetContext(ctx, &remains, `SELECT to_regclass(current_schema() || '.' || $1) IS NOT NULL`, partition); err != nil {
+			t.Fatal(err)
+		}
+		if partition == "operation_logs_y2020m01" {
+			if archiveErr != nil || archived == partition || !strings.HasPrefix(archived, partition+"_") || remains {
+				t.Fatalf("first partition archive=%q err=%v remains=%t", archived, archiveErr, remains)
+			}
+		} else if !errors.Is(archiveErr, sql.ErrNoRows) || !remains {
+			t.Fatalf("second partition archived too early=%q err=%v remains=%t", archived, archiveErr, remains)
+		}
+	}
+	if err := manager.Maintain(ctx); err != nil {
+		t.Fatalf("archive next expired partition: %v", err)
+	}
+	var archived string
+	if err := db.GetContext(ctx, &archived, `SELECT tablename FROM pg_tables WHERE schemaname='integration_archive' AND tablename LIKE $1`, "operation_logs_y2020m02_%"); err != nil || !strings.HasPrefix(archived, "operation_logs_y2020m02_") {
+		t.Fatalf("second partition archive=%q err=%v", archived, err)
 	}
 }
 

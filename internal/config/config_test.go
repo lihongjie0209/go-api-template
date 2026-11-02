@@ -387,6 +387,12 @@ func TestLoad_ValidatesDataLifecycleDatabaseAndBounds(t *testing.T) {
 			want: "premake_months",
 		},
 		{
+			name: "partition maintenance unbounded",
+			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
+				"data_lifecycle:\n  enabled: true\n  partition_max_per_run: 121\n",
+			want: "partition_max_per_run",
+		},
+		{
 			name: "unsafe archive schema",
 			content: "database:\n  enabled: true\n  type: postgres\n  dsn: postgres://localhost/app\n" +
 				"data_lifecycle:\n  enabled: true\n  archive_schema: archive-invalid!\n",

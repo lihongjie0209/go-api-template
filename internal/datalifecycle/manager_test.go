@@ -17,7 +17,28 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	"go.uber.org/fx"
 )
+
+type lifecycleHookCapture struct{ hooks []fx.Hook }
+
+func (l *lifecycleHookCapture) Append(hook fx.Hook) { l.hooks = append(l.hooks, hook) }
+
+func TestEnabledLifecycleFailsStartupWithoutDatabase(t *testing.T) {
+	t.Parallel()
+	manager := &Manager{cfg: config.DataLifecycle{Enabled: true}}
+	if err := manager.Maintain(t.Context()); !errors.Is(err, ErrLifecycleDatabaseUnavailable) {
+		t.Fatalf("Maintain() error=%v", err)
+	}
+	lifecycle := &lifecycleHookCapture{}
+	start(lifecycle, manager)
+	if len(lifecycle.hooks) != 1 || lifecycle.hooks[0].OnStart == nil {
+		t.Fatalf("enabled lifecycle hooks=%d, want startup check", len(lifecycle.hooks))
+	}
+	if err := lifecycle.hooks[0].OnStart(t.Context()); !errors.Is(err, ErrLifecycleDatabaseUnavailable) {
+		t.Fatalf("OnStart() error=%v", err)
+	}
+}
 
 type cancelOnLogWriter struct {
 	output *bytes.Buffer
@@ -176,13 +197,23 @@ func TestCleanupOutboxMySQLUsesBoundedAuditedBatches(t *testing.T) {
 	db := sqlx.NewDb(raw, "mysql")
 	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, platformLocation)
 	actor := "orders:data-lifecycle"
-	mock.ExpectBegin()
-	mock.ExpectExec("SET @app_actor_id = \\?").WithArgs(actor).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`UPDATE event_outbox SET envelope=`).
-		WithArgs([]byte{}, now, actor, now.Add(-7*24*time.Hour), now.Add(-90*24*time.Hour), 250).
-		WillReturnResult(sqlmock.NewResult(0, 10))
-	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
+	for _, test := range []struct {
+		order  string
+		cutoff time.Time
+		rows   int64
+	}{
+		{order: "published_at,id", cutoff: now.Add(-7 * 24 * time.Hour), rows: 250},
+		{order: "published_at,id", cutoff: now.Add(-7 * 24 * time.Hour), rows: 0},
+		{order: "dead_at,id", cutoff: now.Add(-90 * 24 * time.Hour), rows: 10},
+	} {
+		mock.ExpectBegin()
+		mock.ExpectExec("SET @app_actor_id = \\?").WithArgs(actor).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`UPDATE event_outbox SET envelope=.*ORDER BY `+regexp.QuoteMeta(test.order)+` LIMIT \\?`).
+			WithArgs([]byte{}, now, actor, test.cutoff, 250).
+			WillReturnResult(sqlmock.NewResult(0, test.rows))
+		mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectCommit()
+	}
 	manager := &Manager{db: db, dialect: "mysql", appName: "orders", cfg: config.DataLifecycle{
 		PurgeBatchSize: 250, PurgeMaxBatches: 2, OutboxPublishedRetention: 7 * 24 * time.Hour, OutboxDeadRetention: 90 * 24 * time.Hour,
 	}}
@@ -208,12 +239,19 @@ func TestCleanupOutboxPostgresUsesBoundedBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, platformLocation)
-	mock.ExpectExec(`WITH expired AS`).
-		WithArgs(now.Add(-7*24*time.Hour), now.Add(-90*24*time.Hour), 250, now, "orders:data-lifecycle").
-		WillReturnResult(sqlmock.NewResult(0, 250))
-	mock.ExpectExec(`WITH expired AS`).
-		WithArgs(now.Add(-7*24*time.Hour), now.Add(-90*24*time.Hour), 250, now, "orders:data-lifecycle").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+	for _, test := range []struct {
+		column string
+		cutoff time.Time
+		rows   int64
+	}{
+		{column: "published_at", cutoff: now.Add(-7 * 24 * time.Hour), rows: 250},
+		{column: "published_at", cutoff: now.Add(-7 * 24 * time.Hour), rows: 0},
+		{column: "dead_at", cutoff: now.Add(-90 * 24 * time.Hour), rows: 10},
+	} {
+		mock.ExpectExec(`(?s)WITH expired AS .*ORDER BY `+test.column+`,id LIMIT \$2 FOR UPDATE SKIP LOCKED`).
+			WithArgs(test.cutoff, 250, now, "orders:data-lifecycle").
+			WillReturnResult(sqlmock.NewResult(0, test.rows))
+	}
 	manager := &Manager{appName: "orders", cfg: config.DataLifecycle{
 		PurgeBatchSize: 250, PurgeMaxBatches: 2, OutboxPublishedRetention: 7 * 24 * time.Hour, OutboxDeadRetention: 90 * 24 * time.Hour,
 	}}
@@ -338,15 +376,72 @@ func TestEnsurePartitionRefusesOccupiedDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT to_regclass(current_schema() || '.' || $1) IS NOT NULL`)).
-		WithArgs("operation_logs_y2026m09").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(`(?s)SELECT EXISTS \(.*FROM pg_inherits.*\) AS attached,to_regclass`).
+		WithArgs("operation_logs", "operation_logs_y2026m09").
+		WillReturnRows(sqlmock.NewRows([]string{"attached", "occupied"}).AddRow(false, false))
 	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM "operation_logs_default"`).
 		WithArgs(time.Date(2026, time.September, 1, 0, 0, 0, 0, platformLocation), time.Date(2026, time.October, 1, 0, 0, 0, 0, platformLocation)).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	err = ensurePartition(t.Context(), tx, "operation_logs", time.Date(2026, time.September, 1, 0, 0, 0, 0, platformLocation))
 	if !errors.Is(err, ErrDefaultPartitionOccupied) {
 		t.Fatalf("ensurePartition() error=%v", err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsurePartitionRejectsUnattachedName(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`(?s)SELECT EXISTS \(.*FROM pg_inherits.*\) AS attached,to_regclass`).
+		WithArgs("operation_logs", "operation_logs_y2026m09").
+		WillReturnRows(sqlmock.NewRows([]string{"attached", "occupied"}).AddRow(false, true))
+	err = ensurePartition(t.Context(), tx, "operation_logs", time.Date(2026, time.September, 1, 0, 0, 0, 0, platformLocation))
+	if !errors.Is(err, ErrPartitionNameOccupied) {
+		t.Fatalf("ensurePartition() error=%v", err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsurePartitionRecognizesAttachedChildOutsideCurrentSchema(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`(?s)SELECT EXISTS \(.*FROM pg_inherits.*\) AS attached,to_regclass`).
+		WithArgs("operation_logs", "operation_logs_y2026m09").
+		WillReturnRows(sqlmock.NewRows([]string{"attached", "occupied"}).AddRow(true, false))
+	if err := ensurePartition(t.Context(), tx, "operation_logs", time.Date(2026, time.September, 1, 0, 0, 0, 0, platformLocation)); err != nil {
+		t.Fatal(err)
 	}
 	mock.ExpectRollback()
 	if err := tx.Rollback(); err != nil {
@@ -370,16 +465,80 @@ func TestRetainPartitionsOnlyDropsOwnedExpiredChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(`SELECT child.relname`).WithArgs("operation_logs").WillReturnRows(
-		sqlmock.NewRows([]string{"relname"}).
-			AddRow("operation_logs_y2025m01").
-			AddRow("operation_logs_y2026m09").
-			AddRow("operation_logs_default").
-			AddRow("unowned_y2025m01"),
+	mock.ExpectQuery(`SELECT child_namespace.nspname AS schema_name,child.relname AS name`).WithArgs("operation_logs").WillReturnRows(
+		sqlmock.NewRows([]string{"schema_name", "name"}).
+			AddRow("orders", "operation_logs_y2025m01").
+			AddRow("orders", "operation_logs_y2026m09").
+			AddRow("orders", "operation_logs_default").
+			AddRow("orders", "unowned_y2025m01"),
 	)
-	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "operation_logs" DETACH PARTITION "operation_logs_y2025m01"`)).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(regexp.QuoteMeta(`DROP TABLE "operation_logs_y2025m01"`)).WillReturnResult(sqlmock.NewResult(0, 0))
-	if err := retainPartitions(t.Context(), tx, "operation_logs", time.Date(2026, time.January, 1, 0, 0, 0, 0, platformLocation), ""); err != nil {
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "operation_logs" DETACH PARTITION "orders"."operation_logs_y2025m01"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`DROP TABLE "orders"."operation_logs_y2025m01"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := retainPartitions(t.Context(), tx, "operation_logs", time.Date(2026, time.January, 1, 0, 0, 0, 0, platformLocation), "", 12); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetainPartitionsArchivesWithSourceSchemaIdentity(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const child = "operation_logs_y2025m01"
+	archived := archivePartitionName("orders", child)
+	if archived == archivePartitionName("billing", child) || len(archived) > 63 {
+		t.Fatalf("archive name does not isolate schemas or exceeds identifier limit: %q", archived)
+	}
+	mock.ExpectQuery(`SELECT child_namespace.nspname AS schema_name,child.relname AS name`).WithArgs("operation_logs").WillReturnRows(sqlmock.NewRows([]string{"schema_name", "name"}).AddRow("orders", child))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "operation_logs" DETACH PARTITION "orders"."` + child + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "orders"."` + child + `" RENAME TO "` + archived + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "orders"."` + archived + `" SET SCHEMA "shared_archive"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := retainPartitions(t.Context(), tx, "operation_logs", time.Date(2026, time.January, 1, 0, 0, 0, 0, platformLocation), "shared_archive", 12); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetainPartitionsBoundsBacklogOldestFirst(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`(?s)SELECT child_namespace.nspname AS schema_name,child.relname AS name.*ORDER BY child.relname`).WithArgs("security_logs").WillReturnRows(
+		sqlmock.NewRows([]string{"schema_name", "name"}).AddRow("orders", "security_logs_y2024m01").AddRow("orders", "security_logs_y2024m02").AddRow("orders", "security_logs_y2024m03"),
+	)
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "security_logs" DETACH PARTITION "orders"."security_logs_y2024m01"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`DROP TABLE "orders"."security_logs_y2024m01"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := retainPartitions(t.Context(), tx, "security_logs", time.Date(2025, time.January, 1, 0, 0, 0, 0, platformLocation), "", 1); err != nil {
 		t.Fatal(err)
 	}
 	mock.ExpectRollback()
