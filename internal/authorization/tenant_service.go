@@ -831,15 +831,9 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 	if err != nil {
 		return pagination.Result[TenantRole]{}, err
 	}
-	request, err := pagination.Normalize(input.Request)
-	input.Keyword = strings.TrimSpace(input.Keyword)
-	if err != nil || len(input.Keyword) > maxRoleKeywordLength || len(input.IDs) > 200 || len(input.Statuses) > 10 || !boundedAuthorizationIDs(input.IDs) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
-		return pagination.Result[TenantRole]{}, ErrTenantAuthorizationInvalid
-	}
-	for _, status := range input.Statuses {
-		if status != "active" && status != "disabled" {
-			return pagination.Result[TenantRole]{}, ErrTenantAuthorizationInvalid
-		}
+	input, request, err := normalizeRolePageInput(input)
+	if err != nil {
+		return pagination.Result[TenantRole]{}, err
 	}
 	scope, err := s.roleScope(ctx)
 	if err != nil {
@@ -855,12 +849,30 @@ func (s *TenantAuthorizationService) PageRoles(ctx context.Context, input RolePa
 	return pagination.Result[TenantRole]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
+func normalizeRolePageInput(input RolePageInput) (RolePageInput, pagination.Request, error) {
+	request, err := pagination.Normalize(input.Request)
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	if err != nil || len(input.Keyword) > maxRoleKeywordLength || len(input.IDs) > 200 || len(input.Statuses) > 10 || !boundedAuthorizationIDs(input.IDs) || (input.CreatedAtFrom != nil && input.CreatedAtTo != nil && !input.CreatedAtFrom.Before(*input.CreatedAtTo)) {
+		return RolePageInput{}, pagination.Request{}, ErrTenantAuthorizationInvalid
+	}
+	for _, status := range input.Statuses {
+		if status != "active" && status != "disabled" {
+			return RolePageInput{}, pagination.Request{}, ErrTenantAuthorizationInvalid
+		}
+	}
+	return input, request, nil
+}
+
 // PageRoleAssignmentCandidates reports which visible active roles the caller may delegate.
 // SetMemberRoles remains the authoritative check against concurrent grant changes.
 func (s *TenantAuthorizationService) PageRoleAssignmentCandidates(ctx context.Context, input RolePageInput) (RoleAssignmentCandidatePage, error) {
 	actor, err := tenantActor(ctx)
 	if err != nil {
 		return RoleAssignmentCandidatePage{}, err
+	}
+	input, _, err = normalizeRolePageInput(input)
+	if err != nil || len(input.Statuses) > 0 && (len(input.Statuses) != 1 || input.Statuses[0] != "active") {
+		return RoleAssignmentCandidatePage{}, ErrTenantAuthorizationInvalid
 	}
 	effective, err := effectivePermissionIDs(ctx, s.db, actor.TenantID, actor.MembershipID)
 	if err != nil {

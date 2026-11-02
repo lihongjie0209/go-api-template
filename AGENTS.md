@@ -373,7 +373,9 @@ TTL, and invalidation for its own data.
   allowed write size; over-limit data fails closed before authorization or
   presentation. Candidate-role delegation checks must stream their join rows
   with an aggregate cap; they must not materialize every selected role's
-  permission links before deciding assignability. A link restore must prefer
+  permission links before deciding assignability. Reject invalid candidate
+  pagination and filters before loading the actor's effective grant set;
+  assignment candidates accept active roles only. A link restore must prefer
   an existing active row, then select deleted history deterministically and
   lock that row; PostgreSQL partial unique indexes may retain multiple deleted
   rows for one business key.

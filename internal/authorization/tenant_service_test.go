@@ -288,6 +288,20 @@ func TestPageRoleAssignmentCandidatesRejectsInactiveMember(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPageRoleAssignmentCandidatesRejectsInvalidFiltersBeforeGrantRead(t *testing.T) {
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"})
+	service := &TenantAuthorizationService{}
+	for _, input := range []RolePageInput{
+		{Request: pagination.Request{Page: -1}},
+		{Request: pagination.Request{Page: 1}, IDs: make([]string, 201)},
+		{Request: pagination.Request{Page: 1}, Statuses: []string{"unknown"}},
+		{Request: pagination.Request{Page: 1}, Statuses: []string{"disabled"}},
+	} {
+		_, err := service.PageRoleAssignmentCandidates(ctx, input)
+		require.ErrorIs(t, err, ErrTenantAuthorizationInvalid)
+	}
+}
+
 func TestEffectivePermissionIDsForAdministrator(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
