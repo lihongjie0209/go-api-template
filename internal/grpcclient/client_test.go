@@ -3,11 +3,13 @@ package grpcclient
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/sony/gobreaker/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -154,6 +156,70 @@ func TestTimeoutInterceptorCapsLongerCallerDeadline(t *testing.T) {
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Less(t, time.Since(started), 250*time.Millisecond)
+}
+
+func TestTimeoutInterceptorRejectsLateSuccess(t *testing.T) {
+	t.Parallel()
+	err := timeoutInterceptor(10*time.Millisecond)(t.Context(), "/example.v1.Service/Get", nil, nil, nil, func(callCtx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		<-callCtx.Done()
+		return nil
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = timeoutInterceptor(time.Second)(ctx, "/example.v1.Service/Get", nil, nil, nil, func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		cancel()
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestTimeoutInterceptorDoesNotStartCanceledCall(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	called := false
+	err := timeoutInterceptor(time.Second)(ctx, "/example.v1.Service/Get", nil, nil, nil, func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, called)
+}
+
+func TestBreakerInterceptorCountsLateDeadlineAsFailure(t *testing.T) {
+	t.Parallel()
+	interceptor := breakerInterceptor("inventory", config.Breaker{Enabled: true, FailureThreshold: 1, OpenTimeout: time.Minute})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	err := interceptor(ctx, "/inventory.v1.Inventory/Get", nil, nil, nil, func(callCtx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+		<-callCtx.Done()
+		return nil
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	called := false
+	err = interceptor(t.Context(), "/inventory.v1.Inventory/Get", nil, nil, nil, func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, gobreaker.ErrOpenState)
+	require.False(t, called)
+}
+
+func TestMetricsInterceptorRecordsLateCancellation(t *testing.T) {
+	t.Parallel()
+	metrics := observability.NewMetrics(config.Config{Observability: config.Observability{MetricsEnabled: true}}, nil, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := metricsInterceptor("inventory", metrics)(ctx, "/inventory.v1.Inventory/Get", nil, nil, nil, func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error {
+		cancel()
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	require.Contains(t, recorder.Body.String(), `outbound_requests_total{client="inventory",protocol="grpc",status="Canceled"} 1`)
 }
 
 func TestDialRejectsUnsafeDirectConfiguration(t *testing.T) {

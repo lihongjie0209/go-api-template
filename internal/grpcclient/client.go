@@ -171,22 +171,24 @@ func breakerInterceptor(name string, cfg config.Breaker) grpc.UnaryClientInterce
 		Name: name, Timeout: cfg.OpenTimeout,
 		ReadyToTrip: func(counts gobreaker.Counts) bool { return counts.ConsecutiveFailures >= cfg.FailureThreshold },
 		IsExcluded: func(err error) bool {
-			code := status.Code(err)
+			code := grpcCallCode(err)
 			return code != codes.Unavailable && code != codes.ResourceExhausted && code != codes.DeadlineExceeded
 		},
 	})
 	return func(ctx context.Context, method string, req, reply any, connection *grpc.ClientConn, invoker grpc.UnaryInvoker, options ...grpc.CallOption) error {
-		_, err := breaker.Execute(func() (any, error) { return nil, invoker(ctx, method, req, reply, connection, options...) })
-		return err
+		_, err := breaker.Execute(func() (any, error) {
+			return nil, completedCallError(ctx, invoker(ctx, method, req, reply, connection, options...))
+		})
+		return completedCallError(ctx, err)
 	}
 }
 
 func metricsInterceptor(name string, metrics *observability.Metrics) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, connection *grpc.ClientConn, invoker grpc.UnaryInvoker, options ...grpc.CallOption) error {
 		started := time.Now()
-		err := invoker(ctx, method, req, reply, connection, options...)
+		err := completedCallError(ctx, invoker(ctx, method, req, reply, connection, options...))
 		if metrics.Enabled() {
-			metrics.OutboundRequests.WithLabelValues("grpc", name, status.Code(err).String()).Inc()
+			metrics.OutboundRequests.WithLabelValues("grpc", name, grpcCallCode(err).String()).Inc()
 			metrics.OutboundDuration.WithLabelValues("grpc", name).Observe(time.Since(started).Seconds())
 		}
 		return err
@@ -197,8 +199,28 @@ func timeoutInterceptor(timeout time.Duration) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, connection *grpc.ClientConn, invoker grpc.UnaryInvoker, options ...grpc.CallOption) error {
 		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		return invoker(callCtx, method, req, reply, connection, options...)
+		if err := callCtx.Err(); err != nil {
+			return err
+		}
+		return completedCallError(callCtx, invoker(callCtx, method, req, reply, connection, options...))
 	}
+}
+
+func completedCallError(ctx context.Context, err error) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return err
+}
+
+func grpcCallCode(err error) codes.Code {
+	if errors.Is(err, context.Canceled) {
+		return codes.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return codes.DeadlineExceeded
+	}
+	return status.Code(err)
 }
 func metadataInterceptor(token, psk string) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, connection *grpc.ClientConn, invoker grpc.UnaryInvoker, options ...grpc.CallOption) error {
