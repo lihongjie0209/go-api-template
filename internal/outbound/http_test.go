@@ -310,6 +310,9 @@ func TestHTTPClient_TransportFailureDoesNotExposeURLOrDependencyError(t *testing
 		return nil, errors.New("upstream secret-value")
 	})
 	response, err := client.Do(t.Context(), http.MethodGet, "/private?token=secret", nil, nil)
+	if response != nil {
+		_ = response.Body.Close()
+	}
 	if response != nil || !errors.Is(err, ErrHTTPTransportUnavailable) {
 		t.Fatalf("Do() response=%v error=%v, want safe transport error", response, err)
 	}
@@ -347,8 +350,12 @@ func TestHTTPClient_ClosesLateResponseAfterCancellation(t *testing.T) {
 		}, nil
 	})
 	response, err := client.Do(ctx, http.MethodGet, "/late", nil, nil)
-	if response != nil || !errors.Is(err, context.Canceled) || !closed.Load() {
-		t.Fatalf("Do() response=%v error=%v body_closed=%t, want canceled and closed", response, err, closed.Load())
+	closedBeforeReturn := closed.Load()
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if response != nil || !errors.Is(err, context.Canceled) || !closedBeforeReturn {
+		t.Fatalf("Do() response=%v error=%v body_closed=%t, want canceled and closed", response, err, closedBeforeReturn)
 	}
 }
 
