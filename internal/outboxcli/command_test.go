@@ -130,6 +130,20 @@ func TestLoadReplacementEnvelopeBoundsAndValidatesJSON(t *testing.T) {
 	})
 }
 
+func TestRunReplayStopsBeforeReadingFileWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := runReplay(ctx, replayOptions{
+		commonOptions: commonOptions{actor: "operator"},
+		id:            "event-1",
+		version:       1,
+		envelopeFile:  filepath.Join(t.TempDir(), "missing.json"),
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled replay error = %v, want context canceled", err)
+	}
+}
+
 func TestDeadCommandRequiresActor(t *testing.T) {
 	command := newCommand(func(context.Context, listOptions) (eventbus.DeadPage, error) {
 		return eventbus.DeadPage{}, nil

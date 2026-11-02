@@ -116,6 +116,9 @@ func runList(ctx context.Context, options listOptions) (eventbus.DeadPage, error
 }
 
 func runReplay(ctx context.Context, options replayOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var replacement []byte
 	if options.envelopeFile != "" {
 		var err error
@@ -163,6 +166,9 @@ func loadReplacementEnvelope(path string) ([]byte, error) {
 }
 
 func openService(ctx context.Context, options commonOptions) (*eventbus.RepairService, func(), context.Context, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, err
+	}
 	if !validActor(options.actor) {
 		return nil, nil, nil, eventbus.ErrRepairInvalid
 	}
