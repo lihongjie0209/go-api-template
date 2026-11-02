@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -141,15 +140,15 @@ func runReplay(ctx context.Context, options replayOptions) error {
 const maxReplacementJSONBytes = 2 << 20
 
 func loadReplacementEnvelope(path string) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxReplacementJSONBytes {
-		return nil, eventbus.ErrRepairInvalid
-	}
-	file, err := os.Open(path)
+	file, err := openReplacementFile(path)
 	if err != nil {
 		return nil, eventbus.ErrRepairInvalid
 	}
 	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxReplacementJSONBytes {
+		return nil, eventbus.ErrRepairInvalid
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maxReplacementJSONBytes+1))
 	if err != nil || len(data) == 0 || len(data) > maxReplacementJSONBytes {
 		return nil, eventbus.ErrRepairInvalid
