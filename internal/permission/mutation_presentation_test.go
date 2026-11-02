@@ -99,6 +99,50 @@ func TestPermissionDeleteChecksVersionDespiteActorDisplayOutage(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPermissionDeleteRetiresActionLinksWithoutLegacyMenuTable(t *testing.T) {
+	t.Parallel()
+	const id = "08896c3a-4c82-473e-90c8-b59f60446139"
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, true))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, false))
+	for _, query := range []string{
+		`SELECT count\(\*\) FROM permissions WHERE parent_id=\? AND deleted_at IS NULL`,
+		`SELECT count\(\*\) FROM platform_principal_permissions WHERE permission_id=\? AND deleted_at IS NULL`,
+		`SELECT count\(\*\) FROM tenant_permission_grants WHERE permission_id=\? AND deleted_at IS NULL`,
+		`SELECT count\(\*\) FROM tenant_role_permissions WHERE permission_id=\? AND deleted_at IS NULL`,
+	} {
+		mock.ExpectQuery(query).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	}
+	mock.ExpectExec(`UPDATE permissions SET deleted_at=\?`).WithArgs(sqlmock.AnyArg(), "admin", sqlmock.AnyArg(), "admin", id, int64(4)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+	require.NoError(t, service.Delete(platformprincipal.SystemContext(t.Context(), "admin"), id, 4))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionDeleteRejectsActivePlatformGrant(t *testing.T) {
+	t.Parallel()
+	const id = "08896c3a-4c82-473e-90c8-b59f60446139"
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, true))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, false))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions WHERE parent_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM platform_principal_permissions WHERE permission_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectRollback()
+	require.ErrorIs(t, service.Delete(platformprincipal.SystemContext(t.Context(), "admin"), id, 4), ErrInUse)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPermissionGroupUpdateSurvivesActorDisplayOutage(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
@@ -300,6 +344,42 @@ func TestPermissionSeedTypeConversionRetiresEveryActionLink(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "group", seeded.NodeType)
+	require.EqualValues(t, 4, seeded.Version)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedReactivationDropsStaleActionLinks(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.user.manage")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, resources, nil)
+	columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	current := []driver.Value{id, nil, "platform.user.manage", "Manage users", "permission", "identity.user", "read", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 3}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "deleted_at")).AddRow(append(append([]driver.Value{}, current...), time.Now())...))
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectExec(`UPDATE permissions SET .* WHERE id=\? AND is_system=true AND version=\?`).
+		WithArgs(nil, "platform.user.manage", "Manage users", "permission", "identity.user", "read", "", int64(0), "active", sqlmock.AnyArg(), "admin", id, int64(3)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectQuery(`SELECT a.id FROM authorization_resource_actions`).WithArgs("identity.user", "read").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("action-read"))
+	mock.ExpectQuery(`SELECT id,deleted_at FROM permission_resource_actions`).WithArgs(id, "action-read").WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-1", time.Now()))
+	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=NULL`).WithArgs("link-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	updated := append([]driver.Value{}, current...)
+	updated[15] = int64(4)
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "parent_name")).AddRow(append(updated, "")...))
+	mock.ExpectCommit()
+	seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.user.manage", Name: "Manage users", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"})
+	require.NoError(t, err)
+	require.True(t, changed)
 	require.EqualValues(t, 4, seeded.Version)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

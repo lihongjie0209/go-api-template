@@ -2260,6 +2260,23 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	if err := db.SelectContext(ctx, &activeSeedActions, db.Rebind(`SELECT a.action_key FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id WHERE l.permission_id=? AND l.deleted_at IS NULL ORDER BY a.action_key`), seeded.ID); err != nil || len(activeSeedActions) != 1 || activeSeedActions[0] != "update" {
 		t.Fatalf("seed primary link was not repaired: actions=%v err=%v", activeSeedActions, err)
 	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		if _, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?)`), seeded.ID, "identity.user", "read"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permissions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), seeded.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("prepare deleted seed with stale links: %v", err)
+	}
+	seeded, changed, err = service.Seed(actorCtx, seedInput)
+	if err != nil || !changed {
+		t.Fatalf("reactivate deleted seed: record=%+v changed=%v err=%v", seeded, changed, err)
+	}
+	activeSeedActions = nil
+	if err := db.SelectContext(ctx, &activeSeedActions, db.Rebind(`SELECT a.action_key FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id WHERE l.permission_id=? AND l.deleted_at IS NULL ORDER BY a.action_key`), seeded.ID); err != nil || len(activeSeedActions) != 1 || activeSeedActions[0] != "update" {
+		t.Fatalf("reactivated seed retained stale actions: actions=%v err=%v", activeSeedActions, err)
+	}
 	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
@@ -2332,6 +2349,33 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	primaryActions, err = service.GetActions(actorCtx, converted.ID)
 	if err != nil || len(primaryActions) != 1 || primaryActions[0].ID == secondaryActionID {
 		t.Fatalf("old secondary action returned after node conversion: actions=%+v err=%v", primaryActions, err)
+	}
+	disposable, err := service.Create(actorCtx, permission.Input{Key: "integration.disposable.read", Name: "Disposable permission", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		now := time.Now()
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO platform_principal_permissions(id,principal_type,principal_id,permission_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1)`), uuid.NewString(), "user", "integration-grant-holder", disposable.ID, now, "permission-integration", now, "permission-integration")
+		return err
+	}); err != nil {
+		t.Fatalf("create active platform permission reference: %v", err)
+	}
+	if err := service.Delete(actorCtx, disposable.ID, disposable.Version); !errors.Is(err, permission.ErrInUse) {
+		t.Fatalf("permission with platform grant was deletable: %v", err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE platform_principal_permissions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND deleted_at IS NULL`), disposable.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("retire platform permission reference: %v", err)
+	}
+	if err := service.Delete(actorCtx, disposable.ID, disposable.Version); err != nil {
+		t.Fatalf("delete unused permission: %v", err)
+	}
+	var activeDeletedLinks int
+	if err := db.GetContext(ctx, &activeDeletedLinks, db.Rebind(`SELECT count(*) FROM permission_resource_actions WHERE permission_id=? AND deleted_at IS NULL`), disposable.ID); err != nil || activeDeletedLinks != 0 {
+		t.Fatalf("deleted permission retained action links: count=%d err=%v", activeDeletedLinks, err)
 	}
 
 	return leaf.ID

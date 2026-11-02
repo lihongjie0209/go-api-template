@@ -604,7 +604,7 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		if rows != 1 {
 			return ErrConflict
 		}
-		if current.NodeType != input.NodeType {
+		if current.DeletedAt.Valid || current.NodeType != input.NodeType {
 			if err := deactivateAllPermissionLinks(ctx, tx, id); err != nil {
 				return err
 			}
@@ -985,7 +985,7 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		if n != 1 {
 			return ErrStaleVersion
 		}
-		return nil
+		return deactivateAllPermissionLinks(ctx, tx, id)
 	})
 }
 
@@ -1026,7 +1026,7 @@ func referenceCount(ctx context.Context, tx *sqlx.Tx, query, id string) (int, er
 }
 func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int, error) {
 	queries := []string{
-		`SELECT count(*) FROM menus WHERE permission_id=? AND deleted_at IS NULL`,
+		`SELECT count(*) FROM platform_principal_permissions WHERE permission_id=? AND deleted_at IS NULL`,
 		`SELECT count(*) FROM tenant_permission_grants WHERE permission_id=? AND deleted_at IS NULL`,
 		`SELECT count(*) FROM tenant_role_permissions WHERE permission_id=? AND deleted_at IS NULL`,
 	}
