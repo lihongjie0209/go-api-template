@@ -22,8 +22,9 @@ cleanup paths and moves tracing ownership into Fx Start/Stop. Its integration,
 verify and container jobs passed in run `41411532321`. The next reliability
 batch covers transport startup privacy, independent lifecycle budgets, SQL
 tracing verification, CLI error privacy, application/tenant context boundaries
-and MySQL audit-actor pool safety. Local unit tests pass; CI validation is
-pending.
+and MySQL audit-actor pool safety. Its PostgreSQL/MySQL integration and verify
+jobs passed in GitHub Actions run `41414839728`; the container job is still
+queued, so the complete run has not yet passed.
 Subsequent local lifecycle hardening classifies event-bus and scheduler startup
 errors before Fx can log them. Scheduler tests cover invalid timezone and sample
 specification values plus a database error during the initial refresh; these
