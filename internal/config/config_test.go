@@ -900,6 +900,13 @@ func TestConfig_JWTKeyMaterialSourcesAreExclusive(t *testing.T) {
 			t.Fatalf("ambiguous private key validation = %v", err)
 		}
 	})
+	t.Run("public keys without signer", func(t *testing.T) {
+		cfg := validDevelopmentConfig(t)
+		cfg.JWT.PublicKeys = []JWTVerificationKey{{KeyID: "old", Algorithm: "RS256", PublicKey: "inline"}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "active signing key") {
+			t.Fatalf("public-only local JWT configuration = %v", err)
+		}
+	})
 	for _, test := range []struct {
 		name string
 		key  JWTVerificationKey
@@ -909,6 +916,8 @@ func TestConfig_JWTKeyMaterialSourcesAreExclusive(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validDevelopmentConfig(t)
+			cfg.JWT.KeyID = "active"
+			cfg.JWT.PrivateKey = "inline"
 			cfg.JWT.PublicKeys = []JWTVerificationKey{test.key}
 			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires exactly one") {
 				t.Fatalf("ambiguous public key validation = %v", err)

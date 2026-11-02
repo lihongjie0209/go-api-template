@@ -57,6 +57,27 @@ func TestKeyMaterialRejectsAmbiguousSources(t *testing.T) {
 	}
 }
 
+func TestService_RejectsIncompleteLocalKeyConfigurationAtConstructor(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		jwt  config.JWT
+	}{
+		{name: "key id only", jwt: config.JWT{KeyID: "key-1"}},
+		{name: "private key only", jwt: config.JWT{PrivateKey: "unused"}},
+		{name: "public keys only", jwt: config.JWT{PublicKeys: []config.JWTVerificationKey{{KeyID: "old", PublicKey: "unused"}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := New(config.Config{JWT: test.jwt})
+			if service.initErr == nil {
+				t.Fatal("incomplete local JWT configuration silently disabled signing")
+			}
+		})
+	}
+	if service := New(config.Config{}); service.initErr != nil {
+		t.Fatalf("remote-verifier-only JWT service = %v", service.initErr)
+	}
+}
+
 func (f verifierFunc) VerifyBearer(ctx context.Context, raw string) (platformprincipal.Principal, error) {
 	return f(ctx, raw)
 }

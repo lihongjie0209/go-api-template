@@ -823,6 +823,9 @@ func (c Config) Validate() error {
 	if (c.JWT.KeyID != "") != hasSigningKey {
 		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
 	}
+	if len(c.JWT.PublicKeys) > 0 && !hasSigningKey {
+		return errors.New("jwt.public_keys require an active signing key")
+	}
 	for index, key := range c.JWT.PublicKeys {
 		if (key.PublicKey != "") == (key.PublicKeyFile != "") {
 			return fmt.Errorf("jwt.public_keys[%d] requires exactly one of public_key or public_key_file", index)

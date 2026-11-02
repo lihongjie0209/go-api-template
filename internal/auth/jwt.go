@@ -106,7 +106,15 @@ func NewWithDatabase(cfg config.Config, db *sqlx.DB) *Service {
 		remoteTimeout = 2 * time.Second
 	}
 	s := &Service{issuer: cfg.JWT.Issuer, audience: cfg.JWT.Audience, ttl: cfg.JWT.TTL, remoteTimeout: remoteTimeout, verification: map[string]signingKey{}, db: db}
-	if cfg.JWT.KeyID == "" || (cfg.JWT.PrivateKey == "" && cfg.JWT.PrivateKeyFile == "") {
+	hasPrivateKey := cfg.JWT.PrivateKey != "" || cfg.JWT.PrivateKeyFile != ""
+	if cfg.JWT.KeyID == "" && !hasPrivateKey {
+		if len(cfg.JWT.PublicKeys) > 0 {
+			s.initErr = errors.New("jwt public keys require an active signing key")
+		}
+		return s
+	}
+	if cfg.JWT.KeyID == "" || !hasPrivateKey {
+		s.initErr = errors.New("jwt key id and private key must be configured together")
 		return s
 	}
 	pem, err := keyMaterial(cfg.JWT.PrivateKey, cfg.JWT.PrivateKeyFile)

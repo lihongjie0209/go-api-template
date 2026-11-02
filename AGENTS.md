@@ -976,7 +976,9 @@ deleted_by text
   key-file path, Secret key, volume mount, and non-root read permissions aligned.
 - JWT key material must choose exactly one inline or file source. Reject both
   sources at configuration validation and again at the signer boundary so a
-  direct constructor cannot silently prefer a stale inline key.
+  direct constructor cannot silently prefer a stale inline key. A partial
+  `kid`/private-key pair or local public keys without an active signer must
+  fail initialization rather than silently disable local JWT handling.
 - Key-rotation tests must use two distinct private keys and prove both rollout
   phases can verify the other phase's tokens while JWKS publishes both `kid`s.
   Rotating a mounted Secret requires a process rollout because signer keys are
