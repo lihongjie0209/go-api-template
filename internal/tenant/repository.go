@@ -85,6 +85,23 @@ func (r *Repository) Get(ctx context.Context, id, tenantID string) (Record, erro
 	return r.get(ctx, `id = ? AND id = ? AND deleted_at IS NULL`, id, tenantID)
 }
 
+// CurrentVersion verifies a cached tenant against the authoritative row and
+// its logical-delete state without reading the full presentation record.
+func (r *Repository) CurrentVersion(ctx context.Context, id, tenantID string) (int64, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, ErrForbidden
+	}
+	var version int64
+	query := r.db.Rebind(`SELECT version FROM tenants WHERE id = ? AND id = ? AND deleted_at IS NULL`)
+	if err := r.db.GetContext(ctx, &version, query, id, tenantID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("get tenant current version: %w", err)
+	}
+	return version, nil
+}
+
 func (r *Repository) AdminGet(ctx context.Context, id string) (Record, error) {
 	return r.get(ctx, `id = ? AND deleted_at IS NULL`, id)
 }

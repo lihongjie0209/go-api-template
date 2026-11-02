@@ -203,14 +203,22 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 		if data, cacheErr := s.cache.Get(ctx, key); cacheErr == nil {
 			var record Record
 			if decodeErr := json.Unmarshal(data, &record); decodeErr == nil {
-				if err := authorizeTenant(actor, record.ID); err != nil {
-					return View{}, err
+				if record.ID == id {
+					if err := authorizeTenant(actor, record.ID); err != nil {
+						return View{}, err
+					}
+					version, versionErr := s.repository.CurrentVersion(ctx, id, actor.TenantID)
+					if versionErr != nil {
+						return View{}, versionErr
+					}
+					if version == record.Version {
+						views, presentErr := s.present(ctx, []Record{record})
+						if presentErr != nil {
+							return View{}, presentErr
+						}
+						return views[0], nil
+					}
 				}
-				views, presentErr := s.present(ctx, []Record{record})
-				if presentErr != nil {
-					return View{}, presentErr
-				}
-				return views[0], nil
 			} else if s.logger != nil {
 				s.logger.WarnContext(ctx, "decode tenant cache", "tenant_id", id, "error", observability.SafeError(decodeErr, errTenantCacheFailed))
 			}

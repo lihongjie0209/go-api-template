@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"regexp"
@@ -23,6 +24,111 @@ import (
 )
 
 type failingTenantCache struct{ cache.Store }
+
+type tenantCacheHit struct {
+	cache.Store
+	value []byte
+}
+
+func (c tenantCacheHit) Get(context.Context, string) ([]byte, error)              { return c.value, nil }
+func (c tenantCacheHit) Set(context.Context, string, []byte, time.Duration) error { return nil }
+
+func cachedTenant(t *testing.T, version int64) []byte {
+	t.Helper()
+	value, err := json.Marshal(Record{ID: "tenant-a", Code: "old", Name: "Old name", Status: StatusActive, Version: version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestServiceGetRejectsDeletedCachedTenant(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT version FROM tenants WHERE id = $1 AND id = $2 AND deleted_at IS NULL`)).
+		WithArgs("tenant-a", "tenant-a").WillReturnRows(sqlmock.NewRows([]string{"version"}))
+	service := New(NewRepository(db), nil, tenantCacheHit{value: cachedTenant(t, 1)}, nil, nil, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-a", Type: platformprincipal.TypeUser, TenantID: "tenant-a"})
+	_, err = service.Get(ctx, "tenant-a")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get() = %v, want ErrNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceGetRefreshesStaleCachedTenant(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT version FROM tenants WHERE id = $1 AND id = $2 AND deleted_at IS NULL`)).
+		WithArgs("tenant-a", "tenant-a").WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(2))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, code, name, description, status, owner_user_id, owner_name, created_at, created_by, updated_at, updated_by, version FROM tenants WHERE id = $1 AND id = $2 AND deleted_at IS NULL`)).
+		WithArgs("tenant-a", "tenant-a").WillReturnRows(sqlmock.NewRows([]string{"id", "code", "name", "description", "status", "owner_user_id", "owner_name", "created_at", "created_by", "updated_at", "updated_by", "version"}).
+		AddRow("tenant-a", "new", "New name", "", StatusActive, "owner-a", "Owner", time.Now(), "owner-a", time.Now(), "owner-a", 2))
+	service := New(NewRepository(db), nil, tenantCacheHit{value: cachedTenant(t, 1)}, nil, nil, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-a", Type: platformprincipal.TypeUser, TenantID: "tenant-a"})
+	view, err := service.Get(ctx, "tenant-a")
+	if err != nil || view.Name != "New name" || view.Version != 2 {
+		t.Fatalf("Get() = %+v, %v, want fresh version 2", view, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceGetFailsClosedWhenCachedTenantCannotBeVerified(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	wantErr := errors.New("database unavailable")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT version FROM tenants WHERE id = $1 AND id = $2 AND deleted_at IS NULL`)).
+		WithArgs("tenant-a", "tenant-a").WillReturnError(wantErr)
+	service := New(NewRepository(db), nil, tenantCacheHit{value: cachedTenant(t, 1)}, nil, nil, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-a", Type: platformprincipal.TypeUser, TenantID: "tenant-a"})
+	_, err = service.Get(ctx, "tenant-a")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Get() = %v, want authoritative database error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceGetUsesVerifiedCachedTenant(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT version FROM tenants WHERE id = $1 AND id = $2 AND deleted_at IS NULL`)).
+		WithArgs("tenant-a", "tenant-a").WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	service := New(NewRepository(db), nil, tenantCacheHit{value: cachedTenant(t, 1)}, nil, nil, nil, nil, config.Config{})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-a", Type: platformprincipal.TypeUser, TenantID: "tenant-a"})
+	view, err := service.Get(ctx, "tenant-a")
+	if err != nil || view.Name != "Old name" || view.Version != 1 {
+		t.Fatalf("Get() = %+v, %v, want verified cache value", view, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func (failingTenantCache) Delete(context.Context, ...string) error {
 	return errors.New("redis password=secret-value")
