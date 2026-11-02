@@ -184,31 +184,8 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	if !m.cfg.Database.Enabled {
 		return nil
 	}
-	rows, err := m.db.QueryxContext(ctx, m.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE status='active' AND deleted_at IS NULL ORDER BY code ASC,id ASC LIMIT ?`), maxActiveScheduledJobs+1)
+	definitions, err := m.loadActiveDefinitions(ctx)
 	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	definitions := make([]Definition, 0)
-	payloadBytes := 0
-	for rows.Next() {
-		if len(definitions) == maxActiveScheduledJobs {
-			return errTooManyActiveJobs
-		}
-		var definition Definition
-		if err := rows.StructScan(&definition); err != nil {
-			return err
-		}
-		payloadBytes += len(definition.Payload)
-		if payloadBytes > maxActiveJobPayloadBytes {
-			return errActiveJobPayloadBudget
-		}
-		definitions = append(definitions, definition)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 	type stagedDefinition struct {
@@ -248,6 +225,39 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	}
 	m.logger.InfoContext(ctx, "scheduled jobs refreshed", "count", len(definitions))
 	return nil
+}
+
+func (m *Manager) loadActiveDefinitions(ctx context.Context) (definitions []Definition, err error) {
+	rows, err := m.db.QueryxContext(ctx, m.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE status='active' AND deleted_at IS NULL ORDER BY code ASC,id ASC LIMIT ?`), maxActiveScheduledJobs+1)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			definitions = nil
+			err = closeErr
+		}
+	}()
+	definitions = make([]Definition, 0)
+	payloadBytes := 0
+	for rows.Next() {
+		if len(definitions) == maxActiveScheduledJobs {
+			return nil, errTooManyActiveJobs
+		}
+		var definition Definition
+		if err := rows.StructScan(&definition); err != nil {
+			return nil, err
+		}
+		payloadBytes += len(definition.Payload)
+		if payloadBytes > maxActiveJobPayloadBytes {
+			return nil, errActiveJobPayloadBudget
+		}
+		definitions = append(definitions, definition)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return definitions, nil
 }
 
 // Trigger executes a registered definition synchronously for trusted in-process

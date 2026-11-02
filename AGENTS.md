@@ -363,7 +363,10 @@ TTL, and invalidation for its own data.
   constructing an unbounded `IN` list. Tenant ceiling, role-permission and
   member-role list reads must use a database row limit matching the maximum
   allowed write size; over-limit data fails closed before authorization or
-  presentation. The data-policy revision and every row-action decision in a
+  presentation. A link restore must prefer an existing active row, then select
+  deleted history deterministically and lock that row; PostgreSQL partial
+  unique indexes may retain multiple deleted rows for one business key.
+  The data-policy revision and every row-action decision in a
   batch must likewise use one pinned immutable policy snapshot, even during a
   concurrent refresh; a failed authoritative grant read fails closed. A failed
   grant read or data-policy pin must invalidate any grant snapshot already in

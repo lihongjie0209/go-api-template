@@ -1625,12 +1625,31 @@ func upsertLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valu
 	if ownerColumn != "" {
 		where, args = `tenant_id=? AND `+ownerColumn+`=? AND `+valueColumn+`=?`, []any{tenantID, ownerID, value}
 	}
-	var id string
-	err := tx.GetContext(ctx, &id, tx.Rebind(`SELECT id FROM `+table+` WHERE `+where), args...)
+	var existing struct {
+		ID        string       `db:"id"`
+		DeletedAt sql.NullTime `db:"deleted_at"`
+	}
+	err := tx.GetContext(ctx, &existing, tx.Rebind(`SELECT id,deleted_at FROM `+table+` WHERE `+where+` ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`), args...)
 	now := time.Now()
 	if err == nil {
-		_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=?`), now, actorID, tenantID, id)
-		return err
+		if !existing.DeletedAt.Valid {
+			return nil
+		}
+		result, updateErr := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND deleted_at IS NOT NULL`), now, actorID, tenantID, existing.ID)
+		if updateErr != nil {
+			if database.IsUniqueViolation(updateErr) {
+				return ErrTenantAuthorizationConflict
+			}
+			return updateErr
+		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		if rows != 1 {
+			return ErrTenantAuthorizationConflict
+		}
+		return nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err

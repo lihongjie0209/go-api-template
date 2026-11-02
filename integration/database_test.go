@@ -202,7 +202,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			permissionID := testPermissionLifecycle(t, ctx, db)
 			testConcurrentPermissionSeed(t, ctx, db)
 			testManagedAuthorizationLifecycle(t, ctx, db, permissionID)
-			testTenantAuthorizationLifecycle(t, ctx, db, permissionID)
+			testTenantAuthorizationLifecycle(t, ctx, db, databaseType, permissionID)
 			testApplicationNavigationLifecycle(t, ctx, db)
 			testPlatformConfigLifecycle(t, ctx, db)
 			testScheduledJobLifecycle(t, ctx, db)
@@ -1346,7 +1346,7 @@ func testPostgresLogPartitions(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	}
 }
 
-func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, permissionID string) {
+func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType, permissionID string) {
 	t.Helper()
 	const (
 		tenantID       = "authorization-tenant"
@@ -1621,6 +1621,33 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	prunedPermissions, err := service.RolePermissions(adminCtx, manualRole.ID)
 	if err != nil || len(prunedPermissions) != 0 {
 		t.Fatalf("pruned role permissions=%+v err=%v", prunedPermissions, err)
+	}
+	if databaseType == "postgres" {
+		var oldLinkID string
+		if err := db.GetContext(ctx, &oldLinkID, db.Rebind(`SELECT id FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil {
+			t.Fatalf("read active administrator link: %v", err)
+		}
+		newLinkID := uuid.NewString()
+		if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			if _, updateErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE tenant_administrators SET deleted_at=?,updated_at=? WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), time.Now(), time.Now(), tenantID, oldLinkID); updateErr != nil {
+				return updateErr
+			}
+			_, insertErr := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO tenant_administrators(id,tenant_id,membership_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,1)`), newLinkID, tenantID, adminMemberID, now, "authorization-integration", now, "authorization-integration")
+			return insertErr
+		}); err != nil {
+			t.Fatalf("prepare administrator link history: %v", err)
+		}
+		var memberVersion int64
+		if err := db.GetContext(ctx, &memberVersion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil {
+			t.Fatalf("read administrator membership version: %v", err)
+		}
+		if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true, memberVersion); err != nil {
+			t.Fatalf("re-enable existing administrator with history: %v", err)
+		}
+		var activeLinkID string
+		if err := db.GetContext(ctx, &activeLinkID, db.Rebind(`SELECT id FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil || activeLinkID != newLinkID {
+			t.Fatalf("active administrator link=%q want=%q err=%v", activeLinkID, newLinkID, err)
+		}
 	}
 }
 

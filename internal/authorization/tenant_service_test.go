@@ -997,6 +997,46 @@ func TestPruneRolePermissionsBumpsAffectedRoleVersions(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpsertLinkPrefersActiveRowAndRestoresDeletedHistory(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		deletedAt    any
+		affectedRows int64
+		wantErr      error
+		wantUpdate   bool
+	}{
+		{name: "active row remains unchanged"},
+		{name: "deleted row restored", deletedAt: time.Now(), affectedRows: 1, wantUpdate: true},
+		{name: "lost restore fails closed", deletedAt: time.Now(), affectedRows: 0, wantUpdate: true, wantErr: ErrTenantAuthorizationConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectBegin()
+			tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+			require.NoError(t, err)
+			mock.ExpectQuery(`SELECT id,deleted_at FROM tenant_administrators WHERE tenant_id=\? AND membership_id=\? ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`).
+				WithArgs("tenant-1", "member-1").
+				WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-1", test.deletedAt))
+			if test.wantUpdate {
+				mock.ExpectExec(`UPDATE tenant_administrators SET deleted_at=NULL.*WHERE tenant_id=\? AND id=\? AND deleted_at IS NOT NULL`).
+					WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "link-1").
+					WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
+			}
+			err = upsertLink(t.Context(), tx, "tenant_administrators", "tenant-1", "", "membership_id", "member-1", "actor-1")
+			if test.wantErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			mock.ExpectRollback()
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestPruneRolePermissionsWithEmptyCeilingUpdatesOnlyLinkedRoles(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)

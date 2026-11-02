@@ -100,6 +100,18 @@ func TestManagerRefreshRejectsAggregatePayloadOverBudget(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestManagerRefreshRejectsCursorCloseFailure(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	want := errors.New("cursor close failed")
+	manager := &Manager{cfg: config.Config{Database: config.Database{Enabled: true}}, db: sqlx.NewDb(raw, "sqlmock")}
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs.*LIMIT \?`).WithArgs(maxActiveScheduledJobs + 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).CloseError(want))
+	require.ErrorIs(t, manager.Refresh(t.Context()), want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestManagerExecuteRecordsBoundedHistory(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
