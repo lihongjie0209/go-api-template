@@ -248,6 +248,44 @@ func TestSetActionsRequiresPrimaryAction(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEnsurePermissionActionLinkPreservesActiveAndRestoresHistory(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		deletedAt    any
+		affectedRows int64
+		wantErr      error
+	}{
+		{name: "active association remains unchanged"},
+		{name: "deleted association is restored", deletedAt: time.Now(), affectedRows: 1},
+		{name: "lost restore fails", deletedAt: time.Now(), wantErr: ErrConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectBegin()
+			tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+			require.NoError(t, err)
+			mock.ExpectQuery(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=\? AND action_id=\? ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`).
+				WithArgs("permission-1", "action-1").
+				WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-1", test.deletedAt))
+			if test.deletedAt != nil {
+				mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=\? AND deleted_at IS NOT NULL`).
+					WithArgs("link-1").WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
+			}
+			err = ensurePermissionActionLink(t.Context(), tx, "permission-1", "action-1", "actor-1")
+			if test.wantErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			mock.ExpectRollback()
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestCapabilityPermissionSeedIDGoldenMapping(t *testing.T) {
 	t.Parallel()
 	id, err := SeedID("authorization.capability.evaluate")

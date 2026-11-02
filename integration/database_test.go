@@ -2401,6 +2401,11 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil || len(links) != 1 {
 		t.Fatalf("permission links=%+v err=%v", links, err)
 	}
+	primaryActionID := links[0].ID
+	var primaryLinkVersion int64
+	if err := db.GetContext(ctx, &primaryLinkVersion, db.Rebind(`SELECT version FROM permission_resource_actions WHERE permission_id=? AND action_id=? AND deleted_at IS NULL`), grantPermission.ID, primaryActionID); err != nil {
+		t.Fatal(err)
+	}
 	grantPermission, err = permissions.SetActions(actorCtx, grantPermission.ID, grantPermission.Version, []string{links[0].ID, secondActionID})
 	if err != nil || grantPermission.Version != 2 {
 		t.Fatalf("set permission links=%+v err=%v", grantPermission, err)
@@ -2408,6 +2413,29 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	links, err = permissions.GetActions(actorCtx, grantPermission.ID)
 	if err != nil || len(links) != 2 {
 		t.Fatalf("multiple permission links=%+v err=%v", links, err)
+	}
+	var unchangedLinkVersion int64
+	if err := db.GetContext(ctx, &unchangedLinkVersion, db.Rebind(`SELECT version FROM permission_resource_actions WHERE permission_id=? AND action_id=? AND deleted_at IS NULL`), grantPermission.ID, primaryActionID); err != nil || unchangedLinkVersion != primaryLinkVersion {
+		t.Fatalf("unchanged primary link version=%d, want %d: %v", unchangedLinkVersion, primaryLinkVersion, err)
+	}
+	grantPermission, err = permissions.SetActions(actorCtx, grantPermission.ID, grantPermission.Version, []string{primaryActionID})
+	if err != nil {
+		t.Fatalf("remove secondary permission link: %v", err)
+	}
+	var secondaryDeleted int
+	if err := db.GetContext(ctx, &secondaryDeleted, db.Rebind(`SELECT count(*) FROM permission_resource_actions WHERE permission_id=? AND action_id=? AND deleted_at IS NOT NULL`), grantPermission.ID, secondActionID); err != nil || secondaryDeleted != 1 {
+		t.Fatalf("secondary link was not soft-deleted: count=%d err=%v", secondaryDeleted, err)
+	}
+	grantPermission, err = permissions.SetActions(actorCtx, grantPermission.ID, grantPermission.Version, []string{primaryActionID, secondActionID})
+	if err != nil {
+		t.Fatalf("restore secondary permission link: %v", err)
+	}
+	if err := db.GetContext(ctx, &unchangedLinkVersion, db.Rebind(`SELECT version FROM permission_resource_actions WHERE permission_id=? AND action_id=? AND deleted_at IS NULL`), grantPermission.ID, primaryActionID); err != nil || unchangedLinkVersion != primaryLinkVersion {
+		t.Fatalf("primary link changed during secondary replacement: version=%d want=%d err=%v", unchangedLinkVersion, primaryLinkVersion, err)
+	}
+	links, err = permissions.GetActions(actorCtx, grantPermission.ID)
+	if err != nil || len(links) != 2 {
+		t.Fatalf("restored permission links=%+v err=%v", links, err)
 	}
 	users := identity.New(identity.NewRepository(db), transactor, nil, discardOperationRecorder{}, discardSecurityRecorder{}, slog.Default(), config.Config{User: config.User{CacheTTL: time.Minute}})
 	user, err := users.Create(actorCtx, identity.CreateInput{Username: "grant.integration", DisplayName: "Grant Test"})

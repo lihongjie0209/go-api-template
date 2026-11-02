@@ -250,26 +250,15 @@ func (s *Service) SetActions(ctx context.Context, id string, version int64, acti
 		if !primaryIncluded {
 			return ErrInvalid
 		}
-		if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND deleted_at IS NULL`), id); err != nil {
+		removeQuery, removeArgs, err := sqlx.In(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id NOT IN (?) AND deleted_at IS NULL`, id, actionIDs)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, tx.Rebind(removeQuery), removeArgs...); err != nil {
 			return err
 		}
 		for _, actionID := range actionIDs {
-			var link struct {
-				ID        string       `db:"id"`
-				DeletedAt sql.NullTime `db:"deleted_at"`
-			}
-			err := tx.GetContext(ctx, &link, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? FOR UPDATE`), id, actionID)
-			if err == nil {
-				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=?`), link.ID); err != nil {
-					return err
-				}
-				continue
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			now := time.Now()
-			if _, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO permission_resource_actions(id,permission_id,action_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,1)`), uuid.NewString(), id, actionID, now, a, now, a); err != nil {
+			if err := ensurePermissionActionLink(ctx, tx, id, actionID, a); err != nil {
 				return err
 			}
 		}
@@ -822,16 +811,31 @@ func syncPrimaryLink(ctx context.Context, tx *sqlx.Tx, permissionID, resource, a
 	if err != nil {
 		return err
 	}
+	return ensurePermissionActionLink(ctx, tx, permissionID, actionID, actorID)
+}
+
+func ensurePermissionActionLink(ctx context.Context, tx *sqlx.Tx, permissionID, actionID, actorID string) error {
 	var link struct {
 		ID        string       `db:"id"`
 		DeletedAt sql.NullTime `db:"deleted_at"`
 	}
-	err = tx.GetContext(ctx, &link, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? FOR UPDATE`), permissionID, actionID)
+	err := tx.GetContext(ctx, &link, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`), permissionID, actionID)
 	if err == nil {
-		if link.DeletedAt.Valid {
-			_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=?`), link.ID)
+		if !link.DeletedAt.Valid {
+			return nil
 		}
-		return err
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=? AND deleted_at IS NOT NULL`), link.ID)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrConflict
+		}
+		return nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
