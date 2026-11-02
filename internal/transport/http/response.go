@@ -9,6 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -34,6 +36,10 @@ func Fail(c *gin.Context, logger *slog.Logger, err error) {
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) {
 		appErr = apperror.Internal(err)
+	}
+	if appErr.HTTPStatus == http.StatusInternalServerError &&
+		(errors.Is(appErr.Err, operationlog.ErrOutboxUnavailable) || errors.Is(appErr.Err, securitylog.ErrOutboxUnavailable)) {
+		appErr = apperror.Unavailable("audit outbox is unavailable", appErr.Err)
 	}
 	if appErr.HTTPStatus >= 500 {
 		span := trace.SpanFromContext(c.Request.Context()).SpanContext()

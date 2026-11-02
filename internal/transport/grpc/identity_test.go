@@ -16,6 +16,8 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	identityv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/identity/v1"
 	"github.com/redis/go-redis/v9"
@@ -269,6 +271,8 @@ func TestIdentityErrorUsesCallerContext(t *testing.T) {
 			return ctx
 		}, err: fmt.Errorf("lookup user: %w", context.DeadlineExceeded), want: codes.DeadlineExceeded},
 		{name: "dependency timed out", err: fmt.Errorf("lookup user: %w", context.DeadlineExceeded), want: codes.Internal},
+		{name: "operation audit outbox", err: fmt.Errorf("record operation: %w", operationlog.ErrOutboxUnavailable), want: codes.Unavailable},
+		{name: "security audit outbox", err: fmt.Errorf("record security: %w", securitylog.ErrOutboxUnavailable), want: codes.Unavailable},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

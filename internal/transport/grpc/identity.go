@@ -8,7 +8,9 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	"github.com/lihongjie0209/go-api-template/internal/serviceaccount"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
@@ -210,6 +212,8 @@ func identityError(ctx context.Context, e error) error {
 		return status.Error(codes.NotFound, "user not found")
 	case errors.Is(e, identity.ErrConflict):
 		return status.Error(codes.Aborted, "user version conflict")
+	case errors.Is(e, operationlog.ErrOutboxUnavailable), errors.Is(e, securitylog.ErrOutboxUnavailable):
+		return status.Error(codes.Unavailable, "audit outbox is unavailable")
 	default:
 		return status.Error(codes.Internal, "identity operation failed")
 	}

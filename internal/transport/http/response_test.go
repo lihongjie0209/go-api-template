@@ -15,7 +15,35 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
+	"github.com/lihongjie0209/go-api-template/internal/operationlog"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 )
+
+func TestFailMapsAuditOutboxFailuresToDependencyUnavailable(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "operation", err: operationlog.ErrOutboxUnavailable},
+		{name: "security", err: apperror.Internal(securitylog.ErrOutboxUnavailable)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/test", nil)
+			Fail(ctx, logger, test.err)
+			var body Response
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != http.StatusServiceUnavailable || body.Code != apperror.CodeDependencyUnavailable {
+				t.Fatalf("status=%d code=%d", recorder.Code, body.Code)
+			}
+		})
+	}
+}
 
 func TestFailDoesNotLogInternalErrorDetails(t *testing.T) {
 	t.Parallel()
