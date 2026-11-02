@@ -538,21 +538,31 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		readErr := tx.GetContext(ctx, &current, tx.Rebind(`SELECT `+columns+`,deleted_at FROM permissions WHERE id=? FOR UPDATE`), id)
 		if readErr == nil && !current.DeletedAt.Valid && current.IsSystem && seedEqual(current.Record, input) {
 			if input.NodeType != "permission" {
-				seeded = current.Record
-				changed = false
-				return nil
-			}
-			present, err := primaryLinkActive(ctx, tx, id, input.Resource, input.Action)
-			if err != nil {
-				return err
-			}
-			if present {
-				seeded = current.Record
-				changed = false
-				return nil
-			}
-			if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
-				return err
+				stale, err := activePermissionLinkExists(ctx, tx, id)
+				if err != nil {
+					return err
+				}
+				if !stale {
+					seeded = current.Record
+					changed = false
+					return nil
+				}
+				if err := deactivateAllPermissionLinks(ctx, tx, id); err != nil {
+					return err
+				}
+			} else {
+				present, err := primaryLinkActive(ctx, tx, id, input.Resource, input.Action)
+				if err != nil {
+					return err
+				}
+				if present {
+					seeded = current.Record
+					changed = false
+					return nil
+				}
+				if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
+					return err
+				}
 			}
 			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permissions SET version=version+1 WHERE id=? AND version=? AND is_system=true AND deleted_at IS NULL`), id, current.Version)
 			if err != nil {
@@ -640,6 +650,14 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 					return false, linkErr
 				}
 				if !present {
+					return false, nil
+				}
+			} else {
+				stale, linkErr := activePermissionLinkExists(ctx, s.repository.db, id)
+				if linkErr != nil {
+					return false, linkErr
+				}
+				if stale {
 					return false, nil
 				}
 			}
@@ -868,6 +886,18 @@ func syncPrimaryLink(ctx context.Context, tx *sqlx.Tx, permissionID, resource, a
 type primaryLinkReader interface {
 	GetContext(context.Context, any, string, ...any) error
 	Rebind(string) string
+}
+
+func activePermissionLinkExists(ctx context.Context, reader primaryLinkReader, permissionID string) (bool, error) {
+	var found int
+	err := reader.GetContext(ctx, &found, reader.Rebind(`SELECT 1 FROM permission_resource_actions WHERE permission_id=? AND deleted_at IS NULL LIMIT 1`), permissionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return found == 1, nil
 }
 
 func primaryLinkActive(ctx context.Context, reader primaryLinkReader, permissionID, resource, action string) (bool, error) {

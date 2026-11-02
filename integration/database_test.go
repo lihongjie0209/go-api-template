@@ -2298,6 +2298,30 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	if err := db.SelectContext(ctx, &activeSeedActions, db.Rebind(`SELECT a.action_key FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id WHERE l.permission_id=? AND l.deleted_at IS NULL ORDER BY a.action_key`), seeded.ID); err != nil || len(activeSeedActions) != 1 || activeSeedActions[0] != "update" {
 		t.Fatalf("reactivated seed retained stale actions: actions=%v err=%v", activeSeedActions, err)
 	}
+	groupSeedInput := permission.Input{Key: "integration.seed.group", Name: "Seed group", NodeType: "group", Status: "active"}
+	groupSeed, _, err := service.Seed(actorCtx, groupSeedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		var actionID string
+		if err := tx.GetContext(actorCtx, &actionID, tx.Rebind(`SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?`), "identity.user", "read"); err != nil {
+			return err
+		}
+		now := time.Now()
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`INSERT INTO permission_resource_actions(id,permission_id,action_id,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,1)`), uuid.NewString(), groupSeed.ID, actionID, now, "permission-integration", now, "permission-integration")
+		return err
+	}); err != nil {
+		t.Fatalf("prepare stale group action link: %v", err)
+	}
+	groupSeed, changed, err = service.Seed(actorCtx, groupSeedInput)
+	if err != nil || !changed || groupSeed.Version != 2 {
+		t.Fatalf("repair seeded group links: record=%+v changed=%v err=%v", groupSeed, changed, err)
+	}
+	var groupLinkCount int
+	if err := db.GetContext(ctx, &groupLinkCount, db.Rebind(`SELECT count(*) FROM permission_resource_actions WHERE permission_id=? AND deleted_at IS NULL`), groupSeed.ID); err != nil || groupLinkCount != 0 {
+		t.Fatalf("seeded group retained action links: count=%d err=%v", groupLinkCount, err)
+	}
 	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
 	if err != nil {
 		t.Fatal(err)

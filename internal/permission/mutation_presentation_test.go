@@ -225,6 +225,9 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 			mock.ExpectRollback()
 			winner := sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at"}).AddRow(id, nil, "platform.menu", tt.winnerName, "group", "", "", "", 0, "active", tt.isSystem, time.Now(), "creator", time.Now(), "updater", 1, nil)
 			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnRows(winner)
+			if tt.wantNoop {
+				mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+			}
 			seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
 			if tt.wantNoop {
 				require.NoError(t, err)
@@ -257,6 +260,7 @@ func TestPermissionSeedExistingIdenticalHasNoAuditEvent(t *testing.T) {
 	service := New(NewRepository(db), database.NewTransactor(db), operations, security, nil, nil, nil)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at"}).AddRow(id, nil, "platform.menu", "Menu", "group", "", "", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 1, nil))
+	mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"1"}))
 	mock.ExpectCommit()
 	seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
 	require.NoError(t, err)
@@ -266,6 +270,36 @@ func TestPermissionSeedExistingIdenticalHasNoAuditEvent(t *testing.T) {
 	require.Zero(t, operations.failureCalls)
 	require.Zero(t, security.transactionalCalls)
 	require.Zero(t, security.failureCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedIdenticalGroupRemovesStaleActionLinks(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.menu")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+	columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	current := []driver.Value{id, nil, "platform.menu", "Menu", "group", "", "", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 3}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "deleted_at")).AddRow(append(append([]driver.Value{}, current...), nil)...))
+	mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE permissions SET version=version\+1 WHERE id=\? AND version=\? AND is_system=true AND deleted_at IS NULL`).WithArgs(id, int64(3)).WillReturnResult(sqlmock.NewResult(0, 1))
+	updated := append([]driver.Value{}, current...)
+	updated[15] = int64(4)
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "parent_name")).AddRow(append(updated, "")...))
+	mock.ExpectCommit()
+	seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.EqualValues(t, 4, seeded.Version)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

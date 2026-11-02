@@ -391,7 +391,10 @@ TTL, and invalidation for its own data.
   link transactionally, incrementing the permission version and recording the
   change. Converting a permission node between group and permission types
   must soft-delete all old action links before attaching the new primary
-  action; group nodes must not retain effective links. Deleting a permission
+  action; group nodes must not retain effective links. An identical code-owned
+  group seed must check for stale active links and retire them transactionally
+  with a version increment; concurrent seed recovery must verify the same
+  invariant before declaring an idempotent no-op. Deleting a permission
   must soft-delete its owned action links in the same transaction after
   reference checks, including platform principal grants, tenant ceilings, and
   tenant role grants. Reference checks use indexed `SELECT 1 ... LIMIT 1`
