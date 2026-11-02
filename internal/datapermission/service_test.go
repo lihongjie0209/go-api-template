@@ -1,6 +1,7 @@
 package datapermission
 
 import (
+	"context"
 	"regexp"
 	"testing"
 
@@ -11,6 +12,18 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+func TestServiceRejectsCanceledSystemContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem}))
+	cancel()
+	service := &Service{}
+	_, err := service.Compile(ctx, "tenant.member")
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, service.AuthorizeObject(ctx, "tenant.member", ResourceAttributes{}), context.Canceled)
+	require.ErrorIs(t, service.AuthorizeTransition(ctx, "tenant.member", ResourceAttributes{}, ResourceAttributes{}), context.Canceled)
+	_, err = service.EvaluateRowActions(ctx, "tenant.member", []string{"read"}, nil)
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 func TestSubjectProjectionRequiresLiveTenantDepartment(t *testing.T) {
 	raw, mock, err := sqlmock.New()

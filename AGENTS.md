@@ -323,6 +323,9 @@ TTL, and invalidation for its own data.
   scope together with tenant isolation and logical-delete predicates. Items
   and counts use the same scope; filtering after pagination is forbidden.
   Policy text and client input never become SQL identifiers or SQL fragments.
+- Data-scope compilation, object checks, and row capability evaluation must
+  reject an ended Context before any system-principal shortcut or empty-batch
+  return; cancellation cannot produce an unrestricted predicate or allow result.
 - Every HTTP route and gRPC method must bind an explicit authorization
   descriptor in the same code registration call: public/internal/authenticated
   mode, canonical resource, action, and whether data permission is required.

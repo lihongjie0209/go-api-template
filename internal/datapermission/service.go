@@ -23,6 +23,9 @@ type Service struct {
 func NewService(db *sqlx.DB, engine *Engine) *Service { return &Service{db: db, engine: engine} }
 
 func (s *Service) Compile(ctx context.Context, expectedResource string) (SQLPredicate, error) {
+	if err := ctx.Err(); err != nil {
+		return SQLPredicate{}, err
+	}
 	principal, err := platformprincipal.Require(ctx)
 	if err != nil {
 		return SQLPredicate{}, err
@@ -70,6 +73,9 @@ func (s *Service) EvaluateRows(ctx context.Context, resource, action string, row
 // EvaluateRowActions evaluates multiple actions while resolving the trusted
 // subject projection only once for the complete bounded batch.
 func (s *Service) EvaluateRowActions(ctx context.Context, resource string, actions []string, rows []ResourceAttributes) (map[string][]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	principal, err := platformprincipal.Require(ctx)
 	if err != nil {
 		return nil, err
@@ -94,10 +100,16 @@ func (s *Service) EvaluateRowActions(ctx context.Context, resource string, actio
 		}
 		result[action] = decisions
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 func (s *Service) authorizeObject(ctx context.Context, expectedResource string, expectedMode accesscontrol.DataPermissionMode, resource, proposed ResourceAttributes) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	principal, err := platformprincipal.Require(ctx)
 	if err != nil {
 		return err
