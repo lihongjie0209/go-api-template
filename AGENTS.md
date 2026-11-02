@@ -959,6 +959,10 @@ deleted_by text
 
 ## Kubernetes environment isolation
 
+- Reserve `test` for isolated unit tests. A deployed test environment uses the
+  `staging` profile. Every profile other than `development` and `test` must
+  enforce production-grade authentication, TLS, audit, and rate-limit controls;
+  an unknown or misspelled profile must not bypass them.
 - A production NetworkPolicy must admit trusted gateway and client namespaces
   that share the deployment's environment label; same-namespace ingress alone
   blocks cross-namespace HTTP/gRPC calls. Do not admit every namespace merely

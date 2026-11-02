@@ -33,6 +33,7 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	profileConfig := "app:\n  name: " + templateName + "\ndatabase:\n  name: " + templateDatabaseName + "\n  schema: " + templateDatabaseSchema + "\nmigration:\n  table: " + templateMigrationTable + "\n"
 	writeFixture(t, source, "config/config-development.yaml", profileConfig)
 	writeFixture(t, source, "config/config-test.yaml", profileConfig)
+	writeFixture(t, source, "config/config-staging.yaml", profileConfig)
 	writeFixture(t, source, "config/config-production.yaml", profileConfig)
 	writeFixture(t, source, ".git/config", "must not be copied")
 	writeFixture(t, source, "cmd/microgen/main.go", "package main")
@@ -56,7 +57,7 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "table: orders_service_schema_migrations")
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "database: orders_service")
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "schema: orders_service")
-	for _, profile := range []string{"development", "test", "production"} {
+	for _, profile := range []string{"development", "test", "staging", "production"} {
 		path := filepath.Join(output, "config", "config-"+profile+".yaml")
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("profile %s: %v", profile, err)
@@ -94,7 +95,7 @@ func TestGenerateCustomImageUpdatesPublishingWorkflow(t *testing.T) {
 	}
 	writeFixture(t, source, ".github/workflows/ci.yml", string(workflow))
 	writeFixture(t, source, "deployments/app.yaml", "image: "+templateImage+":sha-0000000\n")
-	for _, path := range []string{"deployments/kubernetes.yaml", "deployments/migrate-job.yaml", "deployments/secret.example.yaml", "scripts/render-production-manifest.sh", "scripts/test-production-render.sh"} {
+	for _, path := range []string{"deployments/kubernetes.yaml", "deployments/migrate-job.yaml", "deployments/secret.example.yaml", "scripts/render-deployment-manifest.sh", "scripts/test-production-render.sh"} {
 		contents, readErr := os.ReadFile(filepath.Join("../..", path))
 		if readErr != nil {
 			t.Fatal(readErr)
@@ -165,11 +166,17 @@ func TestOptionsValidationRejectsTemplateInjection(t *testing.T) {
 		Description: "Orders service.",
 	}
 	valid.Defaults()
+	longestNamespace := valid
+	longestNamespace.Namespace = strings.Repeat("a", 55)
+	if err := longestNamespace.Validate(); err != nil {
+		t.Fatalf("55-byte namespace should leave room for staging: %v", err)
+	}
 
 	tests := []struct {
 		name   string
 		mutate func(*Options)
 	}{
+		{name: "namespace staging overflow", mutate: func(options *Options) { options.Namespace = strings.Repeat("a", 56) }},
 		{name: "tagged image", mutate: func(options *Options) { options.Image = "ghcr.io/acme/orders-service:latest" }},
 		{name: "image newline", mutate: func(options *Options) { options.Image = "ghcr.io/acme/orders\nprivileged" }},
 		{name: "invalid buf module", mutate: func(options *Options) { options.BufModule = "buf.build/acme/orders\nmodule" }},

@@ -536,6 +536,14 @@ func stringToStringSliceHook() mapstructure.DecodeHookFuncType {
 }
 
 var validProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// IsDeployedEnvironment applies production security controls to every profile
+// except the explicit local development and isolated unit-test profiles.
+// This also keeps a misspelled production profile from bypassing those checks.
+func IsDeployedEnvironment(profile string) bool {
+	return profile != "development" && profile != "test"
+}
+
 var validMigrationTable = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 var validRedisPrefix = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,127}:$`)
 var validUpstreamName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
@@ -747,11 +755,11 @@ func (c Config) Validate() error {
 	if c.GRPC.TLS.Enabled && (c.GRPC.TLS.CertFile == "" || c.GRPC.TLS.KeyFile == "") {
 		return errors.New("grpc tls requires cert_file and key_file")
 	}
-	if c.App.Env == "production" && c.GRPC.Enabled && !c.GRPC.TLS.Enabled {
-		return errors.New("grpc tls must be enabled in production")
+	if IsDeployedEnvironment(c.App.Env) && c.GRPC.Enabled && !c.GRPC.TLS.Enabled {
+		return errors.New("grpc tls must be enabled in deployed environments")
 	}
-	if c.App.Env == "production" && c.GRPC.ReflectionEnabled {
-		return errors.New("grpc reflection must be disabled in production")
+	if IsDeployedEnvironment(c.App.Env) && c.GRPC.ReflectionEnabled {
+		return errors.New("grpc reflection must be disabled in deployed environments")
 	}
 	if c.Database.Enabled && (c.Database.DSN == "" || !isDBType(c.Database.Type)) {
 		return errors.New("enabled database requires dsn and type mysql, postgres, or kingbase")
@@ -771,8 +779,8 @@ func (c Config) Validate() error {
 	if c.Health.DatabaseTimeout <= 0 || c.Health.DatabaseTimeout > 30*time.Second || c.Health.RedisTimeout <= 0 || c.Health.RedisTimeout > 30*time.Second {
 		return errors.New("health dependency timeouts must be positive and no greater than 30 seconds")
 	}
-	if c.App.Env == "production" && !c.RateLimit.Enabled {
-		return errors.New("production requires rate_limit.enabled for login protection")
+	if IsDeployedEnvironment(c.App.Env) && !c.RateLimit.Enabled {
+		return errors.New("deployed environments require rate_limit.enabled for login protection")
 	}
 	if c.RateLimit.Enabled {
 		for name, rule := range map[string]RateLimitRule{"ip": c.RateLimit.IP, "api": c.RateLimit.API, "user": c.RateLimit.User, "login": c.RateLimit.Login} {
@@ -799,11 +807,11 @@ func (c Config) Validate() error {
 	if c.Observability.PprofEnabled && (len(c.Observability.PprofToken) < 32 || len(c.Observability.PprofToken) > 4096) {
 		return errors.New("observability.pprof_token must contain 32-4096 bytes")
 	}
-	if c.App.Env == "production" && c.Swagger.Enabled && !c.Swagger.RequireAuth {
-		return errors.New("swagger.require_auth must be enabled in production")
+	if IsDeployedEnvironment(c.App.Env) && c.Swagger.Enabled && !c.Swagger.RequireAuth {
+		return errors.New("swagger.require_auth must be enabled in deployed environments")
 	}
-	if c.App.Env == "production" && (c.Auth.JWKSURL == "" || c.Auth.Issuer == "" || c.Auth.Audience == "") {
-		return errors.New("production authentication requires identity JWKS URL, issuer, and service audience")
+	if IsDeployedEnvironment(c.App.Env) && (c.Auth.JWKSURL == "" || c.Auth.Issuer == "" || c.Auth.Audience == "") {
+		return errors.New("deployed environments require identity JWKS URL, issuer, and service audience")
 	}
 	if c.Auth.JWKSTimeout < 100*time.Millisecond || c.Auth.JWKSTimeout > 10*time.Second {
 		return errors.New("auth.jwks_timeout must be between 100ms and 10s")
@@ -812,8 +820,8 @@ func (c Config) Validate() error {
 	if (c.JWT.KeyID != "") != hasSigningKey {
 		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
 	}
-	if c.App.Env == "production" && !hasSigningKey {
-		return errors.New("production authentication requires an asymmetric JWT signing key")
+	if IsDeployedEnvironment(c.App.Env) && !hasSigningKey {
+		return errors.New("deployed environments require an asymmetric JWT signing key")
 	}
 	if c.JWT.Algorithm != "" && c.JWT.Algorithm != "RS256" && c.JWT.Algorithm != "ES256" {
 		return errors.New("jwt.algorithm must be RS256 or ES256")
@@ -896,8 +904,8 @@ func (c Config) Validate() error {
 		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
 			return errors.New("object_storage.endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment")
 		}
-		if c.App.Env == "production" && endpoint.Scheme != "https" {
-			return errors.New("production object_storage.endpoint must use https")
+		if IsDeployedEnvironment(c.App.Env) && endpoint.Scheme != "https" {
+			return errors.New("deployed environment object_storage.endpoint must use https")
 		}
 	}
 	if c.Files.Enabled && (!c.Database.Enabled || !c.ObjectStorage.Enabled || c.Files.MaxSizeBytes <= 0 || c.Files.MaxSizeBytes > 5<<30 || c.Files.MaxSizeBytes > c.HTTP.MaxBodyBytes) {
@@ -920,11 +928,11 @@ func (c Config) Validate() error {
 	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || len(c.SecurityLog.Subject) > 256 || c.SecurityLog.Durable == "" || len(c.SecurityLog.Durable) > 256 || c.SecurityLog.MaxPayloadBytes < 256 || c.SecurityLog.MaxPayloadBytes > 64<<10 || len(c.SecurityLog.HashKey) < 32 || len(c.SecurityLog.HashKey) > 4096) {
 		return errors.New("enabled security_log requires database, event_bus, subject and durable names no greater than 256 bytes, max_payload_bytes between 256 bytes and 64 KiB, and a 32-4096 byte hash_key")
 	}
-	if c.App.Env == "production" && (!c.EventBus.Enabled || !c.OperationLog.Enabled || !c.SecurityLog.Enabled) {
-		return errors.New("production authentication requires event_bus, operation_log, and security_log")
+	if IsDeployedEnvironment(c.App.Env) && (!c.EventBus.Enabled || !c.OperationLog.Enabled || !c.SecurityLog.Enabled) {
+		return errors.New("deployed environments require event_bus, operation_log, and security_log")
 	}
-	if c.App.Env == "production" && !c.SecurityLog.FailClosed {
-		return errors.New("production security_log must fail closed")
+	if IsDeployedEnvironment(c.App.Env) && !c.SecurityLog.FailClosed {
+		return errors.New("deployed environment security_log must fail closed")
 	}
 	if c.DataLifecycle.Enabled {
 		if !c.Database.Enabled {
@@ -957,7 +965,7 @@ func (c Config) Validate() error {
 		if len(upstream.Retry.Methods) != 0 {
 			return fmt.Errorf("outbound.http.%s retry.methods is gRPC-only; HTTP retries derive safety from the verb or Idempotency-Key", name)
 		}
-		if err := validateClientPolicy(name, upstream.Auth, upstream.Retry, upstream.Breaker, upstream.TLS, c.App.Env == "production"); err != nil {
+		if err := validateClientPolicy(name, upstream.Auth, upstream.Retry, upstream.Breaker, upstream.TLS, IsDeployedEnvironment(c.App.Env)); err != nil {
 			return err
 		}
 	}
@@ -968,7 +976,7 @@ func (c Config) Validate() error {
 		if upstream.Target == "" || len(upstream.Target) > 2048 || upstream.Timeout < 10*time.Millisecond || upstream.Timeout > 5*time.Minute {
 			return fmt.Errorf("outbound.grpc.%s requires a bounded target and timeout between 10ms and 5m", name)
 		}
-		if err := validateClientPolicy(name, upstream.Auth, upstream.Retry, upstream.Breaker, upstream.TLS, c.App.Env == "production"); err != nil {
+		if err := validateClientPolicy(name, upstream.Auth, upstream.Retry, upstream.Breaker, upstream.TLS, IsDeployedEnvironment(c.App.Env)); err != nil {
 			return err
 		}
 	}
@@ -1004,7 +1012,7 @@ var idempotencyForbiddenHTTPRoutes = []string{
 	"/api/v1/public/platform-configs/list",
 }
 
-func validateClientPolicy(name string, auth ClientAuth, retry Retry, breaker Breaker, tls ClientTLS, production bool) error {
+func validateClientPolicy(name string, auth ClientAuth, retry Retry, breaker Breaker, tls ClientTLS, deployed bool) error {
 	if auth.Type != "" && auth.Type != "bearer" && auth.Type != "psk" {
 		return fmt.Errorf("outbound %s auth.type must be bearer or psk", name)
 	}
@@ -1020,8 +1028,8 @@ func validateClientPolicy(name string, auth ClientAuth, retry Retry, breaker Bre
 	if tls.Enabled && tls.AllowInsecure {
 		return fmt.Errorf("outbound %s TLS and allow_insecure are mutually exclusive", name)
 	}
-	if production && auth.Type != "" && tls.AllowInsecure {
-		return fmt.Errorf("production outbound %s credentials require TLS", name)
+	if deployed && auth.Type != "" && tls.AllowInsecure {
+		return fmt.Errorf("deployed environment outbound %s credentials require TLS", name)
 	}
 	if retry.MaxAttempts < 1 || retry.MaxAttempts > 5 || retry.InitialBackoff < 10*time.Millisecond || retry.InitialBackoff > time.Minute || retry.MaxBackoff < retry.InitialBackoff || retry.MaxBackoff > time.Minute || len(retry.Methods) > 100 {
 		return fmt.Errorf("outbound %s retry policy is invalid", name)

@@ -36,7 +36,7 @@ import (
 var errHTTPServerStopped = errors.New("http_server_stopped")
 
 func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, scheduledJobHandler *ScheduledJobHandler, dictionaryHandler *DictionaryHandler, resourceCatalogHandler *ResourceCatalogHandler, platformGrantHandler *PlatformGrantHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
-	if cfg.App.Env == "production" {
+	if config.IsDeployedEnvironment(cfg.App.Env) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.New()

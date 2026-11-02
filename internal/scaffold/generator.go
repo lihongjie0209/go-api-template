@@ -106,8 +106,8 @@ func (o Options) Validate() error {
 	if !serviceNamePattern.MatchString(o.Name) || len(o.Name) > 63 {
 		return errors.New("name must be a lowercase DNS label of at most 63 characters")
 	}
-	if !serviceNamePattern.MatchString(o.Namespace) || len(o.Namespace) > 63 {
-		return errors.New("namespace must be a lowercase DNS label of at most 63 characters")
+	if !serviceNamePattern.MatchString(o.Namespace) || len(o.Namespace) > 55 {
+		return errors.New("namespace must be a lowercase DNS label of at most 55 characters to leave room for the staging suffix")
 	}
 	if !migrationTablePattern.MatchString(o.MigrationTable) {
 		return errors.New("migration-table must contain lowercase letters, digits, or underscores and be at most 63 characters")

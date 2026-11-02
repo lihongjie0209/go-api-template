@@ -227,8 +227,8 @@ func TestValidateClientPolicy_PlaintextCredentialsRequireExplicitNonProductionOp
 	if err := validateClientPolicy("application", auth, retry, Breaker{}, insecureTLS, false); err != nil {
 		t.Fatalf("validateClientPolicy() development error = %v", err)
 	}
-	if err := validateClientPolicy("application", auth, retry, Breaker{}, insecureTLS, true); err == nil || !strings.Contains(err.Error(), "production") {
-		t.Fatalf("validateClientPolicy() production error = %v", err)
+	if err := validateClientPolicy("application", auth, retry, Breaker{}, insecureTLS, true); err == nil || !strings.Contains(err.Error(), "deployed environment") {
+		t.Fatalf("validateClientPolicy() deployed environment error = %v", err)
 	}
 }
 
@@ -745,7 +745,7 @@ func TestLoad_ShippedDevelopmentAndTestProfiles(t *testing.T) {
 	}
 }
 
-func TestLoad_ShippedProductionProfileRequiresAndAcceptsInjectedSecrets(t *testing.T) {
+func TestLoad_ShippedDeployedProfilesRequireAndAcceptInjectedSecrets(t *testing.T) {
 	t.Setenv("APP_GRPC_TLS_CERT_FILE", "/run/secrets/tls.crt")
 	t.Setenv("APP_GRPC_TLS_KEY_FILE", "/run/secrets/tls.key")
 	t.Setenv("APP_DATABASE_DSN", "postgres://app:secret@postgres:5432/app?sslmode=require")
@@ -755,12 +755,16 @@ func TestLoad_ShippedProductionProfileRequiresAndAcceptsInjectedSecrets(t *testi
 	t.Setenv("APP_JWT_PRIVATE_KEY_FILE", "/run/secrets/jwt.pem")
 	t.Setenv("APP_SECURITY_LOG_HASH_KEY", strings.Repeat("h", 32))
 
-	cfg, err := LoadWithProfile("../../config/config.yaml", "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.EventBus.Enabled || !cfg.OperationLog.Enabled || !cfg.SecurityLog.Enabled || cfg.Runtime.ActiveProfile != "production" {
-		t.Fatalf("production audit chain/runtime = %+v/%+v", cfg.EventBus, cfg.Runtime)
+	for _, profile := range []string{"staging", "production"} {
+		t.Run(profile, func(t *testing.T) {
+			cfg, err := LoadWithProfile("../../config/config.yaml", profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cfg.EventBus.Enabled || !cfg.OperationLog.Enabled || !cfg.SecurityLog.Enabled || cfg.Runtime.ActiveProfile != profile || len(cfg.Runtime.ConfigFiles) != 2 {
+				t.Fatalf("%s audit chain/runtime = %+v/%+v", profile, cfg.EventBus, cfg.Runtime)
+			}
+		})
 	}
 }
 
@@ -850,10 +854,10 @@ func TestConfig_ProductionSecurityRequirementsFailClosed(t *testing.T) {
 	}{
 		{name: "grpc tls", want: "grpc tls must be enabled", mutate: func(cfg *Config) { cfg.GRPC.TLS.Enabled = false }},
 		{name: "grpc reflection", want: "grpc reflection must be disabled", mutate: func(cfg *Config) { cfg.GRPC.ReflectionEnabled = true }},
-		{name: "identity verifier", want: "production authentication requires identity JWKS", mutate: func(cfg *Config) { cfg.Auth.JWKSURL = "" }},
+		{name: "identity verifier", want: "deployed environments require identity JWKS", mutate: func(cfg *Config) { cfg.Auth.JWKSURL = "" }},
 		{name: "jwt signing key", want: "asymmetric JWT signing key", mutate: func(cfg *Config) { cfg.JWT.KeyID, cfg.JWT.PrivateKey = "", "" }},
 		{name: "durable security logs", want: "event_bus, operation_log, and security_log", mutate: func(cfg *Config) { cfg.SecurityLog.Enabled = false }},
-		{name: "login rate limit", want: "production requires rate_limit.enabled", mutate: func(cfg *Config) { cfg.RateLimit.Enabled = false }},
+		{name: "login rate limit", want: "deployed environments require rate_limit.enabled", mutate: func(cfg *Config) { cfg.RateLimit.Enabled = false }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -863,6 +867,25 @@ func TestConfig_ProductionSecurityRequirementsFailClosed(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestConfig_UnknownAndStagingProfilesCannotBypassDeploymentSecurity(t *testing.T) {
+	t.Parallel()
+	for _, profile := range []string{"staging", "prodution", ""} {
+		t.Run(profile, func(t *testing.T) {
+			cfg := validProductionConfig(t)
+			cfg.App.Env = profile
+			cfg.RateLimit.Enabled = false
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "rate_limit.enabled") {
+				t.Fatalf("profile %q bypassed deployed-environment rate limit requirement: %v", profile, err)
+			}
+		})
+	}
+	for _, profile := range []string{"development", "test"} {
+		if IsDeployedEnvironment(profile) {
+			t.Fatalf("local profile %q treated as deployed", profile)
+		}
 	}
 }
 

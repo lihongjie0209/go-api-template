@@ -1,10 +1,16 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 2 ]; then
-	echo "usage: $0 migration|application image@sha256:digest" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+	echo "usage: $0 migration|application image@sha256:digest [production|staging]" >&2
 	exit 2
 fi
+
+environment=${3:-production}
+case "$environment" in
+	production|staging) ;;
+	*) echo "unknown deployment environment: $environment" >&2; exit 2 ;;
+esac
 
 case "$1" in
 	migration) file=migrate-job.yaml ;;
@@ -31,4 +37,14 @@ if [ "${image%@sha256:*}" != "$repository" ]; then
 	exit 2
 fi
 
-sed -E "s#^([[:space:]]*image: )[[:graph:]]+:sha-0000000[[:space:]]*#\\1$image#" "$manifest"
+sed -E "s#^([[:space:]]*image: )[[:graph:]]+:sha-0000000[[:space:]]*#\\1$image#" "$manifest" |
+if [ "$environment" = staging ]; then
+	sed -E \
+		-e 's#^([[:space:]]*namespace: )microservices([[:space:]]*)$#\1microservices-staging\2#' \
+		-e 's#^([[:space:]]*name: )microservices([[:space:]]*)$#\1microservices-staging\2#' \
+		-e 's#^([[:space:]]*APP_ENV: )production([[:space:]]*)$#\1staging\2#' \
+		-e 's#^([[:space:]]*platform-environment: )production([[:space:]]*)$#\1staging\2#' \
+		-e 's#-env, production,#-env, staging,#'
+else
+	cat
+fi

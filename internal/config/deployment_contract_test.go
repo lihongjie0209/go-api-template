@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,8 +16,9 @@ import (
 type deploymentConfigManifest struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name   string            `yaml:"name"`
-		Labels map[string]string `yaml:"labels"`
+		Name      string            `yaml:"name"`
+		Namespace string            `yaml:"namespace"`
+		Labels    map[string]string `yaml:"labels"`
 	} `yaml:"metadata"`
 	Data       map[string]string `yaml:"data"`
 	StringData map[string]string `yaml:"stringData"`
@@ -33,6 +37,7 @@ type deploymentConfigManifest struct {
 		Template struct {
 			Spec struct {
 				Containers []struct {
+					Args    []string `yaml:"args"`
 					EnvFrom []struct {
 						ConfigMapRef struct {
 							Name string `yaml:"name"`
@@ -51,6 +56,40 @@ type deploymentConfigManifest struct {
 			} `yaml:"spec"`
 		} `yaml:"template"`
 	} `yaml:"spec"`
+}
+
+func TestStagingRenderKeepsEnvironmentAndNamespaceAligned(t *testing.T) {
+	namespace := renderedDeploymentManifest(t, "application", "staging", "Namespace")
+	configMap := renderedDeploymentManifest(t, "application", "staging", "ConfigMap")
+	policy := renderedDeploymentManifest(t, "application", "staging", "NetworkPolicy")
+	job := renderedDeploymentManifest(t, "migration", "staging", "Job")
+	if namespace.Metadata.Name != "microservices-staging" || namespace.Metadata.Labels["platform-environment"] != "staging" {
+		t.Fatalf("staging Namespace = %+v", namespace.Metadata)
+	}
+	if configMap.Metadata.Namespace != namespace.Metadata.Name || configMap.Data["APP_ENV"] != "staging" {
+		t.Fatalf("staging ConfigMap namespace=%q APP_ENV=%q", configMap.Metadata.Namespace, configMap.Data["APP_ENV"])
+	}
+	if policy.Metadata.Namespace != namespace.Metadata.Name || len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 2 || policy.Spec.Ingress[0].From[1].NamespaceSelector.MatchLabels["platform-environment"] != "staging" {
+		t.Fatalf("staging NetworkPolicy namespace=%q ingress=%+v", policy.Metadata.Namespace, policy.Spec.Ingress)
+	}
+	if job.Metadata.Namespace != namespace.Metadata.Name || len(job.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("staging migration Job namespace=%q containers=%d", job.Metadata.Namespace, len(job.Spec.Template.Spec.Containers))
+	}
+	args := job.Spec.Template.Spec.Containers[0].Args
+	if !slices.Contains(args, "staging") || slices.Contains(args, "production") {
+		t.Fatalf("staging migration arguments = %v", args)
+	}
+}
+
+func renderedDeploymentManifest(t *testing.T, part, environment, kind string) deploymentConfigManifest {
+	t.Helper()
+	const image = "ghcr.io/lihongjie0209/go-api-template@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	command := exec.Command("sh", "../../scripts/render-deployment-manifest.sh", part, image, environment)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render %s %s: %v: %s", environment, part, err, output)
+	}
+	return decodeDeploymentManifest(t, bytes.NewReader(output), kind)
 }
 
 func TestProductionNetworkPolicyAllowsOnlySameEnvironmentNamespaces(t *testing.T) {
@@ -139,12 +178,17 @@ func deploymentManifest(t *testing.T, path, kind string) deploymentConfigManifes
 		t.Fatal(err)
 	}
 	defer func() { _ = file.Close() }()
-	decoder := yaml.NewDecoder(file)
+	return decodeDeploymentManifest(t, file, kind)
+}
+
+func decodeDeploymentManifest(t *testing.T, source io.Reader, kind string) deploymentConfigManifest {
+	t.Helper()
+	decoder := yaml.NewDecoder(source)
 	for {
 		var manifest deploymentConfigManifest
 		if err := decoder.Decode(&manifest); err != nil {
 			if err == io.EOF {
-				t.Fatalf("%s has no %s", path, kind)
+				t.Fatalf("manifest has no %s", kind)
 			}
 			t.Fatal(err)
 		}

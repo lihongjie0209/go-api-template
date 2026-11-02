@@ -21,9 +21,9 @@ microgen new \
   --migration-table orders_service_schema_migrations
 ```
 
-Use `--ref v1.0.0` to pin a released template or `--source /path/to/go-api-template` while developing the template locally. Other parameters include `--output`, `--image`, `--buf-module`, `--description`, `--generate=false`, `--tidy=false`, and `--git-init=false`. The generator refuses to overwrite an existing destination, regenerates protobuf descriptors through Buf, runs `go mod tidy`, initializes a fresh Git repository by default, edits business Go code through parser/AST plus `go/format`, edits `go.mod` through `x/mod/modfile`, and removes the generator itself from generated services.
+Use `--ref v1.0.0` to pin a released template or `--source /path/to/go-api-template` while developing the template locally. Other parameters include `--output`, `--image`, `--buf-module`, `--description`, `--generate=false`, `--tidy=false`, and `--git-init=false`. Namespace names are limited to 55 characters so their staging counterparts fit the Kubernetes 63-character limit. The generator refuses to overwrite an existing destination, regenerates protobuf descriptors through Buf, runs `go mod tidy`, initializes a fresh Git repository by default, edits business Go code through parser/AST plus `go/format`, edits `go.mod` through `x/mod/modfile`, and removes the generator itself from generated services.
 
-Every generated project includes explicit `development`, `test`, `production`, and Compose profiles. Development favors local diagnostics, test disables external side effects and telemetry, and production fails fast until database, Redis, authentication, migration, and TLS secrets are injected by the deployment platform.
+Every generated project includes explicit `development`, `test`, `staging`, `production`, and Compose profiles. Development favors local diagnostics, `test` isolates unit tests, and staging and production fail fast until database, Redis, authentication, migration, and TLS secrets are injected by the deployment platform.
 <!-- microgen:template-only:end -->
 
 ## Quick start
@@ -68,7 +68,21 @@ After unit and integration tests pass, main-branch pushes publish `main` and `sh
 
 Generated services publish to their configured `--image` repository. GHCR uses `GITHUB_TOKEN` by default; for another registry, set the `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` GitHub Actions secrets before pushing.
 
-The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Its image tag is deliberately a non-release placeholder. Take the complete `Verified image` reference from a successful CI container job, verify that digest in the test environment, then use the same digest for both the migration Job and application Deployment. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference:
+The deployment baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Its image tag is deliberately a non-release placeholder. Take the complete `Verified image` reference from a successful CI container job. Render that digest into the staging namespace first, using staging-only database, Redis, NATS, identity, and TLS credentials. The `staging` profile has the same fail-closed controls as production; the `test` profile is reserved for isolated unit tests. Use `deployments/secret.example.yaml` as the field reference for the two staging Secrets:
+
+```bash
+set -euo pipefail
+export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
+kubectl create namespace microservices-staging --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace microservices-staging platform-environment=staging --overwrite
+# Provision both Secrets in microservices-staging with staging-only values here.
+staging_job=$(sh scripts/render-deployment-manifest.sh migration "$IMAGE_REF" staging | kubectl create -f - -o name)
+kubectl wait --namespace microservices-staging --for=condition=complete "$staging_job" --timeout=5m
+sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" staging | kubectl apply -f -
+kubectl rollout status --namespace microservices-staging deployment/go-api-template --timeout=5m
+```
+
+The rollout requires `/ready` to pass against the staging dependencies. Run the service's HTTP/gRPC smoke tests there before promoting the **same** `IMAGE_REF` to production. Create the production Secret outside Git using `deployments/secret.example.yaml` as a field reference:
 
 ```bash
 set -euo pipefail
@@ -88,9 +102,9 @@ kubectl create secret generic go-api-template-tls --namespace microservices \
   --from-file=grpc-tls.crt='/secure/path/grpc-tls.crt' \
   --from-file=grpc-tls.key='/secure/path/grpc-tls.key' \
   --from-file=authorization-ca.crt='/secure/path/authorization-ca.crt'
-migration_job=$(sh scripts/render-production-manifest.sh migration "$IMAGE_REF" | kubectl create -f - -o name)
+migration_job=$(sh scripts/render-deployment-manifest.sh migration "$IMAGE_REF" | kubectl create -f - -o name)
 kubectl wait --namespace microservices --for=condition=complete "$migration_job" --timeout=5m
-sh scripts/render-production-manifest.sh application "$IMAGE_REF" | kubectl apply -f -
+sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" | kubectl apply -f -
 ```
 
 Replace the example values through your secret manager in production. The NetworkPolicy admits HTTP/gRPC traffic from the service's own namespace and from namespaces labeled `platform-environment=production`. Label only trusted production gateway and client namespaces this way; give each environment its own gateway namespace so a shared namespace cannot cross the environment boundary. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, NATS, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
@@ -131,7 +145,7 @@ database-schema: orders_service
 migration-table: orders_service_schema_migrations
 ```
 
-Environment profiles work like Spring Boot: load `config.yaml`, then an optional sibling `config-{env}.yaml`, then apply environment variables. Select the profile with `-env production` or `APP_ENV=production`; the flag has the highest priority. The active profile and loaded file list are available through `config.Config.Runtime`, while the profile is also placed in HTTP/gRPC contexts through `environment.FromContext` and attached to every structured log entry.
+Environment profiles work like Spring Boot: load `config.yaml`, then an optional sibling `config-{env}.yaml`, then apply environment variables. Select the profile with `-env staging`, `-env production`, or `APP_ENV`; the flag has the highest priority. Only `development` and `test` may relax deployment security controls; every other profile, including a misspelled production profile, must satisfy the same authentication, TLS, audit, and rate-limit checks. The active profile and loaded file list are available through `config.Config.Runtime`, while the profile is also placed in HTTP/gRPC contexts through `environment.FromContext` and attached to every structured log entry.
 
 Service-to-service client credentials are database-owned service accounts, not
 static configuration. A platform administrator creates an account through

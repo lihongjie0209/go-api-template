@@ -91,7 +91,12 @@ jobs:
       - name: Validate Kubernetes manifests
         run: |
           make k8s-render-check
-          go run github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0 -strict -summary deployments/*.yaml
+          staging_dir="$(mktemp -d)"
+          trap 'rm -rf "$staging_dir"' EXIT
+          image="${IMAGE_NAME}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          sh scripts/render-deployment-manifest.sh application "$image" staging > "$staging_dir/application.yaml"
+          sh scripts/render-deployment-manifest.sh migration "$image" staging > "$staging_dir/migration.yaml"
+          go run github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0 -strict -summary deployments/*.yaml "$staging_dir"/*.yaml
 
   integration:
     runs-on: ubuntu-latest
