@@ -204,6 +204,16 @@ func New(db *sqlx.DB, transactor *database.Transactor, storage objectstorage.Sto
 	return &Service{enabled: cfg.Files.Enabled, db: db, transactor: transactor, storage: storage, locker: locker, operations: operations, actors: actors, logger: logger, cfg: cfg.Files, lockTTL: cfg.DistributedLock.TTL, lockRetry: cfg.DistributedLock.RetryDelay}
 }
 
+func (s *Service) ValidateDependencies() error {
+	if !s.enabled {
+		return nil
+	}
+	if s.db == nil || s.transactor == nil || s.storage == nil || s.locker == nil || s.operations == nil || !s.operations.Enabled() {
+		return errors.New("enabled files requires database, transactor, object storage, distributed lock, and operation log")
+	}
+	return nil
+}
+
 const recordColumns = `id, tenant_id, object_key, original_name, content_type, size_bytes, etag, checksum_sha256, created_at, created_by, updated_at, updated_by, version, deleted_at, deleted_by, object_deleted_at, object_delete_attempts, object_delete_error, object_delete_next_at`
 
 func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error) {

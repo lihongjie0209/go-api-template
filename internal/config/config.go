@@ -946,6 +946,9 @@ func (c Config) Validate() error {
 	if c.Files.Enabled && (!c.Database.Enabled || !c.ObjectStorage.Enabled || c.Files.MaxSizeBytes <= 0 || c.Files.MaxSizeBytes > 5<<30 || c.Files.MaxSizeBytes > c.HTTP.MaxBodyBytes) {
 		return errors.New("enabled files requires database, object_storage, and positive max_size_bytes not exceeding http.max_body_bytes")
 	}
+	if c.Files.Enabled && !c.OperationLog.Enabled {
+		return errors.New("enabled files requires operation_log for durable mutation and download records")
+	}
 	if c.Files.Enabled && (c.Files.UploadStaleAfter < time.Minute || c.Files.UploadStaleAfter > 24*time.Hour || c.Files.DeletionInterval < time.Second || c.Files.DeletionInterval > 24*time.Hour || c.Files.DeletionRetryDelay < time.Second || c.Files.DeletionRetryDelay > 24*time.Hour || c.Files.DeletionBatchSize <= 0 || c.Files.DeletionBatchSize > 1000 || len(c.Files.AllowedTypes) > 100) {
 		return errors.New("enabled files requires valid upload recovery and deletion retry settings")
 	}

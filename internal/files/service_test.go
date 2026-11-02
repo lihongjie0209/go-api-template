@@ -44,6 +44,41 @@ type storageStub struct {
 }
 type operationStub struct{}
 
+type disabledOperationStub struct{ operationStub }
+
+func (disabledOperationStub) Enabled() bool { return false }
+
+func TestServiceValidateDependencies(t *testing.T) {
+	t.Parallel()
+	service := &Service{}
+	if err := service.ValidateDependencies(); err != nil {
+		t.Fatalf("disabled files require dependencies: %v", err)
+	}
+	service.enabled = true
+	for _, test := range []struct {
+		name string
+		set  func()
+	}{
+		{name: "database", set: func() { service.db = &sqlx.DB{} }},
+		{name: "transactor", set: func() { service.transactor = &database.Transactor{} }},
+		{name: "storage", set: func() { service.storage = &storageStub{} }},
+		{name: "lock", set: func() { service.locker = &uploadLeaseLocker{} }},
+		{name: "operation log", set: func() { service.operations = operationStub{} }},
+	} {
+		if err := service.ValidateDependencies(); err == nil {
+			t.Fatalf("missing %s dependency was accepted", test.name)
+		}
+		test.set()
+	}
+	if err := service.ValidateDependencies(); err != nil {
+		t.Fatalf("complete dependencies rejected: %v", err)
+	}
+	service.operations = disabledOperationStub{}
+	if err := service.ValidateDependencies(); err == nil {
+		t.Fatal("disabled operation log was accepted")
+	}
+}
+
 var errUploadLeaseHeld = errors.New("upload lease is held")
 
 type uploadLeaseLocker struct {

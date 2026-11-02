@@ -145,6 +145,9 @@ func registerFileDeletionWorker(lc fx.Lifecycle, service *files.Service) {
 	worker := background.New(service.RunDeletionWorker)
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
+			if err := service.ValidateDependencies(); err != nil {
+				return err
+			}
 			worker.Start()
 			return nil
 		},

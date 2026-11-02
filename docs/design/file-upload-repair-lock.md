@@ -12,6 +12,10 @@ into a reported failure.
 The repair worker checks cancellation between the upload-intent and deletion
 scans so shutdown does not start another database query after its lifecycle
 Context ends.
+When files are enabled, configuration requires the durable operation log, and
+the file worker's startup hook rejects missing database, transactor, object
+storage, Redis locker, or enabled operation recorder before serving traffic.
+Disabled files remain valid without these file-specific dependencies.
 
 | Concern | Decision and rationale |
 | --- | --- |
@@ -25,5 +29,5 @@ Context ends.
 | Optimistic lock | The final intent transition requires pending state, the file row is inserted once, and the object key is unique per upload. An upload has no prior file version to compare. |
 | Audit | Database audit triggers maintain actor, time, version and logical-delete fields on the file and intent rows. |
 | Presentation | File response names and +08 times retain the existing presentation path. |
-| Tests | A service-local unit test makes the repair worker attempt the same lock during object `Put`, checks that it cannot enter, and checks that the lock remains held through `RecordTx` even when release reports an error. Acquisition and renewal failures are tested for safe dependency classification; renewal loss cancels the callback. The HTTP boundary maps the sentinel to 503 with the global dependency code. Existing failure-repair unit tests still pass. The PostgreSQL/MySQL Testcontainers suite combines a real database, the shared Redis locker and an in-process Redis server to prove that a due repair cannot delete an active upload object; CI execution is pending. |
+| Tests | A service-local unit test makes the repair worker attempt the same lock during object `Put`, checks that it cannot enter, and checks that the lock remains held through `RecordTx` even when release reports an error. Acquisition and renewal failures are tested for safe dependency classification; renewal loss cancels the callback. The HTTP boundary maps the sentinel to 503 with the global dependency code. Configuration and service unit tests cover required operation logging and missing runtime dependencies. The PostgreSQL/MySQL Testcontainers suite combines a real database, the shared Redis locker and an in-process Redis server to prove that a due repair cannot delete an active upload object; its integration job passed in run `41403187952`. The same run's verify job failed on an unrelated SQL mock cleanup race fixed locally in `a15ab52`. |
 | Shared capability and dictionary | Reuses SDK `cache.WithCommittedLock` and `cache.WithLock`. Upload intents are sensitive transactional state and are not dictionary data. |

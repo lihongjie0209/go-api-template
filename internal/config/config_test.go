@@ -986,6 +986,25 @@ func validDevelopmentConfig(t *testing.T) Config {
 	return cfg
 }
 
+func TestConfig_FilesRequireOperationLog(t *testing.T) {
+	t.Parallel()
+	cfg := validDevelopmentConfig(t)
+	cfg.Database.Enabled = true
+	cfg.Database.DSN = "postgres://user:pass@localhost:5432/test?sslmode=disable"
+	cfg.ObjectStorage.Enabled = true
+	cfg.ObjectStorage.Bucket = "test-files"
+	cfg.ObjectStorage.Region = "test-region"
+	cfg.EventBus.Enabled = true
+	cfg.Files.Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires operation_log") {
+		t.Fatalf("enabled files without durable operation log = %v", err)
+	}
+	cfg.OperationLog.Enabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid file configuration rejected: %v", err)
+	}
+}
+
 func TestConfig_RedisKeyPrefixAlwaysIncludesActiveEnvironment(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -8,6 +8,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/files"
+	"go.uber.org/fx"
 )
 
 func TestNew_DependencyGraph(t *testing.T) {
@@ -37,5 +39,17 @@ func TestNew_DependencyGraph(t *testing.T) {
 	}
 	if err := application.Stop(ctx); err != nil {
 		t.Fatalf("Stop() error = %v", err)
+	}
+}
+
+func TestFileWorkerRejectsMissingRuntimeDependencies(t *testing.T) {
+	t.Parallel()
+	service := files.New(nil, nil, nil, nil, nil, nil, nil, config.Config{Files: config.Files{Enabled: true}})
+	application := fx.New(fx.Supply(service), fx.Invoke(registerFileDeletionWorker), fx.NopLogger)
+	if err := application.Err(); err != nil {
+		t.Fatalf("build file worker: %v", err)
+	}
+	if err := application.Start(t.Context()); err == nil {
+		t.Fatal("file worker started without required dependencies")
 	}
 }
