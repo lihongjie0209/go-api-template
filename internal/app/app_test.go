@@ -2,15 +2,54 @@ package app
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/files"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
 )
+
+type startupTestLifecycle struct{}
+
+func (*startupTestLifecycle) Append(fx.Hook) {}
+
+func TestInfrastructureStartupErrorsAreSafe(t *testing.T) {
+	t.Parallel()
+	lifecycle := new(startupTestLifecycle)
+	if _, err := newDatabase(lifecycle, config.Config{Database: config.Database{Enabled: true, Type: "unsupported", DSN: "postgres://user:secret-value@host/db"}}); err == nil {
+		t.Fatal("invalid database started")
+	} else {
+		assertStartupReason(t, err, "database_startup_failed")
+	}
+	if _, err := newRedisWithOpener(lifecycle, config.Config{}, new(observability.Tracing), func(context.Context, config.Redis) (*redis.Client, error) {
+		return nil, errors.New("redis://user:secret-value@host:6379 unavailable")
+	}); err == nil {
+		t.Fatal("unavailable Redis started")
+	} else {
+		assertStartupReason(t, err, "redis_startup_failed")
+	}
+	if _, err := newObjectStorage(config.Config{ObjectStorage: config.ObjectStorage{
+		Enabled: true, Provider: "unsupported", Bucket: "bucket", Region: "region", PresignTTL: time.Minute, Timeout: time.Second,
+	}}, nil); err == nil {
+		t.Fatal("unsupported object storage started")
+	} else {
+		assertStartupReason(t, err, "object_storage_startup_failed")
+	}
+}
+
+func assertStartupReason(t *testing.T, err error, want string) {
+	t.Helper()
+	if reason, ok := observability.SafeReason(err); !ok || reason != want || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("startup error %q was not classified as %q", err, want)
+	}
+}
 
 func TestNew_DependencyGraph(t *testing.T) {
 	t.Parallel()

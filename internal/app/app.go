@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -44,6 +44,15 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
+)
+
+var (
+	errDatabaseStartupFailed        = errors.New("database_startup_failed")
+	errRedisStartupFailed           = errors.New("redis_startup_failed")
+	errObjectStorageStartupFailed   = errors.New("object_storage_startup_failed")
+	errMigrationStartupFailed       = errors.New("migration_startup_failed")
+	errResourceCatalogStartupFailed = errors.New("resource_catalog_startup_failed")
+	errDataPolicyStartupFailed      = errors.New("data_policy_startup_failed")
 )
 
 func New(cfg config.Config) *fx.App {
@@ -115,7 +124,7 @@ func startResourceCatalog(lc fx.Lifecycle, cfg config.Config, syncer *resourceca
 			return nil
 		}
 		if err := syncer.Sync(ctx, buildinfo.BuildTime, buildinfo.Commit); err != nil {
-			return fmt.Errorf("sync code resource/action catalog: %w", err)
+			return observability.SafeError(err, errResourceCatalogStartupFailed)
 		}
 		return nil
 	}))
@@ -134,7 +143,7 @@ func startDataPermissionRuntime(lc fx.Lifecycle, cfg config.Config, loader *data
 			return nil
 		}
 		if err := loader.Initialize(ctx); err != nil {
-			return fmt.Errorf("load published data permission policies: %w", err)
+			return observability.SafeError(err, errDataPolicyStartupFailed)
 		}
 		worker.Start()
 		return nil
@@ -162,7 +171,7 @@ func runStartupMigration(cfg config.Config, logger *slog.Logger) error {
 	started := time.Now()
 	logger.Info("running startup database migration", "path", cfg.Migration.Path)
 	if err := migration.Run(cfg.Migration, "up", 0); err != nil {
-		return fmt.Errorf("startup database migration: %w", err)
+		return observability.SafeError(err, errMigrationStartupFailed)
 	}
 	logger.Info("startup database migration completed", "duration", time.Since(started))
 	return nil
@@ -189,21 +198,25 @@ func newDatabase(lc fx.Lifecycle, cfg config.Config) (*sqlx.DB, error) {
 	}
 	db, err := database.Open(context.Background(), cfg.Database)
 	if err != nil {
-		return nil, err
+		return nil, observability.SafeError(err, errDatabaseStartupFailed)
 	}
 	lc.Append(fx.StopHook(func() error { return db.Close() }))
 	return db, nil
 }
 
 func newRedis(lc fx.Lifecycle, cfg config.Config, tracing *observability.Tracing) (*redis.Client, error) {
-	client, err := cache.Open(context.Background(), cfg.Redis)
+	return newRedisWithOpener(lc, cfg, tracing, cache.Open)
+}
+
+func newRedisWithOpener(lc fx.Lifecycle, cfg config.Config, tracing *observability.Tracing, open func(context.Context, config.Redis) (*redis.Client, error)) (*redis.Client, error) {
+	client, err := open(context.Background(), cfg.Redis)
 	if err != nil {
-		return nil, err
+		return nil, observability.SafeError(err, errRedisStartupFailed)
 	}
 	if tracing.Enabled() {
 		if err := redisotel.InstrumentTracing(client); err != nil {
 			_ = client.Close()
-			return nil, fmt.Errorf("instrument redis tracing: %w", err)
+			return nil, observability.SafeError(err, errRedisStartupFailed)
 		}
 	}
 	lc.Append(fx.StopHook(func() error { return client.Close() }))
@@ -225,7 +238,7 @@ func newLocker(client *redis.Client, cfg config.Config, metrics *observability.M
 func newObjectStorage(cfg config.Config, metrics *observability.Metrics) (objectstorage.Store, error) {
 	store, err := objectstorage.New(context.Background(), cfg.ObjectStorage)
 	if err != nil {
-		return nil, err
+		return nil, observability.SafeError(err, errObjectStorageStartupFailed)
 	}
 	store = objectstorage.WithTimeout(store, cfg.ObjectStorage.Timeout)
 	return objectstorage.Observe(store, metrics, cfg.ObjectStorage.Provider), nil
