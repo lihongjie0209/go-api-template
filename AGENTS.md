@@ -974,6 +974,9 @@ deleted_by text
 - Mount asymmetric JWT signing keys from a dedicated read-only Secret volume;
   do not inject private PEM material through `envFrom`. Keep the configured
   key-file path, Secret key, volume mount, and non-root read permissions aligned.
+- JWT key material must choose exactly one inline or file source. Reject both
+  sources at configuration validation and again at the signer boundary so a
+  direct constructor cannot silently prefer a stale inline key.
 
 ## Shared-component review
 

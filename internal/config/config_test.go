@@ -889,6 +889,34 @@ func TestConfig_UnknownAndStagingProfilesCannotBypassDeploymentSecurity(t *testi
 	}
 }
 
+func TestConfig_JWTKeyMaterialSourcesAreExclusive(t *testing.T) {
+	t.Parallel()
+	t.Run("private key", func(t *testing.T) {
+		cfg := validDevelopmentConfig(t)
+		cfg.JWT.KeyID = "key-1"
+		cfg.JWT.PrivateKey = "inline"
+		cfg.JWT.PrivateKeyFile = "/run/secrets/signing/jwt-private.pem"
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("ambiguous private key validation = %v", err)
+		}
+	})
+	for _, test := range []struct {
+		name string
+		key  JWTVerificationKey
+	}{
+		{name: "two public sources", key: JWTVerificationKey{PublicKey: "inline", PublicKeyFile: "/run/secrets/old.pem"}},
+		{name: "missing public source", key: JWTVerificationKey{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validDevelopmentConfig(t)
+			cfg.JWT.PublicKeys = []JWTVerificationKey{test.key}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires exactly one") {
+				t.Fatalf("ambiguous public key validation = %v", err)
+			}
+		})
+	}
+}
+
 func validProductionConfig(t *testing.T) Config {
 	t.Helper()
 	cfg, err := LoadWithProfile("../../config/config.yaml", "development")

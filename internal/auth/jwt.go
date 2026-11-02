@@ -490,8 +490,14 @@ func parsePublicKey(id, algorithm string, pem []byte) (signingKey, error) {
 	}
 }
 func keyMaterial(inline, file string) ([]byte, error) {
+	if inline != "" && file != "" {
+		return nil, errors.New("jwt key material must use either inline text or a file")
+	}
 	if inline != "" {
 		return []byte(inline), nil
+	}
+	if file == "" {
+		return nil, errors.New("jwt key material is missing")
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {

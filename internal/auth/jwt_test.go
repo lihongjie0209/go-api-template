@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +31,30 @@ import (
 )
 
 type verifierFunc func(context.Context, string) (platformprincipal.Principal, error)
+
+func TestKeyMaterialRejectsAmbiguousSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(path, []byte("from-file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keyMaterial("inline", path); err == nil {
+		t.Fatal("keyMaterial accepted both inline and file sources")
+	}
+	if _, err := keyMaterial("", ""); err == nil {
+		t.Fatal("keyMaterial accepted no source")
+	}
+	if got, err := keyMaterial("", path); err != nil || string(got) != "from-file" {
+		t.Fatalf("keyMaterial file = (%q, %v)", got, err)
+	}
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwtConfig.PrivateKeyFile = path
+	if service := New(config.Config{JWT: jwtConfig}); service.initErr == nil {
+		t.Fatal("direct JWT service constructor accepted ambiguous private-key sources")
+	}
+}
 
 func (f verifierFunc) VerifyBearer(ctx context.Context, raw string) (platformprincipal.Principal, error) {
 	return f(ctx, raw)

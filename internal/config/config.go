@@ -817,8 +817,16 @@ func (c Config) Validate() error {
 		return errors.New("auth.jwks_timeout must be between 100ms and 10s")
 	}
 	hasSigningKey := c.JWT.PrivateKey != "" || c.JWT.PrivateKeyFile != ""
+	if c.JWT.PrivateKey != "" && c.JWT.PrivateKeyFile != "" {
+		return errors.New("jwt.private_key and jwt.private_key_file are mutually exclusive")
+	}
 	if (c.JWT.KeyID != "") != hasSigningKey {
 		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
+	}
+	for index, key := range c.JWT.PublicKeys {
+		if (key.PublicKey != "") == (key.PublicKeyFile != "") {
+			return fmt.Errorf("jwt.public_keys[%d] requires exactly one of public_key or public_key_file", index)
+		}
 	}
 	if IsDeployedEnvironment(c.App.Env) && !hasSigningKey {
 		return errors.New("deployed environments require an asymmetric JWT signing key")
