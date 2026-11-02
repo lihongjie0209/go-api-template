@@ -88,6 +88,35 @@ func TestPolicyRevisionsFailsClosedWithoutDataSnapshot(t *testing.T) {
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
 }
 
+func TestPolicyRevisionsFailureInvalidatesPriorGrantContext(t *testing.T) {
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
+	priorCtx := context.WithValue(t.Context(), grantSnapshotKey{}, grantSnapshot{
+		principal: principal,
+		platform:  map[string]struct{}{"identity.user\x00read": {}},
+	})
+	a, mock := testAuthorizer(t)
+	requirement := platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}
+	require.NoError(t, a.Authorize(priorCtx, principal, requirement))
+	for _, test := range []struct {
+		name      string
+		data      *datapermission.RuntimeLoader
+		authorize *revisionAuthorizerStub
+	}{
+		{name: "grant read", authorize: &revisionAuthorizerStub{err: errors.New("database unavailable")}},
+		{name: "data snapshot", data: datapermission.NewRuntimeLoader(nil, nil), authorize: &revisionAuthorizerStub{grants: "grant-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			revisions, err := NewPolicyRevisions(test.data, test.authorize)
+			require.NoError(t, err)
+			failedCtx, revision, err := revisions.ForRequest(priorCtx, principal)
+			require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+			require.Empty(t, revision)
+			require.ErrorIs(t, a.Authorize(failedCtx, principal, requirement), platformauthz.ErrDecisionUnavailable)
+		})
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPolicyRevisionsRequireSnapshotProviderAtConstruction(t *testing.T) {
 	t.Parallel()
 	_, err := NewPolicyRevisions(nil, nil)

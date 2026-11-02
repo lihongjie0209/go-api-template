@@ -34,17 +34,17 @@ func NewPolicyRevisions(data *datapermission.RuntimeLoader, authorizer platforma
 // published data-permission revision. A failed grant read cannot yield a hint.
 func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprincipal.Principal) (context.Context, string, error) {
 	if r == nil || r.grants == nil {
-		return ctx, "", platformauthz.ErrDecisionUnavailable
+		return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 	}
 	snapshotCtx, grantRevision, err := r.grants.Snapshot(ctx, principal)
 	if err != nil {
-		return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+		return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 	}
 	dataRevision := ""
 	if r.data != nil {
 		snapshotCtx, dataRevision, err = r.data.Pin(snapshotCtx)
 		if err != nil {
-			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+			return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 		}
 	}
 	digest := sha256.Sum256([]byte("capability/v2\x00" + grantRevision + "\x00" + dataRevision))

@@ -347,7 +347,10 @@ TTL, and invalidation for its own data.
   Resource/Action must query only that target rather than loading the full
   grant set. The data-policy revision and every row-action decision in a batch
   must likewise use one pinned immutable policy snapshot, even during a
-  concurrent refresh; a failed authoritative grant read fails closed. A missing
+  concurrent refresh; a failed authoritative grant read fails closed. A failed
+  grant read or data-policy pin must invalidate any grant snapshot already in
+  the returned request Context, so callers cannot reuse stale grants after an
+  error. A missing
   grant-snapshot provider must fail startup,
   including in generated services and test compositions; do not pass a typed
   nil revision provider through an interface. Every business endpoint must

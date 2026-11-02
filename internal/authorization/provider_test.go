@@ -178,6 +178,28 @@ func TestAuthorizerSnapshotFailsClosedWhenDatabaseIsUnavailable(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAuthorizerSnapshotFailureInvalidatesPriorGrantContext(t *testing.T) {
+	a, mock := testAuthorizer(t)
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
+	requirement := platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FROM platform_principal_permissions`).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_key", "action_key"}).AddRow("identity.user", "read"))
+	mock.ExpectCommit()
+	priorCtx, _, err := a.Snapshot(t.Context(), principal)
+	require.NoError(t, err)
+	require.NoError(t, a.Authorize(priorCtx, principal, requirement))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FROM platform_principal_permissions`).WillReturnError(errors.New("database unavailable"))
+	mock.ExpectRollback()
+	failedCtx, revision, err := a.Snapshot(priorCtx, principal)
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
+	require.ErrorIs(t, a.Authorize(failedCtx, principal, requirement), platformauthz.ErrDecisionUnavailable)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAuthorizerSnapshotFailsClosedOnTenantReadAndTransactionCommit(t *testing.T) {
 	a, mock := testAuthorizer(t)
 	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}

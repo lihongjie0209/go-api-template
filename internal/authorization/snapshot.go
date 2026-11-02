@@ -29,8 +29,11 @@ type grantSnapshot struct {
 // database and pins that immutable decision set to one capability request.
 // The digest changes when an effective platform or tenant action changes.
 func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.Principal) (context.Context, string, error) {
+	fail := func(err error) (context.Context, string, error) {
+		return invalidateGrantSnapshot(ctx), "", err
+	}
 	if a == nil || a.db == nil || a.registry == nil || principal.ID == "" {
-		return ctx, "", platformauthz.ErrDecisionUnavailable
+		return fail(platformauthz.ErrDecisionUnavailable)
 	}
 	snapshot := grantSnapshot{principal: principal}
 	switch principal.Type {
@@ -40,26 +43,33 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 		// The platform and tenant grant sets must come from one database view.
 		tx, err := a.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 		if err != nil {
-			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
 		}
 		defer func() { _ = tx.Rollback() }()
 		snapshot.platform, err = a.platformGrants(ctx, tx, principal)
 		if err != nil {
-			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
 		}
 		if principal.Type == platformprincipal.TypeUser && principal.TenantID != "" && principal.MembershipID != "" {
 			snapshot.tenant, err = a.managedTenantGrants(ctx, tx, principal)
 			if err != nil {
-				return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+				return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
 			}
 		}
 		if err := tx.Commit(); err != nil {
-			return ctx, "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
 		}
 	default:
-		return ctx, "", platformauthz.ErrDecisionUnavailable
+		return fail(platformauthz.ErrDecisionUnavailable)
 	}
 	return context.WithValue(ctx, grantSnapshotKey{}, snapshot), snapshot.revision(), nil
+}
+
+func invalidateGrantSnapshot(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, grantSnapshotKey{}, grantSnapshot{})
 }
 
 func (a *Authorizer) platformGrants(ctx context.Context, reader grantReader, principal platformprincipal.Principal) (map[string]struct{}, error) {
