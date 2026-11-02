@@ -2,6 +2,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: microservices
+  labels:
+    platform-environment: production
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -214,6 +216,9 @@ spec:
   ingress:
     - from:
         - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              platform-environment: production
       ports:
         - {port: 8080, protocol: TCP}
         - {port: 9090, protocol: TCP}

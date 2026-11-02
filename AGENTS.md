@@ -957,6 +957,17 @@ deleted_by text
 - Generated Swagger/protobuf drift, migration audit contracts, race tests,
   vet, lint, and Kubernetes validation remain required CI gates.
 
+## Kubernetes environment isolation
+
+- A production NetworkPolicy must admit trusted gateway and client namespaces
+  that share the deployment's environment label; same-namespace ingress alone
+  blocks cross-namespace HTTP/gRPC calls. Do not admit every namespace merely
+  to make routing work.
+- Keep namespace labels, NetworkPolicy selectors, and documented namespace
+  provisioning commands in sync. Test the manifest contract locally.
+- Give each environment its own gateway namespace before granting it the
+  matching label, so gateway placement does not bridge environments.
+
 ## Shared-component review
 
 For every implementation:

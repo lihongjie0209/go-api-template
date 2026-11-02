@@ -74,6 +74,7 @@ The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Serv
 set -euo pipefail
 export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
 kubectl create namespace microservices --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace microservices platform-environment=production --overwrite
 kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/go_api_template_db?sslmode=require' \
   --from-literal=APP_MIGRATION_DATABASE_URL='postgres://user:password@postgres:5432/go_api_template_db?sslmode=require' \
@@ -92,7 +93,7 @@ kubectl wait --namespace microservices --for=condition=complete "$migration_job"
 sh scripts/render-production-manifest.sh application "$IMAGE_REF" | kubectl apply -f -
 ```
 
-Replace the example values through your secret manager in production. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, NATS, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
+Replace the example values through your secret manager in production. The NetworkPolicy admits HTTP/gRPC traffic from the service's own namespace and from namespaces labeled `platform-environment=production`. Label only trusted production gateway and client namespaces this way; give each environment its own gateway namespace so a shared namespace cannot cross the environment boundary. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, NATS, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
 The migration Job reads the same ConfigMap as the application, so database name, schema, and migration table overrides apply to both. Its database URL comes from the `APP_MIGRATION_DATABASE_URL` Secret key.
 
 ## Shared gRPC contracts

@@ -13,11 +13,23 @@ import (
 type deploymentConfigManifest struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name string `yaml:"name"`
+		Name   string            `yaml:"name"`
+		Labels map[string]string `yaml:"labels"`
 	} `yaml:"metadata"`
 	Data       map[string]string `yaml:"data"`
 	StringData map[string]string `yaml:"stringData"`
 	Spec       struct {
+		Ingress []struct {
+			From []struct {
+				PodSelector       *map[string]string `yaml:"podSelector"`
+				NamespaceSelector struct {
+					MatchLabels map[string]string `yaml:"matchLabels"`
+				} `yaml:"namespaceSelector"`
+			} `yaml:"from"`
+			Ports []struct {
+				Port int `yaml:"port"`
+			} `yaml:"ports"`
+		} `yaml:"ingress"`
 		Template struct {
 			Spec struct {
 				Containers []struct {
@@ -39,6 +51,29 @@ type deploymentConfigManifest struct {
 			} `yaml:"spec"`
 		} `yaml:"template"`
 	} `yaml:"spec"`
+}
+
+func TestProductionNetworkPolicyAllowsOnlySameEnvironmentNamespaces(t *testing.T) {
+	namespace := deploymentManifest(t, "../../deployments/kubernetes.yaml", "Namespace")
+	policy := deploymentManifest(t, "../../deployments/kubernetes.yaml", "NetworkPolicy")
+	environment := namespace.Metadata.Labels["platform-environment"]
+	if environment != "production" {
+		t.Fatalf("production Namespace environment label = %q", environment)
+	}
+	if len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 2 {
+		t.Fatalf("production NetworkPolicy ingress peers = %+v", policy.Spec.Ingress)
+	}
+	if own := policy.Spec.Ingress[0].From[0].PodSelector; own == nil || len(*own) != 0 {
+		t.Fatalf("production NetworkPolicy does not allow its own namespace")
+	}
+	peer := policy.Spec.Ingress[0].From[1].NamespaceSelector.MatchLabels
+	if len(peer) != 1 || peer["platform-environment"] != environment {
+		t.Fatalf("production NetworkPolicy namespace selector = %v, want platform-environment=%q", peer, environment)
+	}
+	ports := policy.Spec.Ingress[0].Ports
+	if len(ports) != 2 || ports[0].Port != 8080 || ports[1].Port != 9090 {
+		t.Fatalf("production NetworkPolicy ingress ports = %v, want HTTP 8080 and gRPC 9090", ports)
+	}
 }
 
 func TestProductionDeploymentEnvironmentLoadsProfile(t *testing.T) {
