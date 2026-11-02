@@ -173,11 +173,11 @@ func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnv
 	}
 	requestPayload, err := sanitizedJSON(entry.Request, s.cfg.MaxPayloadBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: sanitize operation request: %v", ErrInvalidEntry, err)
+		return nil, fmt.Errorf("%w: invalid request payload", ErrInvalidEntry)
 	}
 	extension, err := sanitizedRawJSON(entry.Extension, s.cfg.MaxPayloadBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: sanitize operation extension: %v", ErrInvalidEntry, err)
+		return nil, fmt.Errorf("%w: invalid extension payload", ErrInvalidEntry)
 	}
 	requestID, _ := requestid.FromContext(ctx)
 	span := trace.SpanContextFromContext(ctx)

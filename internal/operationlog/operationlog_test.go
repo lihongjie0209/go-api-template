@@ -21,6 +21,12 @@ import (
 
 type recorderStub struct{ entry Entry }
 
+type leakingOperationMarshaler struct{}
+
+func (leakingOperationMarshaler) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("password=operation-marshaler-test-secret")
+}
+
 type outboxStub struct {
 	called  bool
 	subject string
@@ -37,6 +43,27 @@ func (s *outboxStub) Store(_ context.Context, tx *sqlx.Tx, subject string, event
 func (r *recorderStub) Enabled() bool { return true }
 
 func (r *recorderStub) Record(_ context.Context, entry Entry) error { r.entry = entry; return nil }
+
+func TestOperationEnvelopeHidesPayloadEncoderErrors(t *testing.T) {
+	t.Parallel()
+	service := &Service{cfg: config.OperationLog{MaxPayloadBytes: 1024}}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeUser})
+	for _, test := range []struct {
+		name      string
+		request   any
+		extension any
+	}{
+		{name: "request", request: leakingOperationMarshaler{}},
+		{name: "extension", extension: leakingOperationMarshaler{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := service.envelope(ctx, Entry{Operation: "order.create", Source: "backend", Protocol: "service", Request: test.request, Extension: test.extension})
+			if !errors.Is(err, ErrInvalidEntry) || strings.Contains(err.Error(), "operation-marshaler-test-secret") {
+				t.Fatalf("envelope error=%v", err)
+			}
+		})
+	}
+}
 
 func TestSanitizedJSONRedactsAndTruncates(t *testing.T) {
 	t.Parallel()

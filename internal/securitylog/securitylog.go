@@ -201,7 +201,7 @@ func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnv
 	}
 	metadata, err := safeMetadata(entry.Metadata, s.cfg.MaxPayloadBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidEntry, err)
+		return nil, fmt.Errorf("%w: invalid metadata", ErrInvalidEntry)
 	}
 	requestID, _ := requestid.FromContext(ctx)
 	span := trace.SpanContextFromContext(ctx)
@@ -316,7 +316,7 @@ func validEvent(value EventType) bool {
 
 func validateEntry(entry Entry) error {
 	if !validEvent(entry.EventType) {
-		return fmt.Errorf("%w: unsupported event type %q", ErrInvalidEntry, entry.EventType)
+		return fmt.Errorf("%w: unsupported event type", ErrInvalidEntry)
 	}
 	for name, value := range map[string]string{
 		"subject_id": entry.SubjectID, "subject_name": entry.SubjectName, "subject_type": entry.SubjectType, "tenant_id": entry.TenantID,

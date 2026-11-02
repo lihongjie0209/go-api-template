@@ -24,6 +24,26 @@ type outboxStub struct {
 	event   *commonv1.EventEnvelope
 }
 
+type leakingSecurityMarshaler struct{}
+
+func (leakingSecurityMarshaler) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("password=security-marshaler-test-secret")
+}
+
+func TestSecurityEnvelopeHidesMetadataEncoderError(t *testing.T) {
+	t.Parallel()
+	service := &Service{cfg: config.SecurityLog{MaxPayloadBytes: 1024}}
+	_, err := service.envelope(t.Context(), Entry{EventType: EventLogin, Metadata: leakingSecurityMarshaler{}})
+	if !errors.Is(err, ErrInvalidEntry) || strings.Contains(err.Error(), "security-marshaler-test-secret") {
+		t.Fatalf("envelope error=%v", err)
+	}
+	maliciousType := EventType("password=event-type-test-secret")
+	err = validateEntry(Entry{EventType: maliciousType})
+	if !errors.Is(err, ErrInvalidEntry) || strings.Contains(err.Error(), "event-type-test-secret") {
+		t.Fatalf("validation error=%v", err)
+	}
+}
+
 func (s *outboxStub) Store(_ context.Context, tx *sqlx.Tx, subject string, event *commonv1.EventEnvelope) error {
 	s.called = tx != nil
 	s.subject = subject
