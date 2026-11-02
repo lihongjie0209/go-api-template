@@ -284,6 +284,40 @@ func containsSensitiveURL(message string) bool {
 	return strings.Contains(message, "user:secret") || strings.Contains(message, "token=secret")
 }
 
+type failingRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn failingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func TestHTTPClient_TransportFailureDoesNotExposeURLOrDependencyError(t *testing.T) {
+	t.Parallel()
+	client, err := NewHTTPClient("test", validHTTPUpstream("https://example.com"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.client.Transport = failingRoundTripper(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("upstream secret-value")
+	})
+	response, err := client.Do(t.Context(), http.MethodGet, "/private?token=secret", nil, nil)
+	if response != nil || !errors.Is(err, ErrHTTPTransportUnavailable) {
+		t.Fatalf("Do() response=%v error=%v, want safe transport error", response, err)
+	}
+	if strings.Contains(err.Error(), "token=secret") || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("Do() exposed upstream details: %v", err)
+	}
+}
+
+func TestSafeHTTPTransportErrorPreservesCancellation(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		got := safeHTTPTransportError(errors.Join(cause, errors.New("token=secret")))
+		if !errors.Is(got, cause) || strings.Contains(got.Error(), "secret") {
+			t.Fatalf("safeHTTPTransportError(%v) = %v", cause, got)
+		}
+	}
+}
+
 func TestHTTPClient_ConfiguredTimeoutCapsLongerCallerDeadline(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {

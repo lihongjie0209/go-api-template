@@ -36,6 +36,8 @@ type HTTPClient struct {
 
 var validHTTPClientName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
+var ErrHTTPTransportUnavailable = errors.New("outbound HTTP transport unavailable")
+
 func (c *HTTPClient) CloseIdleConnections() { c.client.CloseIdleConnections() }
 
 func NewHTTPClient(name string, cfg config.HTTPUpstream, metrics *observability.Metrics) (*HTTPClient, error) {
@@ -167,7 +169,7 @@ func (c *HTTPClient) doWithRetry(ctx context.Context, method, requestPath string
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		request, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("create outbound HTTP request: %w", err)
+			return nil, errors.New("create outbound HTTP request failed")
 		}
 		request.Header = headers.Clone()
 		if request.Header == nil {
@@ -190,7 +192,7 @@ func (c *HTTPClient) doWithRetry(ctx context.Context, method, requestPath string
 			return response, nil
 		}
 		if err != nil && attempt == maxAttempts {
-			return nil, fmt.Errorf("call outbound HTTP service: %w", err)
+			return nil, safeHTTPTransportError(err)
 		}
 		if response != nil {
 			_, _ = io.CopyN(io.Discard, response.Body, 32<<10)
@@ -203,6 +205,16 @@ func (c *HTTPClient) doWithRetry(ctx context.Context, method, requestPath string
 		}
 	}
 	return nil, errors.New("outbound HTTP attempts exhausted")
+}
+
+func safeHTTPTransportError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return ErrHTTPTransportUnavailable
 }
 
 func retryableMethod(ctx context.Context, method string) bool {
