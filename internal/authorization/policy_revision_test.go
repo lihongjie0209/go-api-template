@@ -84,6 +84,14 @@ func TestPolicyRevisionsFailsClosedWhenGrantsAreUnavailable(t *testing.T) {
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
 }
 
+func TestPolicyRevisionsFailsClosedWithoutGrantRevision(t *testing.T) {
+	revisions, err := NewPolicyRevisions(nil, &revisionAuthorizerStub{})
+	require.NoError(t, err)
+	_, revision, err := revisions.ForRequest(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
+}
+
 func TestPolicyRevisionsFailsClosedWithoutDataSnapshot(t *testing.T) {
 	t.Parallel()
 	revisions, err := NewPolicyRevisions(datapermission.NewRuntimeLoader(nil, nil), &revisionAuthorizerStub{grants: "grant-1"})

@@ -40,7 +40,7 @@ func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprin
 	if err != nil {
 		return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 	}
-	if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil {
+	if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil || grantRevision == "" {
 		return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 	}
 	dataRevision := ""
@@ -49,7 +49,7 @@ func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprin
 		if err != nil {
 			return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 		}
-		if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil {
+		if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil || dataRevision == "" {
 			return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 		}
 	}
