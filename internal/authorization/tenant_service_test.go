@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -299,6 +300,34 @@ func TestEffectivePermissionIDsRejectsInactiveMembershipBeforeGrants(t *testing.
 	_, err = effectivePermissionIDs(t.Context(), sqlxDB, "tenant-1", "member-1")
 	require.ErrorIs(t, err, ErrTenantAuthorizationForbidden)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEffectivePermissionIDsRejectsOversizedGrantSet(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		administrator int
+		query         string
+		args          []driver.Value
+	}{
+		{name: "administrator", administrator: 1, query: `SELECT g.permission_id FROM tenant_permission_grants.*LIMIT 10001`, args: []driver.Value{"tenant-1"}},
+		{name: "role member", administrator: 0, query: `SELECT DISTINCT rp.permission_id FROM tenant_role_permissions.*LIMIT 10001`, args: []driver.Value{"tenant-1", "member-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).WithArgs("tenant-1", "member-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(test.administrator))
+			rows := sqlmock.NewRows([]string{"permission_id"})
+			for i := range maxEffectiveGrantActions + 1 {
+				rows.AddRow(strconv.Itoa(i))
+			}
+			mock.ExpectQuery(test.query).WithArgs(test.args...).WillReturnRows(rows)
+			_, err = effectivePermissionIDs(t.Context(), sqlx.NewDb(raw, "sqlmock"), "tenant-1", "member-1")
+			require.ErrorIs(t, err, errEffectivePermissionLimit)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestEffectivePermissionsReturnsDisplayContractForCurrentMember(t *testing.T) {

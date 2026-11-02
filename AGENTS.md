@@ -356,12 +356,15 @@ TTL, and invalidation for its own data.
   pairs and fail closed when the cap is exceeded; a bounded capability request
   must not materialize an unbounded grant set. Ordinary authorization of one
   Resource/Action must query only that target rather than loading the full
-  grant set. The data-policy revision and every row-action decision in a batch
-  must likewise use one pinned immutable policy snapshot, even during a
-  concurrent refresh; a failed authoritative grant read fails closed. A failed
-  grant read or data-policy pin must invalidate any grant snapshot already in
-  the returned request Context, so callers cannot reuse stale grants after an
-  error. An empty grant or data-policy revision is unavailable, not a valid
+  grant set. Tenant effective-permission reads used by delegation and
+  administration must apply the same database row cap and reject overflow
+  before granting anything. The data-policy revision and every row-action
+  decision in a batch must likewise use one pinned immutable policy snapshot,
+  even during a concurrent refresh; a failed authoritative grant read fails
+  closed. A failed grant read or data-policy pin must invalidate any grant
+  snapshot already in the returned request Context, so callers cannot reuse
+  stale grants after an error. An empty grant or data-policy revision is
+  unavailable, not a valid
   capability hint. Authorization and capability revision evaluation must reject an
   already-canceled or expired Context even when an in-memory grant snapshot
   or system/principal shortcut could otherwise return allow. A missing

@@ -29,6 +29,7 @@ var (
 	ErrTenantAuthorizationNotFound     = errors.New("tenant authorization resource not found")
 	ErrTenantAuthorizationConflict     = errors.New("tenant authorization conflict")
 	ErrTenantAuthorizationStaleVersion = errors.New("tenant authorization stale version")
+	errEffectivePermissionLimit        = errors.New("effective permission set exceeds maximum")
 	roleCodePattern                    = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 )
 
@@ -1430,9 +1431,13 @@ func effectivePermissionIDs(ctx context.Context, db queryer, tenantID, membershi
 		query = `SELECT g.permission_id FROM tenant_permission_grants g JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL WHERE g.tenant_id=? AND g.deleted_at IS NULL`
 		args = []any{tenantID}
 	}
+	query += fmt.Sprintf(" LIMIT %d", maxEffectiveGrantActions+1)
 	ids := []string{}
 	if err := db.SelectContext(ctx, &ids, db.Rebind(query), args...); err != nil {
 		return nil, err
+	}
+	if len(ids) > maxEffectiveGrantActions {
+		return nil, errEffectivePermissionLimit
 	}
 	sort.Strings(ids)
 	return ids, nil
