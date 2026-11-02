@@ -249,10 +249,16 @@ func Generate(ctx context.Context, options Options) (string, error) {
 }
 
 func copyLocal(ctx context.Context, source, destination string) error {
+	return copyLocalLimited(ctx, source, destination, maxExtractedBytes)
+}
+
+func copyLocalLimited(ctx context.Context, source, destination string, maxBytes int64) error {
 	root, err := filepath.Abs(source)
 	if err != nil {
 		return fmt.Errorf("resolve source: %w", err)
 	}
+	entries := 0
+	var copiedBytes int64
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -273,6 +279,13 @@ func copyLocal(ctx context.Context, source, destination string) error {
 			}
 			return nil
 		}
+		entries++
+		if entries > maxArchiveEntries {
+			return fmt.Errorf("local template exceeds %d entries", maxArchiveEntries)
+		}
+		if len(relative) > maxArchivePathBytes {
+			return fmt.Errorf("local template path exceeds %d bytes", maxArchivePathBytes)
+		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("template contains unsupported symlink: %s", relative)
 		}
@@ -283,7 +296,9 @@ func copyLocal(ctx context.Context, source, destination string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		return copyFile(ctx, path, target, entry)
+		copied, err := copyFile(ctx, path, target, entry, maxBytes-copiedBytes, maxBytes)
+		copiedBytes += copied
+		return err
 	})
 }
 
@@ -549,26 +564,35 @@ func skipped(relative string) bool {
 		clean == "internal/microgencli" || strings.HasPrefix(clean, "internal/microgencli/")
 }
 
-func copyFile(ctx context.Context, source, destination string, entry fs.DirEntry) error {
+func copyFile(ctx context.Context, source, destination string, entry fs.DirEntry, remainingBytes, maxBytes int64) (int64, error) {
+	info, err := entry.Info()
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("template contains unsupported file type: %s", source)
+	}
+	if info.Size() > remainingBytes {
+		return 0, fmt.Errorf("local template exceeds %d bytes", maxBytes)
+	}
 	input, err := os.Open(source)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = input.Close() }()
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return err
-	}
-	info, err := entry.Info()
-	if err != nil {
-		return err
+		return 0, err
 	}
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, copyErr := io.Copy(output, canceledReader{ctx: ctx, reader: input})
+	copied, copyErr := io.Copy(output, io.LimitReader(canceledReader{ctx: ctx, reader: input}, remainingBytes+1))
 	closeErr := output.Close()
-	return errors.Join(copyErr, closeErr)
+	if copied > remainingBytes {
+		return copied, fmt.Errorf("local template exceeds %d bytes", maxBytes)
+	}
+	return copied, errors.Join(copyErr, closeErr)
 }
 
 type canceledReader struct {

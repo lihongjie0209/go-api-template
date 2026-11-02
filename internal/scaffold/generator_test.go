@@ -105,6 +105,51 @@ func TestGenerateCanceledBeforeWorkDoesNotPublishProject(t *testing.T) {
 	}
 }
 
+func TestGenerateRejectsOversizedLocalTemplateWithoutPublishing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "template")
+	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.26.9\n")
+	oversized := filepath.Join(source, "oversized.bin")
+	file, err := os.Create(oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxExtractedBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "orders")
+	_, err = Generate(t.Context(), Options{
+		Name: "orders-service", Module: "github.com/acme/orders-service", Source: source,
+		Output: output, InitGit: false, Tidy: false, GenerateCode: false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "local template exceeds") {
+		t.Fatalf("Generate() error = %v, want local template size limit", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("oversized template created output: %v", err)
+	}
+}
+
+func TestCopyLocalRejectsAggregateSizeOverflow(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	writeFixture(t, source, "a.txt", "12345")
+	writeFixture(t, source, "b.txt", "67890")
+	destination := filepath.Join(root, "destination")
+	if err := copyLocalLimited(t.Context(), source, destination, 8); err == nil || !strings.Contains(err.Error(), "local template exceeds") {
+		t.Fatalf("copyLocalLimited() error = %v, want aggregate size limit", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "b.txt")); !os.IsNotExist(err) {
+		t.Fatalf("overflow file was copied: %v", err)
+	}
+}
+
 func TestGenerateCustomImageUpdatesPublishingWorkflow(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
