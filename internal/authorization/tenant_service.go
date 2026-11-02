@@ -516,7 +516,7 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 			if count <= 1 {
 				return ErrTenantAuthorizationConflict
 			}
-			return softDeleteLink(ctx, tx, "tenant_administrators", tenantID, "", "membership_id", membershipID, actor.ID)
+			return softDeleteAdministratorLink(ctx, tx, tenantID, membershipID, actor.ID)
 		})
 	})
 }
@@ -1602,6 +1602,14 @@ func replaceLinks(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, va
 		where += " AND " + ownerColumn + "=?"
 		args = append(args, ownerID)
 	}
+	if len(values) > 0 {
+		clause, valuesArgs, err := sqlx.In(` AND `+valueColumn+` NOT IN (?)`, values)
+		if err != nil {
+			return fmt.Errorf("build authorization link replacement: %w", err)
+		}
+		where += clause
+		args = append(args, valuesArgs...)
+	}
 	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE `+where+` AND deleted_at IS NULL`), append([]any{now, actorID, now, actorID}, args...)...); err != nil {
 		return err
 	}
@@ -1669,10 +1677,9 @@ func upsertLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valu
 	return err
 }
 
-func softDeleteLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valueColumn, value, actorID string) error {
-	_ = ownerID
+func softDeleteAdministratorLink(ctx context.Context, tx *sqlx.Tx, tenantID, membershipID, actorID string) error {
 	now := time.Now()
-	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND `+valueColumn+`=? AND deleted_at IS NULL`), now, actorID, now, actorID, tenantID, value)
+	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_administrators SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), now, actorID, now, actorID, tenantID, membershipID)
 	if err != nil {
 		return err
 	}

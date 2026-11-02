@@ -1037,6 +1037,73 @@ func TestUpsertLinkPrefersActiveRowAndRestoresDeletedHistory(t *testing.T) {
 	}
 }
 
+func TestReplaceLinksPreservesUnchangedActiveAssociation(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=.*WHERE tenant_id=\? AND role_id=\? AND permission_id NOT IN \(\?\) AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1", "permission-keep").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,deleted_at FROM tenant_role_permissions WHERE tenant_id=\? AND role_id=\? AND permission_id=\?`).
+		WithArgs("tenant-1", "role-1", "permission-keep").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-keep", nil))
+	require.NoError(t, replaceLinks(t.Context(), tx, "tenant_role_permissions", "tenant-1", "role-1", "permission_id", []string{"permission-keep"}, "actor-1"))
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReplaceLinksEmptySetRemovesAllActiveAssociations(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	mock.ExpectExec(`UPDATE tenant_member_roles SET deleted_at=.*WHERE tenant_id=\? AND membership_id=\? AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "member-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	require.NoError(t, replaceLinks(t.Context(), tx, "tenant_member_roles", "tenant-1", "member-1", "role_id", nil, "actor-1"))
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSoftDeleteAdministratorLinkIsTenantAndMemberScoped(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		affectedRows int64
+		wantErr      error
+	}{
+		{name: "one active link", affectedRows: 1},
+		{name: "missing or foreign link", affectedRows: 0, wantErr: ErrTenantAuthorizationNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectBegin()
+			tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+			require.NoError(t, err)
+			mock.ExpectExec(`UPDATE tenant_administrators SET deleted_at=.*WHERE tenant_id=\? AND membership_id=\? AND deleted_at IS NULL`).
+				WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "member-1").
+				WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
+			err = softDeleteAdministratorLink(t.Context(), tx, "tenant-1", "member-1", "actor-1")
+			if test.wantErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			mock.ExpectRollback()
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestPruneRolePermissionsWithEmptyCeilingUpdatesOnlyLinkedRoles(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)

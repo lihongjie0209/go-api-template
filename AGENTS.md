@@ -366,6 +366,8 @@ TTL, and invalidation for its own data.
   presentation. A link restore must prefer an existing active row, then select
   deleted history deterministically and lock that row; PostgreSQL partial
   unique indexes may retain multiple deleted rows for one business key.
+  Replacing a link set must soft-delete only removed values; unchanged active
+  links keep their audit timestamps and versions.
   The data-policy revision and every row-action decision in a
   batch must likewise use one pinned immutable policy snapshot, even during a
   concurrent refresh; a failed authoritative grant read fails closed. A failed

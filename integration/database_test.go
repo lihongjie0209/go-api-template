@@ -1622,6 +1622,20 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err != nil || len(prunedPermissions) != 0 {
 		t.Fatalf("pruned role permissions=%+v err=%v", prunedPermissions, err)
 	}
+	var grantVersion, tenantVersion int64
+	if err := db.GetContext(ctx, &grantVersion, db.Rebind(`SELECT version FROM tenant_permission_grants WHERE tenant_id=? AND permission_id=? AND deleted_at IS NULL`), tenantID, permissionID); err != nil {
+		t.Fatalf("read retained grant version: %v", err)
+	}
+	if err := db.GetContext(ctx, &tenantVersion, db.Rebind(`SELECT version FROM tenants WHERE id=? AND deleted_at IS NULL`), tenantID); err != nil {
+		t.Fatalf("read tenant version: %v", err)
+	}
+	if err := service.SetTenantPermissions(actorCtx, tenantID, tenantVersion, []string{permissionID}); err != nil {
+		t.Fatalf("replace tenant permission ceiling with identical set: %v", err)
+	}
+	var retainedVersion int64
+	if err := db.GetContext(ctx, &retainedVersion, db.Rebind(`SELECT version FROM tenant_permission_grants WHERE tenant_id=? AND permission_id=? AND deleted_at IS NULL`), tenantID, permissionID); err != nil || retainedVersion != grantVersion {
+		t.Fatalf("retained grant version=%d want=%d err=%v", retainedVersion, grantVersion, err)
+	}
 	if databaseType == "postgres" {
 		var oldLinkID string
 		if err := db.GetContext(ctx, &oldLinkID, db.Rebind(`SELECT id FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil {
