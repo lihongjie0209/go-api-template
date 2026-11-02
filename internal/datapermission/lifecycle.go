@@ -157,6 +157,9 @@ type Repository struct{ db *sqlx.DB }
 func NewRepository(db *sqlx.DB) *Repository { return &Repository{db: db} }
 
 func (r *Repository) LoadAllPublished(ctx context.Context) ([]Policy, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("data permission: policy database is disabled")
+	}
 	return loadAllPublished(ctx, r.db)
 }
 

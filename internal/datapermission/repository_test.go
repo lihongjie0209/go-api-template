@@ -53,6 +53,14 @@ func TestLoadPublishedPoliciesBoundsDatabaseResult(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLoadPublishedPoliciesFailsClosedWithoutDatabase(t *testing.T) {
+	for _, repository := range []*Repository{nil, NewRepository(nil)} {
+		policies, err := repository.LoadAllPublished(t.Context())
+		require.Error(t, err)
+		require.Empty(t, policies)
+	}
+}
+
 func TestLoadPublishedPoliciesRejectsRowAndByteOverflow(t *testing.T) {
 	document := func(code string) string {
 		data, err := MarshalPolicy(Policy{
