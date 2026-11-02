@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -22,10 +21,11 @@ const grantColumns = `g.id,g.tenant_id,t.name tenant_name,g.application_id,a.cod
 const grantDetailQuery = `SELECT ` + grantColumns + ` FROM tenant_application_grants g JOIN tenants t ON t.id=g.tenant_id AND t.deleted_at IS NULL JOIN applications a ON a.id=g.application_id AND a.deleted_at IS NULL WHERE g.tenant_id=? AND g.id=? AND g.deleted_at IS NULL`
 
 var (
-	ErrGrantInvalid   = errors.New("invalid tenant application grant")
-	ErrGrantNotFound  = errors.New("tenant application grant not found")
-	ErrGrantConflict  = errors.New("tenant application grant conflict")
-	ErrGrantForbidden = errors.New("tenant application grant forbidden")
+	ErrGrantInvalid        = errors.New("invalid tenant application grant")
+	ErrGrantNotFound       = errors.New("tenant application grant not found")
+	ErrGrantConflict       = errors.New("tenant application grant conflict")
+	ErrGrantForbidden      = errors.New("tenant application grant forbidden")
+	ErrSecurityUnavailable = errors.New("application security audit unavailable")
 )
 
 type Grant struct {
@@ -437,7 +437,7 @@ func (s *TenantAccessService) mutate(ctx context.Context, operation, tenantID, s
 	}
 	if s.security != nil {
 		if recordErr := s.security.Record(ctx, securityEntry); recordErr != nil && s.security.FailClosed() {
-			return fmt.Errorf("%w: %v", err, recordErr)
+			return ErrSecurityUnavailable
 		}
 	}
 	return err

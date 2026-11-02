@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -43,4 +44,15 @@ func TestApplicationUpdateTargetReturnsOnlyEditableFields(t *testing.T) {
 		"home_path": "/erp", "status": "active", "sort_order": float64(2), "metadata": map[string]any{"x": float64(1)}, "version": float64(4),
 	}, response.Body)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestApplicationSecurityAuditOutageReturnsUnavailable(t *testing.T) {
+	t.Parallel()
+	handler := NewApplicationHandler(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/me/application/switch", strings.NewReader(`{}`))
+	handler.respond(ctx, nil, errors.Join(application.ErrSecurityUnavailable, errors.New("password=secret")))
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "secret")
 }

@@ -9,9 +9,21 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+type failingApplicationSecurityRecorder struct{}
+
+func (failingApplicationSecurityRecorder) Enabled() bool    { return true }
+func (failingApplicationSecurityRecorder) FailClosed() bool { return true }
+func (failingApplicationSecurityRecorder) Record(context.Context, securitylog.Entry) error {
+	return errors.New("password=application-security-test-secret")
+}
+func (failingApplicationSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
+	return nil
+}
 
 func applicationContextTestPrincipal(ctx context.Context) context.Context {
 	return platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1", TenantID: "tenant-1", MembershipID: "membership-1"})
@@ -76,5 +88,40 @@ func TestSwitchApplicationContextRollsBackInsertFailure(t *testing.T) {
 	service := &TenantAccessService{db: db, tx: database.NewTransactor(db)}
 	_, err = service.SwitchContext(applicationContextTestPrincipal(t.Context()), SwitchInput{ApplicationID: "app-1"})
 	require.ErrorContains(t, err, "write unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSwitchApplicationContextHidesFailedSecurityAuditDetails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g`).
+		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "session-1", sqlmock.AnyArg(), "app-1").
+		WillReturnError(errors.New("password=application-db-test-secret"))
+	mock.ExpectRollback()
+	service := &TenantAccessService{db: db, tx: database.NewTransactor(db), security: failingApplicationSecurityRecorder{}}
+	_, err = service.SwitchContext(applicationContextTestPrincipal(t.Context()), SwitchInput{ApplicationID: "app-1"})
+	require.ErrorIs(t, err, ErrSecurityUnavailable)
+	require.NotContains(t, err.Error(), "application-security-test-secret")
+	require.NotContains(t, err.Error(), "application-db-test-secret")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTenantApplicationMutationHidesFailedSecurityAuditDetails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+	service := &TenantAccessService{db: db, tx: database.NewTransactor(db), security: failingApplicationSecurityRecorder{}}
+	err = service.mutate(t.Context(), "application.grant.revoke", "tenant-1", "grant-1", nil, func(*sqlx.Tx) (string, string, error) {
+		return "", "", errors.New("password=application-db-test-secret")
+	})
+	require.ErrorIs(t, err, ErrSecurityUnavailable)
+	require.NotContains(t, err.Error(), "application-security-test-secret")
+	require.NotContains(t, err.Error(), "application-db-test-secret")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

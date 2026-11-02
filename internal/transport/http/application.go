@@ -417,6 +417,8 @@ func (h *ApplicationHandler) respond(c *gin.Context, v any, e error) {
 		Fail(c, h.logger, apperror.Forbidden("tenant application grant forbidden"))
 	case errors.Is(e, application.ErrContextNotFound):
 		Fail(c, h.logger, apperror.NotFound("current application context not found"))
+	case errors.Is(e, application.ErrSecurityUnavailable):
+		Fail(c, h.logger, apperror.Unavailable("security audit is unavailable", e))
 	default:
 		Fail(c, h.logger, apperror.Internal(e))
 	}

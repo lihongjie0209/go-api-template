@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -126,7 +125,7 @@ func (s *TenantAccessService) SwitchContext(ctx context.Context, input SwitchInp
 		}
 		if s.security != nil {
 			if recordErr := s.security.Record(ctx, security); recordErr != nil && s.security.FailClosed() {
-				return Context{}, fmt.Errorf("%w: %v", err, recordErr)
+				return Context{}, ErrSecurityUnavailable
 			}
 		}
 		return Context{}, err
