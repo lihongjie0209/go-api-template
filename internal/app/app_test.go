@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,6 +44,19 @@ func TestInfrastructureStartupErrorsAreSafe(t *testing.T) {
 	} else {
 		assertStartupReason(t, err, "object_storage_startup_failed")
 	}
+}
+
+func TestLoggerStartupDoesNotExposeFilesystemPath(t *testing.T) {
+	t.Parallel()
+	blockingFile := filepath.Join(t.TempDir(), "secret-value")
+	if err := os.WriteFile(blockingFile, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := newLogger(new(startupTestLifecycle), config.Config{Log: config.Log{File: filepath.Join(blockingFile, "service.log"), Level: "info", Format: "json"}})
+	if logger != nil {
+		t.Fatal("logger unexpectedly started")
+	}
+	assertStartupReason(t, err, "logger_startup_failed")
 }
 
 func TestObjectStorageStartupIsBoundedAndRejectsMissingStore(t *testing.T) {

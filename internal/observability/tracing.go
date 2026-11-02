@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
@@ -20,20 +21,35 @@ type Tracing struct {
 	provider *sdktrace.TracerProvider
 }
 
+var (
+	errTracingStartupFailed  = errors.New("tracing_startup_failed")
+	errTracingShutdownFailed = errors.New("tracing_shutdown_failed")
+)
+
 func (t *Tracing) Enabled() bool { return t.enabled }
 
 func NewTracing(lc fx.Lifecycle, cfg config.Config) (*Tracing, error) {
+	return newTracingWithExporter(lc, cfg, func(ctx context.Context, endpoint string) (sdktrace.SpanExporter, error) {
+		return otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint))
+	})
+}
+
+func newTracingWithExporter(lc fx.Lifecycle, cfg config.Config, create func(context.Context, string) (sdktrace.SpanExporter, error)) (*Tracing, error) {
 	tracing := &Tracing{enabled: cfg.Observability.TracingEnabled}
 	if !tracing.enabled {
 		return tracing, nil
 	}
-	exporter, err := otlptracehttp.New(context.Background(), otlptracehttp.WithEndpointURL(cfg.Observability.TracingEndpoint))
+	exporter, err := create(context.Background(), cfg.Observability.TracingEndpoint)
 	if err != nil {
-		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
+		return nil, SafeError(err, errTracingStartupFailed)
+	}
+	if exporter == nil {
+		return nil, errTracingStartupFailed
 	}
 	res, err := traceResource(cfg)
 	if err != nil {
-		return nil, err
+		_ = exporter.Shutdown(context.Background())
+		return nil, SafeError(err, errTracingStartupFailed)
 	}
 	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Observability.TracingSampleRatio))))
 	tracing.provider = provider
@@ -45,7 +61,7 @@ func NewTracing(lc fx.Lifecycle, cfg config.Config) (*Tracing, error) {
 		err := provider.Shutdown(ctx)
 		otel.SetTracerProvider(previousProvider)
 		otel.SetTextMapPropagator(previousPropagator)
-		return err
+		return SafeError(err, errTracingShutdownFailed)
 	}))
 	return tracing, nil
 }

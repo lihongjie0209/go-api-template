@@ -2,14 +2,45 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/fx"
 )
+
+type tracingTestLifecycle struct{}
+
+func (tracingTestLifecycle) Append(fx.Hook) {}
+
+func TestTracingStartupErrorIsSafe(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{Observability: config.Observability{TracingEnabled: true, TracingEndpoint: "https://collector.example"}}
+	for _, test := range []struct {
+		name   string
+		create func(context.Context, string) (sdktrace.SpanExporter, error)
+	}{
+		{name: "exporter error", create: func(context.Context, string) (sdktrace.SpanExporter, error) {
+			return nil, errors.New("collector URL contains secret-value")
+		}},
+		{name: "missing exporter", create: func(context.Context, string) (sdktrace.SpanExporter, error) {
+			return nil, nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			tracing, err := newTracingWithExporter(tracingTestLifecycle{}, cfg, test.create)
+			if tracing != nil || !errors.Is(err, errTracingStartupFailed) || strings.Contains(err.Error(), "secret-value") {
+				t.Fatalf("NewTracing() = %v, %v; want safe startup failure", tracing, err)
+			}
+		})
+	}
+}
 
 func TestTraceResourceMergesDefaultsAndServiceIdentity(t *testing.T) {
 	t.Parallel()

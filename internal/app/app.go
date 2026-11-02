@@ -53,6 +53,8 @@ var (
 	errMigrationStartupFailed       = errors.New("migration_startup_failed")
 	errResourceCatalogStartupFailed = errors.New("resource_catalog_startup_failed")
 	errDataPolicyStartupFailed      = errors.New("data_policy_startup_failed")
+	errLoggerStartupFailed          = errors.New("logger_startup_failed")
+	errLoggerShutdownFailed         = errors.New("logger_shutdown_failed")
 )
 
 func New(cfg config.Config) *fx.App {
@@ -180,9 +182,9 @@ func runStartupMigration(cfg config.Config, logger *slog.Logger) error {
 func newLogger(lc fx.Lifecycle, cfg config.Config) (*slog.Logger, error) {
 	logger, closer, err := logging.New(cfg.Log)
 	if err != nil {
-		return nil, err
+		return nil, observability.SafeError(err, errLoggerStartupFailed)
 	}
-	lc.Append(fx.StopHook(func() error { return closer.Close() }))
+	lc.Append(fx.StopHook(func() error { return observability.SafeError(closer.Close(), errLoggerShutdownFailed) }))
 	return logger.With(
 		"service", cfg.App.Name,
 		"environment", cfg.Runtime.ActiveProfile,
