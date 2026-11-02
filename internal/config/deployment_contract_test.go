@@ -36,8 +36,23 @@ type deploymentConfigManifest struct {
 		} `yaml:"ingress"`
 		Template struct {
 			Spec struct {
+				SecurityContext struct {
+					FSGroup int `yaml:"fsGroup"`
+				} `yaml:"securityContext"`
+				Volumes []struct {
+					Name   string `yaml:"name"`
+					Secret struct {
+						SecretName  string `yaml:"secretName"`
+						DefaultMode int    `yaml:"defaultMode"`
+					} `yaml:"secret"`
+				} `yaml:"volumes"`
 				Containers []struct {
-					Args    []string `yaml:"args"`
+					Args         []string `yaml:"args"`
+					VolumeMounts []struct {
+						Name      string `yaml:"name"`
+						MountPath string `yaml:"mountPath"`
+						ReadOnly  bool   `yaml:"readOnly"`
+					} `yaml:"volumeMounts"`
 					EnvFrom []struct {
 						ConfigMapRef struct {
 							Name string `yaml:"name"`
@@ -89,7 +104,7 @@ func renderedDeploymentManifest(t *testing.T, part, environment, kind string) de
 	if err != nil {
 		t.Fatalf("render %s %s: %v: %s", environment, part, err, output)
 	}
-	return decodeDeploymentManifest(t, bytes.NewReader(output), kind)
+	return decodeDeploymentManifest(t, bytes.NewReader(output), kind, "")
 }
 
 func TestProductionNetworkPolicyAllowsOnlySameEnvironmentNamespaces(t *testing.T) {
@@ -145,6 +160,37 @@ func TestProductionDeploymentEnvironmentLoadsProfile(t *testing.T) {
 	}
 }
 
+func TestProductionSigningKeyUsesReadOnlySecretVolume(t *testing.T) {
+	configMap := deploymentManifest(t, "../../deployments/kubernetes.yaml", "ConfigMap")
+	deployment := deploymentManifest(t, "../../deployments/kubernetes.yaml", "Deployment")
+	applicationSecret := deploymentManifestNamed(t, "../../deployments/secret.example.yaml", "Secret", "go-api-template")
+	signingSecret := deploymentManifestNamed(t, "../../deployments/secret.example.yaml", "Secret", "go-api-template-signing")
+	const signingPath = "/run/secrets/signing"
+	if configMap.Data["APP_JWT_PRIVATE_KEY_FILE"] != signingPath+"/jwt-private.pem" {
+		t.Fatalf("JWT private key file = %q", configMap.Data["APP_JWT_PRIVATE_KEY_FILE"])
+	}
+	if _, exists := applicationSecret.StringData["APP_JWT_PRIVATE_KEY"]; exists {
+		t.Fatal("application environment Secret still contains JWT private key material")
+	}
+	if _, exists := signingSecret.StringData["jwt-private.pem"]; !exists {
+		t.Fatal("signing Secret lacks jwt-private.pem")
+	}
+	if len(deployment.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("deployment has %d containers", len(deployment.Spec.Template.Spec.Containers))
+	}
+	mounted := false
+	for _, mount := range deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+		mounted = mounted || mount.Name == "signing" && mount.MountPath == signingPath && mount.ReadOnly
+	}
+	volumeFound := false
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		volumeFound = volumeFound || volume.Name == "signing" && volume.Secret.SecretName == signingSecret.Metadata.Name && volume.Secret.DefaultMode == 0o440
+	}
+	if !mounted || !volumeFound || deployment.Spec.Template.Spec.SecurityContext.FSGroup == 0 {
+		t.Fatalf("signing Secret mount invalid: mounted=%t volume_found=%t fs_group=%d", mounted, volumeFound, deployment.Spec.Template.Spec.SecurityContext.FSGroup)
+	}
+}
+
 func TestProductionMigrationJobUsesApplicationConfigMap(t *testing.T) {
 	configMap := deploymentManifest(t, "../../deployments/kubernetes.yaml", "ConfigMap")
 	secret := deploymentManifest(t, "../../deployments/secret.example.yaml", "Secret")
@@ -172,16 +218,20 @@ func TestProductionMigrationJobUsesApplicationConfigMap(t *testing.T) {
 }
 
 func deploymentManifest(t *testing.T, path, kind string) deploymentConfigManifest {
+	return deploymentManifestNamed(t, path, kind, "")
+}
+
+func deploymentManifestNamed(t *testing.T, path, kind, name string) deploymentConfigManifest {
 	t.Helper()
 	file, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = file.Close() }()
-	return decodeDeploymentManifest(t, file, kind)
+	return decodeDeploymentManifest(t, file, kind, name)
 }
 
-func decodeDeploymentManifest(t *testing.T, source io.Reader, kind string) deploymentConfigManifest {
+func decodeDeploymentManifest(t *testing.T, source io.Reader, kind, name string) deploymentConfigManifest {
 	t.Helper()
 	decoder := yaml.NewDecoder(source)
 	for {
@@ -192,7 +242,7 @@ func decodeDeploymentManifest(t *testing.T, source io.Reader, kind string) deplo
 			}
 			t.Fatal(err)
 		}
-		if manifest.Kind == kind {
+		if manifest.Kind == kind && (name == "" || manifest.Metadata.Name == name) {
 			return manifest
 		}
 	}

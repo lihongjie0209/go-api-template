@@ -971,6 +971,9 @@ deleted_by text
   provisioning commands in sync. Test the manifest contract locally.
 - Give each environment its own gateway namespace before granting it the
   matching label, so gateway placement does not bridge environments.
+- Mount asymmetric JWT signing keys from a dedicated read-only Secret volume;
+  do not inject private PEM material through `envFrom`. Keep the configured
+  key-file path, Secret key, volume mount, and non-root read permissions aligned.
 
 ## Shared-component review
 

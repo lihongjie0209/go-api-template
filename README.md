@@ -68,21 +68,21 @@ After unit and integration tests pass, main-branch pushes publish `main` and `sh
 
 Generated services publish to their configured `--image` repository. GHCR uses `GITHUB_TOKEN` by default; for another registry, set the `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` GitHub Actions secrets before pushing.
 
-The deployment baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Its image tag is deliberately a non-release placeholder. Take the complete `Verified image` reference from a successful CI container job. Render that digest into the staging namespace first, using staging-only database, Redis, NATS, identity, and TLS credentials. The `staging` profile has the same fail-closed controls as production; the `test` profile is reserved for isolated unit tests. Use `deployments/secret.example.yaml` as the field reference for the two staging Secrets:
+The deployment baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Its image tag is deliberately a non-release placeholder. Take the complete `Verified image` reference from a successful CI container job. Render that digest into the staging namespace first, using staging-only database, Redis, NATS, identity, and TLS credentials. The `staging` profile has the same fail-closed controls as production; the `test` profile is reserved for isolated unit tests. Use `deployments/secret.example.yaml` as the field reference for the three staging Secrets:
 
 ```bash
 set -euo pipefail
 export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
 kubectl create namespace microservices-staging --dry-run=client -o yaml | kubectl apply -f -
 kubectl label namespace microservices-staging platform-environment=staging --overwrite
-# Provision both Secrets in microservices-staging with staging-only values here.
+# Provision the application, TLS, and signing Secrets in microservices-staging with staging-only values here.
 staging_job=$(sh scripts/render-deployment-manifest.sh migration "$IMAGE_REF" staging | kubectl create -f - -o name)
 kubectl wait --namespace microservices-staging --for=condition=complete "$staging_job" --timeout=5m
 sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" staging | kubectl apply -f -
 kubectl rollout status --namespace microservices-staging deployment/go-api-template --timeout=5m
 ```
 
-The rollout requires `/ready` to pass against the staging dependencies. Run the service's HTTP/gRPC smoke tests there before promoting the **same** `IMAGE_REF` to production. Create the production Secret outside Git using `deployments/secret.example.yaml` as a field reference:
+The rollout requires `/ready` to pass against the staging dependencies. Run the service's HTTP/gRPC smoke tests there before promoting the **same** `IMAGE_REF` to production. Create the production Secrets outside Git using `deployments/secret.example.yaml` as a field reference:
 
 ```bash
 set -euo pipefail
@@ -95,13 +95,14 @@ kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_REDIS_ADDRESS='redis:6379' \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
   --from-literal=APP_JWT_KEY_ID='production-2026-01' \
-  --from-file=APP_JWT_PRIVATE_KEY='/secure/path/jwt-private.pem' \
   --from-literal=APP_AUTH_JWKS_URL='https://identity.example.com/.well-known/jwks.json' \
   --from-literal=APP_SECURITY_LOG_HASH_KEY='replace-with-at-least-32-random-bytes'
 kubectl create secret generic go-api-template-tls --namespace microservices \
   --from-file=grpc-tls.crt='/secure/path/grpc-tls.crt' \
   --from-file=grpc-tls.key='/secure/path/grpc-tls.key' \
   --from-file=authorization-ca.crt='/secure/path/authorization-ca.crt'
+kubectl create secret generic go-api-template-signing --namespace microservices \
+  --from-file=jwt-private.pem='/secure/path/jwt-private.pem'
 migration_job=$(sh scripts/render-deployment-manifest.sh migration "$IMAGE_REF" | kubectl create -f - -o name)
 kubectl wait --namespace microservices --for=condition=complete "$migration_job" --timeout=5m
 sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" | kubectl apply -f -

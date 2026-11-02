@@ -35,6 +35,7 @@ data:
   APP_MIGRATION_PATH: /app/migrations/postgres
   APP_MIGRATION_TABLE: go_api_template_schema_migrations
   APP_OUTBOUND_GRPC_AUTHORIZATION_TLS_CA_FILE: /run/secrets/tls/authorization-ca.crt
+  APP_JWT_PRIVATE_KEY_FILE: /run/secrets/signing/jwt-private.pem
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -123,6 +124,9 @@ spec:
             - name: tls
               mountPath: /run/secrets/tls
               readOnly: true
+            - name: signing
+              mountPath: /run/secrets/signing
+              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -146,6 +150,10 @@ spec:
         - name: tls
           secret:
             secretName: go-api-template-tls
+            defaultMode: 0440
+        - name: signing
+          secret:
+            secretName: go-api-template-signing
             defaultMode: 0440
 ---
 apiVersion: v1
