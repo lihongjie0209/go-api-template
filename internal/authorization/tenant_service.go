@@ -30,6 +30,7 @@ var (
 	ErrTenantAuthorizationConflict     = errors.New("tenant authorization conflict")
 	ErrTenantAuthorizationStaleVersion = errors.New("tenant authorization stale version")
 	errEffectivePermissionLimit        = errors.New("effective permission set exceeds maximum")
+	errAuthorizationLinkLimit          = errors.New("authorization link set exceeds maximum")
 	roleCodePattern                    = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 )
 
@@ -38,7 +39,10 @@ const (
 	maxRoleNameLength        = 256
 	maxRoleDescriptionLength = 4096
 	maxRoleKeywordLength     = 256
+	maxAuthorizationLinks    = 1000
 )
+
+var authorizationLinkLimitClause = fmt.Sprintf(" LIMIT %d", maxAuthorizationLinks+1)
 
 type TenantRole struct {
 	ID            string    `db:"id" json:"id"`
@@ -297,9 +301,12 @@ func (s *TenantAuthorizationService) TenantPermissionCeiling(ctx context.Context
 		return nil, err
 	}
 	permissions := []TenantCeilingPermission{}
-	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action,(` + tenantGrantablePermissionWhere + `) AS assignable FROM tenant_permission_grants g JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE g.tenant_id=? AND g.deleted_at IS NULL ORDER BY p.permission_key,p.id`
+	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action,(` + tenantGrantablePermissionWhere + `) AS assignable FROM tenant_permission_grants g JOIN permissions p ON p.id=g.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE g.tenant_id=? AND g.deleted_at IS NULL ORDER BY p.permission_key,p.id` + authorizationLinkLimitClause
 	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), tenantID); err != nil {
 		return nil, fmt.Errorf("list tenant permission ceiling: %w", err)
+	}
+	if len(permissions) > maxAuthorizationLinks {
+		return nil, errAuthorizationLinkLimit
 	}
 	return permissions, nil
 }
@@ -1139,9 +1146,12 @@ func (s *TenantAuthorizationService) RoleDeleteTarget(ctx context.Context, roleI
 
 func (s *TenantAuthorizationService) rolePermissionViews(ctx context.Context, tenantID, roleID string) ([]PermissionView, error) {
 	permissions := []PermissionView{}
-	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action,p.status FROM tenant_role_permissions rp JOIN permissions p ON p.id=rp.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id=? AND rp.deleted_at IS NULL ORDER BY p.permission_key`
+	query := `SELECT p.id,p.permission_key,p.name,p.resource,p.action,p.status FROM tenant_role_permissions rp JOIN permissions p ON p.id=rp.permission_id AND p.node_type='permission' AND p.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id=? AND rp.deleted_at IS NULL ORDER BY p.permission_key` + authorizationLinkLimitClause
 	if err := s.db.SelectContext(ctx, &permissions, s.db.Rebind(query), tenantID, roleID); err != nil {
 		return nil, err
+	}
+	if len(permissions) > maxAuthorizationLinks {
+		return nil, errAuthorizationLinkLimit
 	}
 	return permissions, nil
 }
@@ -1168,9 +1178,12 @@ func (s *TenantAuthorizationService) MemberRoles(ctx context.Context, membership
 		return nil, ErrTenantAuthorizationNotFound
 	}
 	roles := []MemberRoleView{}
-	query := `SELECT r.id,r.code,r.name,r.status FROM tenant_member_roles mr JOIN tenant_roles r ON r.tenant_id=mr.tenant_id AND r.id=mr.role_id AND r.deleted_at IS NULL WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL ORDER BY r.name,r.id`
+	query := `SELECT r.id,r.code,r.name,r.status FROM tenant_member_roles mr JOIN tenant_roles r ON r.tenant_id=mr.tenant_id AND r.id=mr.role_id AND r.deleted_at IS NULL WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL ORDER BY r.name,r.id` + authorizationLinkLimitClause
 	if err := s.db.SelectContext(ctx, &roles, s.db.Rebind(query), actor.TenantID, membershipID); err != nil {
 		return nil, err
+	}
+	if len(roles) > maxAuthorizationLinks {
+		return nil, errAuthorizationLinkLimit
 	}
 	return roles, nil
 }
@@ -1202,9 +1215,6 @@ func (s *TenantAuthorizationService) MemberRoleAssignmentTarget(ctx context.Cont
 	roles, err := s.MemberRoles(ctx, target.ID)
 	if err != nil {
 		return MemberRoleAssignmentTarget{}, err
-	}
-	if len(roles) > 1000 {
-		return MemberRoleAssignmentTarget{}, ErrTenantAuthorizationInvalid
 	}
 	roleIDs := make([]string, 0, len(roles))
 	for _, role := range roles {
@@ -1378,7 +1388,7 @@ func tenantActor(ctx context.Context) (platformprincipal.Principal, error) {
 }
 
 func normalizeIDs(ids []string) ([]string, error) {
-	if len(ids) > 1000 {
+	if len(ids) > maxAuthorizationLinks {
 		return nil, ErrTenantAuthorizationInvalid
 	}
 	set := make(map[string]struct{}, len(ids))
@@ -1456,9 +1466,12 @@ func (s *TenantAuthorizationService) ensureAssignable(ctx context.Context, tx *s
 
 func (s *TenantAuthorizationService) ensureRoleAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, roleID string) error {
 	permissions := []string{}
-	query := `SELECT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL`
+	query := `SELECT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL` + authorizationLinkLimitClause
 	if err := tx.SelectContext(ctx, &permissions, tx.Rebind(query), actor.TenantID, roleID); err != nil {
 		return err
+	}
+	if len(permissions) > maxAuthorizationLinks {
+		return errAuthorizationLinkLimit
 	}
 	var count int
 	if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT count(*) FROM tenant_roles WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), actor.TenantID, roleID); err != nil {
@@ -1474,13 +1487,16 @@ func (s *TenantAuthorizationService) ensureRolesAssignable(ctx context.Context, 
 	if len(roleIDs) == 0 {
 		return nil
 	}
-	query, args, inErr := sqlx.In(`SELECT DISTINCT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id IN (?) AND deleted_at IS NULL`, actor.TenantID, roleIDs)
+	query, args, inErr := sqlx.In(`SELECT DISTINCT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id IN (?) AND deleted_at IS NULL`+authorizationLinkLimitClause, actor.TenantID, roleIDs)
 	if inErr != nil {
 		return fmt.Errorf("build role permission query: %w", inErr)
 	}
 	permissions := []string{}
 	if err := tx.SelectContext(ctx, &permissions, tx.Rebind(query), args...); err != nil {
 		return err
+	}
+	if len(permissions) > maxAuthorizationLinks {
+		return errAuthorizationLinkLimit
 	}
 	var roleCount int
 	countQuery, countArgs, inErr := sqlx.In(`SELECT count(*) FROM tenant_roles WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL`, actor.TenantID, roleIDs)

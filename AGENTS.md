@@ -360,13 +360,15 @@ TTL, and invalidation for its own data.
   administration must apply the same database row cap and reject overflow
   before granting anything. Ceiling shrink must update affected role versions
   with tenant-scoped SQL predicates without materializing every role ID or
-  constructing an unbounded `IN` list. The data-policy revision and every
-  row-action decision in a batch must likewise use one pinned immutable policy
-  snapshot, even during a concurrent refresh; a failed authoritative grant read fails
-  closed. A failed grant read or data-policy pin must invalidate any grant
-  snapshot already in the returned request Context, so callers cannot reuse
-  stale grants after an error. An empty grant or data-policy revision is
-  unavailable, not a valid
+  constructing an unbounded `IN` list. Tenant ceiling, role-permission and
+  member-role list reads must use a database row limit matching the maximum
+  allowed write size; over-limit data fails closed before authorization or
+  presentation. The data-policy revision and every row-action decision in a
+  batch must likewise use one pinned immutable policy snapshot, even during a
+  concurrent refresh; a failed authoritative grant read fails closed. A failed
+  grant read or data-policy pin must invalidate any grant snapshot already in
+  the returned request Context, so callers cannot reuse stale grants after an
+  error. An empty grant or data-policy revision is unavailable, not a valid
   capability hint. Authorization and capability revision evaluation must reject an
   already-canceled or expired Context even when an in-memory grant snapshot
   or system/principal shortcut could otherwise return allow. A missing

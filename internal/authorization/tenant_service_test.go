@@ -23,6 +23,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func repeatedAuthorizationRows(columns []string, values ...driver.Value) *sqlmock.Rows {
+	rows := sqlmock.NewRows(columns)
+	for range maxAuthorizationLinks + 1 {
+		rows.AddRow(values...)
+	}
+	return rows
+}
+
 func TestTenantAuthorizationLockDistinguishesCommitFromReleaseFailure(t *testing.T) {
 	t.Parallel()
 	callbackFailure := errors.New("transaction rolled back")
@@ -515,6 +523,21 @@ func TestTenantPermissionCeilingReturnsAuthoritativePlatformGrantSet(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestTenantPermissionCeilingRejectsOversizedResult(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "platform-user", Type: platformprincipal.TypeUser})
+	mock.ExpectQuery(`SELECT name FROM tenants WHERE id=\? AND deleted_at IS NULL`).WithArgs("tenant-1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Tenant One"))
+	mock.ExpectQuery(`SELECT p.id,p.permission_key,p.name,p.resource,p.action,.*FROM tenant_permission_grants g.*LIMIT 1001`).WithArgs("tenant-1").WillReturnRows(repeatedAuthorizationRows(
+		[]string{"id", "permission_key", "name", "resource", "action", "assignable"}, "permission", "tenant.member.read", "Read", "tenant.member", "read", true,
+	))
+	_, err = service.TenantPermissionCeiling(ctx, "tenant-1")
+	require.ErrorIs(t, err, errAuthorizationLinkLimit)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestTenantPermissionCeilingRejectsTenantPrincipalBeforeDatabase(t *testing.T) {
 	t.Parallel()
 	service := &TenantAuthorizationService{}
@@ -784,6 +807,36 @@ func TestEnsureRolesAssignablePropagatesRoleCountFailure(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestRoleAssignmentChecksRejectOversizedPermissions(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		query string
+		check func(context.Context, *sqlx.Tx, platformprincipal.Principal) error
+	}{
+		{name: "one role", query: `SELECT permission_id FROM tenant_role_permissions.*LIMIT 1001`, check: func(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal) error {
+			return (&TenantAuthorizationService{}).ensureRoleAssignable(ctx, tx, actor, "role-1")
+		}},
+		{name: "multiple roles", query: `SELECT DISTINCT permission_id FROM tenant_role_permissions.*LIMIT 1001`, check: func(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal) error {
+			return (&TenantAuthorizationService{}).ensureRolesAssignable(ctx, tx, actor, []string{"role-1"})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectBegin()
+			tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+			require.NoError(t, err)
+			mock.ExpectQuery(test.query).WithArgs("tenant-1", "role-1").WillReturnRows(repeatedAuthorizationRows([]string{"permission_id"}, "permission"))
+			actor := platformprincipal.Principal{TenantID: "tenant-1", MembershipID: "member-1"}
+			require.ErrorIs(t, test.check(t.Context(), tx, actor), errAuthorizationLinkLimit)
+			mock.ExpectRollback()
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestSetRolePermissionsCanRemoveNoLongerAssignablePermission(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -982,6 +1035,34 @@ func TestMemberRolesReturnsDisplayFieldsAndScopesTenant(t *testing.T) {
 	roles, err := service.MemberRoles(ctx, "member-target")
 	require.NoError(t, err)
 	require.Equal(t, []MemberRoleView{{ID: "role-1", Code: "auditor", Name: "审计员", Status: "disabled"}}, roles)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMemberRolesRejectsOversizedResult(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-actor"})
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships tm WHERE tm.tenant_id=`).WithArgs("tenant-1", "member-target").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT r.id,r.code,r.name,r.status FROM tenant_member_roles.*LIMIT 1001`).WithArgs("tenant-1", "member-target").WillReturnRows(repeatedAuthorizationRows(
+		[]string{"id", "code", "name", "status"}, "role-1", "auditor", "Auditor", "active",
+	))
+	_, err = service.MemberRoles(ctx, "member-target")
+	require.ErrorIs(t, err, errAuthorizationLinkLimit)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRolePermissionViewsRejectOversizedResult(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	mock.ExpectQuery(`SELECT p.id,p.permission_key,p.name,p.resource,p.action,p.status FROM tenant_role_permissions.*LIMIT 1001`).WithArgs("tenant-1", "role-1").WillReturnRows(repeatedAuthorizationRows(
+		[]string{"id", "permission_key", "name", "resource", "action", "status"}, "permission", "tenant.member.read", "Read", "tenant.member", "read", "active",
+	))
+	_, err = service.rolePermissionViews(t.Context(), "tenant-1", "role-1")
+	require.ErrorIs(t, err, errAuthorizationLinkLimit)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
