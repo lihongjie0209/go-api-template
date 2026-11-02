@@ -12,6 +12,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
@@ -83,4 +84,21 @@ func TestTenantAuthorizationStaleVersionUsesGlobalErrorCode(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 	require.Equal(t, apperror.CodeStaleVersion, response.Code)
+}
+
+func TestTenantAuthorizationSerializationFailureUsesGlobalConflictCode(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/tenant-roles/delete", strings.NewReader(`{}`))
+	handler := NewTenantAuthorizationHandler(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler.fail(context, &pgconn.PgError{Code: "40001", Message: "sensitive database detail"})
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	var response struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, apperror.CodeConflict, response.Code)
+	require.Equal(t, "tenant authorization conflict", response.Message)
+	require.NotContains(t, recorder.Body.String(), "sensitive database detail")
 }

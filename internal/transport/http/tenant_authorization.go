@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
 	"github.com/lihongjie0209/go-api-template/internal/authorization"
+	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 )
 
@@ -727,6 +728,8 @@ func (h *TenantAuthorizationHandler) fail(c *gin.Context, err error) {
 	case errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion):
 		Fail(c, h.logger, apperror.StaleVersion(err))
 	case errors.Is(err, authorization.ErrTenantAuthorizationConflict):
+		Fail(c, h.logger, apperror.Conflict("tenant authorization conflict", err))
+	case database.IsRetryableTransaction(err):
 		Fail(c, h.logger, apperror.Conflict("tenant authorization conflict", err))
 	default:
 		Fail(c, h.logger, apperror.Internal(err))

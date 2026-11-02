@@ -6,7 +6,7 @@ responses, and registered Resource/Action descriptors.
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | At most 1,000 distinct requested IDs; an existing active set over 1,000 fails closed instead of issuing an unbounded mutation. Existing conflict and invalid-input codes remain. |
+| Contract | At most 1,000 distinct requested IDs; an existing active set over 1,000 fails closed instead of issuing an unbounded mutation. Existing conflict and invalid-input codes remain. Database serialization/deadlock aborts map to the global conflict response after rollback, without exposing driver details. |
 | Authentication | Existing JWT tenant principals and platform-admin routes remain. |
 | Authorization | Existing permission ceilings, delegation, tenant ID predicates, and object data scopes remain authoritative. |
 | Operation log | Existing set command and bounded IDs/counts are recorded atomically. |
