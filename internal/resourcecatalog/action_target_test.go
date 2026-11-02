@@ -3,6 +3,7 @@ package resourcecatalog
 import (
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestCatalogActionTargetsOnlyAllowManualDefinitions(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
-	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil, nil)
+	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil, catalogActorResolver{err: errors.New("identity unavailable")})
 	resourceRows := func(source string) *sqlmock.Rows {
 		return sqlmock.NewRows([]string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
 			AddRow(resourceID, "warehouse.item", "库存物料", "业务资源", "tenant", source, "active", now, "admin", now, "admin", 4)

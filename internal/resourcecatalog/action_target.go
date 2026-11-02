@@ -51,7 +51,7 @@ func (s *Service) ResourceUpdateTarget(ctx context.Context, id string) (Resource
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return ResourceUpdateTarget{}, err
 	}
-	row, err := s.GetResource(ctx, id)
+	row, err := s.getResourceRaw(ctx, id)
 	if err != nil {
 		return ResourceUpdateTarget{}, err
 	}
@@ -65,7 +65,7 @@ func (s *Service) ResourceDeleteTarget(ctx context.Context, id string) (Resource
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return ResourceDeleteTarget{}, err
 	}
-	row, err := s.GetResource(ctx, id)
+	row, err := s.getResourceRaw(ctx, id)
 	if err != nil {
 		return ResourceDeleteTarget{}, err
 	}
@@ -79,7 +79,7 @@ func (s *Service) ActionUpdateTarget(ctx context.Context, id string) (ActionUpda
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return ActionUpdateTarget{}, err
 	}
-	row, err := s.GetAction(ctx, id)
+	row, err := s.getActionRaw(ctx, id)
 	if err != nil {
 		return ActionUpdateTarget{}, err
 	}
@@ -93,7 +93,7 @@ func (s *Service) ActionDeleteTarget(ctx context.Context, id string) (ActionDele
 	if _, err := platformprincipal.Require(ctx); err != nil {
 		return ActionDeleteTarget{}, err
 	}
-	row, err := s.GetAction(ctx, id)
+	row, err := s.getActionRaw(ctx, id)
 	if err != nil {
 		return ActionDeleteTarget{}, err
 	}

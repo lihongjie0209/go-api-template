@@ -164,6 +164,18 @@ func (s *Service) CreateResource(ctx context.Context, input ResourceInput) (Reso
 }
 
 func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) {
+	result, err := s.getResourceRaw(ctx, id)
+	if err != nil {
+		return Resource{}, err
+	}
+	rows := []Resource{result}
+	if err := s.presentResources(ctx, rows); err != nil {
+		return Resource{}, err
+	}
+	return rows[0], nil
+}
+
+func (s *Service) getResourceRaw(ctx context.Context, id string) (Resource, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return Resource{}, ErrInvalid
 	}
@@ -175,11 +187,7 @@ func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) 
 	if err != nil {
 		return Resource{}, err
 	}
-	rows := []Resource{result}
-	if err := s.presentResources(ctx, rows); err != nil {
-		return Resource{}, err
-	}
-	return rows[0], nil
+	return result, nil
 }
 
 func (s *Service) PageResources(ctx context.Context, input PageInput) (ResourcePage, error) {
@@ -303,6 +311,18 @@ func (s *Service) CreateAction(ctx context.Context, input ActionInput) (Action, 
 }
 
 func (s *Service) GetAction(ctx context.Context, id string) (Action, error) {
+	row, err := s.getActionRaw(ctx, id)
+	if err != nil {
+		return Action{}, err
+	}
+	rows := []Action{row}
+	if err := s.presentActions(ctx, rows); err != nil {
+		return Action{}, err
+	}
+	return rows[0], nil
+}
+
+func (s *Service) getActionRaw(ctx context.Context, id string) (Action, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return Action{}, ErrInvalid
 	}
@@ -314,11 +334,7 @@ func (s *Service) GetAction(ctx context.Context, id string) (Action, error) {
 	if err != nil {
 		return Action{}, err
 	}
-	rows := []Action{row}
-	if err := s.presentActions(ctx, rows); err != nil {
-		return Action{}, err
-	}
-	return rows[0], nil
+	return row, nil
 }
 
 func (s *Service) PageActions(ctx context.Context, input PageInput) (ActionPage, error) {
