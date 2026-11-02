@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,8 +131,20 @@ func TestContextService_SwitchRecordsRejectedAttemptAtServiceBoundary(t *testing
 	require.False(t, entry.Succeeded)
 }
 
+func TestContextService_SwitchBoundsRejectedTargetBeforeSecurityAudit(t *testing.T) {
+	security := &transactionalSecurityRecorderStub{}
+	service := &ContextService{security: security}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, SessionID: "session-1"})
+	target := strings.Repeat("x", maxTenantIDLength+1)
+	_, err := service.Switch(ctx, target)
+	require.ErrorIs(t, err, ErrForbidden)
+	require.Len(t, security.standalone, 1)
+	require.Empty(t, security.standalone[0].TenantID)
+	require.False(t, security.standalone[0].Succeeded)
+}
+
 func TestContextService_SwitchFailsClosedWhenSecurityAuditIsUnavailable(t *testing.T) {
-	wantErr := errors.New("security store unavailable")
+	wantErr := errors.New("security store password=secret-value unavailable")
 	security := &transactionalSecurityRecorderStub{recordErr: wantErr}
 	service := &ContextService{security: security}
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "service-1", Type: platformprincipal.TypeServiceAccount})
@@ -139,6 +152,7 @@ func TestContextService_SwitchFailsClosedWhenSecurityAuditIsUnavailable(t *testi
 	_, err := service.Switch(ctx, "tenant-1")
 	require.ErrorIs(t, err, ErrSecurityUnavailable)
 	require.NotErrorIs(t, err, ErrForbidden)
+	require.NotContains(t, err.Error(), "secret-value")
 }
 
 func TestContextService_SwitchDoesNotReturnIssuedTokenWhenAuditFails(t *testing.T) {

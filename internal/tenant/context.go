@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
@@ -84,13 +85,17 @@ func (s *ContextService) recordSwitch(ctx context.Context, actor platformprincip
 	if s.security == nil {
 		return switchErr
 	}
-	entry := securitylog.Entry{EventType: securitylog.EventTenantContextSwitch, SubjectID: actor.ID, SubjectType: string(actor.Type), TenantID: tenantID, SessionID: actor.SessionID, Succeeded: switchErr == nil}
+	auditTenantID := tenantID
+	if len(auditTenantID) > maxTenantIDLength || !utf8.ValidString(auditTenantID) {
+		auditTenantID = ""
+	}
+	entry := securitylog.Entry{EventType: securitylog.EventTenantContextSwitch, SubjectID: actor.ID, SubjectType: string(actor.Type), TenantID: auditTenantID, SessionID: actor.SessionID, Succeeded: switchErr == nil}
 	if switchErr != nil {
 		entry.ErrorCode = "tenant_context_switch_failed"
 		entry.ErrorMessage = "tenant context switch failed"
 	}
 	if err := s.security.Record(ctx, entry); err != nil && s.security.FailClosed() {
-		return fmt.Errorf("%w: %v", ErrSecurityUnavailable, err)
+		return ErrSecurityUnavailable
 	}
 	return switchErr
 }
