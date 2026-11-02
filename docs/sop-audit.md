@@ -24,6 +24,10 @@ batch covers transport startup privacy, independent lifecycle budgets, SQL
 tracing verification, CLI error privacy, application/tenant context boundaries
 and MySQL audit-actor pool safety. Local unit tests pass; CI validation is
 pending.
+Subsequent local lifecycle hardening classifies event-bus and scheduler startup
+errors before Fx can log them. Scheduler tests cover invalid timezone and sample
+specification values plus a database error during the initial refresh; these
+changes are awaiting the next batched CI push.
 
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,

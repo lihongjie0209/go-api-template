@@ -35,6 +35,9 @@ var ErrJobPanicked = errors.New("job_panic")
 var errJobExecutionFailed = errors.New("scheduled_job_failed")
 var errSchedulerOperationFailed = errors.New("scheduler_operation_failed")
 var errSchedulerConsumerFailed = errors.New("scheduler_consumer_failed")
+var errSchedulerTimezoneInvalid = errors.New("scheduler_timezone_invalid")
+var errSchedulerSampleSpecInvalid = errors.New("scheduler_sample_spec_invalid")
+var errSchedulerStartupUnavailable = errors.New("scheduler_startup_unavailable")
 var errTooManyActiveJobs = errors.New("too many active scheduled jobs")
 var errActiveJobPayloadBudget = errors.New("active scheduled job payload budget exceeded")
 
@@ -64,7 +67,7 @@ type Manager struct {
 func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Transactor, locker cache.Locker, metrics *observability.Metrics, logger *slog.Logger, handlers *HandlerRegistry, operations operationlog.TransactionalRecorder) (*Manager, error) {
 	location, err := time.LoadLocation(cfg.Cron.Timezone)
 	if err != nil {
-		return nil, err
+		return nil, observability.SafeError(err, errSchedulerTimezoneInvalid)
 	}
 	runner := cron.New(cron.WithLocation(location), cron.WithSeconds(), cron.WithChain(cron.Recover(safeCronLogger{logger}), cron.SkipIfStillRunning(safeCronLogger{logger})))
 	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
@@ -85,7 +88,7 @@ func NewManager(lc fx.Lifecycle, cfg config.Config, db *sqlx.DB, tx *database.Tr
 			metrics.ObserveCron("sample", status, started)
 		}); err != nil {
 			cancelScheduler()
-			return nil, err
+			return nil, observability.SafeError(err, errSchedulerSampleSpecInvalid)
 		}
 	}
 	lc.Append(fx.Hook{OnStart: manager.start, OnStop: manager.stop})
@@ -101,7 +104,7 @@ func (m *Manager) start(ctx context.Context) error {
 		if m.cfg.Database.Enabled {
 			if err := m.Refresh(ctx); err != nil {
 				m.cancel()
-				return err
+				return observability.SafeError(err, errSchedulerStartupUnavailable)
 			}
 		}
 		if err := ctx.Err(); err != nil {

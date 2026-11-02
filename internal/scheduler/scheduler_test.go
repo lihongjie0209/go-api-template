@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -16,12 +17,58 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/robfig/cron/v3"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.uber.org/fx"
 )
+
+type testLifecycle struct{}
+
+func (testLifecycle) Append(fx.Hook) {}
+
+func TestManagerConstructorRedactsInvalidTimezone(t *testing.T) {
+	_, err := NewManager(testLifecycle{}, config.Config{Cron: config.Cron{Timezone: "secret-value"}}, nil, nil, nil, nil, nil, nil, nil)
+	if reason, ok := observability.SafeReason(err); !ok || reason != "scheduler_timezone_invalid" || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("NewManager() error=%v reason=%q, want classified redacted timezone failure", err, reason)
+	}
+}
+
+func TestManagerConstructorRedactsInvalidSampleSpec(t *testing.T) {
+	_, err := NewManager(testLifecycle{}, config.Config{Cron: config.Cron{Timezone: "UTC", SampleSpec: "secret-value"}}, nil, nil, nil, nil, nil, nil, nil)
+	if reason, ok := observability.SafeReason(err); !ok || reason != "scheduler_sample_spec_invalid" || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("NewManager() error=%v reason=%q, want classified redacted sample-spec failure", err, reason)
+	}
+}
+
+func TestManagerStartRedactsInitialRefreshError(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs WHERE status='active'`).WillReturnError(errors.New("secret-value"))
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
+	defer cancelScheduler()
+	manager := &Manager{
+		cfg:    config.Config{Cron: config.Cron{Enabled: true}, Database: config.Database{Enabled: true}},
+		db:     sqlx.NewDb(raw, "sqlmock"),
+		cancel: cancelScheduler,
+	}
+	err = manager.start(t.Context())
+	if reason, ok := observability.SafeReason(err); !ok || reason != "scheduler_startup_unavailable" || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("start() error=%v reason=%q, want classified redacted refresh failure", err, reason)
+	}
+	if schedulerCtx.Err() != context.Canceled {
+		t.Fatal("failed startup left scheduler context active")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type lockerStub struct {
 	mutex    cache.Lock
