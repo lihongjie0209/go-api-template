@@ -917,7 +917,7 @@ func (s *Service) Query(ctx context.Context, q Query) (Result, error) {
 		}
 		result, err = s.providers.Query(ctx, q)
 		if err != nil {
-			err = fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
+			err = ErrProviderUnavailable
 		}
 		if err == nil && (result.Code != d.Code || result.Type != d.Kind || !validProviderResult(result, q, maxResultNodes)) {
 			err = ErrProviderUnavailable

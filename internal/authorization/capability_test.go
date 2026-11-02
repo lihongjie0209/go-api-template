@@ -233,18 +233,20 @@ func TestValidateCapabilityRowsRejectsCrossTenantAndUnscopedRows(t *testing.T) {
 }
 
 func TestCapabilityServiceFailsClosedWhenDecisionIsUnavailable(t *testing.T) {
+	const secret = "password=capability-test-secret"
 	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
 	require.NoError(t, err)
 	endpoints, err := accesscontrol.NewEndpointRegistry(resources, []accesscontrol.Endpoint{{Transport: accesscontrol.TransportHTTP, Operation: "POST /api/v1/users/update", Authentication: accesscontrol.AuthenticationJWT, Resource: "identity.user", Action: "update", DataPermission: accesscontrol.DataPermissionNone, DataPermissionReason: "platform resource"}})
 	require.NoError(t, err)
 	service := newCapabilityService(capabilityAuthorizerFunc(func(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
-		return platformauthz.ErrDecisionUnavailable
+		return fmt.Errorf("%w: %s", platformauthz.ErrDecisionUnavailable, secret)
 	}), nil, resources, nil, nil, time.Now)
 	service.SetEndpointRegistry(endpoints)
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 
 	_, err = service.Evaluate(ctx, []CapabilityRequest{{Key: "user.update", Resource: "identity.user", Action: "update"}})
 	require.True(t, errors.Is(err, ErrCapabilityUnavailable))
+	require.NotContains(t, err.Error(), secret)
 }
 
 func TestCapabilityServiceReturnsCombinedRevisionAndFailsClosedOnSnapshotError(t *testing.T) {
@@ -260,9 +262,11 @@ func TestCapabilityServiceReturnsCombinedRevisionAndFailsClosedOnSnapshotError(t
 	require.NoError(t, err)
 	require.Equal(t, "combined-1", result.Revision)
 
-	service.revisions = capabilityRevisionStub{err: errors.New("database unavailable")}
+	const secret = "password=revision-test-secret"
+	service.revisions = capabilityRevisionStub{err: errors.New(secret)}
 	_, err = service.Evaluate(ctx, requests)
 	require.ErrorIs(t, err, ErrCapabilityUnavailable)
+	require.NotContains(t, err.Error(), secret)
 }
 
 func TestCapabilityServiceRejectsInvalidBatchBeforeReadingGrants(t *testing.T) {

@@ -671,6 +671,33 @@ type testProvider struct{}
 func (testProvider) Query(context.Context, Query) (Result, error) {
 	return Result{Code: "identity.user", Type: KindEnum}, nil
 }
+
+type failingProvider struct{}
+
+func (failingProvider) Query(context.Context, Query) (Result, error) {
+	return Result{}, errors.New("password=dictionary-test-secret")
+}
+
+func TestProviderQueryDoesNotExposeDependencyError(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, raw.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	mock.ExpectQuery(`SELECT .* FROM dictionary_definitions WHERE lower\(dictionary_code\)=\? AND status='active'`).
+		WithArgs("identity.user").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "dictionary_code", "name", "dictionary_type", "source_type", "version", "extension"}).
+			AddRow(uuidString(1), "identity.user", "Users", KindEnum, SourceProvider, 1, []byte(`{}`)))
+	mock.ExpectClose()
+	registry := NewProviderRegistry()
+	require.NoError(t, registry.Register("identity.user", failingProvider{}))
+	service := &Service{db: sqlx.NewDb(raw, "sqlmock"), providers: registry}
+	_, err = service.Query(t.Context(), Query{Code: "identity.user"})
+	require.ErrorIs(t, err, ErrProviderUnavailable)
+	require.NotContains(t, err.Error(), "dictionary-test-secret")
+}
 func TestProviderRegistry(t *testing.T) {
 	t.Parallel()
 	r := NewProviderRegistry()

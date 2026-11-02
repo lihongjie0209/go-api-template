@@ -3,7 +3,6 @@ package authorization
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -223,7 +222,7 @@ func (s *CapabilityService) EvaluateRows(ctx context.Context, resource string, a
 	}
 	decisions, err := s.dataScopes.EvaluateRowActions(ctx, resource, allowedActions, attributes)
 	if err != nil {
-		return RowCapabilityResult{}, fmt.Errorf("%w: %v", ErrCapabilityUnavailable, err)
+		return RowCapabilityResult{}, ErrCapabilityUnavailable
 	}
 	for _, action := range allowedActions {
 		for index, value := range decisions[action] {
@@ -243,7 +242,7 @@ func (s *CapabilityService) resultMetadata(ctx context.Context, principal platfo
 		var err error
 		ctx, revision, err = s.revisions.ForRequest(ctx, principal)
 		if err != nil {
-			return ctx, CapabilityResult{}, fmt.Errorf("%w: %v", ErrCapabilityUnavailable, err)
+			return ctx, CapabilityResult{}, ErrCapabilityUnavailable
 		}
 	}
 	return ctx, CapabilityResult{Revision: revision, ExpiresAt: presentation.Time(now().Add(30 * time.Second))}, nil
@@ -303,7 +302,7 @@ func (s *CapabilityService) evaluateOperation(ctx context.Context, principal pla
 		case errors.Is(err, platformauthz.ErrDenied):
 			denied = true
 		default:
-			return false, fmt.Errorf("%w: %v", ErrCapabilityUnavailable, err)
+			return false, ErrCapabilityUnavailable
 		}
 	}
 	if denied {
