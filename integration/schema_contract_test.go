@@ -19,27 +19,33 @@ func assertMandatoryAuditColumns(t *testing.T, ctx context.Context, db *sqlx.DB,
 	if databaseType == "mysql" {
 		schema = "DATABASE()"
 	}
-	query := `SELECT t.table_name, c.column_name
+	query := `SELECT t.table_name, c.column_name, c.is_nullable, c.data_type
 		FROM information_schema.tables t
 		JOIN information_schema.columns c
 			ON c.table_schema=t.table_schema AND c.table_name=t.table_name
 		WHERE t.table_schema=` + schema + ` AND t.table_type='BASE TABLE'`
 	var rows []struct {
-		Table  string `db:"table_name"`
-		Column string `db:"column_name"`
+		Table    string `db:"table_name"`
+		Column   string `db:"column_name"`
+		Nullable string `db:"is_nullable"`
+		DataType string `db:"data_type"`
 	}
 	if err := db.SelectContext(ctx, &rows, query); err != nil {
 		t.Fatalf("load migrated table columns: %v", err)
 	}
-	tables := make(map[string]map[string]struct{})
+	type columnContract struct {
+		nullable string
+		dataType string
+	}
+	tables := make(map[string]map[string]columnContract)
 	for _, row := range rows {
 		if strings.EqualFold(row.Table, migrationTable) {
 			continue
 		}
 		if tables[row.Table] == nil {
-			tables[row.Table] = make(map[string]struct{})
+			tables[row.Table] = make(map[string]columnContract)
 		}
-		tables[row.Table][strings.ToLower(row.Column)] = struct{}{}
+		tables[row.Table][strings.ToLower(row.Column)] = columnContract{nullable: row.Nullable, dataType: strings.ToLower(row.DataType)}
 	}
 	if len(tables) == 0 {
 		t.Fatal("migrated schema has no business tables")
@@ -52,12 +58,38 @@ func assertMandatoryAuditColumns(t *testing.T, ctx context.Context, db *sqlx.DB,
 	slices.Sort(names)
 	for _, name := range names {
 		for _, column := range required {
-			if _, ok := tables[name][column]; !ok {
+			contract, ok := tables[name][column]
+			if !ok {
 				t.Errorf("migrated table %s is missing mandatory audit column %s", name, column)
+				continue
+			}
+			if column != "deleted_at" && column != "deleted_by" && contract.nullable != "NO" {
+				t.Errorf("migrated table %s audit column %s must be NOT NULL", name, column)
+			}
+			if (column == "deleted_at" || column == "deleted_by") && contract.nullable != "YES" {
+				t.Errorf("migrated table %s audit column %s must allow NULL", name, column)
+			}
+			expectedType := auditColumnType(databaseType, column)
+			if contract.dataType != expectedType {
+				t.Errorf("migrated table %s audit column %s has type %s, want %s", name, column, contract.dataType, expectedType)
 			}
 		}
 	}
 	assertAuditTriggers(t, ctx, db, databaseType, names)
+}
+
+func auditColumnType(databaseType, column string) string {
+	switch column {
+	case "created_at", "updated_at", "deleted_at":
+		if databaseType == "postgres" {
+			return "timestamp with time zone"
+		}
+		return "timestamp"
+	case "version":
+		return "bigint"
+	default:
+		return "text"
+	}
 }
 
 func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string, tables []string) {
