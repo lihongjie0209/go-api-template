@@ -82,6 +82,30 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	}
 }
 
+func TestGenerateCustomImageUpdatesPublishingWorkflow(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "template")
+	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.26.9\n")
+	workflow, err := os.ReadFile("../../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, source, ".github/workflows/ci.yml", string(workflow))
+	writeFixture(t, source, "deployments/app.yaml", "image: "+templateImage+":sha-0000000\n")
+	output := filepath.Join(root, "orders")
+	customImage := "registry.example.com/commerce/orders"
+	_, err = Generate(context.Background(), Options{
+		Name: "orders-service", Module: "github.com/acme/orders-service", Image: customImage,
+		Output: output, Source: source, InitGit: false, Tidy: false, GenerateCode: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, filepath.Join(output, ".github/workflows/ci.yml"), "IMAGE_NAME: "+customImage)
+	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "image: "+customImage+":sha-0000000")
+}
+
 func assertNoTemplateIdentity(t *testing.T, root string) {
 	t.Helper()
 	forbidden := []string{templateModule, templateImage, templateBufModule, templateNamespace, templateMigrationTable, templateDatabaseName, templateDatabaseSchema, templateName}

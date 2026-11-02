@@ -66,6 +66,8 @@ gRPC request messages are configurable up to 64 MiB (`grpc.max_receive_bytes`, 1
 
 After unit and integration tests pass, main-branch pushes publish `main` and `sha-*` image tags, and version-tag pushes publish version and `sha-*` tags to `ghcr.io/lihongjie0209/go-api-template`. CI builds `linux/amd64` and `linux/arm64` images with Git metadata, an SBOM, and build provenance. Pull requests run verification and integration tests without building or publishing an image. Batch local changes before pushing to avoid starting CI for each small edit.
 
+Generated services publish to their configured `--image` repository. GHCR uses `GITHUB_TOKEN` by default; for another registry, set the `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` GitHub Actions secrets before pushing.
+
 The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Its image tag is deliberately a non-release placeholder. Take the complete `Verified image` reference from a successful CI container job, verify that digest in the test environment, then use the same digest for both the migration Job and application Deployment. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference:
 
 ```bash
