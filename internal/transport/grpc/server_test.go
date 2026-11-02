@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +50,15 @@ func TestGRPCEndpointDescriptorsExactlyCoverRegisteredBusinessMethods(t *testing
 	}
 	if err := registry.ValidateCoverage(grpcBusinessOperations(server)); err != nil {
 		t.Fatalf("gRPC descriptor coverage: %v", err)
+	}
+}
+
+func TestServerCredentialsDoNotExposeCertificatePaths(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "secret-value.crt")
+	credentials, err := serverCredentials(config.GRPCTLS{CertFile: path, KeyFile: path + ".key"})
+	if credentials != nil || !errors.Is(err, errGRPCTLSStartupFailed) || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("serverCredentials() = %v, %v; want safe TLS startup error", credentials, err)
 	}
 }
 

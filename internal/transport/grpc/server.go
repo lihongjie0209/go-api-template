@@ -53,6 +53,7 @@ type Server struct {
 }
 
 var errGRPCServerStopped = errors.New("grpc_server_stopped")
+var errGRPCTLSStartupFailed = errors.New("grpc_tls_startup_failed")
 
 const maxGRPCHeaderListBytes = 64 << 10
 
@@ -526,17 +527,17 @@ func grpcMetricMethod(method string) string {
 func serverCredentials(cfg config.GRPCTLS) (credentials.TransportCredentials, error) {
 	certificate, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("load grpc certificate: %w", err)
+		return nil, observability.SafeError(err, errGRPCTLSStartupFailed)
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
 	if cfg.ClientCAFile != "" {
 		pem, err := os.ReadFile(cfg.ClientCAFile)
 		if err != nil {
-			return nil, fmt.Errorf("read grpc client CA: %w", err)
+			return nil, observability.SafeError(err, errGRPCTLSStartupFailed)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("parse grpc client CA")
+			return nil, errGRPCTLSStartupFailed
 		}
 		tlsConfig.ClientCAs = pool
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
