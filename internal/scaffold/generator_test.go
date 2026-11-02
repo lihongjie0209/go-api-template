@@ -95,7 +95,7 @@ func TestGenerateCustomImageUpdatesPublishingWorkflow(t *testing.T) {
 	}
 	writeFixture(t, source, ".github/workflows/ci.yml", string(workflow))
 	writeFixture(t, source, "deployments/app.yaml", "image: "+templateImage+":sha-0000000\n")
-	for _, path := range []string{"deployments/kubernetes.yaml", "deployments/migrate-job.yaml", "deployments/secret.example.yaml", "scripts/render-deployment-manifest.sh", "scripts/test-production-render.sh"} {
+	for _, path := range []string{"deployments/kubernetes.yaml", "deployments/migrate-job.yaml", "deployments/secret.example.yaml", "scripts/render-deployment-manifest.sh", "scripts/test-production-render.sh", "scripts/verify-staging-image.sh"} {
 		contents, readErr := os.ReadFile(filepath.Join("../..", path))
 		if readErr != nil {
 			t.Fatal(readErr)
@@ -113,6 +113,8 @@ func TestGenerateCustomImageUpdatesPublishingWorkflow(t *testing.T) {
 	}
 	assertContains(t, filepath.Join(output, ".github/workflows/ci.yml"), "IMAGE_NAME: "+customImage)
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "image: "+customImage+":sha-0000000")
+	assertContains(t, filepath.Join(output, "scripts/verify-staging-image.sh"), "--namespace orders-service-staging")
+	assertContains(t, filepath.Join(output, "scripts/verify-staging-image.sh"), "deployment/orders-service")
 	if checkOutput, checkErr := exec.CommandContext(t.Context(), "sh", filepath.Join(output, "scripts/test-production-render.sh")).CombinedOutput(); checkErr != nil {
 		t.Fatalf("generated production render check failed: %v: %s", checkErr, checkOutput)
 	}

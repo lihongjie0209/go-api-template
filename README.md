@@ -82,11 +82,12 @@ sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" staging | kube
 kubectl rollout status --namespace microservices-staging deployment/go-api-template --timeout=5m
 ```
 
-The rollout requires `/ready` to pass against the staging dependencies. Run the service's HTTP/gRPC smoke tests there before promoting the **same** `IMAGE_REF` to production. Create the production Secrets outside Git using `deployments/secret.example.yaml` as a field reference:
+The rollout requires `/ready` to pass against the staging dependencies. Run the service's HTTP/gRPC smoke tests there before promoting the **same** `IMAGE_REF` to production. `make staging-verify` checks the live staging rollout, its image digest, ConfigMap profile and namespace environment label before the production commands proceed. Create the production Secrets outside Git using `deployments/secret.example.yaml` as a field reference:
 
 ```bash
 set -euo pipefail
 export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
+make staging-verify
 kubectl create namespace microservices --dry-run=client -o yaml | kubectl apply -f -
 kubectl label namespace microservices platform-environment=production --overwrite
 kubectl create secret generic go-api-template --namespace microservices \

@@ -971,6 +971,10 @@ deleted_by text
   provisioning commands in sync. Test the manifest contract locally.
 - Give each environment its own gateway namespace before granting it the
   matching label, so gateway placement does not bridge environments.
+- Before a production rollout, verify the live staging Deployment is ready,
+  uses the exact immutable image digest being promoted, and has the staging
+  profile and namespace environment label. Use that same digest for the
+  production migration Job and API.
 - Mount asymmetric JWT signing keys from a dedicated read-only Secret volume;
   do not inject private PEM material through `envFrom`. Keep the configured
   key-file path, Secret key, volume mount, and non-root read permissions aligned.
