@@ -303,6 +303,7 @@ func TestPresentSessionUsesPlatformTimezone(t *testing.T) {
 		require.Equal(t, 8*60*60, offset, name)
 		require.Equal(t, "Asia/Shanghai", value.Location().String(), name)
 	}
+	require.True(t, presentSession(SessionView{}).LastSeenAt.IsZero())
 }
 
 func TestBoundedSessionText(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
 
@@ -68,11 +69,10 @@ func (s *RepairService) Dead(ctx context.Context, request pagination.Request) (D
 	if err := s.db.SelectContext(ctx, &items, query, pageArgs...); err != nil {
 		return DeadPage{}, fmt.Errorf("list dead outbox events: %w", err)
 	}
-	location := time.FixedZone("Asia/Shanghai", 8*60*60)
 	for index := range items {
 		items[index].LastError = safeOutboxReason(items[index].LastError)
-		items[index].CreatedAt = items[index].CreatedAt.In(location)
-		items[index].DeadAt = items[index].DeadAt.In(location)
+		items[index].CreatedAt = presentation.Time(items[index].CreatedAt)
+		items[index].DeadAt = presentation.Time(items[index].DeadAt)
 	}
 	return DeadPage{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }

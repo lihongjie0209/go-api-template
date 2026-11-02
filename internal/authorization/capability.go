@@ -11,6 +11,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/dependency"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -20,8 +21,6 @@ var (
 	ErrCapabilityInvalid     = errors.New("authorization capability request is invalid")
 	ErrCapabilityUnavailable = errors.New("authorization capability evaluation is unavailable")
 )
-
-var operationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 const (
 	MaxCapabilityItems = 100
@@ -247,7 +246,7 @@ func (s *CapabilityService) resultMetadata(ctx context.Context, principal platfo
 			return ctx, CapabilityResult{}, fmt.Errorf("%w: %v", ErrCapabilityUnavailable, err)
 		}
 	}
-	return ctx, CapabilityResult{Revision: revision, ExpiresAt: now().In(operationLocation).Add(30 * time.Second)}, nil
+	return ctx, CapabilityResult{Revision: revision, ExpiresAt: presentation.Time(now().Add(30 * time.Second))}, nil
 }
 
 func validateCapabilityRows(rows map[string]datapermission.ResourceAttributes, requestedIDs []string, tenantID string) error {

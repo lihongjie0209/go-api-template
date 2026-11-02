@@ -9,6 +9,7 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/accesscontrol"
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	platformauthz "github.com/lihongjie0209/microservice-platform-go/authz"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -68,7 +69,7 @@ func TestCapabilityServiceEvaluatesAnyRegisteredTargetOperation(t *testing.T) {
 	result, err := service.Evaluate(ctx, []CapabilityRequest{{Key: "user.update", Resource: "identity.user", Action: "update"}})
 	require.NoError(t, err)
 	require.Equal(t, []CapabilityDecision{{Key: "user.update", Allowed: true}}, result.Items)
-	require.Equal(t, time.Date(2026, 9, 17, 18, 0, 30, 0, operationLocation), result.ExpiresAt)
+	require.Equal(t, presentation.Time(time.Date(2026, 9, 17, 10, 0, 30, 0, time.UTC)), result.ExpiresAt)
 	require.Equal(t, []string{"POST /api/v1/users/status/update"}, seen)
 }
 
@@ -172,7 +173,7 @@ func TestCapabilityServiceEvaluatesRowsInOneTenantBoundedQuery(t *testing.T) {
 
 	result, err := service.EvaluateRows(ctx, "tenant.member", []string{"update"}, []string{"member-1", "missing-member"})
 	require.NoError(t, err)
-	require.Equal(t, RowCapabilityResult{ExpiresAt: time.Date(2026, 9, 17, 18, 0, 30, 0, operationLocation), Resource: "tenant.member", Items: []RowCapabilityDecision{
+	require.Equal(t, RowCapabilityResult{ExpiresAt: presentation.Time(time.Date(2026, 9, 17, 10, 0, 30, 0, time.UTC)), Resource: "tenant.member", Items: []RowCapabilityDecision{
 		{ResourceID: "member-1", Actions: map[string]bool{"update": true}},
 		{ResourceID: "missing-member", Actions: map[string]bool{"update": false}},
 	}}, result)

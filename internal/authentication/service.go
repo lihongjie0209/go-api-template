@@ -19,6 +19,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/identity"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -131,8 +132,6 @@ type Service struct {
 
 const identitySessionInsertSQL = `INSERT INTO identity_sessions (id,user_id,refresh_token_hash,previous_refresh_token_hash,expires_at,last_seen_at,revoke_reason,client_ip,user_agent,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?, '',?,?, '',?,?,?,?,?,?,1)`
 const refreshSessionSelect = `SELECT s.id,s.user_id,s.refresh_token_hash,s.previous_refresh_token_hash,s.expires_at,s.revoked_at,c.must_change_password,s.version FROM identity_sessions s JOIN identity_users u ON u.id=s.user_id AND u.status='active' AND u.deleted_at IS NULL JOIN identity_user_credentials c ON c.user_id=s.user_id AND c.deleted_at IS NULL`
-
-var presentationLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 func New(db *sqlx.DB, tx *database.Transactor, users *identity.Service, jwt *auth.Service, cfg config.Config) *Service {
 	return &Service{db: db, tx: tx, users: users, jwt: jwt, hasher: auth.NewPasswordHasher(), cfg: cfg}
@@ -310,7 +309,7 @@ func (s *Service) SessionRevokeTarget(ctx context.Context, sessionID string) (Se
 	} else {
 		target.Status = SessionStatusActive
 	}
-	target.ExpiresAt = target.ExpiresAt.In(presentationLocation)
+	target.ExpiresAt = presentation.Time(target.ExpiresAt)
 	return target, nil
 }
 
@@ -354,11 +353,11 @@ func classifySession(value SessionView, now time.Time) (SessionStatus, string) {
 }
 
 func presentSession(value SessionView) SessionView {
-	value.ExpiresAt = value.ExpiresAt.In(presentationLocation)
-	value.LastSeenAt = value.LastSeenAt.In(presentationLocation)
-	value.CreatedAt = value.CreatedAt.In(presentationLocation)
+	value.ExpiresAt = presentation.Time(value.ExpiresAt)
+	value.LastSeenAt = presentation.Time(value.LastSeenAt)
+	value.CreatedAt = presentation.Time(value.CreatedAt)
 	if value.RevokedAt != nil {
-		revokedAt := value.RevokedAt.In(presentationLocation)
+		revokedAt := presentation.Time(*value.RevokedAt)
 		value.RevokedAt = &revokedAt
 	}
 	return value
