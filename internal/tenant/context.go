@@ -11,6 +11,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -49,6 +50,9 @@ func (s *ContextService) Available(ctx context.Context) ([]AvailableTenant, erro
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), actor.ID); err != nil {
 		return nil, err
 	}
+	for index := range items {
+		items[index] = presentAvailableTenant(items[index])
+	}
 	return items, nil
 }
 func (s *ContextService) Switch(ctx context.Context, tenantID string) (ContextToken, error) {
@@ -73,7 +77,7 @@ func (s *ContextService) Switch(ctx context.Context, tenantID string) (ContextTo
 	if err := s.recordSwitch(ctx, actor, tenantID, nil); err != nil {
 		return ContextToken{}, err
 	}
-	return ContextToken{AccessToken: raw, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), Tenant: selected}, nil
+	return ContextToken{AccessToken: raw, TokenType: "Bearer", ExpiresIn: int64(s.cfg.JWT.TTL.Seconds()), Tenant: presentAvailableTenant(selected)}, nil
 }
 
 func (s *ContextService) recordSwitch(ctx context.Context, actor platformprincipal.Principal, tenantID string, switchErr error) error {
@@ -103,5 +107,10 @@ func (s *ContextService) Current(ctx context.Context) (AvailableTenant, error) {
 		}
 		return AvailableTenant{}, fmt.Errorf("load current tenant: %w", err)
 	}
-	return selected, nil
+	return presentAvailableTenant(selected), nil
+}
+
+func presentAvailableTenant(value AvailableTenant) AvailableTenant {
+	value.JoinedAt = presentation.Time(value.JoinedAt)
+	return value
 }
