@@ -124,7 +124,7 @@ func TestService_CreateReturnsSecretOnceWithoutAuditingIt(t *testing.T) {
 	operations, security := &operationRecorder{}, &securityRecorder{}
 	service := New(db, database.NewTransactor(db), operations, security, config.Config{})
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin-1", Type: platformprincipal.TypeUser})
-	now := time.Now()
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("admin-1").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -143,6 +143,9 @@ func TestService_CreateReturnsSecretOnceWithoutAuditingIt(t *testing.T) {
 	if len(created.Secret) < 40 || created.Account.ClientID != "billing-worker" || created.Account.CreatedByName != "Administrator" || created.Account.UpdatedByName != "Administrator" {
 		t.Fatalf("created account = %+v", created)
 	}
+	if created.Account.CreatedAt.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" || created.Account.UpdatedAt.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" {
+		t.Fatalf("created account audit times = %s, %s", created.Account.CreatedAt.Format(time.RFC3339), created.Account.UpdatedAt.Format(time.RFC3339))
+	}
 	payload, err := json.Marshal(struct {
 		Operation any
 		Security  any
@@ -158,6 +161,47 @@ func TestService_CreateReturnsSecretOnceWithoutAuditingIt(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestService_GetPresentsOptionalTimesInShanghai(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	service := New(sqlx.NewDb(raw, "pgx"), nil, nil, nil, config.Config{})
+	instant := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT .* FROM identity_service_accounts a WHERE id=\$1 AND deleted_at IS NULL`).WithArgs("account-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "client_id", "name", "description", "status", "expires_at", "last_used_at", "failed_attempts", "locked_until", "created_at", "created_by", "created_by_name", "updated_at", "updated_by", "updated_by_name", "version"}).
+			AddRow("account-1", "billing-worker", "Billing Worker", "", StatusActive, instant, instant, 0, instant, instant, "admin-1", "Administrator", instant, "admin-1", "Administrator", 1))
+	ctx := platformprincipal.SystemContext(t.Context(), "admin-1")
+	account, err := service.Get(ctx, "account-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]*time.Time{
+		"created_at": &account.CreatedAt, "updated_at": &account.UpdatedAt,
+		"expires_at": account.ExpiresAt, "last_used_at": account.LastUsedAt, "locked_until": account.LockedUntil,
+	} {
+		if value == nil || value.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" {
+			t.Fatalf("%s = %v, want Shanghai time", name, value)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPresentAccountDoesNotChangeAuthoritativeTimePointers(t *testing.T) {
+	instant := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	account := Account{ExpiresAt: &instant, LastUsedAt: &instant, LockedUntil: &instant}
+	presented := presentAccount(account)
+	if instant.Location() != time.UTC || account.ExpiresAt != &instant || account.LastUsedAt != &instant || account.LockedUntil != &instant {
+		t.Fatal("presentation changed the authoritative account time pointers")
+	}
+	if presented.ExpiresAt == &instant || presented.LastUsedAt == &instant || presented.LockedUntil == &instant {
+		t.Fatal("presentation retained a pointer to authoritative account time")
 	}
 }
 

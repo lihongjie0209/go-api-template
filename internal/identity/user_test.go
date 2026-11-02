@@ -185,13 +185,17 @@ func TestGetUsesCacheOnlyAfterAuthoritativeVersionCheck(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 	store := &memoryStore{values: map[string][]byte{}}
 	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock")), cache: store, cacheTTL: time.Minute}
-	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Email: "alice@example.com", Version: 2})
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	service.cacheUser(t.Context(), User{ID: "user-1", Username: "alice", Email: "alice@example.com", CreatedAt: now, UpdatedAt: now, Version: 2})
 	mock.ExpectQuery(`SELECT version FROM identity_users WHERE id=\? AND deleted_at IS NULL`).WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(2))
 	ctx := platformprincipal.SystemContext(t.Context(), "reader")
 	user, err := service.Get(ctx, "user-1")
 	if err != nil || user.Email != "alice@example.com" {
 		t.Fatalf("cached user=%+v err=%v", user, err)
+	}
+	if user.CreatedAt.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" || user.UpdatedAt.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" {
+		t.Fatalf("cached user audit times = %s, %s", user.CreatedAt.Format(time.RFC3339), user.UpdatedAt.Format(time.RFC3339))
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -254,6 +258,29 @@ func TestPageRejectsReversedTimeRangeBeforeDatabase(t *testing.T) {
 	_, err := service.Page(ctx, PageInput{CreatedAtFrom: &from, CreatedAtTo: &to})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Page() error=%v", err)
+	}
+}
+
+func TestPagePresentsUserAuditTimesInShanghai(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &Service{repository: NewRepository(sqlx.NewDb(raw, "sqlmock"))}
+	instant := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM identity_users WHERE deleted_at IS NULL`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT .* FROM identity_users u WHERE deleted_at IS NULL`).WithArgs(20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "created_at", "updated_at", "version"}).AddRow("user-1", "alice", instant, instant, 1))
+	page, err := service.Page(platformprincipal.SystemContext(t.Context(), "admin"), PageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].CreatedAt.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" || page.Items[0].UpdatedAt.Format(time.RFC3339) != "2026-10-13T08:00:00+08:00" {
+		t.Fatalf("user page = %+v", page)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

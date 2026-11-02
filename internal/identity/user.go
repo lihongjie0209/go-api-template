@@ -18,6 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -272,10 +273,11 @@ func (s *Service) Get(ctx context.Context, id string) (User, error) {
 	if strings.TrimSpace(id) == "" || len(id) > maxUserIDLength {
 		return User{}, ErrInvalid
 	}
-	return s.cached(ctx, "id:"+id,
+	user, err := s.cached(ctx, "id:"+id,
 		func() (int64, error) { return s.repository.versionByID(ctx, id) },
 		func() (User, error) { return s.repository.Get(ctx, id) },
 		func(user User) bool { return user.ID == id })
+	return presentUser(user), err
 }
 func (s *Service) SecurityTarget(ctx context.Context, id string) (SecurityTarget, error) {
 	if _, err := actor(ctx); err != nil {
@@ -323,10 +325,11 @@ func (s *Service) ResolveUsername(ctx context.Context, username string) (User, e
 	if !usernamePattern.MatchString(username) {
 		return User{}, ErrInvalid
 	}
-	return s.cached(ctx, "username:"+username,
+	user, err := s.cached(ctx, "username:"+username,
 		func() (int64, error) { return s.repository.versionByUsername(ctx, username) },
 		func() (User, error) { return s.repository.ResolveUsername(ctx, username) },
 		func(user User) bool { return normalizeUsername(user.Username) == username })
+	return presentUser(user), err
 }
 
 // ResolveUsernameAuthoritative bypasses the disposable cache for security
@@ -371,7 +374,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 		return User{}, fmt.Errorf("create user: %w", e)
 	}
 	s.cacheUser(ctx, user)
-	return user, nil
+	return presentUser(user), nil
 }
 func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[User], error) {
 	if _, e := actor(ctx); e != nil {
@@ -394,6 +397,11 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 	}
 	input.Request = request
 	users, total, e := s.repository.Page(ctx, input)
+	if e == nil {
+		for index := range users {
+			users[index] = presentUser(users[index])
+		}
+	}
 	return pagination.Result[User]{Items: users, Page: request.Page, PageSize: request.PageSize, Total: total}, e
 }
 func (s *Service) Update(ctx context.Context, input UpdateInput) (User, error) {
@@ -447,7 +455,7 @@ func (s *Service) UpdateSelf(ctx context.Context, input SelfUpdateInput) (User, 
 	}
 	s.invalidate(ctx, existing)
 	s.cacheUser(ctx, user)
-	return user, nil
+	return presentUser(user), nil
 }
 func (s *Service) update(ctx context.Context, input UpdateInput, operation string) (User, error) {
 	a, e := actor(ctx)
@@ -494,7 +502,13 @@ func (s *Service) update(ctx context.Context, input UpdateInput, operation strin
 	}
 	s.invalidate(ctx, existing)
 	s.cacheUser(ctx, user)
-	return user, nil
+	return presentUser(user), nil
+}
+
+func presentUser(user User) User {
+	user.CreatedAt = presentation.Time(user.CreatedAt)
+	user.UpdatedAt = presentation.Time(user.UpdatedAt)
+	return user
 }
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 	a, e := actor(ctx)

@@ -18,6 +18,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 )
@@ -98,6 +99,23 @@ type credential struct {
 	CredentialGeneration int64  `db:"credential_generation"`
 }
 
+func presentAccount(account Account) Account {
+	account.CreatedAt = presentation.Time(account.CreatedAt)
+	account.UpdatedAt = presentation.Time(account.UpdatedAt)
+	account.ExpiresAt = presentOptionalTime(account.ExpiresAt)
+	account.LastUsedAt = presentOptionalTime(account.LastUsedAt)
+	account.LockedUntil = presentOptionalTime(account.LockedUntil)
+	return account
+}
+
+func presentOptionalTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	presented := presentation.Time(*value)
+	return &presented
+}
+
 type Service struct {
 	db                *sqlx.DB
 	transactor        *database.Transactor
@@ -153,7 +171,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Created, error
 	if err != nil {
 		return Created{}, err
 	}
-	return Created{Account: account, Secret: secret}, nil
+	return Created{Account: presentAccount(account), Secret: secret}, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Account, error) {
@@ -163,7 +181,8 @@ func (s *Service) Get(ctx context.Context, id string) (Account, error) {
 	if strings.TrimSpace(id) == "" || len(id) > maxAccountIDLength {
 		return Account{}, ErrInvalid
 	}
-	return s.get(ctx, "id=?", id)
+	account, err := s.get(ctx, "id=?", id)
+	return presentAccount(account), err
 }
 
 func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[Account], error) {
@@ -224,6 +243,9 @@ func (s *Service) Page(ctx context.Context, input PageInput) (pagination.Result[
 	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(`SELECT `+accountColumns+` FROM identity_service_accounts a WHERE `+where+` ORDER BY created_at DESC,id LIMIT ? OFFSET ?`), queryArgs...); err != nil {
 		return pagination.Result[Account]{}, err
 	}
+	for index := range items {
+		items[index] = presentAccount(items[index])
+	}
 	return pagination.Result[Account]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 
@@ -257,7 +279,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (Account, error
 	if err != nil {
 		return Account{}, err
 	}
-	return account, nil
+	return presentAccount(account), nil
 }
 
 func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (Created, error) {
@@ -292,7 +314,7 @@ func (s *Service) RotateSecret(ctx context.Context, id string, version int64) (C
 	if err != nil {
 		return Created{}, err
 	}
-	return Created{Account: account, Secret: secret}, nil
+	return Created{Account: presentAccount(account), Secret: secret}, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, version int64) error {
@@ -317,14 +339,15 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 
 func (s *Service) Authenticate(ctx context.Context, clientID, secret string) (Account, error) {
 	account, _, err := s.authenticateAndIssue(ctx, clientID, secret, nil)
-	return account, err
+	return presentAccount(account), err
 }
 
 // AuthenticateAndIssue verifies a service account, creates its stateless
 // credential, then atomically records both successful use and the security
 // event before the credential can be returned to the caller.
 func (s *Service) AuthenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string, int64) (string, string, error)) (Account, string, error) {
-	return s.authenticateAndIssue(ctx, clientID, secret, issue)
+	account, token, err := s.authenticateAndIssue(ctx, clientID, secret, issue)
+	return presentAccount(account), token, err
 }
 
 func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret string, issue func(string, int64) (string, string, error)) (Account, string, error) {
