@@ -12,6 +12,9 @@ import (
 )
 
 var ErrScopeRequired = errors.New("data permission: endpoint scope is required")
+var ErrSubjectProjectionLimit = errors.New("data permission: subject projection exceeds maximum")
+
+const maxSubjectProjectionEntries = 10_000
 
 // Service resolves trusted subject projections and compiles the scope declared
 // by the already-authorized endpoint.
@@ -142,13 +145,19 @@ func (s *Service) projections(ctx context.Context, principal platformprincipal.P
 		return nil, nil, nil
 	}
 	roles, departments := []string{}, []string{}
-	roleQuery := s.db.Rebind(`SELECT DISTINCT r.code FROM tenant_member_roles mr JOIN tenant_memberships m ON m.id=mr.membership_id AND m.tenant_id=mr.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL ORDER BY r.code`)
+	roleQuery := s.db.Rebind(fmt.Sprintf(`SELECT DISTINCT r.code FROM tenant_member_roles mr JOIN tenant_memberships m ON m.id=mr.membership_id AND m.tenant_id=mr.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_roles r ON r.id=mr.role_id AND r.tenant_id=mr.tenant_id WHERE mr.tenant_id=? AND mr.membership_id=? AND mr.deleted_at IS NULL AND r.status='active' AND r.deleted_at IS NULL ORDER BY r.code LIMIT %d`, maxSubjectProjectionEntries+1))
 	if err := s.db.SelectContext(ctx, &roles, roleQuery, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, nil, err
 	}
-	departmentQuery := s.db.Rebind(`SELECT DISTINCT dm.department_id FROM tenant_department_members dm JOIN tenant_memberships m ON m.id=dm.membership_id AND m.tenant_id=dm.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_departments d ON d.id=dm.department_id AND d.tenant_id=dm.tenant_id AND d.deleted_at IS NULL WHERE dm.tenant_id=? AND dm.membership_id=? AND dm.deleted_at IS NULL ORDER BY dm.department_id`)
+	if len(roles) > maxSubjectProjectionEntries {
+		return nil, nil, ErrSubjectProjectionLimit
+	}
+	departmentQuery := s.db.Rebind(fmt.Sprintf(`SELECT DISTINCT dm.department_id FROM tenant_department_members dm JOIN tenant_memberships m ON m.id=dm.membership_id AND m.tenant_id=dm.tenant_id AND m.user_id=? AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_departments d ON d.id=dm.department_id AND d.tenant_id=dm.tenant_id AND d.deleted_at IS NULL WHERE dm.tenant_id=? AND dm.membership_id=? AND dm.deleted_at IS NULL ORDER BY dm.department_id LIMIT %d`, maxSubjectProjectionEntries+1))
 	if err := s.db.SelectContext(ctx, &departments, departmentQuery, principal.ID, principal.TenantID, principal.MembershipID); err != nil {
 		return nil, nil, err
+	}
+	if len(departments) > maxSubjectProjectionEntries {
+		return nil, nil, ErrSubjectProjectionLimit
 	}
 	return roles, departments, nil
 }

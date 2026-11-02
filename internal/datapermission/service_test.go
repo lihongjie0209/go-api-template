@@ -44,6 +44,36 @@ func TestSubjectProjectionRequiresLiveTenantDepartment(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestSubjectProjectionRejectsOversizedRoleAndDepartmentSets(t *testing.T) {
+	for _, overflow := range []string{"roles", "departments"} {
+		t.Run(overflow, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			service := NewService(sqlx.NewDb(raw, "sqlmock"), nil)
+			roleRows := sqlmock.NewRows([]string{"code"})
+			if overflow == "roles" {
+				for range 10_001 {
+					roleRows.AddRow("role")
+				}
+			}
+			mock.ExpectQuery(`SELECT DISTINCT r.code.*LIMIT 10001`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(roleRows)
+			if overflow == "departments" {
+				departmentRows := sqlmock.NewRows([]string{"department_id"})
+				for range 10_001 {
+					departmentRows.AddRow("department")
+				}
+				mock.ExpectQuery(`SELECT DISTINCT dm.department_id.*LIMIT 10001`).WithArgs("user-1", "tenant-1", "member-1").WillReturnRows(departmentRows)
+			}
+			_, _, err = service.projections(t.Context(), platformprincipal.Principal{
+				ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1",
+			})
+			require.ErrorContains(t, err, "subject projection exceeds maximum")
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestServiceAuthorizesTrustedProposedObject(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)

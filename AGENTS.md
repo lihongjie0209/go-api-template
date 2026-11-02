@@ -326,6 +326,9 @@ TTL, and invalidation for its own data.
 - Data-scope compilation, object checks, and row capability evaluation must
   reject an ended Context before any system-principal shortcut or empty-batch
   return; cancellation cannot produce an unrestricted predicate or allow result.
+- Subject role and department projections used by data permission must each
+  use a bounded SQL result and fail closed on overflow; a small capability
+  request must not load unlimited associations for one member.
 - Every HTTP route and gRPC method must bind an explicit authorization
   descriptor in the same code registration call: public/internal/authenticated
   mode, canonical resource, action, and whether data permission is required.
