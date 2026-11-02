@@ -13,6 +13,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/operationlog"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
+	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -28,35 +29,39 @@ var (
 )
 
 type Resource struct {
-	ID          string                       `db:"id" json:"id"`
-	Key         string                       `db:"resource_key" json:"resource_key"`
-	Name        string                       `db:"name" json:"name"`
-	Description string                       `db:"description" json:"description"`
-	Scope       resourceaction.ResourceScope `db:"scope" json:"scope"`
-	Source      string                       `db:"source" json:"source"`
-	Status      string                       `db:"status" json:"status"`
-	CreatedAt   time.Time                    `db:"created_at" json:"created_at"`
-	CreatedBy   string                       `db:"created_by" json:"created_by"`
-	UpdatedAt   time.Time                    `db:"updated_at" json:"updated_at"`
-	UpdatedBy   string                       `db:"updated_by" json:"updated_by"`
-	Version     int64                        `db:"version" json:"version"`
+	ID            string                       `db:"id" json:"id"`
+	Key           string                       `db:"resource_key" json:"resource_key"`
+	Name          string                       `db:"name" json:"name"`
+	Description   string                       `db:"description" json:"description"`
+	Scope         resourceaction.ResourceScope `db:"scope" json:"scope"`
+	Source        string                       `db:"source" json:"source"`
+	Status        string                       `db:"status" json:"status"`
+	CreatedAt     time.Time                    `db:"created_at" json:"created_at"`
+	CreatedBy     string                       `db:"created_by" json:"created_by"`
+	CreatedByName string                       `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time                    `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string                       `db:"updated_by" json:"updated_by"`
+	UpdatedByName string                       `db:"-" json:"updated_by_name"`
+	Version       int64                        `db:"version" json:"version"`
 }
 
 type Action struct {
-	ID           string    `db:"id" json:"id"`
-	ResourceID   string    `db:"resource_id" json:"resource_id"`
-	ResourceKey  string    `db:"resource_key" json:"resource_key"`
-	ResourceName string    `db:"resource_name" json:"resource_name"`
-	Key          string    `db:"action_key" json:"action_key"`
-	Name         string    `db:"name" json:"name"`
-	Description  string    `db:"description" json:"description"`
-	Source       string    `db:"source" json:"source"`
-	Status       string    `db:"status" json:"status"`
-	CreatedAt    time.Time `db:"created_at" json:"created_at"`
-	CreatedBy    string    `db:"created_by" json:"created_by"`
-	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
-	UpdatedBy    string    `db:"updated_by" json:"updated_by"`
-	Version      int64     `db:"version" json:"version"`
+	ID            string    `db:"id" json:"id"`
+	ResourceID    string    `db:"resource_id" json:"resource_id"`
+	ResourceKey   string    `db:"resource_key" json:"resource_key"`
+	ResourceName  string    `db:"resource_name" json:"resource_name"`
+	Key           string    `db:"action_key" json:"action_key"`
+	Name          string    `db:"name" json:"name"`
+	Description   string    `db:"description" json:"description"`
+	Source        string    `db:"source" json:"source"`
+	Status        string    `db:"status" json:"status"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	CreatedBy     string    `db:"created_by" json:"created_by"`
+	CreatedByName string    `db:"-" json:"created_by_name"`
+	UpdatedAt     time.Time `db:"updated_at" json:"updated_at"`
+	UpdatedBy     string    `db:"updated_by" json:"updated_by"`
+	UpdatedByName string    `db:"-" json:"updated_by_name"`
+	Version       int64     `db:"version" json:"version"`
 }
 
 type ResourceInput struct {
@@ -92,10 +97,11 @@ type Service struct {
 	tx         *database.Transactor
 	operations operationlog.TransactionalRecorder
 	security   securitylog.TransactionalRecorder
+	actors     presentation.ActorResolver
 }
 
-func NewService(db *sqlx.DB, tx *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder) *Service {
-	return &Service{db: db, tx: tx, operations: operations, security: security}
+func NewService(db *sqlx.DB, tx *database.Transactor, operations operationlog.TransactionalRecorder, security securitylog.TransactionalRecorder, actors presentation.ActorResolver) *Service {
+	return &Service{db: db, tx: tx, operations: operations, security: security, actors: actors}
 }
 
 func validateResource(input ResourceInput) error {
@@ -154,7 +160,7 @@ func (s *Service) CreateResource(ctx context.Context, input ResourceInput) (Reso
 	if err != nil {
 		return Resource{}, err
 	}
-	return created, nil
+	return s.presentResourceMutation(ctx, created), nil
 }
 
 func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) {
@@ -166,7 +172,14 @@ func (s *Service) GetResource(ctx context.Context, id string) (Resource, error) 
 	if errors.Is(err, sql.ErrNoRows) {
 		return Resource{}, ErrNotFound
 	}
-	return result, err
+	if err != nil {
+		return Resource{}, err
+	}
+	rows := []Resource{result}
+	if err := s.presentResources(ctx, rows); err != nil {
+		return Resource{}, err
+	}
+	return rows[0], nil
 }
 
 func (s *Service) PageResources(ctx context.Context, input PageInput) (ResourcePage, error) {
@@ -190,6 +203,9 @@ func (s *Service) PageResources(ctx context.Context, input PageInput) (ResourceP
 	rows := []Resource{}
 	args = append(args, request.PageSize, pagination.Offset(request))
 	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE `+where+` ORDER BY resource_key,id LIMIT ? OFFSET ?`), args...); err != nil {
+		return ResourcePage{}, err
+	}
+	if err := s.presentResources(ctx, rows); err != nil {
 		return ResourcePage{}, err
 	}
 	return ResourcePage{Items: rows, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
@@ -224,7 +240,7 @@ func (s *Service) UpdateResource(ctx context.Context, id string, version int64, 
 	if err != nil {
 		return Resource{}, err
 	}
-	return updated, nil
+	return s.presentResourceMutation(ctx, updated), nil
 }
 
 func (s *Service) DeleteResource(ctx context.Context, id string, version int64) error {
@@ -283,7 +299,7 @@ func (s *Service) CreateAction(ctx context.Context, input ActionInput) (Action, 
 	if err != nil {
 		return Action{}, err
 	}
-	return created, nil
+	return s.presentActionMutation(ctx, created), nil
 }
 
 func (s *Service) GetAction(ctx context.Context, id string) (Action, error) {
@@ -295,7 +311,14 @@ func (s *Service) GetAction(ctx context.Context, id string) (Action, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return Action{}, ErrNotFound
 	}
-	return row, err
+	if err != nil {
+		return Action{}, err
+	}
+	rows := []Action{row}
+	if err := s.presentActions(ctx, rows); err != nil {
+		return Action{}, err
+	}
+	return rows[0], nil
 }
 
 func (s *Service) PageActions(ctx context.Context, input PageInput) (ActionPage, error) {
@@ -332,6 +355,9 @@ func (s *Service) PageActions(ctx context.Context, input PageInput) (ActionPage,
 	rows := []Action{}
 	args = append(args, request.PageSize, pagination.Offset(request))
 	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(actionSelect+` WHERE `+where+` ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?`), args...); err != nil {
+		return ActionPage{}, err
+	}
+	if err := s.presentActions(ctx, rows); err != nil {
 		return ActionPage{}, err
 	}
 	return ActionPage{Items: rows, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
@@ -373,7 +399,7 @@ func (s *Service) UpdateAction(ctx context.Context, id string, version int64, in
 	if err != nil {
 		return Action{}, err
 	}
-	return updated, nil
+	return s.presentActionMutation(ctx, updated), nil
 }
 
 func (s *Service) DeleteAction(ctx context.Context, id string, version int64) error {

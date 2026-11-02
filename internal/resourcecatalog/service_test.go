@@ -1,6 +1,7 @@
 package resourcecatalog
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -15,6 +16,15 @@ import (
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
 )
+
+type catalogActorResolver struct {
+	names map[string]string
+	err   error
+}
+
+func (r catalogActorResolver) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
+	return r.names, r.err
+}
 
 func TestCatalogInputValidation(t *testing.T) {
 	t.Parallel()
@@ -48,7 +58,7 @@ func TestCodeOwnedResourceCannotBeUpdated(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	sqlxDB := sqlx.NewDb(db, "pgx")
-	service := NewService(sqlxDB, database.NewTransactor(sqlxDB), nil, nil)
+	service := NewService(sqlxDB, database.NewTransactor(sqlxDB), nil, nil, nil)
 	id := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	ctx := platformprincipal.SystemContext(t.Context(), "test-admin")
 	mock.ExpectBegin()
@@ -72,7 +82,7 @@ func TestPageActionsFiltersActiveResourcesByScope(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	sqlxDB := sqlx.NewDb(db, "pgx")
-	service := NewService(sqlxDB, nil, nil, nil)
+	service := NewService(sqlxDB, nil, nil, nil, catalogActorResolver{names: map[string]string{"creator-1": "创建者", "updater-1": "更新者"}})
 	input := PageInput{
 		Request:             pagination.Request{Page: 1, PageSize: 20},
 		Statuses:            []string{"active"},
@@ -85,7 +95,7 @@ func TestPageActionsFiltersActiveResourcesByScope(t *testing.T) {
 	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
 	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	actionID := "2f3c4f4d-f243-4204-a75a-20cf4b39b541"
-	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(actionSelect+" WHERE "+where+" ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?"))).WithArgs("active", "tenant.member", resourceaction.ResourceScopeTenant, 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow(actionID, resourceID, "tenant.member", "租户成员", "read", "读取", "", "code", "active", now, "system", now, "system", 1))
+	mock.ExpectQuery(regexp.QuoteMeta(sqlxDB.Rebind(actionSelect+" WHERE "+where+" ORDER BY r.resource_key,a.action_key,a.id LIMIT ? OFFSET ?"))).WithArgs("active", "tenant.member", resourceaction.ResourceScopeTenant, 20, 0).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow(actionID, resourceID, "tenant.member", "租户成员", "read", "读取", "", "code", "active", now, "creator-1", now, "updater-1", 1))
 
 	page, err := service.PageActions(t.Context(), input)
 	require.NoError(t, err)
@@ -93,6 +103,10 @@ func TestPageActionsFiltersActiveResourcesByScope(t *testing.T) {
 	require.Equal(t, int64(1), page.Total)
 	require.Equal(t, resourceID, page.Items[0].ResourceID)
 	require.Equal(t, "租户成员", page.Items[0].ResourceName)
+	require.Equal(t, "创建者", page.Items[0].CreatedByName)
+	require.Equal(t, "更新者", page.Items[0].UpdatedByName)
+	require.Equal(t, "2026-10-13T08:00:00+08:00", page.Items[0].CreatedAt.Format(time.RFC3339))
+	require.Equal(t, "2026-10-13T08:00:00+08:00", page.Items[0].UpdatedAt.Format(time.RFC3339))
 	mock.ExpectClose()
 	require.NoError(t, db.Close())
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -102,7 +116,7 @@ func TestPageActionsKeywordMatchesParentResource(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	sqlxDB := sqlx.NewDb(db, "pgx")
-	service := NewService(sqlxDB, nil, nil, nil)
+	service := NewService(sqlxDB, nil, nil, nil, nil)
 	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	input := PageInput{
 		Request:    pagination.Request{Page: 1, PageSize: 20, Keyword: "成员"},
@@ -132,7 +146,7 @@ func TestPageResourcesEmptyResultUsesArrayContract(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	sqlxDB := sqlx.NewDb(db, "pgx")
-	service := NewService(sqlxDB, nil, nil, nil)
+	service := NewService(sqlxDB, nil, nil, nil, nil)
 	mock.ExpectQuery(`SELECT count\(\*\) FROM authorization_resources WHERE deleted_at IS NULL`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status`).WithArgs(20, 0).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	page, err := service.PageResources(t.Context(), PageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
@@ -145,11 +159,47 @@ func TestPageResourcesEmptyResultUsesArrayContract(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestResourceCatalogReadReturnsShanghaiAuditTimes(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	service := NewService(sqlxDB, nil, nil, nil, catalogActorResolver{names: map[string]string{"creator-1": "创建者", "updater-1": "更新者"}})
+	id := "082c606d-f4d9-4339-8d0b-c77e5d839451"
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	columns := []string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE id=`).
+		WithArgs(id).WillReturnRows(sqlmock.NewRows(columns).AddRow(id, "tenant.member", "成员", "", "tenant", "code", "active", now, "creator-1", now, "updater-1", 1))
+	resource, err := service.GetResource(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, "2026-10-13T08:00:00+08:00", resource.CreatedAt.Format(time.RFC3339))
+	require.Equal(t, "2026-10-13T08:00:00+08:00", resource.UpdatedAt.Format(time.RFC3339))
+	require.Equal(t, "创建者", resource.CreatedByName)
+	require.Equal(t, "更新者", resource.UpdatedByName)
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM authorization_resources WHERE deleted_at IS NULL`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE deleted_at IS NULL`).
+		WithArgs(20, 0).WillReturnRows(sqlmock.NewRows(columns).AddRow(id, "tenant.member", "成员", "", "tenant", "code", "active", now, "creator-1", now, "updater-1", 1))
+	page, err := service.PageResources(t.Context(), PageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "2026-10-13T08:00:00+08:00", page.Items[0].CreatedAt.Format(time.RFC3339))
+	require.Equal(t, "2026-10-13T08:00:00+08:00", page.Items[0].UpdatedAt.Format(time.RFC3339))
+	require.Equal(t, "创建者", page.Items[0].CreatedByName)
+	require.Equal(t, "更新者", page.Items[0].UpdatedByName)
+	failing := NewService(sqlxDB, nil, nil, nil, catalogActorResolver{err: errors.New("identity unavailable")})
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE id=`).
+		WithArgs(id).WillReturnRows(sqlmock.NewRows(columns).AddRow(id, "tenant.member", "成员", "", "tenant", "code", "active", now, "creator-1", now, "updater-1", 1))
+	_, err = failing.GetResource(t.Context(), id)
+	require.ErrorContains(t, err, "identity unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGetActionIncludesResourceDisplayName(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	sqlxDB := sqlx.NewDb(db, "pgx")
-	service := NewService(sqlxDB, nil, nil, nil)
+	service := NewService(sqlxDB, nil, nil, nil, nil)
 	actionID := "2f3c4f4d-f243-4204-a75a-20cf4b39b541"
 	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
@@ -160,8 +210,34 @@ func TestGetActionIncludesResourceDisplayName(t *testing.T) {
 	require.Equal(t, resourceID, action.ResourceID)
 	require.Equal(t, "tenant.member", action.ResourceKey)
 	require.Equal(t, "租户成员", action.ResourceName)
+	require.Equal(t, "system", action.CreatedByName)
+	require.Equal(t, "system", action.UpdatedByName)
+	require.Equal(t, "2026-10-13T08:00:00+08:00", action.CreatedAt.Format(time.RFC3339))
+	require.Equal(t, "2026-10-13T08:00:00+08:00", action.UpdatedAt.Format(time.RFC3339))
 	mock.ExpectClose()
 	require.NoError(t, db.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCatalogCreateResourceKeepsCommittedSuccessWhenActorLookupFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewService(db, database.NewTransactor(db), nil, nil, catalogActorResolver{err: errors.New("identity unavailable")})
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO authorization_resources`).WillReturnResult(sqlmock.NewResult(0, 1))
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	columns := []string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	mock.ExpectQuery(`SELECT id,resource_key,name,description,scope,source,status,created_at,created_by,updated_at,updated_by,version FROM authorization_resources WHERE id=`).
+		WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows(columns).AddRow("082c606d-f4d9-4339-8d0b-c77e5d839451", "catalog.resource", "Resource", "", "platform", "manual", "active", now, "creator-1", now, "updater-1", 1))
+	mock.ExpectCommit()
+	resource, err := service.CreateResource(platformprincipal.SystemContext(t.Context(), "admin"), ResourceInput{Key: "catalog.resource", Name: "Resource", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
+	require.NoError(t, err)
+	require.Equal(t, "creator-1", resource.CreatedByName)
+	require.Equal(t, "updater-1", resource.UpdatedByName)
+	require.Equal(t, "2026-10-13T08:00:00+08:00", resource.CreatedAt.Format(time.RFC3339))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -171,7 +247,7 @@ func TestCatalogCreateResourceRollsBackWhenResultReadFails(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "pgx")
-	service := NewService(db, database.NewTransactor(db), nil, nil)
+	service := NewService(db, database.NewTransactor(db), nil, nil, nil)
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO authorization_resources`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -190,7 +266,7 @@ func TestCatalogCreateActionRollsBackWhenResultReadFails(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "pgx")
-	service := NewService(db, database.NewTransactor(db), nil, nil)
+	service := NewService(db, database.NewTransactor(db), nil, nil, nil)
 	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	now := time.Now()
 	mock.ExpectBegin()
@@ -214,7 +290,7 @@ func TestCatalogUpdateResourceRollsBackWhenResultReadFails(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "pgx")
-	service := NewService(db, database.NewTransactor(db), nil, nil)
+	service := NewService(db, database.NewTransactor(db), nil, nil, nil)
 	id := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	now := time.Now()
 	mock.ExpectBegin()
@@ -238,7 +314,7 @@ func TestCatalogUpdateActionRollsBackWhenResultReadFails(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "pgx")
-	service := NewService(db, database.NewTransactor(db), nil, nil)
+	service := NewService(db, database.NewTransactor(db), nil, nil, nil)
 	id := "2f3c4f4d-f243-4204-a75a-20cf4b39b541"
 	resourceID := "082c606d-f4d9-4339-8d0b-c77e5d839451"
 	now := time.Now()

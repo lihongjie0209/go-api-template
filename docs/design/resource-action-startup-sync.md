@@ -16,7 +16,7 @@ future administration and are never changed by this sync.
 | Distributed lock | The audited `authorization_catalog_syncs` row is locked `FOR UPDATE` in the same transaction. The build-time/commit fence rejects an older or ambiguous build. |
 | Optimistic lock | Not used for a startup snapshot: row-level versions are audit output, and the transaction lock serializes complete reconciliations. |
 | Audit | All three catalog tables include the mandatory audit columns and triggers. Repeated identical startup produces no record updates. |
-| Presentation | Names and descriptions are copied from code. Stable UUIDv5 IDs use the immutable catalog namespace, never an environment value. |
+| Presentation | Names and descriptions are copied from code. Resource/action create, get, page and update responses use the shared +08 time and batched actor-name presentation helpers. Missing actor names fall back to stable IDs. A display-name lookup failure after a committed mutation does not change its success result; read requests surface the dependency failure. Stable UUIDv5 IDs use the immutable catalog namespace, never an environment value. |
 | Tests | Unit tests cover first sync, idempotence, overwrite, retirement, manual-source conflict and stale builds. Testcontainers integration covers PostgreSQL/MySQL migrations and real reconciliation without another service. |
 | Shared capability | Reuses the SDK stable-ID helper and the existing audit-aware `database.Transactor`; no duplicate transaction or UUID implementation. |
 

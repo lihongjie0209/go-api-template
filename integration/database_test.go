@@ -2476,7 +2476,7 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	t.Helper()
 	actorCtx := platformprincipal.SystemContext(ctx, "authorization-integration")
 	transactor := appdb.NewTransactor(db)
-	catalog := resourcecatalog.NewService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{})
+	catalog := resourcecatalog.NewService(db, transactor, discardOperationRecorder{}, discardSecurityRecorder{}, nil)
 	resource, err := catalog.CreateResource(actorCtx, resourcecatalog.ResourceInput{Key: "integration.manual", Name: "Catalog Display", Scope: resourceaction.ResourceScopePlatform, Status: "active"})
 	if err != nil {
 		t.Fatal(err)

@@ -33,7 +33,7 @@ func TestCatalogActionTargetResponsesExcludeAuditFields(t *testing.T) {
 	mock.ExpectQuery(`SELECT a.id,a.resource_id,r.resource_key,r.name AS resource_name`).
 		WithArgs(actionID).WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_key", "resource_name", "action_key", "name", "description", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
 		AddRow(actionID, resourceID, "warehouse.item", "库存物料", "adjust", "调整库存", "业务动作", "manual", "active", now, "admin", now, "admin", 3))
-	handler := NewResourceCatalogHandler(resourcecatalog.NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewResourceCatalogHandler(resourcecatalog.NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	context := platformprincipal.SystemContext(t.Context(), "admin")
 	for _, test := range []struct {
 		name     string

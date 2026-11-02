@@ -23,7 +23,7 @@ func TestCatalogActionTargetsOnlyAllowManualDefinitions(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
-	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil)
+	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil, nil)
 	resourceRows := func(source string) *sqlmock.Rows {
 		return sqlmock.NewRows([]string{"id", "resource_key", "name", "description", "scope", "source", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
 			AddRow(resourceID, "warehouse.item", "库存物料", "业务资源", "tenant", source, "active", now, "admin", now, "admin", 4)
@@ -76,7 +76,7 @@ func TestCatalogActionTargetsRejectUnauthenticatedInvalidAndMissing(t *testing.T
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
-	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil)
+	service := NewService(sqlx.NewDb(raw, "sqlmock"), nil, nil, nil, nil)
 	_, err = service.ResourceUpdateTarget(t.Context(), id)
 	require.Error(t, err)
 	ctx := platformprincipal.SystemContext(t.Context(), "admin")
@@ -123,7 +123,7 @@ func TestCatalogMutationsRejectStaleVersions(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = raw.Close() })
 			db := sqlx.NewDb(raw, "pgx")
-			service := NewService(db, database.NewTransactor(db), nil, nil)
+			service := NewService(db, database.NewTransactor(db), nil, nil, nil)
 			mock.ExpectBegin()
 			mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.actor_id', $1, true)")).WithArgs("admin").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery(test.query).WithArgs(id).WillReturnRows(sqlmock.NewRows(test.columns).AddRow(test.values...))
