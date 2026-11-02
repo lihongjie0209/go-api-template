@@ -542,6 +542,9 @@ func (s *Service) ProcessPendingUploads(ctx context.Context) error {
 	}
 	var result error
 	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(result, err)
+		}
 		if err := s.withUploadLock(ctx, item.ID, func(lockCtx context.Context) error {
 			return s.processUploadIntent(lockCtx, item.ID, item.Attempts)
 		}); err != nil {
@@ -568,6 +571,9 @@ func (s *Service) ProcessPendingDeletions(ctx context.Context) error {
 	}
 	var result error
 	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(result, err)
+		}
 		if err := s.withDeletionLock(ctx, item.ID, func(lockCtx context.Context) error {
 			return s.processDeletion(lockCtx, item.ID, item.ObjectKey, item.Attempts)
 		}); err != nil {

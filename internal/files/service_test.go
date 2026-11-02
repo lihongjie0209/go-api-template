@@ -90,6 +90,21 @@ type uploadLeaseLocker struct {
 	unlockErr  error
 }
 
+type cancelingBatchLocker struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (l *cancelingBatchLocker) Lock(context.Context, string, time.Duration, time.Duration) (cache.Lock, error) {
+	l.calls++
+	l.cancel()
+	return nil, context.Canceled
+}
+
+func (*cancelingBatchLocker) TryLock(context.Context, string, time.Duration) (cache.Lock, bool, error) {
+	return nil, false, context.Canceled
+}
+
 func (l *uploadLeaseLocker) Lock(_ context.Context, key string, _, _ time.Duration) (cache.Lock, error) {
 	if l.lockErr != nil {
 		return nil, l.lockErr
@@ -247,6 +262,53 @@ func TestFileRepairSkipsDatabaseAfterCancellation(t *testing.T) {
 		t.Fatalf("ProcessPendingDeletions() error=%v", err)
 	}
 	service.RunDeletionWorker(ctx)
+}
+
+func TestFileRepairStopsBatchAfterCancellation(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		query   string
+		rows    *sqlmock.Rows
+		process func(*Service, context.Context) error
+	}{
+		{
+			name:  "uploads",
+			query: `SELECT id,object_key,attempts FROM file_upload_intents`,
+			rows: sqlmock.NewRows([]string{"id", "object_key", "attempts"}).
+				AddRow("upload-1", "key-1", 0).AddRow("upload-2", "key-2", 0),
+			process: (*Service).ProcessPendingUploads,
+		},
+		{
+			name:  "deletions",
+			query: `SELECT id,object_key,object_delete_attempts FROM files`,
+			rows: sqlmock.NewRows([]string{"id", "object_key", "object_delete_attempts"}).
+				AddRow("file-1", "key-1", 0).AddRow("file-2", "key-2", 0),
+			process: (*Service).ProcessPendingDeletions,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectQuery(test.query).WithArgs(sqlmock.AnyArg(), 2).WillReturnRows(test.rows)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			locker := &cancelingBatchLocker{cancel: cancel}
+			service := &Service{enabled: true, db: sqlx.NewDb(raw, "sqlmock"), locker: locker, cfg: config.Files{DeletionBatchSize: 2}, lockTTL: time.Second, lockRetry: 10 * time.Millisecond}
+			if err := test.process(service, ctx); !errors.Is(err, context.Canceled) {
+				t.Fatalf("repair error=%v, want context cancellation", err)
+			}
+			if locker.calls != 1 {
+				t.Fatalf("lock calls=%d, want 1", locker.calls)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestServiceUploadRejectsDeclaredSizeMismatchBeforeStorage(t *testing.T) {
