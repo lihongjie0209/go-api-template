@@ -185,6 +185,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			assertMandatoryAuditColumns(t, ctx, db, databaseType, migrationCfg.Table)
 			assertOutboxDeadListIndex(t, ctx, db, databaseType)
 			assertPlatformPermissionReferenceIndex(t, ctx, db, databaseType)
+			assertTenantSelectionIndex(t, ctx, db, databaseType)
 			assertOutboxLegacyErrorProjection(t, ctx, db)
 			if databaseType == "postgres" {
 				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
@@ -261,6 +262,26 @@ func assertPlatformPermissionReferenceIndex(t *testing.T, ctx context.Context, d
 	}
 	if definition != "permission_id,deleted_at" {
 		t.Fatalf("unexpected MySQL platform permission reference index: %s", definition)
+	}
+}
+
+func assertTenantSelectionIndex(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string) {
+	t.Helper()
+	var definition string
+	if databaseType == "postgres" {
+		if err := db.GetContext(ctx, &definition, `SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='tenant_memberships' AND indexname='tenant_memberships_selection_idx'`); err != nil {
+			t.Fatalf("inspect PostgreSQL tenant selection index: %v", err)
+		}
+		if !strings.Contains(definition, "(user_id, status, tenant_id)") || !strings.Contains(definition, "deleted_at IS NULL") {
+			t.Fatalf("unexpected PostgreSQL tenant selection index: %s", definition)
+		}
+		return
+	}
+	if err := db.GetContext(ctx, &definition, `SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='tenant_memberships' AND index_name='tenant_memberships_selection_idx'`); err != nil {
+		t.Fatalf("inspect MySQL tenant selection index: %v", err)
+	}
+	if definition != "user_id,status,deleted_at,tenant_id" {
+		t.Fatalf("unexpected MySQL tenant selection index: %s", definition)
 	}
 }
 

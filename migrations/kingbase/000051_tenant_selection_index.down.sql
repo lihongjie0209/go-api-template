@@ -1,0 +1,1 @@
+DROP INDEX tenant_memberships_selection_idx;

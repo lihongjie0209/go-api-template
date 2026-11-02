@@ -25,3 +25,9 @@ The selector does not expose a joined-at range filter because users select by
 tenant identity and name; `joined_at` is only a display field. The optional
 ID list is an exact `IN` filter, while code and name participate in literal
 case-insensitive keyword search. An empty ID list means no ID restriction.
+
+Migration `000051` keeps selection lookup bounded by an index starting with
+`user_id,status` and covering `tenant_id`. PostgreSQL and Kingbase use a
+partial index for undeleted memberships; MySQL includes `deleted_at` as a key.
+The migration replaces the narrower PostgreSQL/MySQL user index and adds the
+previously missing Kingbase selection index. Each dialect has a down migration.
