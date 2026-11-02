@@ -149,6 +149,9 @@ func (o Options) Validate() error {
 }
 
 func Generate(ctx context.Context, options Options) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	options.Defaults()
 	if err := options.Validate(); err != nil {
 		return "", err
@@ -173,11 +176,14 @@ func Generate(ctx context.Context, options Options) (string, error) {
 	defer func() { _ = os.RemoveAll(temporary) }()
 
 	if options.Source != "" {
-		err = copyLocal(options.Source, temporary)
+		err = copyLocal(ctx, options.Source, temporary)
 	} else {
 		err = downloadTemplate(ctx, options.Ref, temporary)
 	}
 	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	replacements := []struct{ old, new string }{
@@ -191,29 +197,50 @@ func Generate(ctx context.Context, options Options) (string, error) {
 		{templateDescription, options.Description},
 		{templateName, options.Name},
 	}
-	if err := rewriteProject(temporary, options.Module, replacements); err != nil {
+	if err := rewriteProject(ctx, temporary, options.Module, replacements); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if options.GenerateCode {
 		command := exec.CommandContext(ctx, "buf", "generate")
 		command.Dir = temporary
 		if data, commandErr := command.CombinedOutput(); commandErr != nil {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			return "", fmt.Errorf("generate protobuf code with Buf: %w: %s", commandErr, strings.TrimSpace(string(data)))
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if options.Tidy {
 		command := exec.CommandContext(ctx, "go", "mod", "tidy")
 		command.Dir = temporary
 		if data, commandErr := command.CombinedOutput(); commandErr != nil {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			return "", fmt.Errorf("tidy generated Go module: %w: %s", commandErr, strings.TrimSpace(string(data)))
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if options.InitGit {
 		command := exec.CommandContext(ctx, "git", "init", "-b", "main")
 		command.Dir = temporary
 		if data, commandErr := command.CombinedOutput(); commandErr != nil {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			return "", fmt.Errorf("initialize Git repository: %w: %s", commandErr, strings.TrimSpace(string(data)))
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if err := os.Rename(temporary, output); err != nil {
 		return "", fmt.Errorf("publish generated project: %w", err)
@@ -221,12 +248,15 @@ func Generate(ctx context.Context, options Options) (string, error) {
 	return output, nil
 }
 
-func copyLocal(source, destination string) error {
+func copyLocal(ctx context.Context, source, destination string) error {
 	root, err := filepath.Abs(source)
 	if err != nil {
 		return fmt.Errorf("resolve source: %w", err)
 	}
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -246,11 +276,14 @@ func copyLocal(source, destination string) error {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("template contains unsupported symlink: %s", relative)
 		}
+		if entry.Type()&os.ModeType != 0 && !entry.IsDir() {
+			return fmt.Errorf("template contains unsupported file type: %s", relative)
+		}
 		target := filepath.Join(destination, relative)
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		return copyFile(path, target, entry)
+		return copyFile(ctx, path, target, entry)
 	})
 }
 
@@ -352,7 +385,10 @@ func extractTarGzip(source io.Reader, destination string) error {
 	}
 }
 
-func rewriteProject(root, modulePath string, replacements []struct{ old, new string }) error {
+func rewriteProject(ctx context.Context, root, modulePath string, replacements []struct{ old, new string }) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	goModPath := filepath.Join(root, "go.mod")
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
@@ -374,6 +410,9 @@ func rewriteProject(root, modulePath string, replacements []struct{ old, new str
 	}
 	goReplacements := replacements
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if err != nil || entry.IsDir() {
 			return err
 		}
@@ -510,7 +549,7 @@ func skipped(relative string) bool {
 		clean == "internal/microgencli" || strings.HasPrefix(clean, "internal/microgencli/")
 }
 
-func copyFile(source, destination string, entry fs.DirEntry) error {
+func copyFile(ctx context.Context, source, destination string, entry fs.DirEntry) error {
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -527,9 +566,25 @@ func copyFile(source, destination string, entry fs.DirEntry) error {
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(output, input)
+	_, copyErr := io.Copy(output, canceledReader{ctx: ctx, reader: input})
 	closeErr := output.Close()
 	return errors.Join(copyErr, closeErr)
+}
+
+type canceledReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r canceledReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	count, err := r.reader.Read(buffer)
+	if contextErr := r.ctx.Err(); contextErr != nil {
+		return count, contextErr
+	}
+	return count, err
 }
 
 func within(root, target string) bool {

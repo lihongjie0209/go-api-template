@@ -149,7 +149,7 @@ func loadReplacementEnvelope(path string) ([]byte, error) {
 	if err != nil {
 		return nil, eventbus.ErrRepairInvalid
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxReplacementJSONBytes+1))
 	if err != nil || len(data) == 0 || len(data) > maxReplacementJSONBytes {
 		return nil, eventbus.ErrRepairInvalid

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"go/format"
 	"os"
 	"os/exec"
@@ -81,6 +82,26 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	formatted, err := format.Source(goSource)
 	if err != nil || string(formatted) != string(goSource) {
 		t.Fatalf("generated Go source is not formatted: %v", err)
+	}
+}
+
+func TestGenerateCanceledBeforeWorkDoesNotPublishProject(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "template")
+	writeFixture(t, source, "go.mod", "module "+templateModule+"\n\ngo 1.26.9\n")
+	output := filepath.Join(root, "orders")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := Generate(ctx, Options{
+		Name: "orders-service", Module: "github.com/acme/orders-service", Source: source,
+		Output: output, InitGit: false, Tidy: false, GenerateCode: false,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Generate() error = %v, want context canceled", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("canceled Generate created output: %v", err)
 	}
 }
 

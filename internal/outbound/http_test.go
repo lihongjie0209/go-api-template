@@ -57,7 +57,7 @@ func TestHTTPClient_DefaultJSONContentTypeForEmptyPost(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer response.Body.Close()
+			defer func() { _ = response.Body.Close() }()
 			if got := response.Header.Get("X-Observed-Content-Type"); got != test.want {
 				t.Fatalf("Content-Type = %q, want %q", got, test.want)
 			}
