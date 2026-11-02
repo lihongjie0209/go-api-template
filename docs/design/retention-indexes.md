@@ -18,7 +18,8 @@ already have a partial index on active lineage.
 When retired partitions move to a shared archive schema, their associated
 indexes move too. The lifecycle worker renames each detached partition index
 to a bounded stable digest of its original schema and index name before moving
-the table. This follows PostgreSQL's documented [`SET SCHEMA` behavior](https://www.postgresql.org/docs/17/sql-altertable.html)
+the table. The index list is capped at 64 per partition; an abnormal larger
+set fails the maintenance transaction before any index is moved. This follows PostgreSQL's documented [`SET SCHEMA` behavior](https://www.postgresql.org/docs/17/sql-altertable.html)
 and [`ALTER INDEX RENAME` behavior](https://www.postgresql.org/docs/17/sql-alterindex.html).
 
 | Concern | Decision and rationale |

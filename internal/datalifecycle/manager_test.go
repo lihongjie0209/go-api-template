@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"regexp"
@@ -517,6 +518,42 @@ func TestRetainPartitionsArchivesWithSourceSchemaIdentity(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "orders"."` + archived + `" SET SCHEMA "shared_archive"`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := retainPartitions(t.Context(), tx, "operation_logs", time.Date(2026, time.January, 1, 0, 0, 0, 0, platformLocation), "shared_archive", 12); err != nil {
 		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetainPartitionsRejectsUnboundedIndexRename(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const child = "operation_logs_y2025m01"
+	archived := archivePartitionName("orders", child)
+	mock.ExpectQuery(`SELECT child_namespace.nspname AS schema_name,child.relname AS name`).WithArgs("operation_logs").
+		WillReturnRows(sqlmock.NewRows([]string{"schema_name", "name"}).AddRow("orders", child))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "operation_logs" DETACH PARTITION "orders"."` + child + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "orders"."` + child + `" RENAME TO "` + archived + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	indexes := sqlmock.NewRows([]string{"relname"})
+	for i := range 65 {
+		indexes.AddRow(fmt.Sprintf("partition_index_%02d", i))
+	}
+	mock.ExpectQuery(`SELECT index_class.relname`).WithArgs("orders", archived).WillReturnRows(indexes)
+	if err := retainPartitions(t.Context(), tx, "operation_logs", time.Date(2026, time.January, 1, 0, 0, 0, 0, platformLocation), "shared_archive", 1); err == nil || !strings.Contains(err.Error(), "too many indexes") {
+		t.Fatalf("retainPartitions() error=%v", err)
 	}
 	mock.ExpectRollback()
 	if err := tx.Rollback(); err != nil {
