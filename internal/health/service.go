@@ -33,32 +33,55 @@ type result struct {
 }
 
 func New(db *sqlx.DB, client *redis.Client, cfg config.Config) *Service {
-	return &Service{db: db, redis: client, databaseEnabled: cfg.Database.Enabled, cfg: cfg.Health}
+	healthConfig := cfg.Health
+	if healthConfig.DatabaseTimeout <= 0 {
+		healthConfig.DatabaseTimeout = 2 * time.Second
+	}
+	if healthConfig.RedisTimeout <= 0 {
+		healthConfig.RedisTimeout = 2 * time.Second
+	}
+	return &Service{db: db, redis: client, databaseEnabled: cfg.Database.Enabled, cfg: healthConfig}
 }
 func (s *Service) Live() Status { return Status{Status: "up"} }
 
 func (s *Service) Ready(ctx context.Context) (Status, bool) {
-	// The per-dependency Contexts cannot stop a driver that ignores cancellation.
-	// Bound the aggregation itself by the longest configured dependency timeout.
-	probeTimeout := max(s.cfg.DatabaseTimeout, s.cfg.RedisTimeout)
-	if probeTimeout <= 0 {
-		probeTimeout = 2 * time.Second
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
+	// A driver may ignore its Context, so the aggregation also enforces each
+	// dependency's deadline independently of that driver's return.
+	databaseTimer := time.NewTimer(s.cfg.DatabaseTimeout)
+	defer databaseTimer.Stop()
+	redisTimer := time.NewTimer(s.cfg.RedisTimeout)
+	defer redisTimer.Stop()
+	databaseDeadline := databaseTimer.C
+	redisDeadline := redisTimer.C
 	// Keep one slot per dependency so a cancelled caller can never leave a
 	// completed probe blocked while publishing its result.
 	results := make(chan result, 2)
-	go s.checkDatabase(probeCtx, results)
-	go s.checkRedis(probeCtx, results)
+	go s.checkDatabase(ctx, results)
+	go s.checkRedis(ctx, results)
 	status := Status{Status: "ready", Dependencies: make(map[string]Dependency, 2)}
 	ready := true
-	for range 2 {
+	for len(status.Dependencies) < 2 {
 		select {
 		case item := <-results:
+			if _, found := status.Dependencies[item.name]; found {
+				continue
+			}
 			status.Dependencies[item.name] = item.dependency
 			ready = ready && item.ready
-		case <-probeCtx.Done():
+			if item.name == "database" {
+				databaseDeadline = nil
+			} else {
+				redisDeadline = nil
+			}
+		case <-databaseDeadline:
+			databaseDeadline = nil
+			status.Dependencies["database"] = Dependency{Status: "down"}
+			ready = false
+		case <-redisDeadline:
+			redisDeadline = nil
+			status.Dependencies["redis"] = Dependency{Status: "down"}
+			ready = false
+		case <-ctx.Done():
 			for _, name := range []string{"database", "redis"} {
 				if _, found := status.Dependencies[name]; !found {
 					status.Dependencies[name] = Dependency{Status: "down"}
@@ -68,7 +91,7 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 			return status, false
 		}
 	}
-	if probeCtx.Err() != nil {
+	if ctx.Err() != nil {
 		status.Status = "not_ready"
 		return status, false
 	}
