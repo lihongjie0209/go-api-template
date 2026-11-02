@@ -195,7 +195,10 @@ func (s *Service) PageResources(ctx context.Context, input PageInput) (ResourceP
 	if err != nil || !validPage(input) || input.ResourceID != "" || input.ActiveResourcesOnly {
 		return ResourcePage{}, ErrInvalid
 	}
-	where, args := pageConditions(input, "id", "resource_key")
+	where, args, err := pageConditions(input, "id", "resource_key")
+	if err != nil {
+		return ResourcePage{}, ErrInvalid
+	}
 	if input.ResourceKey != "" {
 		where += " AND resource_key=?"
 		args = append(args, input.ResourceKey)
@@ -347,7 +350,10 @@ func (s *Service) PageActions(ctx context.Context, input PageInput) (ActionPage,
 			return ActionPage{}, ErrInvalid
 		}
 	}
-	where, args := pageConditions(input, "a.id", "a.action_key", "r.resource_key", "r.name")
+	where, args, err := pageConditions(input, "a.id", "a.action_key", "r.resource_key", "r.name")
+	if err != nil {
+		return ActionPage{}, ErrInvalid
+	}
 	where += " AND r.deleted_at IS NULL"
 	if input.ResourceKey != "" {
 		where += " AND r.resource_key=?"
@@ -506,7 +512,7 @@ func validPage(input PageInput) bool {
 	}
 	return true
 }
-func pageConditions(input PageInput, idColumn, keyColumn string, extraKeywordColumns ...string) (string, []any) {
+func pageConditions(input PageInput, idColumn, keyColumn string, extraKeywordColumns ...string) (string, []any, error) {
 	alias := ""
 	if strings.Contains(idColumn, ".") {
 		alias = strings.SplitN(idColumn, ".", 2)[0] + "."
@@ -526,26 +532,29 @@ func pageConditions(input PageInput, idColumn, keyColumn string, extraKeywordCol
 	}
 	if len(input.IDs) > 0 {
 		query, in, err := sqlx.In(idColumn+` IN (?)`, input.IDs)
-		if err == nil {
-			where += " AND " + query
-			args = append(args, in...)
+		if err != nil {
+			return "", nil, err
 		}
+		where += " AND " + query
+		args = append(args, in...)
 	}
 	if len(input.Statuses) > 0 {
 		query, in, err := sqlx.In(alias+`status IN (?)`, input.Statuses)
-		if err == nil {
-			where += " AND " + query
-			args = append(args, in...)
+		if err != nil {
+			return "", nil, err
 		}
+		where += " AND " + query
+		args = append(args, in...)
 	}
 	if len(input.Sources) > 0 {
 		query, in, err := sqlx.In(alias+`source IN (?)`, input.Sources)
-		if err == nil {
-			where += " AND " + query
-			args = append(args, in...)
+		if err != nil {
+			return "", nil, err
 		}
+		where += " AND " + query
+		args = append(args, in...)
 	}
-	return where, args
+	return where, args, nil
 }
 
 func (s *Service) mutate(ctx context.Context, name, id, display string, fn func(*sqlx.Tx) error) error {

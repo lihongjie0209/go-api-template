@@ -72,10 +72,13 @@ func TestCodeOwnedResourceCannotBeUpdated(t *testing.T) {
 }
 
 func TestCatalogPageConditionsUseBoundParameters(t *testing.T) {
-	where, args := pageConditions(PageInput{Request: paginationRequest("alice"), IDs: []string{"082c606d-f4d9-4339-8d0b-c77e5d839451"}, Statuses: []string{"active"}}, "a.id", "a.action_key")
+	where, args, err := pageConditions(PageInput{Request: paginationRequest("alice"), IDs: []string{"082c606d-f4d9-4339-8d0b-c77e5d839451"}, Statuses: []string{"active"}, Sources: []string{"manual"}}, "a.id", "a.action_key")
+	require.NoError(t, err)
 	require.Contains(t, where, "a.id IN (?)")
+	require.Contains(t, where, "a.status IN (?)")
+	require.Contains(t, where, "a.source IN (?)")
 	require.NotContains(t, where, "alice")
-	require.Equal(t, []any{"%alice%", "%alice%", "082c606d-f4d9-4339-8d0b-c77e5d839451", "active"}, args)
+	require.Equal(t, []any{"%alice%", "%alice%", "082c606d-f4d9-4339-8d0b-c77e5d839451", "active", "manual"}, args)
 }
 
 func TestPageActionsFiltersActiveResourcesByScope(t *testing.T) {
