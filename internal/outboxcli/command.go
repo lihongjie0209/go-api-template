@@ -138,6 +138,10 @@ func runReplay(ctx context.Context, options replayOptions) error {
 const maxReplacementJSONBytes = 2 << 20
 
 func loadReplacementEnvelope(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxReplacementJSONBytes {
+		return nil, eventbus.ErrRepairInvalid
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, eventbus.ErrRepairInvalid

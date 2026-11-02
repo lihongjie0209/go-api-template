@@ -114,6 +114,20 @@ func TestLoadReplacementEnvelopeBoundsAndValidatesJSON(t *testing.T) {
 	if _, err := loadReplacementEnvelope(filepath.Join(t.TempDir(), "missing.json")); !errors.Is(err, eventbus.ErrRepairInvalid) {
 		t.Fatalf("missing file error = %v", err)
 	}
+	t.Run("symlink to regular file", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "envelope.json")
+		link := filepath.Join(root, "mounted-envelope.json")
+		if err := os.WriteFile(target, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadReplacementEnvelope(link); err != nil {
+			t.Fatalf("regular file symlink rejected: %v", err)
+		}
+	})
 }
 
 func TestDeadCommandRequiresActor(t *testing.T) {

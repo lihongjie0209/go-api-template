@@ -215,7 +215,7 @@ The scheduler uses robfig/cron with six-field specifications and `Asia/Shanghai`
 
 The same bounded maintenance run retires transactional outbox rows after `outbox_published_retention` (seven days by default) or `outbox_dead_retention` (90 days). Because every table follows the audit/soft-delete contract, it logically deletes the row and clears the protobuf envelope, trace context, and error payload instead of issuing an unaudited physical delete. Dead events therefore retain a substantially longer operator-investigation window than successfully published events.
 
-Use the packaged Cobra command for dead-event repair instead of editing the table. It loads only the database portion of the normal profile/environment configuration, never prints the protobuf envelope, requires an explicit bounded system actor, and replays with the row version as an optimistic lock. A malformed event needs a corrected protobuf JSON envelope file; the command validates its event ID and type against the stored row, replaces the bytes, and requeues the event in one transaction:
+Use the packaged Cobra command for dead-event repair instead of editing the table. It loads only the database portion of the normal profile/environment configuration, never prints the protobuf envelope, requires an explicit bounded system actor, and replays with the row version as an optimistic lock. A malformed event needs a corrected protobuf JSON envelope in a regular file (a symlink to one is accepted); the command validates its event ID and type against the stored row, replaces the bytes, and requeues the event in one transaction:
 
 ```bash
 /app/outboxctl dead list --config /app/config/config.yaml --env production --actor incident-123 --page 1 --page-size 20
