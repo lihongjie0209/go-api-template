@@ -197,10 +197,12 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 		winnerName string
 		isSystem   bool
 		wantNoop   bool
+		staleLink  bool
 		writeError error
 	}{
 		{name: "identical system seed", winnerName: "Menu", isSystem: true, wantNoop: true},
 		{name: "identical seed after serialization failure", winnerName: "Menu", isSystem: true, wantNoop: true, writeError: &pgconn.PgError{Code: "40001"}},
+		{name: "identical group with stale action link", winnerName: "Menu", isSystem: true, staleLink: true},
 		{name: "different system seed", winnerName: "Other menu", isSystem: true},
 		{name: "manual record", winnerName: "Menu", isSystem: false},
 	}
@@ -225,8 +227,12 @@ func TestPermissionSeedConcurrentInsertConflict(t *testing.T) {
 			mock.ExpectRollback()
 			winner := sqlmock.NewRows([]string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version", "deleted_at"}).AddRow(id, nil, "platform.menu", tt.winnerName, "group", "", "", "", 0, "active", tt.isSystem, time.Now(), "creator", time.Now(), "updater", 1, nil)
 			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).WillReturnRows(winner)
-			if tt.wantNoop {
-				mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+			if tt.wantNoop || tt.staleLink {
+				linkRows := sqlmock.NewRows([]string{"1"})
+				if tt.staleLink {
+					linkRows.AddRow(1)
+				}
+				mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).WillReturnRows(linkRows)
 			}
 			seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.menu", Name: "Menu", NodeType: "group", Status: "active"})
 			if tt.wantNoop {
