@@ -102,7 +102,7 @@ func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databas
 			JOIN pg_namespace n ON n.oid=c.relnamespace
 			JOIN pg_trigger tr ON tr.tgrelid=c.oid
 			WHERE n.nspname=current_schema() AND tr.tgname='app_audit_row_trigger'
-				AND tr.tgenabled <> 'D' AND tr.tgfoid='app_audit_row()'::regprocedure
+				AND tr.tgenabled IN ('O', 'A') AND tr.tgfoid='app_audit_row()'::regprocedure
 				AND (tr.tgtype & 31) = 31`)
 		if err != nil {
 			t.Fatalf("load PostgreSQL audit triggers: %v", err)
@@ -157,7 +157,7 @@ func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databas
 				t.Errorf("migrated table %s is missing audit trigger %s", name, triggerName)
 				continue
 			}
-			if contract.event != expected.event {
+			if !strings.EqualFold(contract.event, expected.event) {
 				t.Errorf("migrated table %s trigger %s fires on %s, want %s", name, triggerName, contract.event, expected.event)
 			}
 			if expected.event == "DELETE" && !strings.Contains(strings.ToUpper(contract.statement), "SIGNAL SQLSTATE '45000'") {
