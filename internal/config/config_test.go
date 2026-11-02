@@ -1005,6 +1005,49 @@ func TestConfig_FilesRequireOperationLog(t *testing.T) {
 	}
 }
 
+func TestConfig_BoundsEventBusStartup(t *testing.T) {
+	t.Parallel()
+	cfg := validDevelopmentConfig(t)
+	cfg.EventBus.Enabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default event bus startup timeout rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name    string
+		connect time.Duration
+		startup time.Duration
+	}{
+		{name: "missing startup deadline", connect: time.Second, startup: 0},
+		{name: "startup shorter than connect", connect: time.Second, startup: time.Millisecond},
+		{name: "unbounded startup", connect: time.Second, startup: time.Minute + time.Second},
+		{name: "unbounded connect", connect: time.Minute + time.Second, startup: time.Minute + time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := cfg
+			candidate.EventBus.ConnectTimeout = test.connect
+			candidate.EventBus.StartupTimeout = test.startup
+			if err := candidate.Validate(); err == nil || !strings.Contains(err.Error(), "startup_timeout") {
+				t.Fatalf("invalid event bus startup settings accepted: %v", err)
+			}
+		})
+	}
+	cfg.EventBus.URLs = make([]string, 9)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "eight URLs") {
+		t.Fatalf("unbounded event bus URLs accepted: %v", err)
+	}
+}
+
+func TestConfig_EventBusStartupTimeoutEnvironmentOverride(t *testing.T) {
+	t.Setenv("APP_EVENT_BUS_STARTUP_TIMEOUT", "23s")
+	cfg, err := LoadWithProfile("../../config/config.yaml", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EventBus.StartupTimeout != 23*time.Second {
+		t.Fatalf("event bus startup timeout = %s, want environment override", cfg.EventBus.StartupTimeout)
+	}
+}
+
 func TestConfig_RedisKeyPrefixAlwaysIncludesActiveEnvironment(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

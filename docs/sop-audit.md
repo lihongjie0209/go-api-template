@@ -535,6 +535,12 @@ and post-callback lock loss. The same CI run verified this change.
 
 ## Event bus and transactional outbox audit decisions
 
+Fx event-bus construction now uses the bounded startup Context documented in
+[event-bus-startup.md](design/event-bus-startup.md). Its separate connection
+timeout is capped and stream provisioning cannot wait indefinitely. Focused
+configuration, event-bus and app unit tests pass locally; CI revalidation is
+pending with the next substantial batch.
+
 | Concern | Current decision and evidence |
 | --- | --- |
 | Atomic publication | Operation and security recorders store protobuf event envelopes through a caller-owned SQL transaction. Standalone recorders open their own transaction, while domain mutations use `RecordTx`; rollback therefore removes both the business change and pending event. Repository-wide search finds no business NATS publish path outside the outbox dispatcher. |

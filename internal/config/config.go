@@ -278,6 +278,7 @@ type EventBus struct {
 	MaxAge                 time.Duration `mapstructure:"max_age"`
 	DuplicateWindow        time.Duration `mapstructure:"duplicate_window"`
 	ConnectTimeout         time.Duration `mapstructure:"connect_timeout"`
+	StartupTimeout         time.Duration `mapstructure:"startup_timeout"`
 	ReconnectWait          time.Duration `mapstructure:"reconnect_wait"`
 	PublishTimeout         time.Duration `mapstructure:"publish_timeout"`
 	ConsumerAckWait        time.Duration `mapstructure:"consumer_ack_wait"`
@@ -685,6 +686,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("event_bus.max_age", "168h")
 	v.SetDefault("event_bus.duplicate_window", "10m")
 	v.SetDefault("event_bus.connect_timeout", "5s")
+	v.SetDefault("event_bus.startup_timeout", "15s")
 	v.SetDefault("event_bus.reconnect_wait", "1s")
 	v.SetDefault("event_bus.publish_timeout", "5s")
 	v.SetDefault("event_bus.consumer_ack_wait", "30s")
@@ -924,6 +926,9 @@ func (c Config) Validate() error {
 	}
 	if c.EventBus.Enabled && (len(c.EventBus.URLs) == 0 || c.EventBus.StreamName == "" || len(c.EventBus.Subjects) != 1 || c.EventBus.Subjects[0] != "platform.>" || (c.EventBus.Storage != "file" && c.EventBus.Storage != "memory") || c.EventBus.MaxAge <= 0 || c.EventBus.DuplicateWindow <= 0 || c.EventBus.ConnectTimeout <= 0 || c.EventBus.ReconnectWait <= 0 || c.EventBus.PublishTimeout <= 0 || c.EventBus.ConsumerAckWait <= 0 || c.EventBus.ConsumerHandlerTimeout <= 0 || c.EventBus.ConsumerHandlerTimeout >= c.EventBus.ConsumerAckWait || c.EventBus.ConsumerMaxDeliver <= 0 || c.EventBus.ConsumerMaxDeliver > 100 || c.EventBus.DispatchInterval < 10*time.Millisecond || c.EventBus.DispatchInterval > time.Minute || c.EventBus.DispatchBatchSize <= 0 || c.EventBus.DispatchBatchSize > 1000 || c.EventBus.DispatchLease <= c.EventBus.PublishTimeout || c.EventBus.DispatchLease > 10*time.Minute || c.EventBus.DispatchRetryDelay <= 0 || c.EventBus.DispatchRetryMaxDelay < c.EventBus.DispatchRetryDelay || c.EventBus.DispatchRetryMaxDelay > time.Hour) {
 		return errors.New("enabled event_bus requires URLs, stream, canonical platform.> subjects, valid storage, positive timeouts, delivery, and dispatch settings")
+	}
+	if c.EventBus.Enabled && (len(c.EventBus.URLs) > 8 || c.EventBus.ConnectTimeout > time.Minute || c.EventBus.StartupTimeout < c.EventBus.ConnectTimeout || c.EventBus.StartupTimeout > time.Minute) {
+		return errors.New("enabled event_bus requires at most eight URLs, startup_timeout from connect_timeout through 1m, and connect_timeout no greater than 1m")
 	}
 	if c.ObjectStorage.Enabled && ((c.ObjectStorage.Provider != "s3" && c.ObjectStorage.Provider != "oss") || strings.TrimSpace(c.ObjectStorage.Bucket) == "" || len(c.ObjectStorage.Bucket) > 255 || strings.TrimSpace(c.ObjectStorage.Region) == "" || len(c.ObjectStorage.Region) > 255 || c.ObjectStorage.PresignTTL <= 0 || c.ObjectStorage.PresignTTL > 24*time.Hour || c.ObjectStorage.Timeout < time.Second || c.ObjectStorage.Timeout > 5*time.Minute || c.ObjectStorage.UseCName && c.ObjectStorage.Provider != "oss") {
 		return errors.New("enabled object_storage requires provider s3 or oss, bounded bucket/region, provider-compatible options, and presign_ttl no greater than 24h")

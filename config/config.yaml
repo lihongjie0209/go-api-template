@@ -229,6 +229,7 @@ event_bus:
   max_age: 168h
   duplicate_window: 10m
   connect_timeout: 5s
+  startup_timeout: 15s # Bounds connection and JetStream provisioning at startup.
   reconnect_wait: 1s
   publish_timeout: 5s
   consumer_ack_wait: 30s
