@@ -3668,7 +3668,7 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := members.Remove(departmentCtx, membershipID, 1); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("remove final tenant administrator error=%v", err)
 	}
-	testMemberDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, addedMember)
+	testMemberDataPermissionEnforcement(t, ctx, db, created.ID, membershipID, rejoinedMember)
 	departments := tenant.NewDepartmentService(db, appdb.NewTransactor(db), nil, discardOperationRecorder{}, nil, staticUserResolver{id: "member-2", username: "member.two", name: "Member Two"}, config.Config{}, nil)
 	root, err := departments.Create(departmentCtx, tenant.DepartmentInput{Code: "engineering", Name: "研发中心"})
 	if err != nil {

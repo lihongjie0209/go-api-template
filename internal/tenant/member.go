@@ -56,7 +56,19 @@ func (r *grpcUserResolver) ResolveUsername(ctx context.Context, username string)
 	}
 	response, err := r.client.ListUsers(ctx, &identityv1.ListUsersRequest{Keyword: "=" + username, Status: identityv1.UserStatus_USER_STATUS_ACTIVE, Page: &commonv1.PageRequest{Page: 1, PageSize: 1}})
 	if err != nil {
-		return UserSnapshot{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return UserSnapshot{}, ctxErr
+		}
+		if errors.Is(err, context.Canceled) {
+			return UserSnapshot{}, context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return UserSnapshot{}, context.DeadlineExceeded
+		}
+		return UserSnapshot{}, ErrIdentityUnavailable
+	}
+	if response == nil {
+		return UserSnapshot{}, ErrIdentityUnavailable
 	}
 	if len(response.GetUsers()) == 1 && response.GetUsers()[0].GetStatus() == identityv1.UserStatus_USER_STATUS_ACTIVE && strings.EqualFold(response.GetUsers()[0].GetUsername(), username) {
 		u := response.GetUsers()[0]

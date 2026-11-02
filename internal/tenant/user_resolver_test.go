@@ -16,6 +16,8 @@ import (
 type identityClientStub struct {
 	identityv1.IdentityServiceClient
 	request       *identityv1.ListUsersRequest
+	listErr       error
+	nilListResult bool
 	batchRequest  *identityv1.BatchGetUsersRequest
 	batchRequests []*identityv1.BatchGetUsersRequest
 	batchErr      error
@@ -86,6 +88,12 @@ func TestGRPCUserResolverActorPresentationFallsBackWhenIdentityUnavailable(t *te
 
 func (s *identityClientStub) ListUsers(_ context.Context, request *identityv1.ListUsersRequest, _ ...grpc.CallOption) (*identityv1.ListUsersResponse, error) {
 	s.request = request
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	if s.nilListResult {
+		return nil, nil
+	}
 	status := s.userStatus
 	if status == identityv1.UserStatus_USER_STATUS_UNSPECIFIED {
 		status = identityv1.UserStatus_USER_STATUS_ACTIVE
@@ -95,6 +103,32 @@ func (s *identityClientStub) ListUsers(_ context.Context, request *identityv1.Li
 		id = "user-1"
 	}
 	return &identityv1.ListUsersResponse{Users: []*identityv1.User{{Id: id, Username: "alice", DisplayName: "Alice", Status: status}}, Page: &commonv1.PageResult{Page: 1, PageSize: 1, Total: 1}}, nil
+}
+
+func TestGRPCUserResolverRejectsMissingIdentityResponse(t *testing.T) {
+	t.Parallel()
+	resolver := &grpcUserResolver{client: &identityClientStub{nilListResult: true}}
+	_, err := resolver.ResolveUsername(t.Context(), "alice")
+	if !errors.Is(err, ErrIdentityUnavailable) {
+		t.Fatalf("identity lookup error=%v, want unavailable for missing response", err)
+	}
+}
+
+func TestGRPCUserResolverClassifiesLookupFailuresWithoutLeakingUpstreamDetails(t *testing.T) {
+	t.Parallel()
+	secretErr := errors.New("upstream password=secret-value")
+	resolver := &grpcUserResolver{client: &identityClientStub{listErr: secretErr}}
+	_, err := resolver.ResolveUsername(t.Context(), "alice")
+	if !errors.Is(err, ErrIdentityUnavailable) || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("identity lookup error=%v, want safe dependency-unavailable", err)
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		resolver := &grpcUserResolver{client: &identityClientStub{listErr: cause}}
+		_, err := resolver.ResolveUsername(t.Context(), "alice")
+		if !errors.Is(err, cause) {
+			t.Fatalf("identity lookup error=%v, want context cause %v", err, cause)
+		}
+	}
 }
 
 func TestGRPCUserResolverRejectsMalformedIdentityID(t *testing.T) {
