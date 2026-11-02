@@ -22,6 +22,40 @@ type outboxStub struct {
 	called  bool
 	subject string
 	event   *commonv1.EventEnvelope
+	err     error
+}
+
+func TestSecurityRecorderHidesOutboxFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	outbox := &outboxStub{err: errors.New("password=security-outbox-test-secret")}
+	service := &Service{cfg: config.SecurityLog{Enabled: true, MaxPayloadBytes: 1024}, outbox: outbox, transactor: database.NewTransactor(db)}
+	entry := Entry{EventType: EventLogin, SubjectID: "user-1"}
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+	err = service.Record(t.Context(), entry)
+	if !errors.Is(err, ErrOutboxUnavailable) || strings.Contains(err.Error(), "security-outbox-test-secret") {
+		t.Fatalf("Record() error=%v", err)
+	}
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	err = service.RecordTx(t.Context(), tx, entry)
+	if !errors.Is(err, ErrOutboxUnavailable) || strings.Contains(err.Error(), "security-outbox-test-secret") {
+		t.Fatalf("RecordTx() error=%v", err)
+	}
+	_ = tx.Rollback()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type leakingSecurityMarshaler struct{}
@@ -48,7 +82,7 @@ func (s *outboxStub) Store(_ context.Context, tx *sqlx.Tx, subject string, event
 	s.called = tx != nil
 	s.subject = subject
 	s.event = event
-	return nil
+	return s.err
 }
 
 func TestMySQLInsertOnlyIgnoresDuplicateEventID(t *testing.T) {

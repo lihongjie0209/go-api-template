@@ -31,13 +31,48 @@ type outboxStub struct {
 	called  bool
 	subject string
 	event   *commonv1.EventEnvelope
+	err     error
 }
 
 func (s *outboxStub) Store(_ context.Context, tx *sqlx.Tx, subject string, event *commonv1.EventEnvelope) error {
 	s.called = tx != nil
 	s.subject = subject
 	s.event = event
-	return nil
+	return s.err
+}
+
+func TestOperationRecorderHidesOutboxFailure(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	outbox := &outboxStub{err: errors.New("password=operation-outbox-test-secret")}
+	service := &Service{enabled: true, cfg: config.OperationLog{MaxPayloadBytes: 1024}, outbox: outbox, transactor: database.NewTransactor(db)}
+	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
+	entry := Entry{Operation: "order.create", Source: "backend", Protocol: "service"}
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+	err = service.Record(ctx, entry)
+	if !errors.Is(err, ErrOutboxUnavailable) || strings.Contains(err.Error(), "operation-outbox-test-secret") {
+		t.Fatalf("Record() error=%v", err)
+	}
+	mock.ExpectBegin()
+	tx, err := db.BeginTxx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	err = service.RecordTx(ctx, tx, entry)
+	if !errors.Is(err, ErrOutboxUnavailable) || strings.Contains(err.Error(), "operation-outbox-test-secret") {
+		t.Fatalf("RecordTx() error=%v", err)
+	}
+	_ = tx.Rollback()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (r *recorderStub) Enabled() bool { return true }

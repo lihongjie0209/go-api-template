@@ -27,6 +27,7 @@ import (
 const eventType = "platform.operation-log.recorded.v1"
 
 var ErrInvalidEntry = errors.New("invalid operation log entry")
+var ErrOutboxUnavailable = errors.New("operation log outbox unavailable")
 
 type Entry struct {
 	Operation     string        `json:"operation"`
@@ -121,7 +122,7 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 		return nil
 	}
 	if s.transactor == nil || s.outbox == nil {
-		return errors.New("operation log outbox is unavailable")
+		return ErrOutboxUnavailable
 	}
 	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
@@ -135,7 +136,7 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 	})
 	s.observeEnqueue(started, err)
 	if err != nil {
-		return fmt.Errorf("store operation log in outbox: %w", err)
+		return ErrOutboxUnavailable
 	}
 	return nil
 }
@@ -148,7 +149,7 @@ func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error 
 		return nil
 	}
 	if tx == nil || s.outbox == nil {
-		return errors.New("operation log transactional outbox is unavailable")
+		return ErrOutboxUnavailable
 	}
 	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
@@ -158,7 +159,10 @@ func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error 
 	err = s.outbox.Store(ctx, tx, s.cfg.Subject, envelope)
 	s.observeEnqueue(started, err)
 	if err != nil {
-		return fmt.Errorf("store operation log in outbox: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return ErrOutboxUnavailable
 	}
 	return nil
 }

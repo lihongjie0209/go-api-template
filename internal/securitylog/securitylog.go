@@ -57,6 +57,7 @@ const (
 const envelopeType = "platform.security-log.recorded.v1"
 
 var ErrInvalidEntry = errors.New("invalid security log entry")
+var ErrOutboxUnavailable = errors.New("security log outbox unavailable")
 
 type Entry struct {
 	EventType    EventType `json:"event_type"`
@@ -136,7 +137,7 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 		return nil
 	}
 	if s.transactor == nil || s.outbox == nil {
-		return errors.New("security log outbox is unavailable")
+		return ErrOutboxUnavailable
 	}
 	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
@@ -159,7 +160,7 @@ func (s *Service) Record(ctx context.Context, entry Entry) error {
 		s.metrics.ObserveInfrastructure("security_log", "database", "enqueue", status, started)
 	}
 	if err != nil {
-		return fmt.Errorf("store security log in outbox: %w", err)
+		return ErrOutboxUnavailable
 	}
 	return nil
 }
@@ -172,14 +173,17 @@ func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error 
 		return nil
 	}
 	if tx == nil || s.outbox == nil {
-		return errors.New("security log transactional outbox is unavailable")
+		return ErrOutboxUnavailable
 	}
 	envelope, err := s.envelope(ctx, entry)
 	if err != nil {
 		return err
 	}
 	if err := s.outbox.Store(ctx, tx, s.cfg.Subject, envelope); err != nil {
-		return fmt.Errorf("store security log in outbox: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return ErrOutboxUnavailable
 	}
 	return nil
 }
