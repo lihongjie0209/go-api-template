@@ -37,6 +37,7 @@ type SwitchInput struct {
 }
 
 const contextColumns = `c.id,c.application_id,a.code application_code,a.name application_name,a.icon,a.home_path,c.created_at,c.created_by,c.updated_at,c.updated_by,c.version`
+const currentContextQuery = `SELECT ` + contextColumns + ` FROM application_session_contexts c JOIN identity_sessions s ON s.id=c.session_id AND s.user_id=c.user_id AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL JOIN tenant_memberships m ON m.id=c.membership_id AND m.tenant_id=c.tenant_id AND m.user_id=c.user_id AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_application_grants g ON g.tenant_id=c.tenant_id AND g.application_id=c.application_id AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenants t ON t.id=c.tenant_id AND t.status='active' AND t.deleted_at IS NULL JOIN applications a ON a.id=c.application_id AND a.status='active' AND a.deleted_at IS NULL WHERE c.session_id=? AND c.tenant_id=? AND c.membership_id=? AND c.user_id=? AND c.deleted_at IS NULL`
 
 func (s *TenantAccessService) CurrentContext(ctx context.Context) (Context, error) {
 	actor, err := currentApplicationActor(ctx)
@@ -44,9 +45,8 @@ func (s *TenantAccessService) CurrentContext(ctx context.Context) (Context, erro
 		return Context{}, err
 	}
 	var result Context
-	query := `SELECT ` + contextColumns + ` FROM application_session_contexts c JOIN identity_sessions s ON s.id=c.session_id AND s.user_id=c.user_id AND s.revoked_at IS NULL AND s.expires_at>? AND s.deleted_at IS NULL JOIN tenant_memberships m ON m.id=c.membership_id AND m.tenant_id=c.tenant_id AND m.user_id=c.user_id AND m.status='active' AND m.deleted_at IS NULL JOIN tenant_application_grants g ON g.tenant_id=c.tenant_id AND g.application_id=c.application_id AND g.status='active' AND g.deleted_at IS NULL AND (g.starts_at IS NULL OR g.starts_at<=?) AND (g.expires_at IS NULL OR g.expires_at>?) JOIN tenants t ON t.id=c.tenant_id AND t.status='active' AND t.deleted_at IS NULL JOIN applications a ON a.id=c.application_id AND a.status='active' AND a.deleted_at IS NULL WHERE c.session_id=? AND c.tenant_id=? AND c.membership_id=? AND c.user_id=? AND c.deleted_at IS NULL`
 	now := time.Now()
-	err = s.db.GetContext(ctx, &result, s.db.Rebind(query), now, now, now, actor.SessionID, actor.TenantID, actor.MembershipID, actor.ID)
+	err = s.db.GetContext(ctx, &result, s.db.Rebind(currentContextQuery), now, now, now, actor.SessionID, actor.TenantID, actor.MembershipID, actor.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Context{}, ErrContextNotFound
 	}
@@ -66,6 +66,7 @@ func (s *TenantAccessService) SwitchContext(ctx context.Context, input SwitchInp
 	started := time.Now()
 	operation := operationlog.Entry{Operation: "application.context.switch", ResourceType: "application", ResourceID: input.ApplicationID, Source: "backend", Protocol: "service", Request: map[string]any{"application_id": input.ApplicationID, "version": input.Version}}
 	security := securitylog.Entry{EventType: securitylog.EventApplicationContextSwitch, SubjectID: actor.ID, SubjectType: string(actor.Type), TenantID: actor.TenantID, SessionID: actor.SessionID, Metadata: map[string]any{"application_id": input.ApplicationID}}
+	var switched Context
 	err = s.tx.Within(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
 		var applicationName string
 		now := time.Now()
@@ -105,6 +106,12 @@ func (s *TenantAccessService) SwitchContext(ctx context.Context, input SwitchInp
 				return ErrGrantConflict
 			}
 		}
+		readAt := time.Now()
+		if err := tx.GetContext(ctx, &switched, tx.Rebind(currentContextQuery), readAt, readAt, readAt, actor.SessionID, actor.TenantID, actor.MembershipID, actor.ID); errors.Is(err, sql.ErrNoRows) {
+			return ErrContextNotFound
+		} else if err != nil {
+			return err
+		}
 		operation.ResourceName, operation.Duration, operation.Succeeded = applicationName, time.Since(started), true
 		security.Succeeded = true
 		if s.operations != nil {
@@ -130,7 +137,7 @@ func (s *TenantAccessService) SwitchContext(ctx context.Context, input SwitchInp
 		}
 		return Context{}, err
 	}
-	return s.CurrentContext(ctx)
+	return presentContext(switched), nil
 }
 
 func currentApplicationActor(ctx context.Context) (platformprincipal.Principal, error) {

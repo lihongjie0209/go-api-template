@@ -19,7 +19,7 @@
 
 | Concern | Application decision | Navigation decision |
 | --- | --- | --- |
-| Contract | POST create/get/page/update/delete with bounded filters and sort allowlist; `/me/application/current` reads and `/me/application/switch` changes the session selection using expected version zero for first selection and a positive current version afterward | POST create/get/tree/update/delete; tree requires `application_id`, is non-paginated, ordered, and bounded |
+| Contract | POST create/get/page/update/delete with bounded filters and sort allowlist; `/me/application/current` reads and `/me/application/switch` changes the session selection using expected version zero for first selection and a positive current version afterward. Switch reads the authorized response row inside the write transaction before commit, so a response-read failure rolls back the switch. | POST create/get/tree/update/delete; tree requires `application_id`, is non-paginated, ordered, and bounded |
 | Authentication | JWT | JWT; current-user projection uses the same authenticated principal |
 | Authorization | Platform `application:<action>`; session context uses tenant-scoped `application.current:read/switch` and SQL-validates the exact user, session, tenant, membership, application and active grant | Platform `navigation:<action>`; `/me/navigations` uses tenant `navigation.current:read`, then evaluates the complete bounded menu tree against one pinned operation-grant and data-policy snapshot. A menu whose former Resource/Action or JWT HTTP target was retired is hidden without hiding healthy siblings; decision-service failures still fail the request closed. The public capability API retains its strict unknown-target validation and separate 100-item limit. |
 | Operation log | Record create/update/delete and successful/failed application context switches | Record create/update/delete and move |
@@ -29,7 +29,7 @@
 | Optimistic lock | Update/delete require version; changing an existing session application requires its current context version | Update/delete/move require version |
 | Audit | Shared transaction actor and database audit triggers; session application context is application-owned and does not modify the identity module's session table | Shared transaction actor and database audit triggers |
 | Presentation | RFC3339 +08 timestamps and actor display names | Same; Resource/Action are semantic display fields rather than opaque IDs |
-| Tests | Validation, filtering, not-found, conflict, cancellation; Testcontainers repository coverage | Type/target matrix, parent/application/cycle/leaf rules, stable tree order; Testcontainers repository coverage |
+| Tests | Validation, filtering, not-found, conflict, cancellation and switch response-read rollback; Testcontainers repository coverage | Type/target matrix, parent/application/cycle/leaf rules, stable tree order; Testcontainers repository coverage |
 | Shared capability | Shared pagination, response/errors, stable ID, operation log | Shared Resource/Action registry, tree SDK, stable ID, response/errors, operation log |
 | Dictionary | `platform.application` is an in-process bounded enum provider for public display metadata (`id/code/name/icon/home_path/status`). It conveys no tenant grant; entry and navigation still require `/me/applications` plus authorization checks. | Unsuitable: navigation is structural frontend configuration, not a business dictionary |
 

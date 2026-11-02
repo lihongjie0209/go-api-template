@@ -53,16 +53,64 @@ func TestSwitchApplicationContextCreatesThenReturnsAuthorizedContext(t *testing.
 		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Console"))
 	mock.ExpectQuery(`SELECT id,version FROM application_session_contexts`).WithArgs("session-1", "tenant-1").WillReturnRows(sqlmock.NewRows([]string{"id", "version"}))
 	mock.ExpectExec(`INSERT INTO application_session_contexts`).WithArgs(sqlmock.AnyArg(), "session-1", "user-1", "tenant-1", "membership-1", "app-1", sqlmock.AnyArg(), "user-1", sqlmock.AnyArg(), "user-1").WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
 	now := time.Now()
 	mock.ExpectQuery(`FROM application_session_contexts c JOIN identity_sessions s`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "session-1", "tenant-1", "membership-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "application_id", "application_code", "application_name", "icon", "home_path", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow("context-1", "app-1", "console", "Console", "", "/", now, "user-1", now, "user-1", 1))
+	mock.ExpectCommit()
 	service := &TenantAccessService{db: db, tx: database.NewTransactor(db)}
 	result, err := service.SwitchContext(applicationContextTestPrincipal(t.Context()), SwitchInput{ApplicationID: "app-1", Version: 0})
 	require.NoError(t, err)
 	require.Equal(t, "app-1", result.ApplicationID)
 	require.Equal(t, int64(1), result.Version)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSwitchApplicationContextRollsBackWhenResponseReadFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g`).
+		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "session-1", sqlmock.AnyArg(), "app-1").
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Console"))
+	mock.ExpectQuery(`SELECT id,version FROM application_session_contexts`).WithArgs("session-1", "tenant-1").WillReturnRows(sqlmock.NewRows([]string{"id", "version"}))
+	mock.ExpectExec(`INSERT INTO application_session_contexts`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`FROM application_session_contexts c JOIN identity_sessions s`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "session-1", "tenant-1", "membership-1", "user-1").
+		WillReturnError(errors.New("response read unavailable"))
+	mock.ExpectRollback()
+	service := &TenantAccessService{db: db, tx: database.NewTransactor(db)}
+	_, err = service.SwitchContext(applicationContextTestPrincipal(t.Context()), SwitchInput{ApplicationID: "app-1"})
+	require.ErrorContains(t, err, "response read unavailable")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSwitchApplicationContextReturnsUpdatedVersionFromTransaction(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FROM applications a JOIN tenant_application_grants g`).
+		WithArgs("tenant-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "membership-1", "user-1", "session-1", sqlmock.AnyArg(), "app-2").
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Reports"))
+	mock.ExpectQuery(`SELECT id,version FROM application_session_contexts`).WithArgs("session-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "version"}).AddRow("context-1", 2))
+	mock.ExpectExec(`UPDATE application_session_contexts SET`).
+		WithArgs("user-1", "membership-1", "app-2", sqlmock.AnyArg(), "user-1", "context-1", "session-1", "tenant-1", 2).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	now := time.Now()
+	mock.ExpectQuery(`FROM application_session_contexts c JOIN identity_sessions s`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "session-1", "tenant-1", "membership-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "application_id", "application_code", "application_name", "icon", "home_path", "created_at", "created_by", "updated_at", "updated_by", "version"}).AddRow("context-1", "app-2", "reports", "Reports", "", "/reports", now, "user-1", now, "user-1", 3))
+	mock.ExpectCommit()
+	service := &TenantAccessService{db: db, tx: database.NewTransactor(db)}
+	result, err := service.SwitchContext(applicationContextTestPrincipal(t.Context()), SwitchInput{ApplicationID: "app-2", Version: 2})
+	require.NoError(t, err)
+	require.Equal(t, "app-2", result.ApplicationID)
+	require.Equal(t, int64(3), result.Version)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
