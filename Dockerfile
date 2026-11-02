@@ -1,4 +1,7 @@
-FROM golang:1.26.10-alpine AS build
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 WORKDIR /src
@@ -8,9 +11,9 @@ COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/api ./cmd/api
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/migrate ./cmd/migrate
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/outboxctl ./cmd/outboxctl
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Version=${VERSION} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.Commit=${COMMIT} -X github.com/lihongjie0209/go-api-template/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/outboxctl ./cmd/outboxctl
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates openssl tzdata \
