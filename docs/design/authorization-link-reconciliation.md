@@ -16,7 +16,7 @@ responses, and registered Resource/Action descriptors.
 | Optimistic lock | Read at most 1,001 active links, preserve requested active rows, delete only removed rows by `id,version`, and restore one deterministically chosen deleted row by `id,version`. Administrator revocation locks its single active link and also deletes by `id,version`. Check exactly one affected row. |
 | Audit | SQL actor context and triggers maintain link timestamps, actor IDs, soft deletion, and versions. Unchanged links retain their audit state. |
 | Presentation | Existing role/permission display names and +08 timestamps remain. |
-| Tests | Unit tests cover unchanged rows, empty replacement, stale delete/restore, oversized active sets, and administrator link conflicts. The service-contained PostgreSQL/MySQL integration suite covers grant and role lifecycle. |
+| Tests | Unit tests cover unchanged rows, empty replacement, stale delete/restore, oversized active sets, and administrator link conflicts. The service-contained PostgreSQL/MySQL integration suite now also checks successful administrator revocation and its persisted audit version; CI execution is pending. |
 | Shared capability | Reuse the existing transactor, authorization service, audit recorders, and common error codes. |
 
 These association links are transactional and are not public data-dictionary

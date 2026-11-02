@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1616,6 +1617,30 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	}
 	if _, err := service.GetRole(adminCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("deleted tenant role lookup error=%v", err)
+	}
+	var administratorTargetVersion int64
+	if err := db.GetContext(ctx, &administratorTargetVersion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil {
+		t.Fatalf("read administrator target version: %v", err)
+	}
+	if err := service.SetAdministrator(actorCtx, tenantID, targetMemberID, true, administratorTargetVersion); err != nil {
+		t.Fatalf("grant second administrator: %v", err)
+	}
+	var administratorLink struct {
+		ID      string `db:"id"`
+		Version int64  `db:"version"`
+	}
+	if err := db.GetContext(ctx, &administratorLink, db.Rebind(`SELECT id,version FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil {
+		t.Fatalf("read second administrator link: %v", err)
+	}
+	if err := service.SetAdministrator(actorCtx, tenantID, targetMemberID, false, administratorTargetVersion+1); err != nil {
+		t.Fatalf("revoke second administrator: %v", err)
+	}
+	var deletedLink struct {
+		Version   int64        `db:"version"`
+		DeletedAt sql.NullTime `db:"deleted_at"`
+	}
+	if err := db.GetContext(ctx, &deletedLink, db.Rebind(`SELECT version,deleted_at FROM tenant_administrators WHERE tenant_id=? AND id=?`), tenantID, administratorLink.ID); err != nil || !deletedLink.DeletedAt.Valid || deletedLink.Version != administratorLink.Version+1 {
+		t.Fatalf("revoked administrator link=%+v previous=%+v err=%v", deletedLink, administratorLink, err)
 	}
 	manualPermissions := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, nil, registry, slog.Default())
 	manual, err := manualPermissions.Create(actorCtx, permission.Input{
