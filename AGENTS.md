@@ -1011,6 +1011,11 @@ deleted_by text
   before committing. The module check is read-only and mirrors the CI gate.
 - Every defect first found by integration or manual testing must receive the
   smallest practical unit regression test before or together with the fix.
+- SQL mock tests that assert transaction rollback in `t.Cleanup` must begin the
+  transaction with a Context that remains active through cleanup. `t.Context()`
+  is canceled before cleanup callbacks run; its automatic rollback can race
+  with the mock's expected rollback and cause intermittent CI failures. Pass
+  the request Context to the operation under test separately.
 - Generated Swagger/protobuf drift, migration audit contracts, race tests,
   vet, lint, and Kubernetes validation remain required CI gates.
 
