@@ -12,6 +12,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/apperror"
@@ -87,18 +88,28 @@ func TestTenantAuthorizationStaleVersionUsesGlobalErrorCode(t *testing.T) {
 }
 
 func TestTenantAuthorizationSerializationFailureUsesGlobalConflictCode(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	context, _ := gin.CreateTestContext(recorder)
-	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/tenant-roles/delete", strings.NewReader(`{}`))
-	handler := NewTenantAuthorizationHandler(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	handler.fail(context, &pgconn.PgError{Code: "40001", Message: "sensitive database detail"})
-	require.Equal(t, http.StatusConflict, recorder.Code)
-	var response struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "postgres serialization", err: &pgconn.PgError{Code: "40001", Message: "sensitive database detail"}},
+		{name: "mysql deadlock", err: &mysqlDriver.MySQLError{Number: 1213, Message: "sensitive database detail"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/tenant-roles/delete", strings.NewReader(`{}`))
+			handler := NewTenantAuthorizationHandler(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			handler.fail(context, test.err)
+			require.Equal(t, http.StatusConflict, recorder.Code)
+			var response struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			require.Equal(t, apperror.CodeConflict, response.Code)
+			require.Equal(t, "tenant authorization conflict", response.Message)
+			require.NotContains(t, recorder.Body.String(), "sensitive database detail")
+		})
 	}
-	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
-	require.Equal(t, apperror.CodeConflict, response.Code)
-	require.Equal(t, "tenant authorization conflict", response.Message)
-	require.NotContains(t, recorder.Body.String(), "sensitive database detail")
 }
