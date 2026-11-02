@@ -1624,28 +1624,66 @@ func ensureAdministrator(ctx context.Context, tx *sqlx.Tx, tenantID, membershipI
 }
 
 func replaceLinks(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valueColumn string, values []string, actorID string) error {
+	ownerColumn, err := authorizationLinkOwnerColumn(table, ownerID, valueColumn)
+	if err != nil || len(values) > maxAuthorizationLinks {
+		return ErrTenantAuthorizationInvalid
+	}
 	now := time.Now()
 	where, args := `tenant_id=?`, []any{tenantID}
-	if ownerID != "" {
-		ownerColumn := "role_id"
-		if table == "tenant_member_roles" {
-			ownerColumn = "membership_id"
-		}
+	if ownerColumn != "" {
 		where += " AND " + ownerColumn + "=?"
 		args = append(args, ownerID)
 	}
-	if len(values) > 0 {
-		clause, valuesArgs, err := sqlx.In(` AND `+valueColumn+` NOT IN (?)`, values)
-		if err != nil {
-			return fmt.Errorf("build authorization link replacement: %w", err)
+	wanted := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len(value) > maxAuthorizationIDLength {
+			return ErrTenantAuthorizationInvalid
 		}
-		where += clause
-		args = append(args, valuesArgs...)
+		if _, exists := wanted[value]; exists {
+			return ErrTenantAuthorizationInvalid
+		}
+		wanted[value] = struct{}{}
 	}
-	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE `+where+` AND deleted_at IS NULL`), append([]any{now, actorID, now, actorID}, args...)...); err != nil {
+	current := []struct {
+		ID      string `db:"id"`
+		Value   string `db:"link_value"`
+		Version int64  `db:"version"`
+	}{}
+	query := tx.Rebind(`SELECT id,` + valueColumn + ` AS link_value,version FROM ` + table + ` WHERE ` + where + ` AND deleted_at IS NULL ORDER BY id` + authorizationLinkLimitClause + ` FOR UPDATE`)
+	if err := tx.SelectContext(ctx, &current, query, args...); err != nil {
 		return err
 	}
+	if len(current) > maxAuthorizationLinks {
+		return ErrTenantAuthorizationConflict
+	}
+	active := make(map[string]struct{}, len(current))
+	for _, link := range current {
+		if _, exists := active[link.Value]; exists {
+			return ErrTenantAuthorizationConflict
+		}
+		active[link.Value] = struct{}{}
+		if _, keep := wanted[link.Value]; keep {
+			continue
+		}
+		result, updateErr := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actorID, now, actorID, tenantID, link.ID, link.Version)
+		if database.IsUniqueViolation(updateErr) {
+			return ErrTenantAuthorizationConflict
+		}
+		if updateErr != nil {
+			return updateErr
+		}
+		count, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		if count != 1 {
+			return ErrTenantAuthorizationConflict
+		}
+	}
 	for _, value := range values {
+		if _, exists := active[value]; exists {
+			continue
+		}
 		if err := upsertLink(ctx, tx, table, tenantID, ownerID, valueColumn, value, actorID); err != nil {
 			return err
 		}
@@ -1654,12 +1692,9 @@ func replaceLinks(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, va
 }
 
 func upsertLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valueColumn, value, actorID string) error {
-	ownerColumn := ""
-	if ownerID != "" {
-		ownerColumn = "role_id"
-		if table == "tenant_member_roles" {
-			ownerColumn = "membership_id"
-		}
+	ownerColumn, specErr := authorizationLinkOwnerColumn(table, ownerID, valueColumn)
+	if specErr != nil {
+		return specErr
 	}
 	where, args := `tenant_id=? AND `+valueColumn+`=?`, []any{tenantID, value}
 	if ownerColumn != "" {
@@ -1668,14 +1703,15 @@ func upsertLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valu
 	var existing struct {
 		ID        string       `db:"id"`
 		DeletedAt sql.NullTime `db:"deleted_at"`
+		Version   int64        `db:"version"`
 	}
-	err := tx.GetContext(ctx, &existing, tx.Rebind(`SELECT id,deleted_at FROM `+table+` WHERE `+where+` ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`), args...)
+	err := tx.GetContext(ctx, &existing, tx.Rebind(`SELECT id,deleted_at,version FROM `+table+` WHERE `+where+` ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`), args...)
 	now := time.Now()
 	if err == nil {
 		if !existing.DeletedAt.Valid {
 			return nil
 		}
-		result, updateErr := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND deleted_at IS NOT NULL`), now, actorID, tenantID, existing.ID)
+		result, updateErr := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NOT NULL`), now, actorID, tenantID, existing.ID, existing.Version)
 		if updateErr != nil {
 			if database.IsUniqueViolation(updateErr) {
 				return ErrTenantAuthorizationConflict
@@ -1707,6 +1743,28 @@ func upsertLink(ctx context.Context, tx *sqlx.Tx, table, tenantID, ownerID, valu
 		return ErrTenantAuthorizationConflict
 	}
 	return err
+}
+
+func authorizationLinkOwnerColumn(table, ownerID, valueColumn string) (string, error) {
+	switch table {
+	case "tenant_permission_grants":
+		if ownerID == "" && valueColumn == "permission_id" {
+			return "", nil
+		}
+	case "tenant_role_permissions":
+		if ownerID != "" && valueColumn == "permission_id" {
+			return "role_id", nil
+		}
+	case "tenant_member_roles":
+		if ownerID != "" && valueColumn == "role_id" {
+			return "membership_id", nil
+		}
+	case "tenant_administrators":
+		if ownerID == "" && valueColumn == "membership_id" {
+			return "", nil
+		}
+	}
+	return "", ErrTenantAuthorizationInvalid
 }
 
 func softDeleteAdministratorLink(ctx context.Context, tx *sqlx.Tx, tenantID, membershipID, actorID string) error {

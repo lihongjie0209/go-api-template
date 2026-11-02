@@ -968,8 +968,11 @@ func TestSetRolePermissionsCanRemoveNoLongerAssignablePermission(t *testing.T) {
 	mock.ExpectExec(`UPDATE tenant_roles AS tr SET version=version\+1`).
 		WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1", int64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=`).
-		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1").
+	mock.ExpectQuery(`SELECT id,permission_id AS link_value,version FROM tenant_role_permissions WHERE tenant_id=\? AND role_id=\? AND deleted_at IS NULL ORDER BY id LIMIT 1001 FOR UPDATE`).
+		WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}).AddRow("link-1", "permission-1", 3))
+	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=.*WHERE tenant_id=\? AND id=\? AND version=\? AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "link-1", int64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -1122,12 +1125,12 @@ func TestUpsertLinkPrefersActiveRowAndRestoresDeletedHistory(t *testing.T) {
 			mock.ExpectBegin()
 			tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
 			require.NoError(t, err)
-			mock.ExpectQuery(`SELECT id,deleted_at FROM tenant_administrators WHERE tenant_id=\? AND membership_id=\? ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`).
+			mock.ExpectQuery(`SELECT id,deleted_at,version FROM tenant_administrators WHERE tenant_id=\? AND membership_id=\? ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`).
 				WithArgs("tenant-1", "member-1").
-				WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-1", test.deletedAt))
+				WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at", "version"}).AddRow("link-1", test.deletedAt, 4))
 			if test.wantUpdate {
-				mock.ExpectExec(`UPDATE tenant_administrators SET deleted_at=NULL.*WHERE tenant_id=\? AND id=\? AND deleted_at IS NOT NULL`).
-					WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "link-1").
+				mock.ExpectExec(`UPDATE tenant_administrators SET deleted_at=NULL.*WHERE tenant_id=\? AND id=\? AND version=\? AND deleted_at IS NOT NULL`).
+					WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "link-1", int64(4)).
 					WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
 			}
 			err = upsertLink(t.Context(), tx, "tenant_administrators", "tenant-1", "", "membership_id", "member-1", "actor-1")
@@ -1150,12 +1153,13 @@ func TestReplaceLinksPreservesUnchangedActiveAssociation(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
 	require.NoError(t, err)
-	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=.*WHERE tenant_id=\? AND role_id=\? AND permission_id NOT IN \(\?\) AND deleted_at IS NULL`).
-		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1", "permission-keep").
+	mock.ExpectQuery(`SELECT id,permission_id AS link_value,version FROM tenant_role_permissions WHERE tenant_id=\? AND role_id=\? AND deleted_at IS NULL ORDER BY id LIMIT 1001 FOR UPDATE`).
+		WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}).
+			AddRow("link-keep", "permission-keep", 2).AddRow("link-remove", "permission-remove", 5))
+	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=.*WHERE tenant_id=\? AND id=\? AND version=\? AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "link-remove", int64(5)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT id,deleted_at FROM tenant_role_permissions WHERE tenant_id=\? AND role_id=\? AND permission_id=\?`).
-		WithArgs("tenant-1", "role-1", "permission-keep").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-keep", nil))
 	require.NoError(t, replaceLinks(t.Context(), tx, "tenant_role_permissions", "tenant-1", "role-1", "permission_id", []string{"permission-keep"}, "actor-1"))
 	mock.ExpectRollback()
 	require.NoError(t, tx.Rollback())
@@ -1169,10 +1173,57 @@ func TestReplaceLinksEmptySetRemovesAllActiveAssociations(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
 	require.NoError(t, err)
-	mock.ExpectExec(`UPDATE tenant_member_roles SET deleted_at=.*WHERE tenant_id=\? AND membership_id=\? AND deleted_at IS NULL`).
-		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "member-1").
-		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectQuery(`SELECT id,role_id AS link_value,version FROM tenant_member_roles WHERE tenant_id=\? AND membership_id=\? AND deleted_at IS NULL ORDER BY id LIMIT 1001 FOR UPDATE`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}).
+			AddRow("link-1", "role-1", 2).AddRow("link-2", "role-2", 4))
+	for _, link := range []struct {
+		id      string
+		version int64
+	}{{"link-1", 2}, {"link-2", 4}} {
+		mock.ExpectExec(`UPDATE tenant_member_roles SET deleted_at=.*WHERE tenant_id=\? AND id=\? AND version=\? AND deleted_at IS NULL`).
+			WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", link.id, link.version).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	}
 	require.NoError(t, replaceLinks(t.Context(), tx, "tenant_member_roles", "tenant-1", "member-1", "role_id", nil, "actor-1"))
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReplaceLinksRejectsStaleDelete(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	mock.ExpectQuery(`SELECT id,role_id AS link_value,version FROM tenant_member_roles`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}).AddRow("link-1", "role-1", 7))
+	mock.ExpectExec(`UPDATE tenant_member_roles SET deleted_at=.*WHERE tenant_id=\? AND id=\? AND version=\? AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "link-1", int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	require.ErrorIs(t, replaceLinks(t.Context(), tx, "tenant_member_roles", "tenant-1", "member-1", "role_id", nil, "actor-1"), ErrTenantAuthorizationConflict)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReplaceLinksRejectsOversizedActiveSet(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	rows := sqlmock.NewRows([]string{"id", "link_value", "version"})
+	for i := range maxAuthorizationLinks + 1 {
+		rows.AddRow("link-"+strconv.Itoa(i), "permission-"+strconv.Itoa(i), 1)
+	}
+	mock.ExpectQuery(`SELECT id,permission_id AS link_value,version FROM tenant_permission_grants`).
+		WithArgs("tenant-1").WillReturnRows(rows)
+	require.ErrorIs(t, replaceLinks(t.Context(), tx, "tenant_permission_grants", "tenant-1", "", "permission_id", nil, "actor-1"), ErrTenantAuthorizationConflict)
 	mock.ExpectRollback()
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -1436,7 +1487,8 @@ func TestCreateRoleKeepsCallerContextAfterLeaseEnds(t *testing.T) {
 		WithArgs("tenant-1").
 		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
 	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id,permission_id AS link_value,version FROM tenant_role_permissions`).
+		WithArgs("tenant-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}))
 	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).
 		WithArgs("tenant-1", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "code", "name", "description", "status", "created_at", "created_by", "updated_at", "updated_by", "version"}).
@@ -1467,7 +1519,8 @@ func TestCreateRoleRollsBackWhenAuditedReadFails(t *testing.T) {
 	mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).WithArgs("tenant-1").
 		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
 	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id,permission_id AS link_value,version FROM tenant_role_permissions`).
+		WithArgs("tenant-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}))
 	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", sqlmock.AnyArg()).WillReturnError(want)
 	mock.ExpectRollback()
 	_, err = service.CreateRole(ctx, "auditor", "Auditor", "", nil)
@@ -1491,7 +1544,8 @@ func TestCreateRoleSurvivesActorDisplayOutage(t *testing.T) {
 	mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).WithArgs("tenant-1").
 		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
 	mock.ExpectExec(`INSERT INTO tenant_roles`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE tenant_role_permissions`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT id,permission_id AS link_value,version FROM tenant_role_permissions`).
+		WithArgs("tenant-1", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id", "link_value", "version"}))
 	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id,tr.code,tr.name,tr.description,tr.status`).WithArgs("tenant-1", sqlmock.AnyArg()).
 		WillReturnRows(tenantRoleRows("role-1", "Auditor", 1))
 	mock.ExpectCommit()
