@@ -1044,6 +1044,9 @@ func TestDeleteRoleLocksRoleBeforeRemovingMemberLinks(t *testing.T) {
 	mock.ExpectExec(`UPDATE tenant_roles AS tr SET deleted_at=`).
 		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1", int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE tenant_memberships SET updated_at=.*id IN \(SELECT membership_id FROM tenant_member_roles WHERE tenant_id=\? AND role_id=\? AND deleted_at IS NULL\)`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "tenant-1", "role-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE tenant_member_roles SET deleted_at=`).
 		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

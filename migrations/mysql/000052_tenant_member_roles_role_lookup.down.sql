@@ -1,0 +1,1 @@
+DROP INDEX tenant_member_roles_role_lookup_idx ON tenant_member_roles;

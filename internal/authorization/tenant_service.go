@@ -1356,6 +1356,10 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 			if rows != 1 {
 				return ErrTenantAuthorizationStaleVersion
 			}
+			_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships SET updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND deleted_at IS NULL AND id IN (SELECT membership_id FROM tenant_member_roles WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL)`), now, actor.ID, actor.TenantID, actor.TenantID, roleID)
+			if err != nil {
+				return fmt.Errorf("advance members affected by role deletion: %w", err)
+			}
 			for _, table := range []string{"tenant_member_roles", "tenant_role_permissions"} {
 				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, roleID); err != nil {
 					return err

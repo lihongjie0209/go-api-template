@@ -1609,8 +1609,19 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if _, err := service.UpdateRole(adminCtx, role.ID, "旧版本", role.Description, "active", role.Version); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
 		t.Fatalf("stale tenant role update error=%v", err)
 	}
+	var memberVersionBeforeRoleDeletion int64
+	if err := db.GetContext(ctx, &memberVersionBeforeRoleDeletion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil {
+		t.Fatalf("read member version before role deletion: %v", err)
+	}
 	if err := service.DeleteRole(adminCtx, role.ID, updated.Version); err != nil {
 		t.Fatalf("delete tenant role: %v", err)
+	}
+	var memberVersionAfterRoleDeletion int64
+	if err := db.GetContext(ctx, &memberVersionAfterRoleDeletion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil || memberVersionAfterRoleDeletion != memberVersionBeforeRoleDeletion+1 {
+		t.Fatalf("member version after role deletion=%d before=%d err=%v", memberVersionAfterRoleDeletion, memberVersionBeforeRoleDeletion, err)
+	}
+	if err := service.SetMemberRoles(adminCtx, targetMemberID, memberVersionBeforeRoleDeletion, nil); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
+		t.Fatalf("stale member role set after role deletion error=%v", err)
 	}
 	if _, err := service.RoleDeleteTarget(adminCtx, role.ID); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("deleted role action target error=%v", err)
