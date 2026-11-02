@@ -11,6 +11,13 @@ authorization uses permission-to-Resource/Action links as described in
 Historical verification statuses elsewhere in this ledger do not establish
 current behavior for removed components.
 
+The reliability batch at commit `2da8319` passed verify, PostgreSQL/MySQL
+integration, and container jobs in GitHub Actions run `41406393443`. It covers
+file-repair cancellation and startup dependencies, archive index bounds,
+shared readiness probe cancellation, and bounded event-bus provisioning.
+Subsequent local startup-error privacy and object-storage initialization
+changes have focused unit coverage but await the next batched CI run.
+
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,
 optimistic-lock, audit, presentation, observability, unit-test, integration-test
