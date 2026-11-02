@@ -148,6 +148,9 @@ func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error 
 	if !s.enabled {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if tx == nil || s.outbox == nil {
 		return ErrOutboxUnavailable
 	}
@@ -163,6 +166,9 @@ func (s *Service) RecordTx(ctx context.Context, tx *sqlx.Tx, entry Entry) error 
 			return ctxErr
 		}
 		return ErrOutboxUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }

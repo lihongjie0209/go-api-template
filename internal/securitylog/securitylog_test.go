@@ -23,6 +23,24 @@ type outboxStub struct {
 	subject string
 	event   *commonv1.EventEnvelope
 	err     error
+	onStore func()
+}
+
+func TestSecurityRecordTxRejectsCanceledContextBeforeAndDuringOutboxStore(t *testing.T) {
+	t.Parallel()
+	outbox := &outboxStub{}
+	service := &Service{cfg: config.SecurityLog{Enabled: true, MaxPayloadBytes: 1024}, outbox: outbox}
+	entry := Entry{EventType: EventLogin, SubjectID: "user-1"}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := service.RecordTx(ctx, &sqlx.Tx{}, entry); !errors.Is(err, context.Canceled) || outbox.called {
+		t.Fatalf("pre-canceled RecordTx() error=%v called=%v", err, outbox.called)
+	}
+	ctx, cancel = context.WithCancel(t.Context())
+	outbox.onStore = cancel
+	if err := service.RecordTx(ctx, &sqlx.Tx{}, entry); !errors.Is(err, context.Canceled) || !outbox.called {
+		t.Fatalf("mid-store canceled RecordTx() error=%v called=%v", err, outbox.called)
+	}
 }
 
 func TestSecurityRecorderHidesOutboxFailure(t *testing.T) {
@@ -82,6 +100,9 @@ func (s *outboxStub) Store(_ context.Context, tx *sqlx.Tx, subject string, event
 	s.called = tx != nil
 	s.subject = subject
 	s.event = event
+	if s.onStore != nil {
+		s.onStore()
+	}
 	return s.err
 }
 
