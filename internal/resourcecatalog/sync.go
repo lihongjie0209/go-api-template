@@ -156,11 +156,19 @@ func backfillLegacyPermissionLinks(ctx context.Context, tx *sqlx.Tx, generator s
 			ID        string       `db:"id"`
 			DeletedAt sql.NullTime `db:"deleted_at"`
 		}
-		err := tx.GetContext(ctx, &existing, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? FOR UPDATE`), row.PermissionID, row.ActionID)
+		err := tx.GetContext(ctx, &existing, tx.Rebind(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=? AND action_id=? ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`), row.PermissionID, row.ActionID)
 		if err == nil {
 			if existing.DeletedAt.Valid {
-				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=?`), existing.ID); err != nil {
+				result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=? AND deleted_at IS NOT NULL`), existing.ID)
+				if err != nil {
 					return err
+				}
+				count, err := result.RowsAffected()
+				if err != nil {
+					return err
+				}
+				if count != 1 {
+					return errors.New("resource catalog: legacy permission link restore conflict")
 				}
 			}
 			continue

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
@@ -96,6 +97,51 @@ func TestBackfillLegacyPermissionLinksRejectsOverflowBeforeWriting(t *testing.T)
 	require.ErrorIs(t, backfillLegacyPermissionLinks(t.Context(), tx, generator), errLegacyLinkLimit)
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBackfillLegacyPermissionLinksPrefersActiveAndChecksRestore(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		deletedAt    any
+		affectedRows int64
+		wantError    bool
+	}{
+		{name: "active link is reused"},
+		{name: "deleted history is restored", deletedAt: time.Now(), affectedRows: 1},
+		{name: "lost restore aborts backfill", deletedAt: time.Now(), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			generator, err := stableid.New(Namespace)
+			require.NoError(t, err)
+			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}))
+			mock.ExpectQuery("SELECT p.id AS permission_id,a.id AS action_id").WithArgs(maxLegacyPermissionLinks + 1).WillReturnRows(sqlmock.NewRows([]string{"permission_id", "action_id"}).AddRow("permission-1", "action-1"))
+			mock.ExpectQuery(`SELECT id,deleted_at FROM permission_resource_actions WHERE permission_id=\$1 AND action_id=\$2 ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,updated_at DESC,id DESC LIMIT 1 FOR UPDATE`).WithArgs("permission-1", "action-1").WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-1", test.deletedAt))
+			if test.deletedAt != nil {
+				mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=\$1 AND deleted_at IS NOT NULL`).WithArgs("link-1").WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
+			}
+			if test.wantError {
+				mock.ExpectRollback()
+			} else {
+				mock.ExpectExec("INSERT INTO authorization_catalog_syncs").WithArgs(sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			}
+			tx, err := sqlx.NewDb(db, "pgx").Beginx()
+			require.NoError(t, err)
+			err = backfillLegacyPermissionLinks(t.Context(), tx, generator)
+			if test.wantError {
+				require.ErrorContains(t, err, "restore conflict")
+				require.NoError(t, tx.Rollback())
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, tx.Commit())
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func expectStart(mock sqlmock.Sqlmock, buildTime, commit string) {
