@@ -32,7 +32,7 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 	fail := func(err error) (context.Context, string, error) {
 		return invalidateGrantSnapshot(ctx), "", err
 	}
-	if ctx == nil || ctx.Err() != nil || a == nil || a.db == nil || a.registry == nil || principal.ID == "" {
+	if ctx == nil || ctx.Err() != nil || a == nil || a.db == nil || a.registry == nil || strings.TrimSpace(principal.ID) == "" {
 		return fail(platformauthz.ErrDecisionUnavailable)
 	}
 	snapshot := grantSnapshot{principal: principal}

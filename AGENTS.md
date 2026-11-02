@@ -301,7 +301,9 @@ TTL, and invalidation for its own data.
 - Operation authorization and data permission are separate modules. Operation
   authorization maps a registered resource/action to one or more permissions,
   then checks platform grants, tenant ceilings and role grants; it fails closed
-  when no grant applies. A permission may cover multiple resource/actions.
+  when no grant applies. Direct operation checks must also reject unsupported
+  principal types before any system or principal-scope shortcut. A permission
+  may cover multiple resource/actions.
   Data-permission policies answer which rows an already-authorized action may
   access; matching Allow predicates are unioned and the union of Deny predicates
   is subtracted. A permission grant never implies unrestricted row access.

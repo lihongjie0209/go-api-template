@@ -83,6 +83,16 @@ func TestAuthorizerPrincipalScope(t *testing.T) {
 	r := platformauthz.Requirement{Resource: "identity.profile", Action: "read", Scope: platformauthz.ScopePrincipal}
 	require.NoError(t, a.Authorize(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}, r))
 	require.ErrorIs(t, a.Authorize(t.Context(), platformprincipal.Principal{}, r), platformauthz.ErrDenied)
+	require.ErrorIs(t, a.Authorize(t.Context(), platformprincipal.Principal{ID: "  ", Type: platformprincipal.TypeUser}, r), platformauthz.ErrDenied)
+	require.ErrorIs(t, a.Authorize(t.Context(), platformprincipal.Principal{ID: "subject-1", Type: "unknown"}, r), platformauthz.ErrDecisionUnavailable)
+}
+
+func TestAuthorizerSnapshotRejectsBlankPrincipalID(t *testing.T) {
+	a, mock := testAuthorizer(t)
+	_, revision, err := a.Snapshot(t.Context(), platformprincipal.Principal{ID: "  ", Type: platformprincipal.TypeUser})
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestAuthorizerCanceledContextFailsClosed(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
@@ -35,8 +36,13 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 	if err != nil || !scopeMatches(resource.Scope, requirement.Scope) {
 		return platformauthz.ErrDecisionUnavailable
 	}
-	if principal.ID == "" {
+	if strings.TrimSpace(principal.ID) == "" {
 		return platformauthz.ErrDenied
+	}
+	switch principal.Type {
+	case platformprincipal.TypeUser, platformprincipal.TypeServiceAccount, platformprincipal.TypeSystem:
+	default:
+		return platformauthz.ErrDecisionUnavailable
 	}
 	if snapshot, ok := ctx.Value(grantSnapshotKey{}).(grantSnapshot); ok && !snapshot.matches(principal) {
 		return platformauthz.ErrDecisionUnavailable
