@@ -2613,6 +2613,29 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil || tenantCeilingOptions.Total != 1 || len(tenantCeilingOptions.Items) != 1 || tenantCeilingOptions.Items[0].ID != tenantPermissionID {
 		t.Fatalf("tenant ceiling options=%+v err=%v", tenantCeilingOptions, err)
 	}
+	var tenantPrimaryLinkID string
+	if err := db.GetContext(ctx, &tenantPrimaryLinkID, db.Rebind(`SELECT link.id FROM permission_resource_actions link
+		JOIN authorization_resource_actions a ON a.id=link.action_id
+		JOIN authorization_resources r ON r.id=a.resource_id
+		WHERE link.permission_id=? AND r.resource_key='integration.permissions' AND a.action_key='read' AND link.deleted_at IS NULL`), tenantPermissionID); err != nil {
+		t.Fatalf("load tenant permission link: %v", err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE id=? AND deleted_at IS NULL`), tenantPrimaryLinkID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("remove tenant permission link: %v", err)
+	}
+	withoutLink, err := tenantCeilingService.PageTenantGrantablePermissions(actorCtx, pagination.Request{Keyword: "integration.permissions.read"})
+	if err != nil || withoutLink.Total != 0 || len(withoutLink.Items) != 0 {
+		t.Fatalf("unlinked permission remained grantable: options=%+v err=%v", withoutLink, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE id=? AND deleted_at IS NOT NULL`), tenantPrimaryLinkID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("restore tenant permission link: %v", err)
+	}
 	platformCeilingOptions, err := tenantCeilingService.PageTenantGrantablePermissions(actorCtx, pagination.Request{Keyword: "integration.platform.catalog.read"})
 	if err != nil || platformCeilingOptions.Total != 0 || len(platformCeilingOptions.Items) != 0 {
 		t.Fatalf("platform permission leaked into tenant ceiling options=%+v err=%v", platformCeilingOptions, err)

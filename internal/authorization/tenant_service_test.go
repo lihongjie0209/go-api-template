@@ -632,7 +632,7 @@ func TestPageTenantGrantablePermissionsScopesCountAndItems(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
 	ctx := platformprincipal.SystemContext(t.Context(), "platform-admin")
-	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM permissions p WHERE .*r.scope='tenant'.*LOWER\(p.permission_key\)`).
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM permissions p WHERE .*FROM permission_resource_actions link.*a.action_key=p.action.*r.resource_key=p.resource.*r.scope='tenant'.*link.permission_id=p.id AND link.deleted_at IS NULL.*LOWER\(p.permission_key\)`).
 		WithArgs("%member%", "%member%").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`(?s)SELECT p.id,p.permission_key,p.name,p.resource,p.action FROM permissions p WHERE .*r.scope='tenant'.*ORDER BY p.permission_key,p.id LIMIT \? OFFSET \?`).

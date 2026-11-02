@@ -157,9 +157,10 @@ type AssignablePermissionPageInput struct {
 }
 
 const tenantGrantablePermissionWhere = `p.node_type='permission' AND p.status='active' AND p.deleted_at IS NULL AND EXISTS (
-	SELECT 1 FROM authorization_resources r
-	JOIN authorization_resource_actions a ON a.resource_id=r.id AND a.action_key=p.action AND a.status='active' AND a.deleted_at IS NULL
-	WHERE r.resource_key=p.resource AND r.scope='tenant' AND r.status='active' AND r.deleted_at IS NULL
+	SELECT 1 FROM permission_resource_actions link
+	JOIN authorization_resource_actions a ON a.id=link.action_id AND a.action_key=p.action AND a.status='active' AND a.deleted_at IS NULL
+	JOIN authorization_resources r ON r.id=a.resource_id AND r.resource_key=p.resource AND r.scope='tenant' AND r.status='active' AND r.deleted_at IS NULL
+	WHERE link.permission_id=p.id AND link.deleted_at IS NULL
 )`
 
 type AdministratorCandidate struct {
