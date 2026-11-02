@@ -64,7 +64,7 @@ func TestService_ReadyReturnsAfterCallerCancellationWhenDriverIgnoresContext(t *
 	})
 	service := New(sqlx.NewDb(database, "blocked"), nil, config.Config{
 		Database: config.Database{Enabled: true},
-		Health:   config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second},
+		Health:   config.Health{DatabaseTimeout: 30 * time.Millisecond, RedisTimeout: time.Second},
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -99,6 +99,50 @@ func TestService_ReadyReturnsAfterCallerCancellationWhenDriverIgnoresContext(t *
 		t.Fatalf("driver Ping() calls = %d, want 1 while first check is blocked", count)
 	}
 	release()
+}
+
+func TestService_ConcurrentReadyCallsShareHealthyDependencyCheck(t *testing.T) {
+	connector := &blockingPingConnector{started: make(chan struct{}), release: make(chan struct{})}
+	database := sql.OpenDB(connector)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(connector.release) }) }
+	t.Cleanup(func() {
+		release()
+		_ = database.Close()
+	})
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := New(sqlx.NewDb(database, "blocked"), client, config.Config{
+		Database: config.Database{Enabled: true},
+		Health:   config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second},
+	})
+	type readiness struct {
+		status Status
+		ready  bool
+	}
+	first := make(chan readiness, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	go func() {
+		status, ready := service.Ready(ctx)
+		first <- readiness{status: status, ready: ready}
+	}()
+	select {
+	case <-connector.started:
+	case <-ctx.Done():
+		t.Fatal("first database check never started")
+	}
+	releaseAfterJoin := time.AfterFunc(100*time.Millisecond, release)
+	defer releaseAfterJoin.Stop()
+	secondStatus, secondReady := service.Ready(ctx)
+	firstResult := <-first
+	if !firstResult.ready || !secondReady || firstResult.status.Dependencies["database"].Status != "up" || secondStatus.Dependencies["database"].Status != "up" {
+		t.Fatalf("concurrent Ready() calls = (%#v, %t), (%#v, %t)", firstResult.status, firstResult.ready, secondStatus, secondReady)
+	}
+	if count := connector.pingCount.Load(); count != 1 {
+		t.Fatalf("driver Ping() calls = %d, want one shared check", count)
+	}
 }
 
 func TestService_ReadyHonorsDependencyTimeoutWhenDriverIgnoresContext(t *testing.T) {

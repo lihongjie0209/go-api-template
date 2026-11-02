@@ -2,12 +2,12 @@ package health
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 )
 
 type Status struct {
@@ -19,15 +19,13 @@ type Dependency struct {
 	Latency string `json:"latency,omitempty"`
 }
 type Service struct {
-	db               *sqlx.DB
-	redis            *redis.Client
-	databaseEnabled  bool
-	cfg              config.Health
-	databaseInFlight atomic.Bool
-	redisInFlight    atomic.Bool
+	db              *sqlx.DB
+	redis           *redis.Client
+	databaseEnabled bool
+	cfg             config.Health
+	probes          singleflight.Group
 }
 type result struct {
-	name       string
 	dependency Dependency
 	ready      bool
 }
@@ -45,6 +43,11 @@ func New(db *sqlx.DB, client *redis.Client, cfg config.Config) *Service {
 func (s *Service) Live() Status { return Status{Status: "up"} }
 
 func (s *Service) Ready(ctx context.Context) (Status, bool) {
+	if ctx.Err() != nil {
+		return Status{Status: "not_ready", Dependencies: map[string]Dependency{
+			"database": {Status: "down"}, "redis": {Status: "down"},
+		}}, false
+	}
 	// A driver may ignore its Context, so the aggregation also enforces each
 	// dependency's deadline independently of that driver's return.
 	databaseTimer := time.NewTimer(s.cfg.DatabaseTimeout)
@@ -53,32 +56,34 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 	defer redisTimer.Stop()
 	databaseDeadline := databaseTimer.C
 	redisDeadline := redisTimer.C
-	// Keep one slot per dependency so a cancelled caller can never leave a
-	// completed probe blocked while publishing its result.
-	results := make(chan result, 2)
-	go s.checkDatabase(ctx, results)
-	go s.checkRedis(ctx, results)
+	// DoChan publishes to a buffered channel for each caller. A timed-out
+	// caller cannot block the shared probe when it eventually completes.
+	databaseResults := s.probes.DoChan("database", func() (any, error) { return s.checkDatabase(ctx), nil })
+	redisResults := s.probes.DoChan("redis", func() (any, error) { return s.checkRedis(ctx), nil })
 	status := Status{Status: "ready", Dependencies: make(map[string]Dependency, 2)}
 	ready := true
 	for len(status.Dependencies) < 2 {
 		select {
-		case item := <-results:
-			if _, found := status.Dependencies[item.name]; found {
-				continue
-			}
-			status.Dependencies[item.name] = item.dependency
+		case outcome := <-databaseResults:
+			item := outcome.Val.(result)
+			status.Dependencies["database"] = item.dependency
 			ready = ready && item.ready
-			if item.name == "database" {
-				databaseDeadline = nil
-			} else {
-				redisDeadline = nil
-			}
+			databaseResults = nil
+			databaseDeadline = nil
+		case outcome := <-redisResults:
+			item := outcome.Val.(result)
+			status.Dependencies["redis"] = item.dependency
+			ready = ready && item.ready
+			redisResults = nil
+			redisDeadline = nil
 		case <-databaseDeadline:
 			databaseDeadline = nil
+			databaseResults = nil
 			status.Dependencies["database"] = Dependency{Status: "down"}
 			ready = false
 		case <-redisDeadline:
 			redisDeadline = nil
+			redisResults = nil
 			status.Dependencies["redis"] = Dependency{Status: "down"}
 			ready = false
 		case <-ctx.Done():
@@ -101,47 +106,34 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 	return status, ready
 }
 
-func (s *Service) checkDatabase(parent context.Context, results chan<- result) {
+func (s *Service) checkDatabase(parent context.Context) result {
 	if !s.databaseEnabled {
-		results <- result{name: "database", dependency: Dependency{Status: "disabled"}, ready: true}
-		return
+		return result{dependency: Dependency{Status: "disabled"}, ready: true}
 	}
 	if s.db == nil {
-		results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
-		return
+		return result{dependency: Dependency{Status: "down"}, ready: false}
 	}
-	if !s.databaseInFlight.CompareAndSwap(false, true) {
-		results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
-		return
-	}
-	defer s.databaseInFlight.Store(false)
 	ctx, cancel := context.WithTimeout(parent, s.cfg.DatabaseTimeout)
 	defer cancel()
 	started := time.Now()
-	results <- checkResult("database", started, s.db.PingContext(ctx))
+	return checkResult(started, s.db.PingContext(ctx))
 }
 
-func (s *Service) checkRedis(parent context.Context, results chan<- result) {
+func (s *Service) checkRedis(parent context.Context) result {
 	if s.redis == nil {
-		results <- result{name: "redis", dependency: Dependency{Status: "down"}, ready: false}
-		return
+		return result{dependency: Dependency{Status: "down"}, ready: false}
 	}
-	if !s.redisInFlight.CompareAndSwap(false, true) {
-		results <- result{name: "redis", dependency: Dependency{Status: "down"}, ready: false}
-		return
-	}
-	defer s.redisInFlight.Store(false)
 	ctx, cancel := context.WithTimeout(parent, s.cfg.RedisTimeout)
 	defer cancel()
 	started := time.Now()
-	results <- checkResult("redis", started, s.redis.Ping(ctx).Err())
+	return checkResult(started, s.redis.Ping(ctx).Err())
 }
 
-func checkResult(name string, started time.Time, err error) result {
+func checkResult(started time.Time, err error) result {
 	dependency := Dependency{Status: "up", Latency: time.Since(started).String()}
 	if err != nil {
 		dependency.Status = "down"
-		return result{name: name, dependency: dependency, ready: false}
+		return result{dependency: dependency, ready: false}
 	}
-	return result{name: name, dependency: dependency, ready: true}
+	return result{dependency: dependency, ready: true}
 }

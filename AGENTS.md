@@ -233,11 +233,13 @@ misleading dependency-down result. Readiness aggregation must stop waiting when
 the caller Context ends, even if a dependency driver ignores cancellation;
 in-flight checks must never block while reporting to an abandoned request.
 Allow at most one in-flight readiness check per dependency per service instance;
-if an earlier check remains blocked, later probes fail closed promptly without
-starting another driver call or accumulating goroutines. Readiness aggregation
-must enforce each dependency's configured timeout independently when a driver
-ignores its own Context, even if the caller has no earlier deadline. A slow
-dependency must not inherit another dependency's longer timeout.
+concurrent probes join that check rather than misreporting a healthy dependency
+as down. If it remains blocked, each caller fails closed at its own dependency
+deadline without starting another driver call or accumulating goroutines.
+Readiness aggregation must enforce each dependency's configured timeout
+independently when a driver ignores its own Context, even if the caller has
+no earlier deadline. A slow dependency must not inherit another dependency's
+longer timeout.
 
 ## Mandatory per-interface design review
 
