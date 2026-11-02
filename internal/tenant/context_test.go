@@ -149,6 +149,18 @@ func TestContextService_CurrentRequiresActiveTenantAndMembership(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestContextServiceCurrentRejectsNonUserPrincipalBeforeSQL(t *testing.T) {
+	t.Parallel()
+	for _, principal := range []platformprincipal.Principal{
+		{ID: "service-1", Type: platformprincipal.TypeServiceAccount, TenantID: "tenant-1", MembershipID: "membership-1"},
+		{Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "membership-1"},
+	} {
+		ctx := platformprincipal.WithContext(t.Context(), principal)
+		_, err := (&ContextService{}).Current(ctx)
+		require.ErrorIs(t, err, ErrForbidden)
+	}
+}
+
 func TestContextService_CurrentPropagatesMembershipLookupFailure(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()

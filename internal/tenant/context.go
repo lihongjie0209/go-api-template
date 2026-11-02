@@ -158,7 +158,7 @@ func (s *ContextService) recordSwitch(ctx context.Context, actor platformprincip
 }
 func (s *ContextService) Current(ctx context.Context) (AvailableTenant, error) {
 	actor, err := platformprincipal.Require(ctx)
-	if err != nil || actor.TenantID == "" || actor.MembershipID == "" {
+	if err != nil || actor.Type != platformprincipal.TypeUser || actor.ID == "" || actor.TenantID == "" || actor.MembershipID == "" {
 		return AvailableTenant{}, ErrForbidden
 	}
 	var selected AvailableTenant
