@@ -136,6 +136,10 @@ The next domain work must keep identity and tenancy separate:
   separately named admin methods/endpoints with explicit platform permission
   and operation logging; an empty tenant context must never silently mean
   unrestricted access.
+- Tenant administrator changes must lock and verify an active tenant row inside
+  the mutation transaction before checking or updating membership state. A
+  disabled or deleted tenant cannot gain a new administrator, and a rejected
+  attempt must not advance the membership version.
 
 ## API contract SOP
 

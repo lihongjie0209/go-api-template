@@ -491,6 +491,9 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 	}
 	return s.withLock(ctx, "tenant:"+tenantID+":administrators", func(ctx context.Context) error {
 		return s.mutate(ctx, "tenant.administrator.set", membershipID, map[string]any{"name": memberName, "tenant_id": tenantID, "enabled": enabled}, tenantID, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *sqlx.Tx) error {
+			if err := lockTenant(ctx, tx, tenantID); err != nil {
+				return err
+			}
 			if actor.TenantID != "" {
 				if err := ensureAdministrator(ctx, tx, tenantID, actor.MembershipID); err != nil {
 					return err
@@ -504,9 +507,6 @@ func (s *TenantAuthorizationService) SetAdministrator(ctx context.Context, tenan
 			}
 			if enabled {
 				return upsertLink(ctx, tx, "tenant_administrators", tenantID, "", "membership_id", membershipID, actor.ID)
-			}
-			if err := lockTenant(ctx, tx, tenantID); err != nil {
-				return err
 			}
 			var count int
 			query := `SELECT count(*) FROM tenant_administrators a JOIN tenant_memberships m ON m.tenant_id=a.tenant_id AND m.id=a.membership_id AND m.status='active' AND m.deleted_at IS NULL WHERE a.tenant_id=? AND a.deleted_at IS NULL`

@@ -81,6 +81,25 @@ func TestSetAdministratorRejectsMissingVersionBeforeDatabaseAccess(t *testing.T)
 	require.ErrorIs(t, service.SetAdministrator(ctx, "tenant-1", "member-1", true, 0), ErrTenantAuthorizationInvalid)
 }
 
+func TestSetAdministratorRejectsInactiveTenantBeforeChangingMembership(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &TenantAuthorizationService{db: db, transactor: database.NewTransactor(db)}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "platform-actor", Type: platformprincipal.TypeSystem})
+	mock.ExpectQuery(`SELECT username,display_name FROM tenant_memberships WHERE tenant_id=\? AND id=\? AND deleted_at IS NULL`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"username", "display_name"}).AddRow("member", "Member"))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
+	require.ErrorIs(t, service.SetAdministrator(ctx, "tenant-1", "member-1", true, 1), ErrTenantAuthorizationNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSetAdministratorPropagatesAdministratorLookupFailure(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()

@@ -1663,6 +1663,29 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 			t.Fatalf("active administrator link=%q want=%q err=%v", activeLinkID, newLinkID, err)
 		}
 	}
+	var adminMemberVersion int64
+	if err := db.GetContext(ctx, &adminMemberVersion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil {
+		t.Fatalf("read administrator membership version before tenant disable: %v", err)
+	}
+	setTenantStatus := func(status string) error {
+		return appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			_, updateErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE tenants SET status=? WHERE id=? AND deleted_at IS NULL`), status, tenantID)
+			return updateErr
+		})
+	}
+	if err := setTenantStatus("disabled"); err != nil {
+		t.Fatalf("disable tenant before administrator guard: %v", err)
+	}
+	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true, adminMemberVersion); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
+		t.Fatalf("set administrator in disabled tenant error=%v", err)
+	}
+	var unchangedMemberVersion int64
+	if err := db.GetContext(ctx, &unchangedMemberVersion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil || unchangedMemberVersion != adminMemberVersion {
+		t.Fatalf("disabled tenant changed member version=%d want=%d err=%v", unchangedMemberVersion, adminMemberVersion, err)
+	}
+	if err := setTenantStatus("active"); err != nil {
+		t.Fatalf("restore tenant after administrator guard: %v", err)
+	}
 }
 
 func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, resources *resourceaction.Registry, tenantID, membershipID string, visible *authorization.TenantRole) {
