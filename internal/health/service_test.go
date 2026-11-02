@@ -18,10 +18,11 @@ import (
 )
 
 type blockingPingConnector struct {
-	started   chan struct{}
-	release   chan struct{}
-	startOnce sync.Once
-	pingCount atomic.Int32
+	started      chan struct{}
+	release      chan struct{}
+	startOnce    sync.Once
+	pingCount    atomic.Int32
+	honorContext bool
 }
 
 func (c *blockingPingConnector) Connect(context.Context) (driver.Conn, error) {
@@ -46,11 +47,86 @@ func (c *blockingPingConn) Close() error { return nil }
 func (c *blockingPingConn) Begin() (driver.Tx, error) {
 	return nil, errors.New("transactions are unsupported")
 }
-func (c *blockingPingConn) Ping(context.Context) error {
+func (c *blockingPingConn) Ping(ctx context.Context) error {
 	c.connector.pingCount.Add(1)
 	c.connector.startOnce.Do(func() { close(c.connector.started) })
+	if c.connector.honorContext {
+		select {
+		case <-c.connector.release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	<-c.connector.release
 	return nil
+}
+
+func TestService_ReadySharedProbeSurvivesFirstCallerCancellation(t *testing.T) {
+	connector := &blockingPingConnector{started: make(chan struct{}), release: make(chan struct{}), honorContext: true}
+	database := sql.OpenDB(connector)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(connector.release) }) }
+	t.Cleanup(func() {
+		release()
+		_ = database.Close()
+	})
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	service := New(sqlx.NewDb(database, "blocked"), client, config.Config{
+		Database: config.Database{Enabled: true},
+		Health:   config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second},
+	})
+	firstCtx, cancelFirst := context.WithCancel(t.Context())
+	defer cancelFirst()
+	firstResult := make(chan bool, 1)
+	go func() {
+		_, ready := service.Ready(firstCtx)
+		firstResult <- ready
+	}()
+	select {
+	case <-connector.started:
+	case <-time.After(time.Second):
+		t.Fatal("first readiness probe did not reach the database")
+	}
+	type readiness struct {
+		status Status
+		ready  bool
+	}
+	secondResult := make(chan readiness, 1)
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		status, ready := service.Ready(t.Context())
+		secondResult <- readiness{status: status, ready: ready}
+	}()
+	<-secondStarted
+	cancelTimer := time.AfterFunc(100*time.Millisecond, cancelFirst)
+	defer cancelTimer.Stop()
+	select {
+	case ready := <-firstResult:
+		if ready {
+			t.Fatal("canceled first readiness request reported ready")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first readiness request did not stop after cancellation")
+	}
+	release()
+	var status Status
+	var ready bool
+	select {
+	case result := <-secondResult:
+		status, ready = result.status, result.ready
+	case <-time.After(2 * time.Second):
+		t.Fatal("second readiness request did not finish")
+	}
+	if !ready || status.Dependencies["database"].Status != "up" {
+		t.Fatalf("second readiness result after first caller cancellation = %#v, %t", status, ready)
+	}
+	if count := connector.pingCount.Load(); count != 1 {
+		t.Fatalf("shared database Ping() calls = %d, want 1", count)
+	}
 }
 
 func TestService_ReadyReturnsAfterCallerCancellationWhenDriverIgnoresContext(t *testing.T) {

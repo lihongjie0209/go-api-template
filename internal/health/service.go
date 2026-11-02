@@ -58,8 +58,11 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 	redisDeadline := redisTimer.C
 	// DoChan publishes to a buffered channel for each caller. A timed-out
 	// caller cannot block the shared probe when it eventually completes.
-	databaseResults := s.probes.DoChan("database", func() (any, error) { return s.checkDatabase(ctx), nil })
-	redisResults := s.probes.DoChan("redis", func() (any, error) { return s.checkRedis(ctx), nil })
+	// A shared probe must outlive the first caller's cancellation so another
+	// waiting readiness request cannot inherit its failure. Each probe still
+	// has its own configured deadline, while every caller has separate timers.
+	databaseResults := s.probes.DoChan("database", func() (any, error) { return s.checkDatabase(), nil })
+	redisResults := s.probes.DoChan("redis", func() (any, error) { return s.checkRedis(), nil })
 	status := Status{Status: "ready", Dependencies: make(map[string]Dependency, 2)}
 	ready := true
 	for len(status.Dependencies) < 2 {
@@ -106,24 +109,24 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 	return status, ready
 }
 
-func (s *Service) checkDatabase(parent context.Context) result {
+func (s *Service) checkDatabase() result {
 	if !s.databaseEnabled {
 		return result{dependency: Dependency{Status: "disabled"}, ready: true}
 	}
 	if s.db == nil {
 		return result{dependency: Dependency{Status: "down"}, ready: false}
 	}
-	ctx, cancel := context.WithTimeout(parent, s.cfg.DatabaseTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DatabaseTimeout)
 	defer cancel()
 	started := time.Now()
 	return checkResult(started, s.db.PingContext(ctx))
 }
 
-func (s *Service) checkRedis(parent context.Context) result {
+func (s *Service) checkRedis() result {
 	if s.redis == nil {
 		return result{dependency: Dependency{Status: "down"}, ready: false}
 	}
-	ctx, cancel := context.WithTimeout(parent, s.cfg.RedisTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.RedisTimeout)
 	defer cancel()
 	started := time.Now()
 	return checkResult(started, s.redis.Ping(ctx).Err())
