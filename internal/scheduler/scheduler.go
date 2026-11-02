@@ -35,6 +35,11 @@ var ErrJobPanicked = errors.New("job_panic")
 var errJobExecutionFailed = errors.New("scheduled_job_failed")
 var errSchedulerOperationFailed = errors.New("scheduler_operation_failed")
 var errSchedulerConsumerFailed = errors.New("scheduler_consumer_failed")
+var errTooManyActiveJobs = errors.New("too many active scheduled jobs")
+var errActiveJobPayloadBudget = errors.New("active scheduled job payload budget exceeded")
+
+const maxActiveScheduledJobs = 10_000
+const maxActiveJobPayloadBytes = 16 << 20
 
 type Manager struct {
 	cfg            config.Config
@@ -179,8 +184,31 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	if !m.cfg.Database.Enabled {
 		return nil
 	}
-	definitions := []Definition{}
-	if err := m.db.SelectContext(ctx, &definitions, m.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE status='active' AND deleted_at IS NULL ORDER BY code ASC,id ASC`)); err != nil {
+	rows, err := m.db.QueryxContext(ctx, m.db.Rebind(`SELECT `+definitionColumns+` FROM scheduled_jobs WHERE status='active' AND deleted_at IS NULL ORDER BY code ASC,id ASC LIMIT ?`), maxActiveScheduledJobs+1)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	definitions := make([]Definition, 0)
+	payloadBytes := 0
+	for rows.Next() {
+		if len(definitions) == maxActiveScheduledJobs {
+			return errTooManyActiveJobs
+		}
+		var definition Definition
+		if err := rows.StructScan(&definition); err != nil {
+			return err
+		}
+		payloadBytes += len(definition.Payload)
+		if payloadBytes > maxActiveJobPayloadBytes {
+			return errActiveJobPayloadBudget
+		}
+		definitions = append(definitions, definition)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
 		return err
 	}
 	type stagedDefinition struct {

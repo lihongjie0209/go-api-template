@@ -49,19 +49,54 @@ func TestManagerRefreshAtomicallyReplacesValidatedDefinitions(t *testing.T) {
 	}
 	now := time.Now()
 	columns := []string{"id", "code", "name", "description", "cron_spec", "timezone", "handler", "timeout_seconds", "lock_ttl_seconds", "status", "payload", "created_at", "created_by", "updated_at", "updated_by", "version"}
-	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-1", "sample-job", "Sample", "", "0 * * * * *", "Asia/Shanghai", "system.sample", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WithArgs(maxActiveScheduledJobs + 1).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-1", "sample-job", "Sample", "", "0 * * * * *", "Asia/Shanghai", "system.sample", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
 	require.NoError(t, manager.Refresh(t.Context()))
 	require.Len(t, manager.dynamicEntries, 1)
 	require.Len(t, manager.runner.Entries(), 1)
 
-	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-2", "unknown-job", "Unknown", "", "0 * * * * *", "Asia/Shanghai", "unknown.handler", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WithArgs(maxActiveScheduledJobs + 1).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-2", "unknown-job", "Unknown", "", "0 * * * * *", "Asia/Shanghai", "unknown.handler", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
 	require.ErrorIs(t, manager.Refresh(t.Context()), ErrHandlerNotRegistered)
 	require.Len(t, manager.dynamicEntries, 1, "invalid snapshots must not replace the active schedule")
 
-	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-2", "timezone-job", "Timezone", "", "CRON_TZ=UTC 0 * * * * *", "Asia/Shanghai", "system.sample", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs`).WithArgs(maxActiveScheduledJobs + 1).WillReturnRows(sqlmock.NewRows(columns).AddRow("job-2", "timezone-job", "Timezone", "", "CRON_TZ=UTC 0 * * * * *", "Asia/Shanghai", "system.sample", 30, 60, "active", []byte(`{}`), now, "system", now, "system", 1))
 	require.ErrorIs(t, manager.Refresh(t.Context()), ErrInvalidDefinition)
 	require.Len(t, manager.dynamicEntries, 1, "an inline timezone must not remove the active schedule")
 	require.Len(t, manager.runner.Entries(), 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManagerRefreshRejectsTooManyActiveJobs(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	manager := &Manager{
+		cfg: config.Config{Database: config.Database{Enabled: true}},
+		db:  sqlx.NewDb(raw, "sqlmock"),
+	}
+	rows := sqlmock.NewRows([]string{"id"})
+	for range 10_001 {
+		rows.AddRow("job")
+	}
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs.*LIMIT \?`).WithArgs(maxActiveScheduledJobs + 1).WillReturnRows(rows)
+	require.ErrorContains(t, manager.Refresh(t.Context()), "too many active scheduled jobs")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManagerRefreshRejectsAggregatePayloadOverBudget(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	manager := &Manager{
+		cfg: config.Config{Database: config.Database{Enabled: true}},
+		db:  sqlx.NewDb(raw, "sqlmock"),
+	}
+	rows := sqlmock.NewRows([]string{"id", "payload"})
+	payload := make([]byte, 1<<20)
+	for range 17 {
+		rows.AddRow("job", payload)
+	}
+	mock.ExpectQuery(`SELECT .* FROM scheduled_jobs.*LIMIT \?`).WithArgs(maxActiveScheduledJobs + 1).WillReturnRows(rows)
+	require.ErrorIs(t, manager.Refresh(t.Context()), errActiveJobPayloadBudget)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

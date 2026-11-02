@@ -553,6 +553,10 @@ available. A feature must not introduce a second transport for the same event.
   non-sensitive failure reason before releasing their distributed lease. Both
   cron and manual runs must persist a terminal failure and operation log;
   recovery logging must never include panic values or stack contents.
+- Scheduler refresh must stream active definitions with a bounded SQL row limit
+  and aggregate payload budget. A row, payload, scan, or close failure must
+  leave the previously installed schedule intact; validate every definition
+  before replacing any active entry.
 - The transactional outbox dispatcher must recover a batch panic into a fixed
   safe reason and continue scanning on the next interval. It must check its
   lifecycle Context before each new claim cycle. A claimed row keeps
