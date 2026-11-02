@@ -1,6 +1,7 @@
 package tenant
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -68,5 +69,21 @@ func TestMembershipAddRejectsStaleDeletedMembershipRestore(t *testing.T) {
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a"})
 	_, err = service.Add(ctx, "alice")
 	require.ErrorIs(t, err, ErrConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMembershipAddFailsClosedWhenDeletedMembershipLookupFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	wantErr := errors.New("membership lookup unavailable")
+	mock.ExpectQuery(`SELECT id,version,created_by FROM tenant_memberships WHERE tenant_id=\? AND user_id=\? AND deleted_at IS NOT NULL`).
+		WithArgs("tenant-a", "owner-1").WillReturnError(wantErr)
+	service := &MembershipService{repository: NewRepository(db), users: mutationOwnerResolver{}}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "admin", Type: platformprincipal.TypeSystem, TenantID: "tenant-a"})
+	_, err = service.Add(ctx, "alice")
+	require.ErrorIs(t, err, wantErr)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
