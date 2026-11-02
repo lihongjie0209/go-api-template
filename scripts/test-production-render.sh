@@ -12,6 +12,10 @@ for kind in migration application; do
 		echo "unresolved image in $kind manifest" >&2
 		exit 1
 	fi
+	if [ "$kind" = application ]; then
+		printf '%s\n' "$output" | grep -Eq '^[[:space:]]*fsGroup: 2000[[:space:]]*$'
+		printf '%s\n' "$output" | grep -Eq '^[[:space:]]*defaultMode: 0440[[:space:]]*$'
+	fi
 done
 
 for bad in ghcr.io/lihongjie0209/go-api-template:main ghcr.io/lihongjie0209/go-api-template:sha-abcdef0 ghcr.io/example/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do

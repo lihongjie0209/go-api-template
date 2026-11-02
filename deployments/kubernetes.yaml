@@ -62,6 +62,7 @@ spec:
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
+        fsGroup: 2000
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
