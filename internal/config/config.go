@@ -61,6 +61,7 @@ type App struct {
 	Name            string        `mapstructure:"name"`
 	Schema          string        `mapstructure:"schema"`
 	Env             string        `mapstructure:"env"`
+	StartupTimeout  time.Duration `mapstructure:"startup_timeout"`
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
 }
 type HTTP struct {
@@ -573,6 +574,7 @@ func profileConfigPath(path, profile string) string {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.name", "go-api-template")
 	v.SetDefault("app.env", "development")
+	v.SetDefault("app.startup_timeout", "30s")
 	v.SetDefault("app.shutdown_timeout", "10s")
 	v.SetDefault("http.address", "127.0.0.1:8080")
 	v.SetDefault("http.read_timeout", "10s")
@@ -743,6 +745,9 @@ func setDefaults(v *viper.Viper) {
 }
 
 func (c Config) Validate() error {
+	if c.App.StartupTimeout <= 0 || c.App.StartupTimeout > 10*time.Minute || c.App.ShutdownTimeout <= 0 || c.App.ShutdownTimeout > 10*time.Minute {
+		return errors.New("app.startup_timeout and app.shutdown_timeout must be positive and no greater than 10m")
+	}
 	if !validMigrationTable.MatchString(c.Database.Name) {
 		return errors.New("database.name must contain lowercase letters, digits, or underscores and be at most 63 characters")
 	}

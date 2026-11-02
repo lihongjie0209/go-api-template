@@ -1,5 +1,6 @@
 app:
   env: test
+  startup_timeout: 2s
   shutdown_timeout: 2s
 log:
   level: error

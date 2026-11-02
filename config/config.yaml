@@ -1,6 +1,7 @@
 app:
   name: go-api-template
   env: development
+  startup_timeout: 30s
   shutdown_timeout: 10s
 http:
   address: 127.0.0.1:8080

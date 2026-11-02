@@ -145,7 +145,7 @@ func TestNew_DependencyGraph(t *testing.T) {
 	t.Parallel()
 	redisServer := miniredis.RunT(t)
 	cfg := config.Config{
-		App:  config.App{Name: "test", Env: "test", ShutdownTimeout: time.Second},
+		App:  config.App{Name: "test", Env: "test", StartupTimeout: time.Second, ShutdownTimeout: time.Second},
 		HTTP: config.HTTP{Address: "127.0.0.1:0", ReadTimeout: time.Second, WriteTimeout: time.Second, IdleTimeout: time.Second, MaxBodyBytes: 1024},
 		Log:  config.Log{Level: "error", Format: "json", File: filepath.Join(t.TempDir(), "app.log"), MaxSizeMB: 1, MaxBackups: 1, MaxAgeDays: 1},
 		JWT:  config.JWT{Issuer: "test", TTL: time.Hour},

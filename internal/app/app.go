@@ -113,7 +113,7 @@ func New(cfg config.Config) *fx.App {
 		scheduler.Module,
 		grpctransport.Module,
 		httptransport.Module,
-		fx.StartTimeout(cfg.App.ShutdownTimeout),
+		fx.StartTimeout(cfg.App.StartupTimeout),
 		fx.StopTimeout(cfg.App.ShutdownTimeout),
 	)
 }

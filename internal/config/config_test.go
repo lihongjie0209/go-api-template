@@ -25,6 +25,53 @@ func TestLoad_EnvironmentOverridesFile(t *testing.T) {
 	}
 }
 
+func TestLoad_AppLifecycleTimeouts(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		fileStartup  string
+		envStartup   string
+		fileShutdown string
+		wantStartup  time.Duration
+		wantShutdown time.Duration
+		wantError    bool
+	}{
+		{name: "default", wantStartup: 30 * time.Second, wantShutdown: 10 * time.Second},
+		{name: "independent file budgets", fileStartup: "45s", fileShutdown: "8s", wantStartup: 45 * time.Second, wantShutdown: 8 * time.Second},
+		{name: "environment overrides startup", fileStartup: "45s", envStartup: "1m", wantStartup: time.Minute, wantShutdown: 10 * time.Second},
+		{name: "zero startup", fileStartup: "0s", wantError: true},
+		{name: "excessive startup", fileStartup: "11m", wantError: true},
+		{name: "zero shutdown", fileShutdown: "0s", wantError: true},
+		{name: "excessive shutdown", fileShutdown: "11m", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			content := "app:\n  name: go-api-template\n"
+			if test.fileStartup != "" {
+				content += "  startup_timeout: " + test.fileStartup + "\n"
+			}
+			if test.fileShutdown != "" {
+				content += "  shutdown_timeout: " + test.fileShutdown + "\n"
+			}
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.envStartup != "" {
+				t.Setenv("APP_APP_STARTUP_TIMEOUT", test.envStartup)
+			}
+			cfg, err := Load(path)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "app.startup_timeout") {
+					t.Fatalf("Load() = %+v, %v; want lifecycle timeout validation", cfg.App, err)
+				}
+				return
+			}
+			if err != nil || cfg.App.StartupTimeout != test.wantStartup || cfg.App.ShutdownTimeout != test.wantShutdown {
+				t.Fatalf("Load() = %+v, %v; want startup %s and shutdown %s", cfg.App, err, test.wantStartup, test.wantShutdown)
+			}
+		})
+	}
+}
+
 func TestLoad_BoundsRefreshTokenLifetimeFromFileAndEnvironment(t *testing.T) {
 	for _, test := range []struct {
 		name      string
