@@ -103,7 +103,7 @@ jobs:
         run: make ci-test-integration
 
   container:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push'
     needs: [verify, integration]
     runs-on: ubuntu-latest
     permissions:

@@ -64,7 +64,7 @@ gRPC request messages are configurable up to 64 MiB (`grpc.max_receive_bytes`, 1
 
 ## Container publishing and Kubernetes
 
-After unit and integration tests pass, CI builds `linux/amd64` and `linux/arm64` images and publishes `main`, `sha-*`, and semantic-version tags to `ghcr.io/lihongjie0209/go-api-template`. Images include Git metadata, an SBOM, and build provenance. Pull requests build both architectures without publishing.
+After unit and integration tests pass, main-branch pushes publish `main` and `sha-*` image tags, and version-tag pushes publish version and `sha-*` tags to `ghcr.io/lihongjie0209/go-api-template`. CI builds `linux/amd64` and `linux/arm64` images with Git metadata, an SBOM, and build provenance. Pull requests run verification and integration tests without building or publishing an image. Batch local changes before pushing to avoid starting CI for each small edit.
 
 The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference, run the migration Job, and then deploy the service:
 
