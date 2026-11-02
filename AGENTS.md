@@ -140,6 +140,10 @@ The next domain work must keep identity and tenancy separate:
   the mutation transaction before checking or updating membership state. A
   disabled or deleted tenant cannot gain a new administrator, and a rejected
   attempt must not advance the membership version.
+- Clearing a member's role set with an empty list still requires the actor's
+  active tenant membership and tenant status to be checked inside the write
+  transaction; an empty replacement must not bypass the normal delegation
+  boundary.
 
 ## API contract SOP
 

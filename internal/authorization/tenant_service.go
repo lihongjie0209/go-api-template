@@ -1485,7 +1485,7 @@ func (s *TenantAuthorizationService) ensureRoleAssignable(ctx context.Context, t
 
 func (s *TenantAuthorizationService) ensureRolesAssignable(ctx context.Context, tx *sqlx.Tx, actor platformprincipal.Principal, roleIDs []string) error {
 	if len(roleIDs) == 0 {
-		return nil
+		return s.ensureAssignable(ctx, tx, actor, nil)
 	}
 	query, args, inErr := sqlx.In(`SELECT DISTINCT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id IN (?) AND deleted_at IS NULL`+authorizationLinkLimitClause, actor.TenantID, roleIDs)
 	if inErr != nil {

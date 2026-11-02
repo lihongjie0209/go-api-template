@@ -1679,6 +1679,13 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err := service.SetAdministrator(actorCtx, tenantID, adminMemberID, true, adminMemberVersion); !errors.Is(err, authorization.ErrTenantAuthorizationNotFound) {
 		t.Fatalf("set administrator in disabled tenant error=%v", err)
 	}
+	var targetVersion int64
+	if err := db.GetContext(ctx, &targetVersion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil {
+		t.Fatalf("read target membership version before empty role assignment: %v", err)
+	}
+	if err := service.SetMemberRoles(adminCtx, targetMemberID, targetVersion, nil); !errors.Is(err, authorization.ErrTenantAuthorizationForbidden) {
+		t.Fatalf("clear member roles in disabled tenant error=%v", err)
+	}
 	var unchangedMemberVersion int64
 	if err := db.GetContext(ctx, &unchangedMemberVersion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, adminMemberID); err != nil || unchangedMemberVersion != adminMemberVersion {
 		t.Fatalf("disabled tenant changed member version=%d want=%d err=%v", unchangedMemberVersion, adminMemberVersion, err)

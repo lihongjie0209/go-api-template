@@ -826,6 +826,46 @@ func TestEnsureRolesAssignablePropagatesRoleCountFailure(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEnsureRolesAssignableEmptySetRequiresActiveTenantMembership(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	actor := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
+	require.ErrorIs(t, (&TenantAuthorizationService{}).ensureRolesAssignable(t.Context(), tx, actor, nil), ErrTenantAuthorizationForbidden)
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEnsureRolesAssignableEmptySetAllowsActiveAdministrator(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).
+		WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).
+		WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+	actor := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1", MembershipID: "member-1"}
+	require.NoError(t, (&TenantAuthorizationService{}).ensureRolesAssignable(t.Context(), tx, actor, nil))
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestRoleAssignmentChecksRejectOversizedPermissions(t *testing.T) {
 	for _, test := range []struct {
 		name  string
