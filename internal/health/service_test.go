@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,12 +18,14 @@ import (
 )
 
 type blockingPingConnector struct {
-	started chan struct{}
-	release chan struct{}
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+	pingCount atomic.Int32
 }
 
 func (c *blockingPingConnector) Connect(context.Context) (driver.Conn, error) {
-	return &blockingPingConn{started: c.started, release: c.release}, nil
+	return &blockingPingConn{connector: c}, nil
 }
 func (*blockingPingConnector) Driver() driver.Driver { return blockingPingDriver{} }
 
@@ -33,8 +36,7 @@ func (blockingPingDriver) Open(string) (driver.Conn, error) {
 }
 
 type blockingPingConn struct {
-	started chan struct{}
-	release chan struct{}
+	connector *blockingPingConnector
 }
 
 func (c *blockingPingConn) Prepare(string) (driver.Stmt, error) {
@@ -45,8 +47,9 @@ func (c *blockingPingConn) Begin() (driver.Tx, error) {
 	return nil, errors.New("transactions are unsupported")
 }
 func (c *blockingPingConn) Ping(context.Context) error {
-	close(c.started)
-	<-c.release
+	c.connector.pingCount.Add(1)
+	c.connector.startOnce.Do(func() { close(c.connector.started) })
+	<-c.connector.release
 	return nil
 }
 
@@ -79,10 +82,23 @@ func TestService_ReadyReturnsAfterCallerCancellationWhenDriverIgnoresContext(t *
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("Ready() waited %s for a driver that ignored cancellation", elapsed)
 	}
-	release()
 	if ready || status.Status != "not_ready" || status.Dependencies["database"].Status != "down" {
 		t.Fatalf("Ready() after canceled blocking driver = %#v, %t", status, ready)
 	}
+	for range 10 {
+		started = time.Now()
+		status, ready = service.Ready(t.Context())
+		if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+			t.Fatalf("Ready() waited %s for an in-flight driver", elapsed)
+		}
+		if ready || status.Dependencies["database"].Status != "down" {
+			t.Fatalf("Ready() with an in-flight driver = %#v, %t", status, ready)
+		}
+	}
+	if count := connector.pingCount.Load(); count != 1 {
+		t.Fatalf("driver Ping() calls = %d, want 1 while first check is blocked", count)
+	}
+	release()
 }
 
 func TestService_Ready(t *testing.T) {

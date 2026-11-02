@@ -232,6 +232,9 @@ body, and an expired deadline uses the shared timeout envelope rather than a
 misleading dependency-down result. Readiness aggregation must stop waiting when
 the caller Context ends, even if a dependency driver ignores cancellation;
 in-flight checks must never block while reporting to an abandoned request.
+Allow at most one in-flight readiness check per dependency per service instance;
+if an earlier check remains blocked, later probes fail closed promptly without
+starting another driver call or accumulating goroutines.
 
 ## Mandatory per-interface design review
 

@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -18,10 +19,12 @@ type Dependency struct {
 	Latency string `json:"latency,omitempty"`
 }
 type Service struct {
-	db              *sqlx.DB
-	redis           *redis.Client
-	databaseEnabled bool
-	cfg             config.Health
+	db               *sqlx.DB
+	redis            *redis.Client
+	databaseEnabled  bool
+	cfg              config.Health
+	databaseInFlight atomic.Bool
+	redisInFlight    atomic.Bool
 }
 type result struct {
 	name       string
@@ -76,6 +79,11 @@ func (s *Service) checkDatabase(parent context.Context, results chan<- result) {
 		results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
 		return
 	}
+	if !s.databaseInFlight.CompareAndSwap(false, true) {
+		results <- result{name: "database", dependency: Dependency{Status: "down"}, ready: false}
+		return
+	}
+	defer s.databaseInFlight.Store(false)
 	ctx, cancel := context.WithTimeout(parent, s.cfg.DatabaseTimeout)
 	defer cancel()
 	started := time.Now()
@@ -87,6 +95,11 @@ func (s *Service) checkRedis(parent context.Context, results chan<- result) {
 		results <- result{name: "redis", dependency: Dependency{Status: "down"}, ready: false}
 		return
 	}
+	if !s.redisInFlight.CompareAndSwap(false, true) {
+		results <- result{name: "redis", dependency: Dependency{Status: "down"}, ready: false}
+		return
+	}
+	defer s.redisInFlight.Store(false)
 	ctx, cancel := context.WithTimeout(parent, s.cfg.RedisTimeout)
 	defer cancel()
 	started := time.Now()
