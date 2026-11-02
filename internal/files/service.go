@@ -522,6 +522,9 @@ func (s *Service) ProcessPendingUploads(ctx context.Context) error {
 	if !s.enabled {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	items := []pendingUpload{}
 	query := s.db.Rebind(`SELECT id,object_key,attempts FROM file_upload_intents WHERE status='pending' AND deleted_at IS NULL AND next_attempt_at<=? ORDER BY next_attempt_at,id LIMIT ?`)
 	if err := s.db.SelectContext(ctx, &items, query, time.Now(), s.cfg.DeletionBatchSize); err != nil {
@@ -545,6 +548,9 @@ func (s *Service) ProcessPendingDeletions(ctx context.Context) error {
 	if !s.enabled {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	items := []pendingDeletion{}
 	query := s.db.Rebind(`SELECT id,object_key,object_delete_attempts FROM files WHERE deleted_at IS NOT NULL AND object_deleted_at IS NULL AND (object_delete_next_at IS NULL OR object_delete_next_at<=?) ORDER BY object_delete_next_at,id LIMIT ?`)
 	if err := s.db.SelectContext(ctx, &items, query, time.Now(), s.cfg.DeletionBatchSize); err != nil {
@@ -565,10 +571,24 @@ func (s *Service) RunDeletionWorker(ctx context.Context) {
 	if !s.enabled {
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	ticker := time.NewTicker(s.cfg.DeletionInterval)
 	defer ticker.Stop()
 	for {
-		if err := errors.Join(s.ProcessPendingUploads(ctx), s.ProcessPendingDeletions(ctx)); err != nil && !errors.Is(err, context.Canceled) && s.logger != nil {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		uploadErr := s.ProcessPendingUploads(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		deletionErr := s.ProcessPendingDeletions(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err := errors.Join(uploadErr, deletionErr); err != nil && s.logger != nil {
 			s.logger.WarnContext(ctx, "process pending file repairs", "error", observability.SafeError(err, errFileRepairFailed))
 		}
 		select {

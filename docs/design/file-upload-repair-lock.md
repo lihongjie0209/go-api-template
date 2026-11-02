@@ -9,6 +9,9 @@ transaction. Failure repair starts only after the upload releases the lease.
 Once the final transaction commits, a lease-release error is observed by the
 shared committed-lock helper without turning the successful upload response
 into a reported failure.
+The repair worker checks cancellation between the upload-intent and deletion
+scans so shutdown does not start another database query after its lifecycle
+Context ends.
 
 | Concern | Decision and rationale |
 | --- | --- |

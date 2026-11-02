@@ -200,6 +200,20 @@ func TestDeletionWorkerDoesNotLogDatabaseErrorDetails(t *testing.T) {
 	}
 }
 
+func TestFileRepairSkipsDatabaseAfterCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	service := &Service{enabled: true, cfg: config.Files{DeletionInterval: time.Hour}}
+	if err := service.ProcessPendingUploads(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ProcessPendingUploads() error=%v", err)
+	}
+	if err := service.ProcessPendingDeletions(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ProcessPendingDeletions() error=%v", err)
+	}
+	service.RunDeletionWorker(ctx)
+}
+
 func TestServiceUploadRejectsDeclaredSizeMismatchBeforeStorage(t *testing.T) {
 	storage := &storageStub{}
 	service := &Service{enabled: true, db: &sqlx.DB{}, transactor: &database.Transactor{}, storage: storage, operations: operationStub{}, cfg: config.Files{MaxSizeBytes: 1024}}
