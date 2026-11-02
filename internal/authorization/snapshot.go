@@ -43,21 +43,21 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 		// The platform and tenant grant sets must come from one database view.
 		tx, err := a.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 		if err != nil {
-			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
+			return fail(platformauthz.ErrDecisionUnavailable)
 		}
 		defer func() { _ = tx.Rollback() }()
 		snapshot.platform, err = a.platformGrants(ctx, tx, principal)
 		if err != nil {
-			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
+			return fail(platformauthz.ErrDecisionUnavailable)
 		}
 		if principal.Type == platformprincipal.TypeUser && principal.TenantID != "" && principal.MembershipID != "" {
 			snapshot.tenant, err = a.managedTenantGrants(ctx, tx, principal)
 			if err != nil {
-				return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
+				return fail(platformauthz.ErrDecisionUnavailable)
 			}
 		}
 		if err := tx.Commit(); err != nil {
-			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
+			return fail(platformauthz.ErrDecisionUnavailable)
 		}
 	default:
 		return fail(platformauthz.ErrDecisionUnavailable)

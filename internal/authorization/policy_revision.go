@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 
 	"github.com/lihongjie0209/go-api-template/internal/datapermission"
 	"github.com/lihongjie0209/go-api-template/internal/dependency"
@@ -38,7 +37,7 @@ func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprin
 	}
 	snapshotCtx, grantRevision, err := r.grants.Snapshot(ctx, principal)
 	if err != nil {
-		return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+		return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 	}
 	if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil || grantRevision == "" {
 		return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
@@ -47,7 +46,7 @@ func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprin
 	if r.data != nil {
 		snapshotCtx, dataRevision, err = r.data.Pin(snapshotCtx)
 		if err != nil {
-			return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+			return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 		}
 		if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil || dataRevision == "" {
 			return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable

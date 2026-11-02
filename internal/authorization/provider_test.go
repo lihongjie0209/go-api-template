@@ -197,13 +197,15 @@ func TestAuthorizerSnapshotIsBoundToPrincipalAndIndependentOfRowOrder(t *testing
 }
 
 func TestAuthorizerSnapshotFailsClosedWhenDatabaseIsUnavailable(t *testing.T) {
+	const secret = "password=grant-snapshot-test-secret"
 	a, mock := testAuthorizer(t)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT DISTINCT res.resource_key,act.action_key FROM platform_principal_permissions`).
-		WillReturnError(errors.New("database unavailable"))
+		WillReturnError(errors.New(secret))
 	mock.ExpectRollback()
 	_, _, err := a.Snapshot(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.NotContains(t, err.Error(), secret)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

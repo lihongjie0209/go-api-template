@@ -77,11 +77,13 @@ func TestPolicyRevisionsTracksDataSnapshot(t *testing.T) {
 
 func TestPolicyRevisionsFailsClosedWhenGrantsAreUnavailable(t *testing.T) {
 	t.Parallel()
-	grants := &revisionAuthorizerStub{err: errors.New("database unavailable")}
+	const secret = "password=grant-revision-test-secret"
+	grants := &revisionAuthorizerStub{err: errors.New(secret)}
 	revisions, err := NewPolicyRevisions(nil, grants)
 	require.NoError(t, err)
 	_, _, err = revisions.ForRequest(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.NotContains(t, err.Error(), secret)
 }
 
 func TestPolicyRevisionsFailsClosedWithoutGrantRevision(t *testing.T) {
