@@ -2,6 +2,10 @@ package health
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +15,75 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/redis/go-redis/v9"
 )
+
+type blockingPingConnector struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingPingConnector) Connect(context.Context) (driver.Conn, error) {
+	return &blockingPingConn{started: c.started, release: c.release}, nil
+}
+func (*blockingPingConnector) Driver() driver.Driver { return blockingPingDriver{} }
+
+type blockingPingDriver struct{}
+
+func (blockingPingDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("connector is required")
+}
+
+type blockingPingConn struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingPingConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare is unsupported")
+}
+func (c *blockingPingConn) Close() error { return nil }
+func (c *blockingPingConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("transactions are unsupported")
+}
+func (c *blockingPingConn) Ping(context.Context) error {
+	close(c.started)
+	<-c.release
+	return nil
+}
+
+func TestService_ReadyReturnsAfterCallerCancellationWhenDriverIgnoresContext(t *testing.T) {
+	connector := &blockingPingConnector{started: make(chan struct{}), release: make(chan struct{})}
+	database := sql.OpenDB(connector)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(connector.release) }) }
+	t.Cleanup(func() {
+		release()
+		_ = database.Close()
+	})
+	service := New(sqlx.NewDb(database, "blocked"), nil, config.Config{
+		Database: config.Database{Enabled: true},
+		Health:   config.Health{DatabaseTimeout: time.Second, RedisTimeout: time.Second},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		select {
+		case <-connector.started:
+			cancel()
+		case <-t.Context().Done():
+		}
+	}()
+	fallback := time.AfterFunc(time.Second, release)
+	defer fallback.Stop()
+	started := time.Now()
+	status, ready := service.Ready(ctx)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Ready() waited %s for a driver that ignored cancellation", elapsed)
+	}
+	release()
+	if ready || status.Status != "not_ready" || status.Dependencies["database"].Status != "down" {
+		t.Fatalf("Ready() after canceled blocking driver = %#v, %t", status, ready)
+	}
+}
 
 func TestService_Ready(t *testing.T) {
 	t.Parallel()

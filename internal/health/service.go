@@ -43,9 +43,23 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 	status := Status{Status: "ready", Dependencies: make(map[string]Dependency, 2)}
 	ready := true
 	for range 2 {
-		item := <-results
-		status.Dependencies[item.name] = item.dependency
-		ready = ready && item.ready
+		select {
+		case item := <-results:
+			status.Dependencies[item.name] = item.dependency
+			ready = ready && item.ready
+		case <-ctx.Done():
+			for _, name := range []string{"database", "redis"} {
+				if _, found := status.Dependencies[name]; !found {
+					status.Dependencies[name] = Dependency{Status: "down"}
+				}
+			}
+			status.Status = "not_ready"
+			return status, false
+		}
+	}
+	if ctx.Err() != nil {
+		status.Status = "not_ready"
+		return status, false
 	}
 	if !ready {
 		status.Status = "not_ready"

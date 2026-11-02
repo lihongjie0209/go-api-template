@@ -229,7 +229,9 @@ readiness merely from a retry loop; it requires an authoritative subscription
 ready signal from the transport. After a readiness check, honor the caller's
 ended Context before writing a dependency response: cancellation writes no
 body, and an expired deadline uses the shared timeout envelope rather than a
-misleading dependency-down result.
+misleading dependency-down result. Readiness aggregation must stop waiting when
+the caller Context ends, even if a dependency driver ignores cancellation;
+in-flight checks must never block while reporting to an abandoned request.
 
 ## Mandatory per-interface design review
 
