@@ -871,6 +871,11 @@ deleted_by text
   retention tables. Exclude only the migration tool's own history table.
 - Writes must use `database.Transactor.Within`, which injects the actor ID
   from context into transaction-local `app.actor_id`.
+- MySQL audit actors use a connection-level session variable. Clear it on
+  every transaction exit, including an ambiguous initial SET error, and
+  discard the physical pooled connection if cleanup fails. A rollback alone
+  does not clear MySQL session variables. Keep unit regressions for both the
+  ambiguous-SET and failed-cleanup paths.
 - Background jobs must create an explicit system principal context.
 - Triggers maintain timestamps, actor IDs, version increments, and soft-delete
   metadata. Physical deletes from audited tables are forbidden.

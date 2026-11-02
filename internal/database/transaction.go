@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,17 +25,31 @@ func (t *Transactor) Within(ctx context.Context, opts *sql.TxOptions, fn func(*s
 	if t.db == nil {
 		return fmt.Errorf("begin transaction: database is disabled")
 	}
-	tx, err := t.db.BeginTxx(ctx, opts)
+	var tx *sqlx.Tx
+	var conn *sqlx.Conn
+	var err error
+	if t.db.DriverName() == "mysql" {
+		conn, err = t.db.Connx(ctx)
+		if err != nil {
+			return fmt.Errorf("acquire transaction connection: %w", err)
+		}
+		defer func() { _ = conn.Close() }()
+		tx, err = conn.BeginTxx(ctx, opts)
+	} else {
+		tx, err = t.db.BeginTxx(ctx, opts)
+	}
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	committed := false
 	mysqlActorSet := false
 	defer func() {
+		discardConnection := false
 		if mysqlActorSet {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			if _, clearErr := tx.ExecContext(cleanupCtx, "SET @app_actor_id = NULL"); clearErr != nil {
 				runErr = errors.Join(runErr, fmt.Errorf("clear transaction audit actor: %w", clearErr))
+				discardConnection = true
 			}
 			cancel()
 		}
@@ -43,11 +58,18 @@ func (t *Transactor) Within(ctx context.Context, opts *sql.TxOptions, fn func(*s
 				runErr = errors.Join(runErr, fmt.Errorf("rollback transaction: %w", rollbackErr))
 			}
 		}
+		if discardConnection && conn != nil {
+			// MySQL user variables outlive transactions. Returning ErrBadConn from
+			// Raw removes a connection whose audit actor could not be cleared.
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
 	}()
+	// MySQL user variables survive ROLLBACK. A failed SET can still have been
+	// applied by the server, so clear it even when the driver reports an error.
+	mysqlActorSet = t.db.DriverName() == "mysql"
 	if err := setAuditActor(ctx, tx, t.db.DriverName()); err != nil {
 		return err
 	}
-	mysqlActorSet = t.db.DriverName() == "mysql"
 	if err := fn(tx); err != nil {
 		return err
 	}

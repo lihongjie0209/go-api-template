@@ -93,6 +93,50 @@ func TestTransactor_WithinClearsMySQLAuditActorBeforeRollback(t *testing.T) {
 	}
 }
 
+func TestTransactor_WithinClearsMySQLAuditActorWhenInitialSetFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	wantErr := errors.New("audit actor set returned after the server applied it")
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\\\?").WithArgs("user-42").WillReturnError(wantErr)
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
+	if err := NewTransactor(db).Within(ctx, nil, func(*sqlx.Tx) error { t.Fatal("business callback ran after actor setup failed"); return nil }); !errors.Is(err, wantErr) {
+		t.Fatalf("Within() error = %v, want audit actor setup failure", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTransactor_WithinDiscardsMySQLConnectionWhenActorClearFails(t *testing.T) {
+	t.Parallel()
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "mysql")
+	mock.ExpectBegin()
+	mock.ExpectExec("SET @app_actor_id = \\\\?").WithArgs("user-42").WillReturnError(errors.New("set result ambiguous"))
+	mock.ExpectExec("SET @app_actor_id = NULL").WillReturnError(errors.New("clear unavailable"))
+	mock.ExpectRollback()
+	mock.ExpectClose()
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-42", Type: platformprincipal.TypeUser})
+	if err := NewTransactor(db).Within(ctx, nil, func(*sqlx.Tx) error { return nil }); err == nil {
+		t.Fatal("Within() succeeded despite ambiguous actor setup and failed cleanup")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTransactor_WithinClearsMySQLAuditActorOnPanic(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()
