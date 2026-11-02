@@ -195,6 +195,27 @@ func (r *Repository) getMemberTx(ctx context.Context, tx *sqlx.Tx, tenantID, id 
 	}
 	return member, nil
 }
+
+type reusableMembership struct {
+	ID        string `db:"id"`
+	Version   int64  `db:"version"`
+	CreatedBy string `db:"created_by"`
+}
+
+func (r *Repository) reusableMembership(ctx context.Context, tenantID, userID string) (reusableMembership, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
+		return reusableMembership{}, ErrForbidden
+	}
+	var value reusableMembership
+	query := r.db.Rebind(`SELECT id,version,created_by FROM tenant_memberships WHERE tenant_id=? AND user_id=? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC,id DESC LIMIT 1`)
+	if err := r.db.GetContext(ctx, &value, query, tenantID, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return reusableMembership{}, nil
+		}
+		return reusableMembership{}, fmt.Errorf("find reusable tenant membership: %w", err)
+	}
+	return value, nil
+}
 func (r *Repository) PageMembers(ctx context.Context, tenantID string, input MemberPageInput, scope datapermission.SQLPredicate) ([]Member, int64, error) {
 	if tenantID == "" {
 		return nil, 0, ErrForbidden
@@ -276,36 +297,63 @@ func (s *MembershipService) Add(ctx context.Context, username string) (Member, e
 		return Member{}, e
 	}
 	id := uuid.NewString()
-	now := time.Now()
-	if s.dataScopes == nil {
-		if actor.Type != platformprincipal.TypeSystem {
-			return Member{}, datapermission.ErrScopeRequired
-		}
-	} else if err := s.dataScopes.AuthorizeObject(ctx, "tenant.member", datapermission.ResourceAttributes{
-		"id": id, "owner_id": user.ID, "status": string(StatusActive), "created_by": actor.ID,
-	}); err != nil {
-		if errors.Is(err, datapermission.ErrObjectDenied) {
-			return Member{}, ErrForbidden
-		}
-		return Member{}, err
-	}
 	var created Member
 	subjectName := strings.TrimSpace(user.DisplayName)
 	if subjectName == "" {
 		subjectName = strings.TrimSpace(user.Username)
 	}
 	run := func(runCtx context.Context) error {
+		reusable, err := s.repository.reusableMembership(runCtx, actor.TenantID, user.ID)
+		if err != nil {
+			return err
+		}
+		creatorID := actor.ID
+		if reusable.ID != "" {
+			id = reusable.ID
+			creatorID = reusable.CreatedBy
+		}
+		if s.dataScopes == nil {
+			if actor.Type != platformprincipal.TypeSystem {
+				return datapermission.ErrScopeRequired
+			}
+		} else if err := s.dataScopes.AuthorizeObject(runCtx, "tenant.member", datapermission.ResourceAttributes{
+			"id": id, "owner_id": user.ID, "status": string(StatusActive), "created_by": creatorID,
+		}); err != nil {
+			if errors.Is(err, datapermission.ErrObjectDenied) {
+				return ErrForbidden
+			}
+			return err
+		}
+		now := time.Now()
 		if err := s.mutate(runCtx, "tenant.member.add", id, map[string]any{"username": username}, securitylog.Entry{EventType: securitylog.EventMembershipAdded, SubjectID: user.ID, SubjectName: subjectName, SubjectType: "user", TenantID: actor.TenantID}, nil, func(tx *sqlx.Tx) error {
 			if err := ensureActiveTenant(runCtx, tx, actor.TenantID); err != nil {
 				return err
 			}
-			q := tx.Rebind(`INSERT INTO tenant_memberships (id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`)
-			_, err := tx.ExecContext(runCtx, q, id, actor.TenantID, user.ID, user.Username, user.DisplayName, StatusActive, now, now, actor.ID, now, actor.ID)
-			if isUniqueViolation(err) {
-				return ErrConflict
-			}
-			if err != nil {
-				return err
+			if reusable.ID != "" {
+				query := tx.Rebind(`UPDATE tenant_memberships SET username=?,display_name=?,status=?,joined_at=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND user_id=? AND version=? AND deleted_at IS NOT NULL`)
+				result, err := tx.ExecContext(runCtx, query, user.Username, user.DisplayName, StatusActive, now, now, actor.ID, actor.TenantID, reusable.ID, user.ID, reusable.Version)
+				if isUniqueViolation(err) {
+					return ErrConflict
+				}
+				if err != nil {
+					return err
+				}
+				rows, err := result.RowsAffected()
+				if err != nil {
+					return fmt.Errorf("restore tenant membership affected rows: %w", err)
+				}
+				if rows != 1 {
+					return ErrConflict
+				}
+			} else {
+				q := tx.Rebind(`INSERT INTO tenant_memberships (id,tenant_id,user_id,username,display_name,status,joined_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`)
+				_, err := tx.ExecContext(runCtx, q, id, actor.TenantID, user.ID, user.Username, user.DisplayName, StatusActive, now, now, actor.ID, now, actor.ID)
+				if isUniqueViolation(err) {
+					return ErrConflict
+				}
+				if err != nil {
+					return err
+				}
 			}
 			created, err = s.repository.getMemberTx(runCtx, tx, actor.TenantID, id)
 			return err

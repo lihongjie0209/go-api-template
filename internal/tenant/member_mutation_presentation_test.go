@@ -25,6 +25,8 @@ func TestMembershipAddReturnsCommittedRowWhenActorPresentationFails(t *testing.T
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(`SELECT id,version,created_by FROM tenant_memberships WHERE tenant_id=\? AND user_id=\? AND deleted_at IS NOT NULL`).
+		WithArgs("tenant-a", "owner-1").WillReturnRows(sqlmock.NewRows([]string{"id", "version", "created_by"}))
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL`).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectExec(`INSERT INTO tenant_memberships`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -68,6 +70,8 @@ func TestMembershipAddRollsBackWhenResponseReadFails(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "sqlmock")
+	mock.ExpectQuery(`SELECT id,version,created_by FROM tenant_memberships WHERE tenant_id=\? AND user_id=\? AND deleted_at IS NOT NULL`).
+		WithArgs("tenant-a", "owner-1").WillReturnRows(sqlmock.NewRows([]string{"id", "version", "created_by"}))
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM tenants WHERE id=\? AND status='active' AND deleted_at IS NULL`).WithArgs("tenant-a").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectExec(`INSERT INTO tenant_memberships`).WillReturnResult(sqlmock.NewResult(0, 1))

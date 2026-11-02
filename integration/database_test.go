@@ -275,6 +275,12 @@ func assertTenantSelectionIndex(t *testing.T, ctx context.Context, db *sqlx.DB, 
 		if !strings.Contains(definition, "(user_id, status, tenant_id)") || !strings.Contains(definition, "deleted_at IS NULL") {
 			t.Fatalf("unexpected PostgreSQL tenant selection index: %s", definition)
 		}
+		if err := db.GetContext(ctx, &definition, `SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='tenant_memberships' AND indexname='tenant_memberships_rejoin_idx'`); err != nil {
+			t.Fatalf("inspect PostgreSQL tenant rejoin index: %v", err)
+		}
+		if !strings.Contains(definition, "(tenant_id, user_id, deleted_at DESC, id DESC)") || !strings.Contains(definition, "deleted_at IS NOT NULL") {
+			t.Fatalf("unexpected PostgreSQL tenant rejoin index: %s", definition)
+		}
 		return
 	}
 	if err := db.GetContext(ctx, &definition, `SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='tenant_memberships' AND index_name='tenant_memberships_selection_idx'`); err != nil {
@@ -3634,6 +3640,17 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	addedMember, err := members.Add(departmentCtx, "member.two")
 	if err != nil || addedMember.UserID != "member-2" || addedMember.Version != 1 {
 		t.Fatalf("added tenant member=%+v err=%v", addedMember, err)
+	}
+	if err := members.Remove(departmentCtx, addedMember.ID, addedMember.Version); err != nil {
+		t.Fatalf("remove tenant member before rejoin: %v", err)
+	}
+	rejoinedMember, err := members.Add(departmentCtx, "member.two")
+	if err != nil || rejoinedMember.ID != addedMember.ID || rejoinedMember.Version != addedMember.Version+2 || rejoinedMember.Status != tenant.StatusActive {
+		t.Fatalf("rejoined tenant member=%+v err=%v", rejoinedMember, err)
+	}
+	var activeMemberCount int
+	if err := db.GetContext(ctx, &activeMemberCount, db.Rebind(`SELECT count(*) FROM tenant_memberships WHERE tenant_id=? AND user_id=? AND deleted_at IS NULL`), created.ID, "member-2"); err != nil || activeMemberCount != 1 {
+		t.Fatalf("rejoined active member count=%d err=%v", activeMemberCount, err)
 	}
 	memberRepository := tenant.NewRepository(db)
 	visible, visibleTotal, err := memberRepository.PageMembers(ctx, created.ID, tenant.MemberPageInput{Request: pagination.Request{Page: 1, PageSize: 20}}, datapermission.SQLPredicate{Clause: "(tm.user_id = ?)", Args: []any{"member-2"}})
