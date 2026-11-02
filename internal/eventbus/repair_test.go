@@ -125,6 +125,24 @@ func TestRepairServiceReplaceAndReplayRejectsMismatchedEvent(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestRepairServiceReplaceAndReplayRejectsRetiredEvent(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewRepairService(db, database.NewTransactor(db))
+	ctx := platformprincipal.SystemContext(t.Context(), "operator")
+	envelope, err := proto.Marshal(completeOutboxEnvelope("event-1"))
+	require.NoError(t, err)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,subject FROM event_outbox.*deleted_at IS NULL FOR UPDATE$`).WithArgs("event-1", int64(3)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject"}))
+	mock.ExpectRollback()
+	require.ErrorIs(t, service.ReplaceAndReplay(ctx, "event-1", 3, envelope), ErrRepairConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestRepairServiceReplayRejectsCorruptLegacyEnvelope(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)

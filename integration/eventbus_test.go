@@ -197,6 +197,17 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 		require.NoError(t, db.GetContext(ctx, &row, `SELECT dead_at,published_at FROM event_outbox WHERE id=$1`, invalidID))
 		require.True(t, row.DeadAt.Valid)
 		require.False(t, row.Published.Valid)
+		require.NoError(t, transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE event_outbox SET deleted_at=?,deleted_by=? WHERE id=? AND dead_at IS NOT NULL`), time.Now(), "integration-eventbus:test", invalidID)
+			return err
+		}))
+		var retiredVersion int64
+		require.NoError(t, db.GetContext(ctx, &retiredVersion, `SELECT version FROM event_outbox WHERE id=$1`, invalidID))
+		corrected, err := proto.Marshal(&commonv1.EventEnvelope{
+			EventId: invalidID, EventType: "platform.integration.outbox.v1", AggregateType: "integration", SchemaVersion: 1, OccurredAt: timestamppb.Now(),
+		})
+		require.NoError(t, err)
+		require.ErrorIs(t, repair.ReplaceAndReplay(actorCtx, invalidID, retiredVersion, corrected), eventbus.ErrRepairConflict)
 	})
 }
 
