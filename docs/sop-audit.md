@@ -15,8 +15,12 @@ The reliability batch at commit `2da8319` passed verify, PostgreSQL/MySQL
 integration, and container jobs in GitHub Actions run `41406393443`. It covers
 file-repair cancellation and startup dependencies, archive index bounds,
 shared readiness probe cancellation, and bounded event-bus provisioning.
-Subsequent local startup-error privacy and object-storage initialization
-changes have focused unit coverage but await the next batched CI run.
+The next batched push at `8f6b474` passed integration in run `41409714856`,
+but verify failed on two `bodyclose` findings in new outbound HTTP tests;
+container was skipped. Those test cleanup paths are fixed locally and the
+affected packages now pass unit tests and `golangci-lint` with zero issues.
+The subsequent tracing lifecycle changes also remain local until the next
+substantial CI batch.
 
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,
@@ -153,7 +157,7 @@ and post-callback lock loss. The same CI run verified this change.
 | Dependency graph | `app.New` composes named Fx modules and constructor injection; no service locator or mutable global container is used. The graph test now performs a real `Start` and `Stop`, rather than checking only `App.Err`. |
 | Startup ordering | Automatic migration is invoked before database-backed transports are constructed. HTTP/gRPC listeners are bound in lifecycle hooks, so bind failures are returned to Fx. Route synchronization and initial policy compilation finish before serving traffic. |
 | Startup error privacy | Logger, tracing, database, Redis, object storage, migration, resource catalog, data-policy and outbound-client initialization classify dependency failures into fixed component reasons before returning them to Fx. Logger, tracing and outbound-client shutdown errors are classified before lifecycle logging. Known Context cancellation/deadline classes remain distinguishable. App and observability unit tests exercise logger path errors, exporter errors and the database, Redis and object-storage constructor paths; CI revalidation is pending for the latest local changes. |
-| Owned resources | Logger, SQL pool, Redis client, NATS connection, outbound gRPC connections, JWKS verifier and trace provider register Fx stop hooks. Fx reverse hook order stops consumers and servers before their dependencies. Constructor failures close resources already created within that constructor. |
+| Owned resources | Logger, SQL pool, Redis client, NATS connection, outbound gRPC connections, JWKS verifier and trace provider register Fx lifecycle hooks. The tracing exporter and global provider are created/installed only at Fx Start and restored at Fx Stop, so a graph-construction failure cannot leave a global provider or exporter worker behind. Redis OTel hooks register in a later Start hook after that provider exists; local span-recorder tests prove Redis commands and preconstructed outbound HTTP/gRPC clients use the active provider. Fx reverse hook order stops consumers and servers before their dependencies. Constructor failures close resources already created within that constructor. |
 | Background work | File deletion, data lifecycle maintenance and both policy snapshot synchronizers use `background.Worker`; cancellation is followed by a bounded join using the Fx stop context. Policy synchronizers use Redis hints plus authoritative database revision polling and only swap fully validated snapshots. |
 | Event consumers | The shared `eventbus.RegisterConsumer` adapter runs the SDK's blocking consumer outside `OnStart`, retries unexpected exits with bounded jitter, and cancels and joins it during `OnStop`. The restart counter increases only when the next subscription attempt begins. This fixes the prior startup deadlock when operation/security logging was enabled. |
 | Shutdown | HTTP uses `Server.Shutdown`, gRPC attempts `GracefulStop` and falls back to `Stop` on deadline, cron waits for running jobs, and all managed workers honor the configured Fx stop timeout. |

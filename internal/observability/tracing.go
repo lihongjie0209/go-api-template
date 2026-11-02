@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -13,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 )
 
@@ -39,31 +42,65 @@ func newTracingWithExporter(lc fx.Lifecycle, cfg config.Config, create func(cont
 	if !tracing.enabled {
 		return tracing, nil
 	}
-	exporter, err := create(context.Background(), cfg.Observability.TracingEndpoint)
-	if err != nil {
-		return nil, SafeError(err, errTracingStartupFailed)
-	}
-	if exporter == nil {
-		return nil, errTracingStartupFailed
-	}
-	res, err := traceResource(cfg)
-	if err != nil {
-		_ = exporter.Shutdown(context.Background())
-		return nil, SafeError(err, errTracingStartupFailed)
-	}
-	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Observability.TracingSampleRatio))))
-	tracing.provider = provider
-	previousProvider := otel.GetTracerProvider()
-	previousPropagator := otel.GetTextMapPropagator()
-	otel.SetTracerProvider(provider)
-	otel.SetTextMapPropagator(tracePropagator())
-	lc.Append(fx.StopHook(func(ctx context.Context) error {
-		err := provider.Shutdown(ctx)
-		otel.SetTracerProvider(previousProvider)
-		otel.SetTextMapPropagator(previousPropagator)
-		return SafeError(err, errTracingShutdownFailed)
-	}))
+	var previousProvider trace.TracerProvider
+	var previousPropagator propagation.TextMapPropagator
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			exporter, err := create(ctx, cfg.Observability.TracingEndpoint)
+			if err != nil {
+				return SafeError(err, errTracingStartupFailed)
+			}
+			if missingSpanExporter(exporter) {
+				return errTracingStartupFailed
+			}
+			if err := ctx.Err(); err != nil {
+				shutdownUnusedExporter(ctx, exporter)
+				return err
+			}
+			res, err := traceResource(cfg)
+			if err != nil {
+				shutdownUnusedExporter(ctx, exporter)
+				return SafeError(err, errTracingStartupFailed)
+			}
+			provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Observability.TracingSampleRatio))))
+			tracing.provider = provider
+			previousProvider = otel.GetTracerProvider()
+			previousPropagator = otel.GetTextMapPropagator()
+			otel.SetTracerProvider(provider)
+			otel.SetTextMapPropagator(tracePropagator())
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if tracing.provider == nil {
+				return nil
+			}
+			err := tracing.provider.Shutdown(ctx)
+			otel.SetTracerProvider(previousProvider)
+			otel.SetTextMapPropagator(previousPropagator)
+			tracing.provider = nil
+			return SafeError(err, errTracingShutdownFailed)
+		},
+	})
 	return tracing, nil
+}
+
+func shutdownUnusedExporter(ctx context.Context, exporter sdktrace.SpanExporter) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_ = exporter.Shutdown(cleanupCtx)
+}
+
+func missingSpanExporter(exporter sdktrace.SpanExporter) bool {
+	if exporter == nil {
+		return true
+	}
+	value := reflect.ValueOf(exporter)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func tracePropagator() propagation.TextMapPropagator {

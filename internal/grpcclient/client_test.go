@@ -3,6 +3,8 @@ package grpcclient
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -12,11 +14,62 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/sony/gobreaker/v2"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.uber.org/fx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+type tracingClientLifecycle struct{ hooks []fx.Hook }
+
+func (l *tracingClientLifecycle) Append(hook fx.Hook) { l.hooks = append(l.hooks, hook) }
+
+func TestGRPCClientTracesAfterFxStart(t *testing.T) {
+	collector := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer collector.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	statusServer := health.NewServer()
+	statusServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthpb.RegisterHealthServer(server, statusServer)
+	go func() { _ = server.Serve(listener) }()
+	defer server.Stop()
+	lifecycle := new(tracingClientLifecycle)
+	_, err = observability.NewTracing(lifecycle, config.Config{Observability: config.Observability{TracingEnabled: true, TracingEndpoint: collector.URL, TracingSampleRatio: 1}})
+	require.NoError(t, err)
+	connection, err := Dial(Config{
+		Name: "inventory", Target: listener.Addr().String(), Timeout: time.Second,
+		Retry: config.Retry{MaxAttempts: 1, InitialBackoff: 10 * time.Millisecond, MaxBackoff: 10 * time.Millisecond},
+	})
+	require.NoError(t, err)
+	defer func() { _ = connection.Close() }()
+	require.Len(t, lifecycle.hooks, 1)
+	started := false
+	defer func() {
+		if started {
+			_ = lifecycle.hooks[0].OnStop(context.Background())
+		}
+	}()
+	require.NoError(t, lifecycle.hooks[0].OnStart(t.Context()))
+	started = true
+	provider, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider)
+	require.True(t, ok)
+	recorder := tracetest.NewSpanRecorder()
+	provider.RegisterSpanProcessor(recorder)
+	response, err := healthpb.NewHealthClient(connection).Check(t.Context(), &healthpb.HealthCheckRequest{})
+	require.NoError(t, err)
+	require.Equal(t, healthpb.HealthCheckResponse_SERVING, response.GetStatus())
+	require.NotEmpty(t, recorder.Ended(), "gRPC client captured an obsolete tracer provider")
+}
 
 func TestMetadataStreamInterceptorPropagatesAuthenticationAndCorrelation(t *testing.T) {
 	t.Parallel()

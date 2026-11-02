@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -49,6 +50,7 @@ import (
 var (
 	errDatabaseStartupFailed        = errors.New("database_startup_failed")
 	errRedisStartupFailed           = errors.New("redis_startup_failed")
+	errRedisShutdownFailed          = errors.New("redis_shutdown_failed")
 	errObjectStorageStartupFailed   = errors.New("object_storage_startup_failed")
 	errMigrationStartupFailed       = errors.New("migration_startup_failed")
 	errResourceCatalogStartupFailed = errors.New("resource_catalog_startup_failed")
@@ -215,13 +217,30 @@ func newRedisWithOpener(lc fx.Lifecycle, cfg config.Config, tracing *observabili
 	if err != nil {
 		return nil, observability.SafeError(err, errRedisStartupFailed)
 	}
-	if tracing.Enabled() {
-		if err := redisotel.InstrumentTracing(client); err != nil {
-			_ = client.Close()
-			return nil, observability.SafeError(err, errRedisStartupFailed)
-		}
+	var closeOnce sync.Once
+	var closeErr error
+	closeClient := func() error {
+		closeOnce.Do(func() { closeErr = client.Close() })
+		return observability.SafeError(closeErr, errRedisShutdownFailed)
 	}
-	lc.Append(fx.StopHook(func() error { return client.Close() }))
+	if tracing.Enabled() {
+		lc.Append(fx.Hook{
+			OnStart: func(ctx context.Context) error {
+				if err := ctx.Err(); err != nil {
+					_ = closeClient()
+					return err
+				}
+				if err := redisotel.InstrumentTracing(client); err != nil {
+					_ = closeClient()
+					return observability.SafeError(err, errRedisStartupFailed)
+				}
+				return nil
+			},
+			OnStop: func(context.Context) error { return closeClient() },
+		})
+	} else {
+		lc.Append(fx.StopHook(closeClient))
+	}
 	return client, nil
 }
 

@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,12 +17,64 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.uber.org/fx"
 )
 
-type startupTestLifecycle struct{}
+type startupTestLifecycle struct{ hooks []fx.Hook }
 
-func (*startupTestLifecycle) Append(fx.Hook) {}
+func (l *startupTestLifecycle) Append(hook fx.Hook) { l.hooks = append(l.hooks, hook) }
+
+func TestRedisTracingRegistersAfterTracingStart(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	collector := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collector.Close)
+	lifecycle := new(startupTestLifecycle)
+	cfg := config.Config{Observability: config.Observability{TracingEnabled: true, TracingEndpoint: collector.URL, TracingSampleRatio: 1}}
+	tracing, err := observability.NewTracing(lifecycle, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := newRedisWithOpener(lifecycle, cfg, tracing, func(context.Context, config.Redis) (*redis.Client, error) {
+		return redis.NewClient(&redis.Options{Addr: redisServer.Addr()}), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lifecycle.hooks) != 2 || lifecycle.hooks[0].OnStart == nil || lifecycle.hooks[1].OnStart == nil {
+		t.Fatalf("tracing/Redis hooks = %+v, want ordered start hooks", lifecycle.hooks)
+	}
+	started := 0
+	t.Cleanup(func() {
+		for index := started - 1; index >= 0; index-- {
+			if lifecycle.hooks[index].OnStop != nil {
+				_ = lifecycle.hooks[index].OnStop(context.Background())
+			}
+		}
+	})
+	for _, hook := range lifecycle.hooks {
+		if err := hook.OnStart(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		started++
+	}
+	provider, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider)
+	if !ok {
+		t.Fatal("Fx start did not install the tracing provider")
+	}
+	recorder := tracetest.NewSpanRecorder()
+	provider.RegisterSpanProcessor(recorder)
+	if err := client.Set(t.Context(), "tracing-test", "value", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.Ended()) == 0 {
+		t.Fatal("Redis command did not use the Fx-started tracing provider")
+	}
+}
 
 func TestInfrastructureStartupErrorsAreSafe(t *testing.T) {
 	t.Parallel()

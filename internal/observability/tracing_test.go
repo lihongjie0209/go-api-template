@@ -8,15 +8,59 @@ import (
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 )
 
-type tracingTestLifecycle struct{}
+type tracingHookLifecycle struct{ hooks []fx.Hook }
 
-func (tracingTestLifecycle) Append(fx.Hook) {}
+func (l *tracingHookLifecycle) Append(hook fx.Hook) { l.hooks = append(l.hooks, hook) }
+
+func TestTracingGlobalProviderFollowsFxLifecycle(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+	})
+	lifecycle := new(tracingHookLifecycle)
+	cfg := config.Config{Observability: config.Observability{TracingEnabled: true, TracingEndpoint: "http://collector.example"}}
+	tracing, err := newTracingWithExporter(lifecycle, cfg, func(context.Context, string) (sdktrace.SpanExporter, error) {
+		return tracetest.NewInMemoryExporter(), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lifecycle.hooks) != 1 {
+		t.Fatalf("tracing lifecycle hooks = %d, want 1", len(lifecycle.hooks))
+	}
+	if otel.GetTracerProvider() != previousProvider {
+		t.Error("tracing replaced the global provider before Fx Start")
+	}
+	if lifecycle.hooks[0].OnStart == nil {
+		t.Error("tracing has no Fx start hook")
+	} else if err := lifecycle.hooks[0].OnStart(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if otel.GetTracerProvider() == previousProvider {
+		t.Error("tracing did not install its provider at Fx Start")
+	}
+	if lifecycle.hooks[0].OnStop == nil {
+		t.Error("tracing has no Fx stop hook")
+	} else if err := lifecycle.hooks[0].OnStop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if otel.GetTracerProvider() != previousProvider {
+		t.Error("tracing did not restore the previous provider at Fx Stop")
+	}
+	if !tracing.Enabled() {
+		t.Error("tracing unexpectedly disabled")
+	}
+}
 
 func TestTracingStartupErrorIsSafe(t *testing.T) {
 	t.Parallel()
@@ -31,12 +75,21 @@ func TestTracingStartupErrorIsSafe(t *testing.T) {
 		{name: "missing exporter", create: func(context.Context, string) (sdktrace.SpanExporter, error) {
 			return nil, nil
 		}},
+		{name: "typed nil exporter", create: func(context.Context, string) (sdktrace.SpanExporter, error) {
+			var exporter *tracetest.InMemoryExporter
+			return exporter, nil
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			tracing, err := newTracingWithExporter(tracingTestLifecycle{}, cfg, test.create)
-			if tracing != nil || !errors.Is(err, errTracingStartupFailed) || strings.Contains(err.Error(), "secret-value") {
-				t.Fatalf("NewTracing() = %v, %v; want safe startup failure", tracing, err)
+			lifecycle := new(tracingHookLifecycle)
+			tracing, err := newTracingWithExporter(lifecycle, cfg, test.create)
+			if err != nil || tracing == nil || len(lifecycle.hooks) != 1 {
+				t.Fatalf("NewTracing() = %v, %v; want registered start hook", tracing, err)
+			}
+			err = lifecycle.hooks[0].OnStart(t.Context())
+			if !errors.Is(err, errTracingStartupFailed) || strings.Contains(err.Error(), "secret-value") {
+				t.Fatalf("tracing OnStart() = %v; want safe startup failure", err)
 			}
 		})
 	}

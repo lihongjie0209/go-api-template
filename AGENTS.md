@@ -833,6 +833,11 @@ message queue with an outbox.
   retry eligibility/exhaustion, jitter-compatible bounds, breaker opening,
   authentication replacement, correlation metadata, unsafe TLS/URL rejection,
   and direct-constructor validation.
+- OTel exporters and the global provider start in Fx `OnStart` and restore in
+  `OnStop`; constructing the Fx graph must not replace global tracing state.
+  Instrumentation that captures a provider when its hook is registered, such
+  as Redis tracing, must register after the tracing start hook. Test a real
+  instrumented operation against a span recorder when changing this order.
 
 ## Database, audit, and optimistic locking
 
@@ -1016,6 +1021,10 @@ deleted_by text
   is canceled before cleanup callbacks run; its automatic rollback can race
   with the mock's expected rollback and cause intermittent CI failures. Pass
   the request Context to the operation under test separately.
+- HTTP client tests must close every non-nil response body, including cases
+  expecting no response. When testing whether the client closed a late body,
+  capture that state before the test's own cleanup closes it. The `bodyclose`
+  lint gate enforces the cleanup path.
 - Generated Swagger/protobuf drift, migration audit contracts, race tests,
   vet, lint, and Kubernetes validation remain required CI gates.
 
