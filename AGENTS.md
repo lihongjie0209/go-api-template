@@ -358,9 +358,11 @@ TTL, and invalidation for its own data.
   Resource/Action must query only that target rather than loading the full
   grant set. Tenant effective-permission reads used by delegation and
   administration must apply the same database row cap and reject overflow
-  before granting anything. The data-policy revision and every row-action
-  decision in a batch must likewise use one pinned immutable policy snapshot,
-  even during a concurrent refresh; a failed authoritative grant read fails
+  before granting anything. Ceiling shrink must update affected role versions
+  with tenant-scoped SQL predicates without materializing every role ID or
+  constructing an unbounded `IN` list. The data-policy revision and every
+  row-action decision in a batch must likewise use one pinned immutable policy
+  snapshot, even during a concurrent refresh; a failed authoritative grant read fails
   closed. A failed grant read or data-policy pin must invalidate any grant
   snapshot already in the returned request Context, so callers cannot reuse
   stale grants after an error. An empty grant or data-policy revision is

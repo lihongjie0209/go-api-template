@@ -931,17 +931,33 @@ func TestPruneRolePermissionsBumpsAffectedRoleVersions(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := sqlxDB.Beginx()
 	require.NoError(t, err)
-	mock.ExpectQuery(`SELECT DISTINCT role_id FROM tenant_role_permissions`).
-		WithArgs("tenant-1", "permission-keep").
-		WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow("role-1"))
-	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=`).
-		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "permission-keep").
+	mock.ExpectExec(`UPDATE tenant_roles SET updated_at=.*EXISTS \(SELECT 1 FROM tenant_role_permissions rp.*rp.permission_id NOT IN \(\?\)\)`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "permission-keep").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE tenant_roles SET updated_at=`).
-		WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1").
+	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=.*permission_id NOT IN \(\?\)`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "permission-keep").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	require.NoError(t, pruneRolePermissions(t.Context(), tx, "tenant-1", []string{"permission-keep"}, "actor-1"))
+	mock.ExpectRollback()
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPruneRolePermissionsWithEmptyCeilingUpdatesOnlyLinkedRoles(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectBegin()
+	tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
+	require.NoError(t, err)
+	mock.ExpectExec(`UPDATE tenant_roles SET updated_at=.*EXISTS \(SELECT 1 FROM tenant_role_permissions rp.*rp.deleted_at IS NULL\)`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE tenant_role_permissions SET deleted_at=.*WHERE tenant_id=\? AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	require.NoError(t, pruneRolePermissions(t.Context(), tx, "tenant-1", nil, "actor-1"))
 	mock.ExpectRollback()
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())

@@ -1752,32 +1752,30 @@ func (s *TenantAuthorizationService) membershipName(ctx context.Context, tenantI
 }
 
 func pruneRolePermissions(ctx context.Context, tx *sqlx.Tx, tenantID string, allowed []string, actorID string) error {
-	where, args := `tenant_id=? AND deleted_at IS NULL`, []any{tenantID}
+	roleWhere := `tenant_roles.tenant_id=? AND tenant_roles.deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_role_permissions rp WHERE rp.tenant_id=tenant_roles.tenant_id AND rp.role_id=tenant_roles.id AND rp.deleted_at IS NULL`
+	roleArgs := []any{tenantID}
+	linkWhere, linkArgs := `tenant_id=? AND deleted_at IS NULL`, []any{tenantID}
 	if len(allowed) > 0 {
-		clause, inArgs, err := sqlx.In(`permission_id NOT IN (?)`, allowed)
+		roleClause, roleValues, err := sqlx.In(` AND rp.permission_id NOT IN (?)`, allowed)
 		if err != nil {
 			return fmt.Errorf("build role permission pruning: %w", err)
 		}
-		where += " AND " + clause
-		args = append(args, inArgs...)
+		linkClause, linkValues, err := sqlx.In(` AND permission_id NOT IN (?)`, allowed)
+		if err != nil {
+			return fmt.Errorf("build role permission pruning: %w", err)
+		}
+		roleWhere += roleClause
+		roleArgs = append(roleArgs, roleValues...)
+		linkWhere += linkClause
+		linkArgs = append(linkArgs, linkValues...)
 	}
-	affectedRoleIDs := []string{}
-	if err := tx.SelectContext(ctx, &affectedRoleIDs, tx.Rebind(`SELECT DISTINCT role_id FROM tenant_role_permissions WHERE `+where), args...); err != nil {
-		return fmt.Errorf("find roles outside tenant ceiling: %w", err)
-	}
-	if len(affectedRoleIDs) == 0 {
-		return nil
-	}
+	roleWhere += `)`
 	now := time.Now()
-	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_role_permissions SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE `+where), append([]any{now, actorID, now, actorID}, args...)...); err != nil {
-		return fmt.Errorf("prune role permissions outside tenant ceiling: %w", err)
-	}
-	roleQuery, roleArgs, err := sqlx.In(`UPDATE tenant_roles SET updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id IN (?) AND deleted_at IS NULL`, now, actorID, tenantID, affectedRoleIDs)
-	if err != nil {
-		return fmt.Errorf("build affected role version update: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, tx.Rebind(roleQuery), roleArgs...); err != nil {
+	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles SET updated_at=?,updated_by=?,version=version+1 WHERE `+roleWhere), append([]any{now, actorID}, roleArgs...)...); err != nil {
 		return fmt.Errorf("update affected role versions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_role_permissions SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE `+linkWhere), append([]any{now, actorID, now, actorID}, linkArgs...)...); err != nil {
+		return fmt.Errorf("prune role permissions outside tenant ceiling: %w", err)
 	}
 	return nil
 }

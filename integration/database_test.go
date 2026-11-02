@@ -1611,6 +1611,17 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err != nil || len(manualTarget.Permissions) != 1 || manualTarget.Permissions[0].Assignable {
 		t.Fatalf("disabled manual resource role grant target=%+v err=%v", manualTarget, err)
 	}
+	if err := service.SetTenantPermissions(actorCtx, tenantID, 3, []string{permissionID}); err != nil {
+		t.Fatalf("shrink tenant permission ceiling: %v", err)
+	}
+	prunedRole, err := service.GetRole(adminCtx, manualRole.ID)
+	if err != nil || prunedRole.Version != manualRole.Version+1 {
+		t.Fatalf("pruned role version=%+v err=%v", prunedRole, err)
+	}
+	prunedPermissions, err := service.RolePermissions(adminCtx, manualRole.ID)
+	if err != nil || len(prunedPermissions) != 0 {
+		t.Fatalf("pruned role permissions=%+v err=%v", prunedPermissions, err)
+	}
 }
 
 func testRoleDataPermissionEnforcement(t *testing.T, ctx context.Context, db *sqlx.DB, resources *resourceaction.Registry, tenantID, membershipID string, visible *authorization.TenantRole) {
