@@ -290,6 +290,16 @@ func (fn failingRoundTripper) RoundTrip(request *http.Request) (*http.Response, 
 	return fn(request)
 }
 
+type closeTrackingBody struct {
+	io.ReadCloser
+	closed *atomic.Bool
+}
+
+func (body *closeTrackingBody) Close() error {
+	body.closed.Store(true)
+	return body.ReadCloser.Close()
+}
+
 func TestHTTPClient_TransportFailureDoesNotExposeURLOrDependencyError(t *testing.T) {
 	t.Parallel()
 	client, err := NewHTTPClient("test", validHTTPUpstream("https://example.com"), nil)
@@ -315,6 +325,30 @@ func TestSafeHTTPTransportErrorPreservesCancellation(t *testing.T) {
 		if !errors.Is(got, cause) || strings.Contains(got.Error(), "secret") {
 			t.Fatalf("safeHTTPTransportError(%v) = %v", cause, got)
 		}
+	}
+}
+
+func TestHTTPClient_ClosesLateResponseAfterCancellation(t *testing.T) {
+	t.Parallel()
+	client, err := NewHTTPClient("test", validHTTPUpstream("https://example.com"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var closed atomic.Bool
+	client.client.Transport = failingRoundTripper(func(request *http.Request) (*http.Response, error) {
+		cancel()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       &closeTrackingBody{ReadCloser: io.NopCloser(strings.NewReader("late")), closed: &closed},
+			Request:    request,
+		}, nil
+	})
+	response, err := client.Do(ctx, http.MethodGet, "/late", nil, nil)
+	if response != nil || !errors.Is(err, context.Canceled) || !closed.Load() {
+		t.Fatalf("Do() response=%v error=%v body_closed=%t, want canceled and closed", response, err, closed.Load())
 	}
 }
 

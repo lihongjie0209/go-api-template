@@ -103,6 +103,13 @@ func (c *HTTPClient) Do(ctx context.Context, method, requestPath string, body []
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	started := time.Now()
 	response, err := c.execute(ctx, method, requestPath, body, headers)
+	if contextErr := ctx.Err(); contextErr != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		response = nil
+		err = contextErr
+	}
 	if response == nil {
 		cancel()
 	} else {
