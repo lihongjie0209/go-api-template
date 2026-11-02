@@ -577,6 +577,11 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		if rows != 1 {
 			return ErrConflict
 		}
+		if current.Resource != input.Resource || current.Action != input.Action {
+			if err := deactivatePrimaryLink(ctx, tx, id, current.Resource, current.Action); err != nil {
+				return err
+			}
+		}
 		if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
 			return err
 		}
@@ -757,7 +762,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 			return ErrStaleVersion
 		}
 		if current.Resource != input.Resource || current.Action != input.Action {
-			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?) AND deleted_at IS NULL`), id, current.Resource, current.Action); err != nil {
+			if err := deactivatePrimaryLink(ctx, tx, id, current.Resource, current.Action); err != nil {
 				return err
 			}
 			if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
@@ -812,6 +817,14 @@ func syncPrimaryLink(ctx context.Context, tx *sqlx.Tx, permissionID, resource, a
 		return err
 	}
 	return ensurePermissionActionLink(ctx, tx, permissionID, actionID, actorID)
+}
+
+func deactivatePrimaryLink(ctx context.Context, tx *sqlx.Tx, permissionID, resource, action string) error {
+	if resource == "" || action == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?) AND deleted_at IS NULL`), permissionID, resource, action)
+	return err
 }
 
 func ensurePermissionActionLink(ctx context.Context, tx *sqlx.Tx, permissionID, actionID, actorID string) error {

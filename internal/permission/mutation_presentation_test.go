@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/resourceaction"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -221,6 +222,48 @@ func TestPermissionSeedExistingIdenticalHasNoAuditEvent(t *testing.T) {
 	require.Zero(t, operations.failureCalls)
 	require.Zero(t, security.transactionalCalls)
 	require.Zero(t, security.failureCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionSeedChangedPrimaryActionRetiresOldLink(t *testing.T) {
+	t.Parallel()
+	id, err := SeedID("platform.user.manage")
+	require.NoError(t, err)
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+	require.NoError(t, err)
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, resources, nil)
+	columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
+	current := []driver.Value{id, nil, "platform.user.manage", "Manage users", "permission", "identity.user", "read", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 3}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "deleted_at")).AddRow(append(append([]driver.Value{}, current...), nil)...))
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(current...))
+	mock.ExpectExec(`UPDATE permissions SET .* WHERE id=\? AND is_system=true AND version=\?`).
+		WithArgs(nil, "platform.user.manage", "Manage users", "permission", "identity.user", "update", "", int64(0), "active", sqlmock.AnyArg(), "admin", id, int64(3)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=\? AND action_id IN`).
+		WithArgs(id, "identity.user", "read").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT a.id FROM authorization_resource_actions`).WithArgs("identity.user", "update").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("action-update"))
+	mock.ExpectQuery(`SELECT id,deleted_at FROM permission_resource_actions`).WithArgs(id, "action-update").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}))
+	mock.ExpectExec(`INSERT INTO permission_resource_actions`).WillReturnResult(sqlmock.NewResult(0, 1))
+	updated := append([]driver.Value{}, current...)
+	updated[6] = "update"
+	updated[15] = int64(4)
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "parent_name")).AddRow(append(updated, "")...))
+	mock.ExpectCommit()
+	seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.user.manage", Name: "Manage users", NodeType: "permission", Resource: "identity.user", Action: "update", Status: "active"})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "update", seeded.Action)
+	require.EqualValues(t, 4, seeded.Version)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

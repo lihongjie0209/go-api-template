@@ -2232,6 +2232,20 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	}
 	service := permission.New(permission.NewRepository(db), appdb.NewTransactor(db), discardOperationRecorder{}, discardSecurityRecorder{}, nil, resources, slog.Default())
 	actorCtx := platformprincipal.SystemContext(ctx, "permission-integration")
+	seedInput := permission.Input{Key: "integration.seed.user-manage", Name: "Manage users", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"}
+	seeded, changed, err := service.Seed(actorCtx, seedInput)
+	if err != nil || !changed {
+		t.Fatalf("seed initial permission: record=%+v changed=%v err=%v", seeded, changed, err)
+	}
+	seedInput.Action = "update"
+	seeded, changed, err = service.Seed(actorCtx, seedInput)
+	if err != nil || !changed || seeded.Version != 2 {
+		t.Fatalf("change seeded primary action: record=%+v changed=%v err=%v", seeded, changed, err)
+	}
+	var activeSeedActions []string
+	if err := db.SelectContext(ctx, &activeSeedActions, db.Rebind(`SELECT a.action_key FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id WHERE l.permission_id=? AND l.deleted_at IS NULL ORDER BY a.action_key`), seeded.ID); err != nil || len(activeSeedActions) != 1 || activeSeedActions[0] != "update" {
+		t.Fatalf("seed retained an old primary action: actions=%v err=%v", activeSeedActions, err)
+	}
 	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
