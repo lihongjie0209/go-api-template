@@ -392,7 +392,11 @@ func (s *Service) loadRecord(ctx context.Context, actor platformprincipal.Princi
 
 func (s *Service) Download(ctx context.Context, id string) (Download, error) {
 	started := time.Now()
-	entry := operationlog.Entry{Operation: "file.download", ResourceType: "file", ResourceID: id, Source: "backend", Protocol: "service", Request: map[string]any{"id": id}}
+	resourceID := ""
+	if parsed, err := uuid.Parse(id); err == nil {
+		resourceID = parsed.String()
+	}
+	entry := operationlog.Entry{Operation: "file.download", ResourceType: "file", ResourceID: resourceID, Source: "backend", Protocol: "service", Request: map[string]any{"id": resourceID}}
 	if !s.enabled {
 		return Download{}, ErrDisabled
 	}

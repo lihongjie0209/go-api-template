@@ -16,6 +16,9 @@ When files are enabled, configuration requires the durable operation log, and
 the file worker's startup hook rejects missing database, transactor, object
 storage, Redis locker, or enabled operation recorder before serving traffic.
 Disabled files remain valid without these file-specific dependencies.
+Download failure events normalize the requested file ID to a UUID before
+including it in their event or fallback log. A malformed ID is omitted while
+the Request ID still correlates the failed request.
 
 | Concern | Decision and rationale |
 | --- | --- |

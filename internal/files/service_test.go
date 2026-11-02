@@ -219,6 +219,24 @@ func TestRecordFailureDoesNotLogRecorderErrorDetails(t *testing.T) {
 	}
 }
 
+func TestDownloadFailureDoesNotRecordUnvalidatedFileID(t *testing.T) {
+	t.Parallel()
+	unsafeID := strings.Repeat("private-token", 30)
+	operations := &failingReadOperationStub{recordErr: errors.New("outbox unavailable")}
+	var output bytes.Buffer
+	service := &Service{enabled: true, operations: operations, logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", TenantID: "tenant-1"})
+	if _, err := service.Download(ctx, unsafeID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Download() error=%v, want invalid input", err)
+	}
+	if len(operations.records) != 1 || operations.records[0].ResourceID != "" || operations.records[0].Request.(map[string]any)["id"] != "" {
+		t.Fatalf("unvalidated file ID entered operation event: %+v", operations.records)
+	}
+	if strings.Contains(output.String(), unsafeID) {
+		t.Fatal("unvalidated file ID entered failure log")
+	}
+}
+
 func TestDeletionWorkerDoesNotLogDatabaseErrorDetails(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	if err != nil {
