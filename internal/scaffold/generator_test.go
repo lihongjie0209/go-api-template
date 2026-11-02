@@ -22,6 +22,11 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixture(t, source, "Dockerfile", string(dockerfile))
+	deploymentTest, err := os.ReadFile("../config/deployment_contract_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, source, "internal/config/deployment_contract_test.go", string(deploymentTest))
 	writeFixture(t, source, "main.go", "package main\nimport x \""+templateModule+"/internal/example\"\nvar _ = x.Name\nconst service = \""+templateName+"\"\n")
 	writeFixture(t, source, "deployments/app.yaml", "namespace: "+templateNamespace+"\nimage: "+templateImage+"\ntable: "+templateMigrationTable+"\ndatabase: "+templateDatabaseName+"\nschema: "+templateDatabaseSchema+"\n")
 	profileConfig := "app:\n  name: " + templateName + "\ndatabase:\n  name: " + templateDatabaseName + "\n  schema: " + templateDatabaseSchema + "\nmigration:\n  table: " + templateMigrationTable + "\n"
@@ -42,6 +47,7 @@ func TestGenerateFromLocalTemplate(t *testing.T) {
 	assertContains(t, filepath.Join(output, "Dockerfile"), "FROM --platform=$BUILDPLATFORM")
 	assertContains(t, filepath.Join(output, "Dockerfile"), "GOOS=$TARGETOS GOARCH=$TARGETARCH")
 	assertContains(t, filepath.Join(output, "Dockerfile"), "github.com/acme/orders-service/internal/buildinfo.Version")
+	assertContains(t, filepath.Join(output, "internal/config/deployment_contract_test.go"), `cfg.Database.Name != "orders_service"`)
 	assertContains(t, filepath.Join(output, "go.mod"), "module github.com/acme/orders-service")
 	assertContains(t, filepath.Join(output, "main.go"), `"github.com/acme/orders-service/internal/example"`)
 	assertContains(t, filepath.Join(output, "deployments/app.yaml"), "namespace: commerce")
