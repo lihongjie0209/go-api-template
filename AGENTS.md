@@ -450,6 +450,15 @@ TTL, and invalidation for its own data.
   example refresh-token reuse), the transport must not enqueue a duplicate.
 - Log persistence is asynchronous through the configured queue. Business code
   must not write operation/security log tables directly.
+- A transactional operation/security recorder must check the caller Context
+  before and after storing its outbox event. If cancellation occurs during a
+  store that ignores Context, return the cancellation error so the owner rolls
+  back the business transaction. A standalone failure recorder may use its
+  separately bounded detached Context to persist an already failed attempt.
+- Audit payload-encoding and outbox-storage failures must not include raw
+  encoder, database, or broker error text in errors returned to business code.
+  Transport boundaries classify an outbox outage as HTTP 503 or gRPC
+  Unavailable with the shared dependency error code.
 - Operation/security log tables retain the mandatory audit and logical-delete
   columns. Only the reviewed data-lifecycle maintenance path may physically
   purge expired MySQL log rows in bounded batches or detach/archive/drop
