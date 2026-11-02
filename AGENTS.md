@@ -386,7 +386,10 @@ TTL, and invalidation for its own data.
   links keep their audit timestamps and versions. When a code-owned permission
   seed changes its primary Resource/Action, retire the old primary link in the
   same transaction as activating the new one; an old action must not remain
-  granted merely because the seed was updated. The data-policy revision and
+  granted merely because the seed was updated. An otherwise identical seed
+  must verify its active primary link from the database and repair a missing
+  link transactionally, incrementing the permission version and recording the
+  change. The data-policy revision and
   every row-action decision in a batch must use one pinned immutable policy
   snapshot, even during a concurrent refresh; a failed authoritative grant
   read fails closed. A failed

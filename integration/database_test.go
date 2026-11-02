@@ -2246,6 +2246,20 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	if err := db.SelectContext(ctx, &activeSeedActions, db.Rebind(`SELECT a.action_key FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id WHERE l.permission_id=? AND l.deleted_at IS NULL ORDER BY a.action_key`), seeded.ID); err != nil || len(activeSeedActions) != 1 || activeSeedActions[0] != "update" {
 		t.Fatalf("seed retained an old primary action: actions=%v err=%v", activeSeedActions, err)
 	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?) AND deleted_at IS NULL`), seeded.ID, seedInput.Resource, seedInput.Action)
+		return err
+	}); err != nil {
+		t.Fatalf("remove seeded primary link for recovery test: %v", err)
+	}
+	seeded, changed, err = service.Seed(actorCtx, seedInput)
+	if err != nil || !changed || seeded.Version != 3 {
+		t.Fatalf("repair missing seeded primary link: record=%+v changed=%v err=%v", seeded, changed, err)
+	}
+	activeSeedActions = nil
+	if err := db.SelectContext(ctx, &activeSeedActions, db.Rebind(`SELECT a.action_key FROM permission_resource_actions l JOIN authorization_resource_actions a ON a.id=l.action_id WHERE l.permission_id=? AND l.deleted_at IS NULL ORDER BY a.action_key`), seeded.ID); err != nil || len(activeSeedActions) != 1 || activeSeedActions[0] != "update" {
+		t.Fatalf("seed primary link was not repaired: actions=%v err=%v", activeSeedActions, err)
+	}
 	group, err := service.Create(actorCtx, permission.Input{Key: "integration.permissions", Name: "集成权限", NodeType: "group", Status: "active"})
 	if err != nil {
 		t.Fatal(err)

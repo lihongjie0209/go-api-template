@@ -267,6 +267,107 @@ func TestPermissionSeedChangedPrimaryActionRetiresOldLink(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPermissionSeedRepairsMissingPrimaryLink(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		linkPresent bool
+	}{
+		{name: "existing primary link is an idempotent no-op", linkPresent: true},
+		{name: "missing primary link is restored"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id, err := SeedID("platform.user.manage")
+			require.NoError(t, err)
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+			require.NoError(t, err)
+			service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, resources, nil)
+			columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
+			current := []driver.Value{id, nil, "platform.user.manage", "Manage users", "permission", "identity.user", "read", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 3}
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).
+				WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "deleted_at")).AddRow(append(append([]driver.Value{}, current...), nil)...))
+			activeRows := sqlmock.NewRows([]string{"1"})
+			if test.linkPresent {
+				activeRows.AddRow(1)
+			}
+			mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions l JOIN authorization_resource_actions a`).WithArgs(id, "identity.user", "read").WillReturnRows(activeRows)
+			if !test.linkPresent {
+				mock.ExpectQuery(`SELECT a.id FROM authorization_resource_actions`).WithArgs("identity.user", "read").
+					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("action-read"))
+				mock.ExpectQuery(`SELECT id,deleted_at FROM permission_resource_actions`).WithArgs(id, "action-read").
+					WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}).AddRow("link-1", time.Now()))
+				mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=NULL`).WithArgs("link-1").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(`UPDATE permissions SET version=version\+1 WHERE id=\? AND version=\? AND is_system=true AND deleted_at IS NULL`).
+					WithArgs(id, int64(3)).WillReturnResult(sqlmock.NewResult(0, 1))
+				updated := append([]driver.Value{}, current...)
+				updated[15] = int64(4)
+				mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).
+					WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "parent_name")).AddRow(append(updated, "")...))
+			}
+			mock.ExpectCommit()
+			seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.user.manage", Name: "Manage users", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"})
+			require.NoError(t, err)
+			require.Equal(t, !test.linkPresent, changed)
+			if test.linkPresent {
+				require.EqualValues(t, 3, seeded.Version)
+			} else {
+				require.EqualValues(t, 4, seeded.Version)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestPermissionSeedConcurrentRecoveryRequiresPrimaryLink(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		linkPresent bool
+	}{
+		{name: "complete concurrent seed is accepted", linkPresent: true},
+		{name: "missing concurrent primary link is not accepted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id, err := SeedID("platform.user.manage")
+			require.NoError(t, err)
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			db := sqlx.NewDb(raw, "sqlmock")
+			resources, err := resourceaction.NewRegistryFromDefinitions(resourceaction.PlatformResourceDefinitions())
+			require.NoError(t, err)
+			service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, resources, nil)
+			columns := []string{"id", "parent_id", "permission_key", "name", "node_type", "resource", "action", "description", "sort_order", "status", "is_system", "created_at", "created_by", "updated_at", "updated_by", "version"}
+			current := []driver.Value{id, nil, "platform.user.manage", "Manage users", "permission", "identity.user", "read", "", 0, "active", true, time.Now(), "creator", time.Now(), "updater", 1}
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\? FOR UPDATE`).WithArgs(id).WillReturnError(sql.ErrNoRows)
+			mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).WillReturnRows(sqlmock.NewRows(columns))
+			mock.ExpectExec(`INSERT INTO permissions`).WillReturnError(&pgconn.PgError{Code: "23505"})
+			mock.ExpectRollback()
+			mock.ExpectQuery(`SELECT .*deleted_at FROM permissions WHERE id=\?`).WithArgs(id).
+				WillReturnRows(sqlmock.NewRows(append(append([]string{}, columns...), "deleted_at")).AddRow(append(append([]driver.Value{}, current...), nil)...))
+			linkRows := sqlmock.NewRows([]string{"1"})
+			if test.linkPresent {
+				linkRows.AddRow(1)
+			}
+			mock.ExpectQuery(`SELECT 1 FROM permission_resource_actions l JOIN authorization_resource_actions a`).WithArgs(id, "identity.user", "read").WillReturnRows(linkRows)
+			seeded, changed, err := service.Seed(platformprincipal.SystemContext(t.Context(), "admin"), Input{Key: "platform.user.manage", Name: "Manage users", NodeType: "permission", Resource: "identity.user", Action: "read", Status: "active"})
+			if test.linkPresent {
+				require.NoError(t, err)
+				require.False(t, changed)
+				require.Equal(t, id, seeded.ID)
+			} else {
+				require.ErrorIs(t, err, ErrConflict)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestPermissionSeedDoesNotOverwriteConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 	id, err := SeedID("platform.menu")
