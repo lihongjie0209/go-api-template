@@ -119,7 +119,11 @@ func (s *Service) checkDatabase() result {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DatabaseTimeout)
 	defer cancel()
 	started := time.Now()
-	return checkResult(started, s.db.PingContext(ctx))
+	err := s.db.PingContext(ctx)
+	if deadlineErr := ctx.Err(); deadlineErr != nil {
+		err = deadlineErr
+	}
+	return checkResult(started, err)
 }
 
 func (s *Service) checkRedis() result {
@@ -129,7 +133,11 @@ func (s *Service) checkRedis() result {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.RedisTimeout)
 	defer cancel()
 	started := time.Now()
-	return checkResult(started, s.redis.Ping(ctx).Err())
+	err := s.redis.Ping(ctx).Err()
+	if deadlineErr := ctx.Err(); deadlineErr != nil {
+		err = deadlineErr
+	}
+	return checkResult(started, err)
 }
 
 func checkResult(started time.Time, err error) result {

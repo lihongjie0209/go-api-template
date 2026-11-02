@@ -25,6 +25,40 @@ type blockingPingConnector struct {
 	honorContext bool
 }
 
+type lateSuccessConnector struct{}
+
+func (lateSuccessConnector) Connect(context.Context) (driver.Conn, error) {
+	return lateSuccessConn{}, nil
+}
+func (lateSuccessConnector) Driver() driver.Driver { return blockingPingDriver{} }
+
+type lateSuccessConn struct{}
+
+func (lateSuccessConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare is unsupported")
+}
+func (lateSuccessConn) Close() error { return nil }
+func (lateSuccessConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("transactions are unsupported")
+}
+func (lateSuccessConn) Ping(ctx context.Context) error {
+	<-ctx.Done()
+	return nil // Simulate a driver that reports success after its deadline.
+}
+
+func TestService_DatabaseProbeRejectsLateDriverSuccess(t *testing.T) {
+	database := sql.OpenDB(lateSuccessConnector{})
+	t.Cleanup(func() { _ = database.Close() })
+	service := New(sqlx.NewDb(database, "late"), nil, config.Config{
+		Database: config.Database{Enabled: true},
+		Health:   config.Health{DatabaseTimeout: 10 * time.Millisecond},
+	})
+	result := service.checkDatabase()
+	if result.ready || result.dependency.Status != "down" {
+		t.Fatalf("late driver success = %#v, want down", result)
+	}
+}
+
 func (c *blockingPingConnector) Connect(context.Context) (driver.Conn, error) {
 	return &blockingPingConn{connector: c}, nil
 }
