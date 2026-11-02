@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,7 +9,10 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/migration"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 )
+
+var errMigrationCommandFailed = errors.New("migration_command_failed")
 
 func main() {
 	configPath := flag.String("config", "", "configuration file path (default: discover config.* in . or ./config)")
@@ -30,7 +34,7 @@ func main() {
 		err = migration.Run(cfg, *direction, *steps)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "migration failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "migration failed: %v\n", observability.SafeError(err, errMigrationCommandFailed))
 		os.Exit(1)
 	}
 }

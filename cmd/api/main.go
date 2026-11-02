@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,7 +9,10 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/app"
 	"github.com/lihongjie0209/go-api-template/internal/buildinfo"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 )
+
+var errConfigurationLoadFailed = errors.New("configuration_load_failed")
 
 // @title Go API Template
 // @version 1.0
@@ -36,7 +40,7 @@ func main() {
 	}
 	cfg, err := config.LoadWithProfile(*configPath, *profile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "load configuration: %v\n", err)
+		fmt.Fprintf(os.Stderr, "load configuration: %v\n", observability.SafeError(err, errConfigurationLoadFailed))
 		os.Exit(1)
 	}
 	app.New(cfg).Run()
