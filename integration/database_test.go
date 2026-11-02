@@ -3516,6 +3516,26 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if created.Version != 1 || created.Owner.ID != "owner-1" || created.Owner.Name != "Owner One" {
 		t.Fatalf("created tenant = %+v", created)
 	}
+	selector := tenant.NewContextService(db, nil, config.Config{}, nil)
+	selected, err := selector.AvailablePage(createCtx, tenant.AvailablePageInput{
+		Request:   pagination.Request{Page: 1, PageSize: 20, Keyword: "Integration"},
+		TenantIDs: []string{created.ID},
+	})
+	if err != nil || selected.Total != 1 || len(selected.Items) != 1 || selected.Items[0].TenantID != created.ID {
+		t.Fatalf("available tenant page=%+v err=%v", selected, err)
+	}
+	if _, offset := selected.Items[0].JoinedAt.Zone(); offset != 8*60*60 {
+		t.Fatalf("available tenant joined_at offset=%d, want +08:00", offset)
+	}
+	literalWildcard, err := selector.AvailablePage(createCtx, tenant.AvailablePageInput{Request: pagination.Request{Keyword: "%"}})
+	if err != nil || literalWildcard.Total != 0 || len(literalWildcard.Items) != 0 {
+		t.Fatalf("literal wildcard search unexpectedly matched tenants=%+v err=%v", literalWildcard, err)
+	}
+	otherUserCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "other-user", Type: platformprincipal.TypeUser})
+	otherUserPage, err := selector.AvailablePage(otherUserCtx, tenant.AvailablePageInput{Request: pagination.Request{Page: 1, PageSize: 20}})
+	if err != nil || otherUserPage.Total != 0 || len(otherUserPage.Items) != 0 {
+		t.Fatalf("available tenant page leaked another user's membership=%+v err=%v", otherUserPage, err)
+	}
 	adminView, err := service.AdminGet(createCtx, created.ID)
 	if err != nil || adminView.ID != created.ID {
 		t.Fatalf("admin tenant get=%+v err=%v", adminView, err)

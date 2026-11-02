@@ -18,7 +18,7 @@ larger sets without changing the existing response shape.
 | Optimistic lock | No mutation; tenant/member updates continue to use expected versions. |
 | Audit | SQL reads the database-owned `joined_at`; mandatory audit fields remain on the underlying tables. |
 | Presentation | Tenant and membership display names are returned, and `joined_at` uses the shared +08 response conversion. |
-| Tests | Unit tests cover bounded legacy output, user scope, literal keyword escaping, page metadata, ID filters, invalid bounds and +08 presentation. Tagged database tests remain a CI-only service gate. |
+| Tests | Unit tests cover bounded legacy output, user scope, literal keyword escaping, page metadata, ID filters, invalid bounds and +08 presentation. The existing tagged PostgreSQL/MySQL lifecycle suite additionally checks the new page query, literal `%`, user isolation and +08 output; it runs only in CI. |
 | Shared capability | Reuses pagination and `database.LikeContainsPattern`; no dictionary provider because the selectable set is principal-specific and transactional. |
 
 The selector does not expose a joined-at range filter because users select by
