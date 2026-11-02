@@ -12,6 +12,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/database"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/presentation"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
@@ -31,6 +33,18 @@ type ContextToken struct {
 	ExpiresIn   int64           `json:"expires_in"`
 	Tenant      AvailableTenant `json:"tenant"`
 }
+
+type AvailablePageInput struct {
+	pagination.Request
+	TenantIDs []string
+}
+
+var ErrAvailableTooLarge = errors.New("available tenant list exceeds 1000 items; use available/page")
+
+const availableTenantColumns = `m.tenant_id,t.code tenant_code,t.name tenant_name,m.id membership_id,CASE WHEN a.id IS NULL THEN false ELSE true END is_administrator,m.joined_at`
+const availableTenantFrom = ` FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL LEFT JOIN tenant_administrators a ON a.tenant_id=m.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL`
+const availableTenantWhere = ` WHERE m.user_id=? AND m.status='active' AND m.deleted_at IS NULL`
+
 type ContextService struct {
 	db       *sqlx.DB
 	signer   *auth.Service
@@ -47,14 +61,57 @@ func (s *ContextService) Available(ctx context.Context) ([]AvailableTenant, erro
 		return nil, ErrForbidden
 	}
 	items := []AvailableTenant{}
-	query := `SELECT m.tenant_id,t.code tenant_code,t.name tenant_name,m.id membership_id,CASE WHEN a.id IS NULL THEN false ELSE true END is_administrator,m.joined_at FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL LEFT JOIN tenant_administrators a ON a.tenant_id=m.tenant_id AND a.membership_id=m.id AND a.deleted_at IS NULL WHERE m.user_id=? AND m.status='active' AND m.deleted_at IS NULL ORDER BY t.name,t.id`
-	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), actor.ID); err != nil {
+	query := `SELECT ` + availableTenantColumns + availableTenantFrom + availableTenantWhere + ` ORDER BY t.name,t.id LIMIT ?`
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), actor.ID, 1001); err != nil {
 		return nil, err
+	}
+	if len(items) > 1000 {
+		return nil, ErrAvailableTooLarge
 	}
 	for index := range items {
 		items[index] = presentAvailableTenant(items[index])
 	}
 	return items, nil
+}
+
+func (s *ContextService) AvailablePage(ctx context.Context, input AvailablePageInput) (pagination.Result[AvailableTenant], error) {
+	actor, err := platformprincipal.Require(ctx)
+	if err != nil || actor.Type != platformprincipal.TypeUser {
+		return pagination.Result[AvailableTenant]{}, ErrForbidden
+	}
+	request, err := pagination.Normalize(input.Request)
+	if err != nil || len(request.Keyword) > 256 || len(input.TenantIDs) > 200 || !boundedStrings(input.TenantIDs, maxTenantIDLength) {
+		return pagination.Result[AvailableTenant]{}, ErrInvalid
+	}
+	where := availableTenantWhere
+	args := []any{actor.ID}
+	if keyword := strings.TrimSpace(request.Keyword); keyword != "" {
+		where += ` AND (LOWER(t.code) LIKE ? ESCAPE '!' OR LOWER(t.name) LIKE ? ESCAPE '!')`
+		pattern := database.LikeContainsPattern(strings.ToLower(keyword))
+		args = append(args, pattern, pattern)
+	}
+	if len(input.TenantIDs) > 0 {
+		where += ` AND m.tenant_id IN (?)`
+		args = append(args, input.TenantIDs)
+	}
+	where, args, err = sqlx.In(where, args...)
+	if err != nil {
+		return pagination.Result[AvailableTenant]{}, ErrInvalid
+	}
+	var total int64
+	if err := s.db.GetContext(ctx, &total, s.db.Rebind(`SELECT count(*)`+availableTenantFrom+where), args...); err != nil {
+		return pagination.Result[AvailableTenant]{}, err
+	}
+	items := []AvailableTenant{}
+	pageArgs := append(append([]any{}, args...), request.PageSize, pagination.Offset(request))
+	query := `SELECT ` + availableTenantColumns + availableTenantFrom + where + ` ORDER BY t.name,t.id LIMIT ? OFFSET ?`
+	if err := s.db.SelectContext(ctx, &items, s.db.Rebind(query), pageArgs...); err != nil {
+		return pagination.Result[AvailableTenant]{}, err
+	}
+	for index := range items {
+		items[index] = presentAvailableTenant(items[index])
+	}
+	return pagination.Result[AvailableTenant]{Items: items, Page: request.Page, PageSize: request.PageSize, Total: total}, nil
 }
 func (s *ContextService) Switch(ctx context.Context, tenantID string) (ContextToken, error) {
 	tenantID = strings.TrimSpace(tenantID)

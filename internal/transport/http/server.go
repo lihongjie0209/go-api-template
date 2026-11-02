@@ -167,6 +167,7 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	jwt("/tenant-members/remove", "tenant.member", "remove", accesscontrol.DataPermissionRequired, tenantMemberHandler.Remove)
 	jwt("/tenant-members/remove-target", "tenant.member", "remove", accesscontrol.DataPermissionRequired, tenantMemberHandler.RemoveTarget)
 	jwt("/tenant-context/available", "tenant.selection", "list", accesscontrol.DataPermissionNone, tenantMemberHandler.AvailableTenants)
+	jwt("/tenant-context/available/page", "tenant.selection", "list", accesscontrol.DataPermissionNone, tenantMemberHandler.AvailableTenantsPage)
 	jwt("/tenant-context/switch", "tenant.selection", "switch", accesscontrol.DataPermissionNone, tenantMemberHandler.SwitchTenant)
 	jwt("/tenant-context/current", "tenant.context", "read", accesscontrol.DataPermissionNone, tenantMemberHandler.CurrentTenant)
 	jwt("/tenant-departments/create", "tenant.department", "create", accesscontrol.DataPermissionObject, departmentHandler.Create)

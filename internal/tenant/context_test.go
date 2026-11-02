@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/auth"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	"github.com/lihongjie0209/go-api-template/internal/securitylog"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
@@ -27,7 +29,7 @@ func TestContextService_AvailableScopesMembershipsToAuthenticatedUser(t *testing
 	t.Cleanup(func() { _ = db.Close() })
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
 	service := &ContextService{db: sqlxDB}
-	mock.ExpectQuery(`FROM tenant_memberships m JOIN tenants`).WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"tenant_id", "tenant_code", "tenant_name", "membership_id", "is_administrator", "joined_at"}))
+	mock.ExpectQuery(`FROM tenant_memberships m JOIN tenants`).WithArgs("user-1", 1001).WillReturnRows(sqlmock.NewRows([]string{"tenant_id", "tenant_code", "tenant_name", "membership_id", "is_administrator", "joined_at"}))
 	ctx := platformprincipal.WithContext(context.Background(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 	items, err := service.Available(ctx)
 	require.NoError(t, err)
@@ -49,7 +51,7 @@ func TestContextServicePresentsJoinedAtInPlatformTimezone(t *testing.T) {
 	}
 	t.Run("available", func(t *testing.T) {
 		service, mock := newService(t)
-		mock.ExpectQuery(`FROM tenant_memberships m JOIN tenants`).WithArgs("user-1").
+		mock.ExpectQuery(`FROM tenant_memberships m JOIN tenants`).WithArgs("user-1", 1001).
 			WillReturnRows(sqlmock.NewRows(columns).AddRow("tenant-1", "tenant", "Tenant", "member-1", false, joined))
 		ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 		items, err := service.Available(ctx)
@@ -79,6 +81,60 @@ func TestContextServicePresentsJoinedAtInPlatformTimezone(t *testing.T) {
 		require.Equal(t, "2026-10-01T10:03:04+08:00", item.JoinedAt.Format(time.RFC3339))
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+}
+
+func TestContextServiceAvailablePageScopesAndEscapesKeyword(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &ContextService{db: sqlx.NewDb(raw, "sqlmock")}
+	joined := time.Date(2026, time.October, 1, 2, 3, 4, 0, time.UTC)
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id AND t.status='active' AND t.deleted_at IS NULL.*WHERE m.user_id=\? AND m.status='active' AND m.deleted_at IS NULL`).
+		WithArgs("user-1", "%a!%b%", "%a!%b%", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(21))
+	mock.ExpectQuery(`SELECT m.tenant_id,t.code tenant_code.*WHERE m.user_id=\? AND m.status='active' AND m.deleted_at IS NULL`).
+		WithArgs("user-1", "%a!%b%", "%a!%b%", "tenant-1", 20, 20).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_id", "tenant_code", "tenant_name", "membership_id", "is_administrator", "joined_at"}).
+			AddRow("tenant-1", "a%b", "Tenant A", "member-1", false, joined))
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	page, err := service.AvailablePage(ctx, AvailablePageInput{Request: pagination.Request{Page: 2, PageSize: 20, Keyword: " a%b "}, TenantIDs: []string{"tenant-1"}})
+	require.NoError(t, err)
+	require.Equal(t, int64(21), page.Total)
+	require.Equal(t, 2, page.Page)
+	require.Equal(t, 20, page.PageSize)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "2026-10-01T10:03:04+08:00", page.Items[0].JoinedAt.Format(time.RFC3339))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestContextServiceAvailablePageRejectsInvalidFiltersBeforeSQL(t *testing.T) {
+	service := &ContextService{}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	for _, input := range []AvailablePageInput{
+		{Request: pagination.Request{PageSize: pagination.MaxPageSize + 1}},
+		{Request: pagination.Request{Keyword: strings.Repeat("x", 257)}},
+		{TenantIDs: []string{""}},
+		{TenantIDs: []string{strings.Repeat("x", maxTenantIDLength+1)}},
+	} {
+		_, err := service.AvailablePage(ctx, input)
+		require.ErrorIs(t, err, ErrInvalid)
+	}
+}
+
+func TestContextServiceAvailableFailsWhenResultExceedsLegacyBound(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	service := &ContextService{db: sqlx.NewDb(raw, "sqlmock")}
+	rows := sqlmock.NewRows([]string{"tenant_id", "tenant_code", "tenant_name", "membership_id", "is_administrator", "joined_at"})
+	for index := 0; index <= 1000; index++ {
+		rows.AddRow(fmt.Sprintf("tenant-%d", index), "tenant", "Tenant", "member", false, time.Now())
+	}
+	mock.ExpectQuery(`FROM tenant_memberships m JOIN tenants`).WithArgs("user-1", 1001).WillReturnRows(rows)
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	_, err = service.Available(ctx)
+	require.ErrorIs(t, err, ErrAvailableTooLarge)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestContextService_CurrentRequiresActiveTenantAndMembership(t *testing.T) {

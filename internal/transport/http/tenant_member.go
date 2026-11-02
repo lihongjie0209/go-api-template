@@ -63,6 +63,20 @@ type SwitchTenantRequest struct {
 	TenantID string `json:"tenant_id" binding:"required"`
 }
 
+type AvailableTenantPageRequest struct {
+	Page      int      `json:"page"`
+	PageSize  int      `json:"page_size"`
+	Keyword   string   `json:"keyword" binding:"omitempty,max=256"`
+	TenantIDs []string `json:"tenant_ids" binding:"max=200"`
+}
+
+type AvailableTenantPageResponse struct {
+	Items    []tenant.AvailableTenant `json:"items"`
+	Page     int                      `json:"page"`
+	PageSize int                      `json:"page_size"`
+	Total    int64                    `json:"total"`
+}
+
 // Add godoc
 // @Summary Add a user to the current tenant
 // @Tags tenant-members
@@ -208,6 +222,7 @@ func (h *TenantMemberHandler) Remove(c *gin.Context) {
 // @Tags tenant-context
 // @Security Bearer
 // @Success 200 {object} Response{body=[]tenant.AvailableTenant}
+// @Failure 400 {object} Response "Use available/page when more than 1000 tenants are available"
 // @Router /api/v1/tenant-context/available [post]
 func (h *TenantMemberHandler) AvailableTenants(c *gin.Context) {
 	v, e := h.contexts.Available(c.Request.Context())
@@ -216,6 +231,32 @@ func (h *TenantMemberHandler) AvailableTenants(c *gin.Context) {
 		return
 	}
 	OK(c, v)
+}
+
+// AvailableTenantsPage godoc
+// @Summary Page the current user's available tenants
+// @Tags tenant-context
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body AvailableTenantPageRequest true "Page and filters"
+// @Success 200 {object} Response{body=AvailableTenantPageResponse}
+// @Failure 400 {object} Response
+// @Router /api/v1/tenant-context/available/page [post]
+func (h *TenantMemberHandler) AvailableTenantsPage(c *gin.Context) {
+	var request AvailableTenantPageRequest
+	if !h.bind(c, &request) {
+		return
+	}
+	page, err := h.contexts.AvailablePage(c.Request.Context(), tenant.AvailablePageInput{
+		Request:   pagination.Request{Page: request.Page, PageSize: request.PageSize, Keyword: request.Keyword},
+		TenantIDs: request.TenantIDs,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	OK(c, page)
 }
 
 // SwitchTenant godoc
@@ -263,6 +304,8 @@ func (h *TenantMemberHandler) fail(c *gin.Context, e error) {
 	switch {
 	case errors.Is(e, tenant.ErrContactFilterTooBroad):
 		Fail(c, h.logger, apperror.Invalid("contact filter matches too many users; narrow the search", e))
+	case errors.Is(e, tenant.ErrAvailableTooLarge):
+		Fail(c, h.logger, apperror.Invalid("too many available tenants; use the paginated endpoint", e))
 	case errors.Is(e, tenant.ErrInvalid):
 		Fail(c, h.logger, apperror.Invalid("invalid tenant member request", e))
 	case errors.Is(e, tenant.ErrForbidden):

@@ -1330,6 +1330,34 @@ definitions:
         maxItems: 2
         type: array
     type: object
+  httptransport.AvailableTenantPageRequest:
+    properties:
+      keyword:
+        maxLength: 256
+        type: string
+      page:
+        type: integer
+      page_size:
+        type: integer
+      tenant_ids:
+        items:
+          type: string
+        maxItems: 200
+        type: array
+    type: object
+  httptransport.AvailableTenantPageResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/tenant.AvailableTenant'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
   httptransport.CapabilityEvaluateRequest:
     properties:
       items:
@@ -10918,9 +10946,45 @@ paths:
                     $ref: '#/definitions/tenant.AvailableTenant'
                   type: array
               type: object
+        "400":
+          description: Use available/page when more than 1000 tenants are available
+          schema:
+            $ref: '#/definitions/httptransport.Response'
       security:
       - Bearer: []
       summary: List the current user's available tenants
+      tags:
+      - tenant-context
+  /api/v1/tenant-context/available/page:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Page and filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/httptransport.AvailableTenantPageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httptransport.Response'
+            - properties:
+                body:
+                  $ref: '#/definitions/httptransport.AvailableTenantPageResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httptransport.Response'
+      security:
+      - Bearer: []
+      summary: Page the current user's available tenants
       tags:
       - tenant-context
   /api/v1/tenant-context/current:
