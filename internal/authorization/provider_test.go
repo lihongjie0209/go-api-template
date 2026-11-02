@@ -1,6 +1,7 @@
 package authorization
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -82,6 +83,24 @@ func TestAuthorizerPrincipalScope(t *testing.T) {
 	r := platformauthz.Requirement{Resource: "identity.profile", Action: "read", Scope: platformauthz.ScopePrincipal}
 	require.NoError(t, a.Authorize(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}, r))
 	require.ErrorIs(t, a.Authorize(t.Context(), platformprincipal.Principal{}, r), platformauthz.ErrDenied)
+}
+
+func TestAuthorizerCanceledContextFailsClosed(t *testing.T) {
+	a, mock := testAuthorizer(t)
+	principal := platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), grantSnapshotKey{}, grantSnapshot{
+		principal: principal,
+		platform:  map[string]struct{}{"identity.user\x00read": {}},
+	}))
+	cancel()
+	require.ErrorIs(t, a.Authorize(ctx, principal, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
+	require.ErrorIs(t, a.Authorize(ctx, principal, platformauthz.Requirement{Resource: "identity.profile", Action: "read", Scope: platformauthz.ScopePrincipal}), platformauthz.ErrDecisionUnavailable)
+	system := platformprincipal.Principal{ID: "system", Type: platformprincipal.TypeSystem}
+	require.ErrorIs(t, a.Authorize(ctx, system, platformauthz.Requirement{Resource: "identity.user", Action: "read", Scope: platformauthz.ScopePlatform}), platformauthz.ErrDecisionUnavailable)
+	_, revision, err := a.Snapshot(ctx, system)
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestAuthorizerSnapshotTracksPlatformGrantsAndReusesSnapshot(t *testing.T) {

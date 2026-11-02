@@ -33,18 +33,24 @@ func NewPolicyRevisions(data *datapermission.RuntimeLoader, authorizer platforma
 // ForRequest pins an operation-grant snapshot and combines its digest with the
 // published data-permission revision. A failed grant read cannot yield a hint.
 func (r *PolicyRevisions) ForRequest(ctx context.Context, principal platformprincipal.Principal) (context.Context, string, error) {
-	if r == nil || r.grants == nil {
+	if ctx == nil || ctx.Err() != nil || r == nil || r.grants == nil {
 		return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 	}
 	snapshotCtx, grantRevision, err := r.grants.Snapshot(ctx, principal)
 	if err != nil {
 		return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
 	}
+	if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil {
+		return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
+	}
 	dataRevision := ""
 	if r.data != nil {
 		snapshotCtx, dataRevision, err = r.data.Pin(snapshotCtx)
 		if err != nil {
 			return invalidateGrantSnapshot(ctx), "", fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err)
+		}
+		if snapshotCtx == nil || ctx.Err() != nil || snapshotCtx.Err() != nil {
+			return invalidateGrantSnapshot(ctx), "", platformauthz.ErrDecisionUnavailable
 		}
 	}
 	digest := sha256.Sum256([]byte("capability/v2\x00" + grantRevision + "\x00" + dataRevision))

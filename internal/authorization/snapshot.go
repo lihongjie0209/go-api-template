@@ -32,7 +32,7 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 	fail := func(err error) (context.Context, string, error) {
 		return invalidateGrantSnapshot(ctx), "", err
 	}
-	if a == nil || a.db == nil || a.registry == nil || principal.ID == "" {
+	if ctx == nil || ctx.Err() != nil || a == nil || a.db == nil || a.registry == nil || principal.ID == "" {
 		return fail(platformauthz.ErrDecisionUnavailable)
 	}
 	snapshot := grantSnapshot{principal: principal}
@@ -60,6 +60,9 @@ func (a *Authorizer) Snapshot(ctx context.Context, principal platformprincipal.P
 			return fail(fmt.Errorf("%w: %v", platformauthz.ErrDecisionUnavailable, err))
 		}
 	default:
+		return fail(platformauthz.ErrDecisionUnavailable)
+	}
+	if ctx.Err() != nil {
 		return fail(platformauthz.ErrDecisionUnavailable)
 	}
 	return context.WithValue(ctx, grantSnapshotKey{}, snapshot), snapshot.revision(), nil

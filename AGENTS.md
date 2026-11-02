@@ -350,7 +350,9 @@ TTL, and invalidation for its own data.
   concurrent refresh; a failed authoritative grant read fails closed. A failed
   grant read or data-policy pin must invalidate any grant snapshot already in
   the returned request Context, so callers cannot reuse stale grants after an
-  error. A missing
+  error. Authorization and capability revision evaluation must reject an
+  already-canceled or expired Context even when an in-memory grant snapshot
+  or system/principal shortcut could otherwise return allow. A missing
   grant-snapshot provider must fail startup,
   including in generated services and test compositions; do not pass a typed
   nil revision provider through an interface. Every business endpoint must

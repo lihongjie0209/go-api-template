@@ -13,8 +13,9 @@ import (
 )
 
 type revisionAuthorizerStub struct {
-	grants string
-	err    error
+	grants        string
+	err           error
+	afterSnapshot func()
 }
 
 func (*revisionAuthorizerStub) Authorize(context.Context, platformprincipal.Principal, platformauthz.Requirement) error {
@@ -22,6 +23,9 @@ func (*revisionAuthorizerStub) Authorize(context.Context, platformprincipal.Prin
 }
 
 func (s *revisionAuthorizerStub) Snapshot(ctx context.Context, _ platformprincipal.Principal) (context.Context, string, error) {
+	if s.afterSnapshot != nil {
+		s.afterSnapshot()
+	}
 	return ctx, s.grants, s.err
 }
 
@@ -86,6 +90,25 @@ func TestPolicyRevisionsFailsClosedWithoutDataSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = revisions.ForRequest(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
 	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+}
+
+func TestPolicyRevisionsCanceledContextFailsClosed(t *testing.T) {
+	revisions, err := NewPolicyRevisions(nil, &revisionAuthorizerStub{grants: "grant-1"})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, revision, err := revisions.ForRequest(ctx, platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
+}
+
+func TestPolicyRevisionsCancellationDuringGrantReadFailsClosed(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	revisions, err := NewPolicyRevisions(nil, &revisionAuthorizerStub{grants: "grant-1", afterSnapshot: cancel})
+	require.NoError(t, err)
+	_, revision, err := revisions.ForRequest(ctx, platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser})
+	require.ErrorIs(t, err, platformauthz.ErrDecisionUnavailable)
+	require.Empty(t, revision)
 }
 
 func TestPolicyRevisionsFailureInvalidatesPriorGrantContext(t *testing.T) {

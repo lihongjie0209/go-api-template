@@ -28,7 +28,7 @@ func New(db *sqlx.DB, registry *resourceaction.Registry) platformauthz.Authorize
 }
 
 func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.Principal, requirement platformauthz.Requirement) error {
-	if a == nil || a.db == nil || a.registry == nil {
+	if ctx == nil || ctx.Err() != nil || a == nil || a.db == nil || a.registry == nil {
 		return platformauthz.ErrDecisionUnavailable
 	}
 	resource, _, err := a.registry.Resolve(requirement.Resource, requirement.Action)
@@ -58,6 +58,9 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 		if err != nil {
 			return platformauthz.ErrDecisionUnavailable
 		}
+		if ctx.Err() != nil {
+			return platformauthz.ErrDecisionUnavailable
+		}
 		if allowed {
 			return nil
 		}
@@ -70,6 +73,9 @@ func (a *Authorizer) Authorize(ctx context.Context, principal platformprincipal.
 		}
 		allowed, err := a.hasManagedTenantGrant(ctx, principal, requirement)
 		if err != nil {
+			return platformauthz.ErrDecisionUnavailable
+		}
+		if ctx.Err() != nil {
 			return platformauthz.ErrDecisionUnavailable
 		}
 		if allowed {
