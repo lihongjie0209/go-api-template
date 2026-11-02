@@ -2,13 +2,34 @@ package httptransport
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestHTTPStartupFailureDoesNotExposeListenAddress(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	err := startHTTPServer(context.Background(), &http.Server{Addr: "secret-value"}, logger)
+	if !errors.Is(err, errHTTPListenFailed) || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("startHTTPServer() = %v; want safe listen failure", err)
+	}
+}
+
+func TestHTTPStartupHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := startHTTPServer(ctx, &http.Server{Addr: "127.0.0.1:0"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("startHTTPServer() = %v; want context cancellation", err)
+	}
+}
 
 type failingHTTPListener struct{}
 

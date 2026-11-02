@@ -54,6 +54,7 @@ type Server struct {
 
 var errGRPCServerStopped = errors.New("grpc_server_stopped")
 var errGRPCTLSStartupFailed = errors.New("grpc_tls_startup_failed")
+var errGRPCListenFailed = errors.New("grpc_listen_failed")
 
 const maxGRPCHeaderListBytes = 64 << 10
 
@@ -141,14 +142,21 @@ func grpcEndpointDefinitions() []accesscontrol.Endpoint {
 }
 
 func (s *Server) start(enabled bool) func(context.Context) error {
-	return func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !enabled {
 			s.logger.Warn("grpc server is disabled")
 			return nil
 		}
 		listener, err := net.Listen("tcp", s.address)
 		if err != nil {
-			return fmt.Errorf("listen grpc: %w", err)
+			return observability.SafeError(err, errGRPCListenFailed)
+		}
+		if err := ctx.Err(); err != nil {
+			_ = listener.Close()
+			return err
 		}
 		go s.serve(listener)
 		s.logger.Info("grpc server started", "address", s.address)

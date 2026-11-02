@@ -34,6 +34,7 @@ import (
 )
 
 var errHTTPServerStopped = errors.New("http_server_stopped")
+var errHTTPListenFailed = errors.New("http_listen_failed")
 
 func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler *FileHandler, userHandler *UserHandler, serviceAccountHandler *ServiceAccountHandler, tenantHandler *TenantHandler, tenantMemberHandler *TenantMemberHandler, departmentHandler *DepartmentHandler, tenantAuthorizationHandler *TenantAuthorizationHandler, capabilityHandler *CapabilityHandler, capabilityService *authorization.CapabilityService, applicationHandler *ApplicationHandler, navigationHandler *NavigationHandler, platformConfigHandler *PlatformConfigHandler, scheduledJobHandler *ScheduledJobHandler, dictionaryHandler *DictionaryHandler, resourceCatalogHandler *ResourceCatalogHandler, platformGrantHandler *PlatformGrantHandler, dataPermissionHandler *DataPermissionHandler, permissionHandler *PermissionHandler, operationLogHandler *OperationLogHandler, securityLogHandler *SecurityLogHandler, authenticationHandler *AuthenticationHandler, userAuthenticationHandler *UserAuthenticationHandler, authService *auth.Service, resources *resourceaction.Registry, schemas *datapermission.SchemaRegistry, authorizer platformauthz.Authorizer, limiter *ratelimit.Limiter, idempotencyManager *idempotency.Manager, metrics *observability.Metrics, tracing *observability.Tracing, logger *slog.Logger) (*http.Server, error) {
 	if config.IsDeployedEnvironment(cfg.App.Env) {
@@ -349,18 +350,27 @@ func NewServer(lc fx.Lifecycle, cfg config.Config, handler *Handler, fileHandler
 	}
 	capabilityService.SetEndpointRegistry(endpointRegistry)
 	server := &http.Server{Addr: cfg.HTTP.Address, Handler: router, ReadTimeout: cfg.HTTP.ReadTimeout, WriteTimeout: cfg.HTTP.WriteTimeout, IdleTimeout: cfg.HTTP.IdleTimeout}
-	var listener net.Listener
 	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
-		var err error
-		listener, err = net.Listen("tcp", server.Addr)
-		if err != nil {
-			return fmt.Errorf("listen http: %w", err)
-		}
-		go serveHTTP(server, listener, logger)
-		logger.Info("http server started", "address", server.Addr)
-		return nil
+		return startHTTPServer(ctx, server, logger)
 	}, OnStop: server.Shutdown})
 	return server, nil
+}
+
+func startHTTPServer(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return observability.SafeError(err, errHTTPListenFailed)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	go serveHTTP(server, listener, logger)
+	logger.Info("http server started", "address", server.Addr)
+	return nil
 }
 
 func globalHTTPMiddleware(cfg config.Config, metrics *observability.Metrics, logger *slog.Logger) []gin.HandlerFunc {
