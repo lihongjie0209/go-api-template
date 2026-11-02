@@ -749,8 +749,9 @@ deleted_by text
 - PostgreSQL/Kingbase tables must call `app_enable_audit('<table>')`.
 - Migration integration tests must enumerate every migrated business table in
   PostgreSQL and MySQL, including association tables, and verify all seven
-  audit column types/nullability plus enabled database audit triggers. Exclude
-  only the migration tool's own history table.
+  audit column types/nullability plus enabled database audit triggers. Verify
+  physical-delete rejection on every business table except the reviewed log
+  retention tables. Exclude only the migration tool's own history table.
 - Writes must use `database.Transactor.Within`, which injects the actor ID
   from context into transaction-local `app.actor_id`.
 - Background jobs must create an explicit system principal context.

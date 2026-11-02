@@ -19,16 +19,17 @@ func assertMandatoryAuditColumns(t *testing.T, ctx context.Context, db *sqlx.DB,
 	if databaseType == "mysql" {
 		schema = "DATABASE()"
 	}
-	query := `SELECT t.table_name, c.column_name, c.is_nullable, c.data_type
+	query := `SELECT t.table_name AS table_key, c.column_name AS column_key,
+		c.is_nullable AS nullable_flag, c.data_type AS type_key
 		FROM information_schema.tables t
 		JOIN information_schema.columns c
 			ON c.table_schema=t.table_schema AND c.table_name=t.table_name
 		WHERE t.table_schema=` + schema + ` AND t.table_type='BASE TABLE'`
 	var rows []struct {
-		Table    string `db:"table_name"`
-		Column   string `db:"column_name"`
-		Nullable string `db:"is_nullable"`
-		DataType string `db:"data_type"`
+		Table    string `db:"table_key"`
+		Column   string `db:"column_key"`
+		Nullable string `db:"nullable_flag"`
+		DataType string `db:"type_key"`
 	}
 	if err := db.SelectContext(ctx, &rows, query); err != nil {
 		t.Fatalf("load migrated table columns: %v", err)
@@ -101,7 +102,8 @@ func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databas
 			JOIN pg_namespace n ON n.oid=c.relnamespace
 			JOIN pg_trigger tr ON tr.tgrelid=c.oid
 			WHERE n.nspname=current_schema() AND tr.tgname='app_audit_row_trigger'
-				AND tr.tgenabled <> 'D' AND tr.tgfoid='app_audit_row()'::regprocedure`)
+				AND tr.tgenabled <> 'D' AND tr.tgfoid='app_audit_row()'::regprocedure
+				AND (tr.tgtype & 31) = 31`)
 		if err != nil {
 			t.Fatalf("load PostgreSQL audit triggers: %v", err)
 		}
@@ -117,10 +119,10 @@ func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databas
 		return
 	}
 	var triggers []struct {
-		Table string `db:"event_object_table"`
-		Name  string `db:"trigger_name"`
+		Table string `db:"table_key"`
+		Name  string `db:"trigger_key"`
 	}
-	if err := db.SelectContext(ctx, &triggers, `SELECT event_object_table, trigger_name
+	if err := db.SelectContext(ctx, &triggers, `SELECT event_object_table AS table_key, trigger_name AS trigger_key
 		FROM information_schema.triggers
 		WHERE trigger_schema=DATABASE() AND action_timing='BEFORE'`); err != nil {
 		t.Fatalf("load MySQL audit triggers: %v", err)
@@ -133,7 +135,12 @@ func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databas
 		covered[trigger.Table][trigger.Name] = struct{}{}
 	}
 	for _, name := range tables {
-		for _, suffix := range []string{"_audit_bi", "_audit_bu"} {
+		suffixes := []string{"_audit_bi", "_audit_bu", "_audit_bd"}
+		if name == "operation_logs" || name == "security_logs" {
+			// Only the reviewed retention worker may physically purge these logs.
+			suffixes = suffixes[:2]
+		}
+		for _, suffix := range suffixes {
 			if _, ok := covered[name][name+suffix]; !ok {
 				t.Errorf("migrated table %s is missing audit trigger %s", name, name+suffix)
 			}
