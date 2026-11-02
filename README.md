@@ -91,6 +91,7 @@ sh scripts/render-production-manifest.sh application "$IMAGE_REF" | kubectl appl
 ```
 
 Replace the example values through your secret manager in production. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, NATS, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
+The migration Job reads the same ConfigMap as the application, so database name, schema, and migration table overrides apply to both. Its database URL comes from the `APP_MIGRATION_DATABASE_URL` Secret key.
 
 ## Shared gRPC contracts
 

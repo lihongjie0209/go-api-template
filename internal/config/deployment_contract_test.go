@@ -11,9 +11,34 @@ import (
 )
 
 type deploymentConfigManifest struct {
-	Kind       string            `yaml:"kind"`
+	Kind     string `yaml:"kind"`
+	Metadata struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
 	Data       map[string]string `yaml:"data"`
 	StringData map[string]string `yaml:"stringData"`
+	Spec       struct {
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					EnvFrom []struct {
+						ConfigMapRef struct {
+							Name string `yaml:"name"`
+						} `yaml:"configMapRef"`
+					} `yaml:"envFrom"`
+					Env []struct {
+						Name      string `yaml:"name"`
+						ValueFrom struct {
+							SecretKeyRef struct {
+								Name string `yaml:"name"`
+								Key  string `yaml:"key"`
+							} `yaml:"secretKeyRef"`
+						} `yaml:"valueFrom"`
+					} `yaml:"env"`
+				} `yaml:"containers"`
+			} `yaml:"spec"`
+		} `yaml:"template"`
+	} `yaml:"spec"`
 }
 
 func TestProductionDeploymentEnvironmentLoadsProfile(t *testing.T) {
@@ -43,6 +68,32 @@ func TestProductionDeploymentEnvironmentLoadsProfile(t *testing.T) {
 		if err != nil || strings.TrimPrefix(parsed.Path, "/") != cfg.Database.Name {
 			t.Fatalf("%s deployment URL does not select configured database %q", label, cfg.Database.Name)
 		}
+	}
+}
+
+func TestProductionMigrationJobUsesApplicationConfigMap(t *testing.T) {
+	configMap := deploymentManifest(t, "../../deployments/kubernetes.yaml", "ConfigMap")
+	secret := deploymentManifest(t, "../../deployments/secret.example.yaml", "Secret")
+	job := deploymentManifest(t, "../../deployments/migrate-job.yaml", "Job")
+	if len(job.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("migration Job has %d containers, want 1", len(job.Spec.Template.Spec.Containers))
+	}
+	container := job.Spec.Template.Spec.Containers[0]
+	configMapFound := false
+	for _, source := range container.EnvFrom {
+		configMapFound = configMapFound || source.ConfigMapRef.Name == configMap.Metadata.Name
+	}
+	if !configMapFound {
+		t.Fatalf("migration Job does not load application ConfigMap %q", configMap.Metadata.Name)
+	}
+	urlFound := false
+	for _, entry := range container.Env {
+		if entry.Name == "APP_MIGRATION_DATABASE_URL" && entry.ValueFrom.SecretKeyRef.Name == secret.Metadata.Name && entry.ValueFrom.SecretKeyRef.Key == entry.Name {
+			urlFound = true
+		}
+	}
+	if !urlFound {
+		t.Fatal("migration Job does not load its URL from the application Secret")
 	}
 }
 

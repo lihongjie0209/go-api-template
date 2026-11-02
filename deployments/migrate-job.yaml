@@ -25,6 +25,9 @@ spec:
         - name: migrate
           image: ghcr.io/lihongjie0209/go-api-template:sha-0000000
           imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: go-api-template
           command: [/app/migrate]
           args: [-config, /app/config/config.yaml, -env, production, -direction, up]
           env:
