@@ -1183,6 +1183,33 @@ func TestConfigRejectsUnboundedOperationLogPayload(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsLogSubjectsThatCannotBeStoredInOutbox(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "operation wildcard", mutate: func(cfg *Config) { cfg.OperationLog.Subject = "platform.operation-log.>" }},
+		{name: "operation outside platform stream", mutate: func(cfg *Config) { cfg.OperationLog.Subject = "audit.operation.v1" }},
+		{name: "security empty token", mutate: func(cfg *Config) { cfg.SecurityLog.Subject = "platform..security-log" }},
+		{name: "security whitespace", mutate: func(cfg *Config) { cfg.SecurityLog.Subject = "platform.security log.v1" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validProductionConfig(t)
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "subject") {
+				t.Fatalf("Validate() error = %v, want invalid log subject", err)
+			}
+		})
+	}
+	cfg := validProductionConfig(t)
+	cfg.OperationLog.Subject = "platform.orders.operation-log.v1"
+	cfg.SecurityLog.Subject = "platform.orders.security-log.v1"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid custom log subjects rejected: %v", err)
+	}
+}
+
 func TestConfigRejectsUnsafeSecurityLogSettings(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

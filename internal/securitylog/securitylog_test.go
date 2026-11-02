@@ -18,6 +18,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const envelopeType = "platform.security-log.recorded.v1"
+
 type outboxStub struct {
 	called  bool
 	subject string
@@ -190,7 +192,7 @@ func TestConsumeDoesNotAcknowledgeConfirmedDuplicateWhenCommitFails(t *testing.T
 	}
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "mysql")
-	service := &Service{appName: "security-log-test", cfg: config.SecurityLog{MaxPayloadBytes: 4096}, transactor: database.NewTransactor(db)}
+	service := &Service{appName: "security-log-test", cfg: config.SecurityLog{Subject: envelopeType, MaxPayloadBytes: 4096}, transactor: database.NewTransactor(db)}
 	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
 	event, err := service.envelope(ctx, Entry{EventType: EventLogin, SubjectID: "user-1", SubjectType: "user", Succeeded: true})
 	if err != nil {
@@ -269,6 +271,9 @@ func TestRecordDurablyStoresOutboxEventAfterRequestCancellation(t *testing.T) {
 	}
 	if !outbox.called || outbox.subject != "platform.security-log.v1" || outbox.event == nil || outbox.event.Context.GetActorId() != "actor-1" {
 		t.Fatalf("outbox = called:%v subject:%q event:%+v", outbox.called, outbox.subject, outbox.event)
+	}
+	if outbox.event.EventType != outbox.subject {
+		t.Fatalf("outbox subject %q differs from event type %q", outbox.subject, outbox.event.EventType)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -375,7 +380,7 @@ func TestValidateConsumedEventRejectsEnvelopeContextMismatch(t *testing.T) {
 	now := time.Now().UTC()
 	value := payload{EventType: EventLogin, ActorID: "actor-1", ActorType: "user", TenantID: "tenant-1", Metadata: []byte(`{}`), OccurredAt: now}
 	envelope := &commonv1.EventEnvelope{EventId: "event-1", EventType: envelopeType, SchemaVersion: 1, TenantId: "tenant-2", OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{ActorId: "actor-1", ActorType: "user", TenantId: "tenant-1"}}
-	service := &Service{cfg: config.SecurityLog{MaxPayloadBytes: 1024}}
+	service := &Service{cfg: config.SecurityLog{Subject: envelopeType, MaxPayloadBytes: 1024}}
 	if err := service.validateConsumedEvent(envelope, value); !errors.Is(err, ErrInvalidEntry) {
 		t.Fatalf("validateConsumedEvent() = %v", err)
 	}
@@ -385,7 +390,7 @@ func TestConsumedEventIDMatchesMySQLPrimaryKeyLimit(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
 	value := payload{EventType: EventLogin, Metadata: []byte(`{}`), OccurredAt: now}
-	service := &Service{cfg: config.SecurityLog{MaxPayloadBytes: 1024}}
+	service := &Service{cfg: config.SecurityLog{Subject: envelopeType, MaxPayloadBytes: 1024}}
 	for _, tc := range []struct {
 		name   string
 		length int

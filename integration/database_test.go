@@ -1157,7 +1157,7 @@ func testDataPermissionSimulationOutbox(t *testing.T, ctx context.Context, db *s
 		if err := proto.Unmarshal(raw, &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if envelope.EventType != "platform.operation-log.recorded.v1" || envelope.Context.GetRequestId() != "simulation-diagnostic-request" {
+		if envelope.EventType != subject || envelope.Context.GetRequestId() != "simulation-diagnostic-request" {
 			t.Fatalf("invalid simulation diagnostic envelope: %+v", &envelope)
 		}
 		var event struct {
@@ -3495,7 +3495,7 @@ func testScheduledJobCompletionOutboxTransaction(t *testing.T, ctx context.Conte
 		t.Fatal(err)
 	}
 	var envelope commonv1.EventEnvelope
-	if err := proto.Unmarshal(rawEnvelope, &envelope); err != nil || envelope.AggregateId == "" || envelope.EventType != "platform.operation-log.recorded.v1" {
+	if err := proto.Unmarshal(rawEnvelope, &envelope); err != nil || envelope.AggregateId == "" || envelope.EventType != subject {
 		t.Fatalf("completion event = %+v, err=%v", &envelope, err)
 	}
 	var linkedRuns int

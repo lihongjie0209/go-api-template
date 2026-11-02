@@ -15,7 +15,7 @@ func TestMySQLConsumerAcknowledgesOnlyOnePersistedEvent(t *testing.T) {
 	db := testutil.MySQLDatabase(t)
 	service := New(config.Config{
 		App:          config.App{Name: "operation-log-integration"},
-		OperationLog: config.OperationLog{Enabled: true, MaxPayloadBytes: 4096},
+		OperationLog: config.OperationLog{Enabled: true, Subject: "platform.operation-log.recorded.v1", MaxPayloadBytes: 4096},
 	}, nil, db, database.NewTransactor(db), nil, nil, nil)
 	ctx := platformprincipal.SystemContext(t.Context(), "audit-test")
 	event, err := service.envelope(ctx, Entry{Operation: "audit.integration", Source: "backend", Protocol: "service", Succeeded: true})

@@ -24,8 +24,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const eventType = "platform.operation-log.recorded.v1"
-
 var ErrInvalidEntry = errors.New("invalid operation log entry")
 var ErrOutboxUnavailable = errors.New("operation log outbox unavailable")
 
@@ -199,7 +197,7 @@ func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnv
 	if err != nil {
 		return nil, fmt.Errorf("encode operation log: %w", err)
 	}
-	return &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: eventType, AggregateId: entry.ResourceID, AggregateType: "operation_log", TenantId: principal.TenantID, ApplicationId: entry.ApplicationID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: principal.ID, ActorType: string(principal.Type), TenantId: principal.TenantID, MembershipId: principal.MembershipID}, Payload: data}, nil
+	return &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: s.cfg.Subject, AggregateId: entry.ResourceID, AggregateType: "operation_log", TenantId: principal.TenantID, ApplicationId: entry.ApplicationID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: principal.ID, ActorType: string(principal.Type), TenantId: principal.TenantID, MembershipId: principal.MembershipID}, Payload: data}, nil
 }
 
 func (s *Service) observeEnqueue(started time.Time, err error) {
@@ -216,7 +214,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 	if envelope == nil {
 		return fmt.Errorf("%w: nil operation log envelope", ErrInvalidEntry)
 	}
-	if envelope.EventType != eventType {
+	if envelope.EventType != s.cfg.Subject {
 		return fmt.Errorf("%w: unexpected operation log event type", ErrInvalidEntry)
 	}
 	var payload eventPayload
@@ -249,7 +247,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 }
 
 func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, payload eventPayload) error {
-	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 || envelope.EventType != eventType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
+	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 || envelope.EventType != s.cfg.Subject || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
 		return fmt.Errorf("%w: invalid operation log envelope", ErrInvalidEntry)
 	}
 	if err := envelope.OccurredAt.CheckValid(); err != nil || !envelope.OccurredAt.AsTime().Equal(payload.OccurredAt) {

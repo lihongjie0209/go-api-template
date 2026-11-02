@@ -561,6 +561,7 @@ func IsDeployedEnvironment(profile string) bool {
 var validMigrationTable = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 var validRedisPrefix = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,127}:$`)
 var validUpstreamName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+var validLogSubject = regexp.MustCompile(`^platform\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
 
 func profileConfigPath(path, profile string) string {
 	if path == "" {
@@ -970,11 +971,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("files.allowed_types contains invalid media type %q", contentType)
 		}
 	}
-	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.OperationLog.Subject == "" || len(c.OperationLog.Subject) > 256 || c.OperationLog.Durable == "" || len(c.OperationLog.Durable) > 256 || c.OperationLog.MaxPayloadBytes < 256 || c.OperationLog.MaxPayloadBytes > 64<<10) {
-		return errors.New("enabled operation_log requires database, event_bus, subject and durable names no greater than 256 bytes, and max_payload_bytes between 256 bytes and 64 KiB")
+	if c.OperationLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || len(c.OperationLog.Subject) > 256 || !validLogSubject.MatchString(c.OperationLog.Subject) || c.OperationLog.Durable == "" || len(c.OperationLog.Durable) > 256 || c.OperationLog.MaxPayloadBytes < 256 || c.OperationLog.MaxPayloadBytes > 64<<10) {
+		return errors.New("enabled operation_log requires database, event_bus, a bounded platform subject without wildcards, a durable name no greater than 256 bytes, and max_payload_bytes between 256 bytes and 64 KiB")
 	}
-	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || c.SecurityLog.Subject == "" || len(c.SecurityLog.Subject) > 256 || c.SecurityLog.Durable == "" || len(c.SecurityLog.Durable) > 256 || c.SecurityLog.MaxPayloadBytes < 256 || c.SecurityLog.MaxPayloadBytes > 64<<10 || len(c.SecurityLog.HashKey) < 32 || len(c.SecurityLog.HashKey) > 4096) {
-		return errors.New("enabled security_log requires database, event_bus, subject and durable names no greater than 256 bytes, max_payload_bytes between 256 bytes and 64 KiB, and a 32-4096 byte hash_key")
+	if c.SecurityLog.Enabled && (!c.Database.Enabled || !c.EventBus.Enabled || len(c.SecurityLog.Subject) > 256 || !validLogSubject.MatchString(c.SecurityLog.Subject) || c.SecurityLog.Durable == "" || len(c.SecurityLog.Durable) > 256 || c.SecurityLog.MaxPayloadBytes < 256 || c.SecurityLog.MaxPayloadBytes > 64<<10 || len(c.SecurityLog.HashKey) < 32 || len(c.SecurityLog.HashKey) > 4096) {
+		return errors.New("enabled security_log requires database, event_bus, a bounded platform subject without wildcards, a durable name no greater than 256 bytes, max_payload_bytes between 256 bytes and 64 KiB, and a 32-4096 byte hash_key")
 	}
 	if IsDeployedEnvironment(c.App.Env) && (!c.EventBus.Enabled || !c.OperationLog.Enabled || !c.SecurityLog.Enabled) {
 		return errors.New("deployed environments require event_bus, operation_log, and security_log")

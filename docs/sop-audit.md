@@ -34,7 +34,13 @@ classified before Fx receives them. Focused lifecycle unit tests pass locally.
 The dead-outbox repair batch at `f2155fa` is in GitHub Actions run
 `41418161165`. Its verify job found two unchecked response/file close calls;
 both are fixed locally, and `golangci-lint run ./...` reports zero issues.
-The integration job has not completed yet.
+Its integration job also failed in PostgreSQL and MySQL because operation-log
+fixtures exposed a real producer defect: the configured outbox subject differed
+from the envelope event type. Both operation and security producers now set
+the event type from their configured subject, and their consumers validate
+against that same subject. Focused unit tests failed before the fix and pass
+after it; tagged integration packages compile locally. The repaired behavior
+awaits the next batched CI run.
 
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,

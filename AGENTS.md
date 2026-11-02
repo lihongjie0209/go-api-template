@@ -640,6 +640,10 @@ available. A feature must not introduce a second transport for the same event.
   decoding a claimed row. Generic outbox events may omit payload or request
   Context when the event contract permits it. Consumer idempotency keys must
   use that same canonical ID.
+- A producer's outbox subject and envelope event type must be identical.
+  Configurable operation/security log subjects determine both the emitted
+  event type and the consumer's accepted type; unit tests using an outbox stub
+  must still assert the subject/event-type equality required by the real store.
 - The outbox dispatcher must apply its envelope byte cap in the SQL projection
   before scanning a claimed row. A legacy or corrupt oversized blob must reach
   the bounded decode-failure/dead-letter path without being materialized in Go;

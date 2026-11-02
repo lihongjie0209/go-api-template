@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const eventType = "platform.operation-log.recorded.v1"
+
 type recorderStub struct{ entry Entry }
 
 type leakingOperationMarshaler struct{}
@@ -103,7 +105,7 @@ func (r *recorderStub) Record(_ context.Context, entry Entry) error { r.entry = 
 
 func TestOperationEnvelopeHidesPayloadEncoderErrors(t *testing.T) {
 	t.Parallel()
-	service := &Service{cfg: config.OperationLog{MaxPayloadBytes: 1024}}
+	service := &Service{cfg: config.OperationLog{Subject: eventType, MaxPayloadBytes: 1024}}
 	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "actor-1", Type: platformprincipal.TypeUser})
 	for _, test := range []struct {
 		name      string
@@ -174,7 +176,7 @@ func TestValidateConsumedEventRejectsEnvelopeContextMismatch(t *testing.T) {
 		TenantId: "tenant-2", OccurredAt: timestamppb.New(now),
 		Context: &commonv1.RequestContext{ActorId: "actor-1", ActorType: "user", TenantId: "tenant-1"},
 	}
-	service := &Service{cfg: config.OperationLog{MaxPayloadBytes: 1024}}
+	service := &Service{cfg: config.OperationLog{Subject: eventType, MaxPayloadBytes: 1024}}
 	if err := service.validateConsumedEvent(envelope, payload); !errors.Is(err, ErrInvalidEntry) {
 		t.Fatalf("validateConsumedEvent() = %v", err)
 	}
@@ -187,7 +189,7 @@ func TestConsumedEventIDMatchesMySQLPrimaryKeyLimit(t *testing.T) {
 		Entry:   Entry{Operation: "order.create", Source: "backend", Protocol: "service", Succeeded: true},
 		ActorID: "actor-1", ActorType: "user", OccurredAt: now, Extension: json.RawMessage(`{}`),
 	}
-	service := &Service{cfg: config.OperationLog{MaxPayloadBytes: 1024}}
+	service := &Service{cfg: config.OperationLog{Subject: eventType, MaxPayloadBytes: 1024}}
 	for _, test := range []struct {
 		name    string
 		idSize  int
@@ -303,6 +305,9 @@ func TestRecordDurablyStoresOutboxEventAfterRequestCancellation(t *testing.T) {
 	}
 	if !outbox.called || outbox.subject != "platform.operation-log.v1" || outbox.event == nil || outbox.event.Context.GetActorId() != "actor-1" {
 		t.Fatalf("outbox = called:%v subject:%q event:%+v", outbox.called, outbox.subject, outbox.event)
+	}
+	if outbox.event.EventType != outbox.subject {
+		t.Fatalf("outbox subject %q differs from event type %q", outbox.subject, outbox.event.EventType)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -429,7 +434,7 @@ func TestConsumeDoesNotAcknowledgeConfirmedDuplicateWhenCommitFails(t *testing.T
 	}
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "mysql")
-	service := &Service{appName: "operation-log-test", cfg: config.OperationLog{MaxPayloadBytes: 4096}, transactor: database.NewTransactor(db)}
+	service := &Service{appName: "operation-log-test", cfg: config.OperationLog{Subject: eventType, MaxPayloadBytes: 4096}, transactor: database.NewTransactor(db)}
 	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
 	event, err := service.envelope(ctx, Entry{Operation: "test.duplicate", Source: "backend", Protocol: "service", Succeeded: true})
 	if err != nil {

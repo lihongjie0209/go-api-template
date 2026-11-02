@@ -54,8 +54,6 @@ const (
 	EventServiceAccountChanged    EventType = "service_account_changed"
 )
 
-const envelopeType = "platform.security-log.recorded.v1"
-
 var ErrInvalidEntry = errors.New("invalid security log entry")
 var ErrOutboxUnavailable = errors.New("security log outbox unavailable")
 
@@ -221,7 +219,7 @@ func (s *Service) envelope(ctx context.Context, entry Entry) (*commonv1.EventEnv
 	if err != nil {
 		return nil, fmt.Errorf("encode security log: %w", err)
 	}
-	envelope := &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: envelopeType, AggregateId: entry.SubjectID, AggregateType: "security_log", TenantId: entry.TenantID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: actor.ID, ActorType: string(actor.Type), TenantId: entry.TenantID}, Payload: data}
+	envelope := &commonv1.EventEnvelope{EventId: uuid.NewString(), EventType: s.cfg.Subject, AggregateId: entry.SubjectID, AggregateType: "security_log", TenantId: entry.TenantID, SchemaVersion: 1, OccurredAt: timestamppb.New(now), Context: &commonv1.RequestContext{RequestId: requestID, TraceId: span.TraceID().String(), ActorId: actor.ID, ActorType: string(actor.Type), TenantId: entry.TenantID}, Payload: data}
 	return envelope, nil
 }
 
@@ -229,7 +227,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 	if envelope == nil {
 		return fmt.Errorf("%w: nil security log envelope", ErrInvalidEntry)
 	}
-	if envelope.EventType != envelopeType {
+	if envelope.EventType != s.cfg.Subject {
 		return fmt.Errorf("%w: unexpected security log event type", ErrInvalidEntry)
 	}
 	var value payload
@@ -268,7 +266,7 @@ func (s *Service) consume(ctx context.Context, envelope *commonv1.EventEnvelope)
 }
 
 func (s *Service) validateConsumedEvent(envelope *commonv1.EventEnvelope, value payload) error {
-	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 || envelope.EventType != envelopeType || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
+	if envelope == nil || envelope.EventId == "" || len(envelope.EventId) > 64 || envelope.EventType != s.cfg.Subject || envelope.SchemaVersion != 1 || envelope.OccurredAt == nil || envelope.Context == nil {
 		return fmt.Errorf("%w: invalid security log envelope", ErrInvalidEntry)
 	}
 	if err := envelope.OccurredAt.CheckValid(); err != nil || !envelope.OccurredAt.AsTime().Equal(value.OccurredAt) {
