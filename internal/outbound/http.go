@@ -184,7 +184,7 @@ func (c *HTTPClient) doWithRetry(ctx context.Context, method, requestPath string
 		}
 		request.Header.Del("X-Request-ID")
 		request.Header.Del("Idempotency-Key")
-		if len(body) > 0 && request.Header.Get("Content-Type") == "" {
+		if (method == http.MethodPost || len(body) > 0) && request.Header.Get("Content-Type") == "" {
 			request.Header.Set("Content-Type", "application/json")
 		}
 		if id, ok := requestid.FromContext(ctx); ok {

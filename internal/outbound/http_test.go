@@ -29,6 +29,42 @@ func validHTTPUpstream(baseURL string) config.HTTPUpstream {
 	}
 }
 
+func TestHTTPClient_DefaultJSONContentTypeForEmptyPost(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("X-Observed-Content-Type", request.Header.Get("Content-Type"))
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewHTTPClient("test", validHTTPUpstream(server.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		method string
+		body   []byte
+		header http.Header
+		want   string
+	}{
+		{name: "empty POST", method: http.MethodPost, want: "application/json"},
+		{name: "JSON POST", method: http.MethodPost, body: []byte(`{}`), want: "application/json"},
+		{name: "explicit POST media type", method: http.MethodPost, header: http.Header{"Content-Type": []string{"application/problem+json"}}, want: "application/problem+json"},
+		{name: "empty GET", method: http.MethodGet},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response, err := client.Do(t.Context(), test.method, "/content-type", test.body, test.header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if got := response.Header.Get("X-Observed-Content-Type"); got != test.want {
+				t.Fatalf("Content-Type = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestHTTPClient_ConfiguredAuthenticationReplacesCallerHeader(t *testing.T) {
 	t.Parallel()
 	var authorization string
