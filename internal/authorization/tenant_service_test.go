@@ -1058,6 +1058,40 @@ func TestDeleteRoleLocksRoleBeforeRemovingMemberLinks(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDeleteRoleRollsBackWhenAffectedMemberVersionUpdateFails(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := &TenantAuthorizationService{db: db, transactor: database.NewTransactor(db)}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{
+		ID: "actor-1", Type: platformprincipal.TypeSystem, TenantID: "tenant-1", MembershipID: "member-1",
+	})
+	want := errors.New("membership update failed")
+	mock.ExpectQuery(`SELECT tr.id,tr.tenant_id.*FROM tenant_roles tr`).WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name"}).AddRow("role-1", "tenant-1", "Auditor"))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT permission_id FROM tenant_role_permissions`).WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_roles`).WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_memberships m JOIN tenants`).WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM tenant_administrators`).WithArgs("tenant-1", "member-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT g.permission_id FROM tenant_permission_grants`).WithArgs("tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"permission_id"}))
+	mock.ExpectExec(`UPDATE tenant_roles AS tr SET deleted_at=`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "role-1", int64(1)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE tenant_memberships SET updated_at=.*id IN \(SELECT membership_id FROM tenant_member_roles WHERE tenant_id=\? AND role_id=\? AND deleted_at IS NULL\)`).
+		WithArgs(sqlmock.AnyArg(), "actor-1", "tenant-1", "tenant-1", "role-1").
+		WillReturnError(want)
+	mock.ExpectRollback()
+	require.ErrorIs(t, service.DeleteRole(ctx, "role-1", 1), want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSetRolePermissionsReportsStaleVersion(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)

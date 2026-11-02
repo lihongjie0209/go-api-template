@@ -1613,6 +1613,13 @@ func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sql
 	if err := db.GetContext(ctx, &memberVersionBeforeRoleDeletion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil {
 		t.Fatalf("read member version before role deletion: %v", err)
 	}
+	if err := service.DeleteRole(adminCtx, role.ID, role.Version); !errors.Is(err, authorization.ErrTenantAuthorizationStaleVersion) {
+		t.Fatalf("stale role deletion error=%v", err)
+	}
+	var memberVersionAfterStaleDeletion int64
+	if err := db.GetContext(ctx, &memberVersionAfterStaleDeletion, db.Rebind(`SELECT version FROM tenant_memberships WHERE tenant_id=? AND id=? AND deleted_at IS NULL`), tenantID, targetMemberID); err != nil || memberVersionAfterStaleDeletion != memberVersionBeforeRoleDeletion {
+		t.Fatalf("stale role deletion changed member version=%d want=%d err=%v", memberVersionAfterStaleDeletion, memberVersionBeforeRoleDeletion, err)
+	}
 	if err := service.DeleteRole(adminCtx, role.ID, updated.Version); err != nil {
 		t.Fatalf("delete tenant role: %v", err)
 	}
