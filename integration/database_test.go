@@ -182,6 +182,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 				t.Fatal("generic template migration must not create a users table")
 			}
 			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
+			assertMandatoryAuditColumns(t, ctx, db, databaseType, migrationCfg.Table)
 			assertOutboxDeadListIndex(t, ctx, db, databaseType)
 			assertOutboxLegacyErrorProjection(t, ctx, db)
 			if databaseType == "postgres" {
