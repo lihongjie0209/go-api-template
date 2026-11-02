@@ -175,6 +175,25 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 		default:
 		}
 	})
+	t.Run("reject corrupt legacy dead letter", func(t *testing.T) {
+		const invalidID = "integration-corrupt-legacy-1"
+		now := time.Now()
+		err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,0,'',?,?,?,?,?,?,1)`)
+			_, err := tx.ExecContext(actorCtx, query, invalidID, "platform.integration.outbox.v1", []byte("corrupt"), "", "", now, "publish_failed", now, now, "integration-eventbus:test", now, "integration-eventbus:test")
+			return err
+		})
+		require.NoError(t, err)
+		repair := eventbus.NewRepairService(db, transactor)
+		require.ErrorIs(t, repair.Replay(actorCtx, invalidID, 1), eventbus.ErrRepairConflict)
+		var row struct {
+			DeadAt    sql.NullTime `db:"dead_at"`
+			Published sql.NullTime `db:"published_at"`
+		}
+		require.NoError(t, db.GetContext(ctx, &row, `SELECT dead_at,published_at FROM event_outbox WHERE id=$1`, invalidID))
+		require.True(t, row.DeadAt.Valid)
+		require.False(t, row.Published.Valid)
+	})
 }
 
 func startNATS(t *testing.T, ctx context.Context) string {

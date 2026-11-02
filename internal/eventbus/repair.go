@@ -100,8 +100,8 @@ func (s *RepairService) Replay(ctx context.Context, id string, version int64) er
 	}
 	return s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var record outboxRecord
-		query := tx.Rebind("SELECT id,subject,envelope FROM event_outbox WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL FOR UPDATE")
-		if err := tx.GetContext(ctx, &record, query, id, version); err != nil {
+		query := tx.Rebind("SELECT id,subject,envelope FROM event_outbox WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL AND OCTET_LENGTH(envelope)<=? FOR UPDATE")
+		if err := tx.GetContext(ctx, &record, query, id, version, maxOutboxEnvelopeBytes); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrRepairConflict
 			}

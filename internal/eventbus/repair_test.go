@@ -51,7 +51,7 @@ func TestRepairServiceReplayUsesAuditActorAndVersion(t *testing.T) {
 	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3)).
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3), maxOutboxEnvelopeBytes).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}).AddRow("event-1", "platform.event.v1", envelope))
 	mock.ExpectExec(`UPDATE event_outbox SET attempts=0`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "event-1", int64(3)).
@@ -73,7 +73,7 @@ func TestRepairServiceReplayRejectsDeterministicallyInvalidEvent(t *testing.T) {
 	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3)).
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3), maxOutboxEnvelopeBytes).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}).AddRow("event-1", "platform.event.v1", envelope))
 	mock.ExpectExec(`UPDATE event_outbox SET attempts=0.*last_error <> 'decode_failed'`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "event-1", int64(3)).
@@ -93,8 +93,25 @@ func TestRepairServiceReplayRejectsCorruptLegacyEnvelope(t *testing.T) {
 	ctx := platformprincipal.SystemContext(t.Context(), "operator")
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3)).
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3), maxOutboxEnvelopeBytes).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}).AddRow("event-1", "platform.event.v1", []byte("corrupt")))
+	mock.ExpectRollback()
+	require.ErrorIs(t, service.Replay(ctx, "event-1", 3), ErrRepairConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRepairServiceReplayRejectsOversizedEnvelopeBeforeLoading(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewRepairService(db, database.NewTransactor(db))
+	ctx := platformprincipal.SystemContext(t.Context(), "operator")
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox.*OCTET_LENGTH\(envelope\)<=\$3 FOR UPDATE`).
+		WithArgs("event-1", int64(3), maxOutboxEnvelopeBytes).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}))
 	mock.ExpectRollback()
 	require.ErrorIs(t, service.Replay(ctx, "event-1", 3), ErrRepairConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
