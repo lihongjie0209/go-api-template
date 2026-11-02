@@ -19,9 +19,11 @@ The next batched push at `8f6b474` passed integration in run `41409714856`,
 but verify failed on two `bodyclose` findings in new outbound HTTP tests;
 container was skipped. The follow-up push at `f071465` fixes those test
 cleanup paths and moves tracing ownership into Fx Start/Stop. Its integration,
-verify and container jobs passed in run `41411532321`. Later transport startup,
-lifecycle-budget and SQL tracing changes remain local until the next
-substantial CI batch.
+verify and container jobs passed in run `41411532321`. The next reliability
+batch covers transport startup privacy, independent lifecycle budgets, SQL
+tracing verification, CLI error privacy, application/tenant context boundaries
+and MySQL audit-actor pool safety. Local unit tests pass; CI validation is
+pending.
 
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,
