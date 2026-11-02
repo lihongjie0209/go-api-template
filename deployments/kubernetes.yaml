@@ -73,7 +73,7 @@ spec:
               app.kubernetes.io/name: go-api-template
       containers:
         - name: api
-          image: ghcr.io/lihongjie0209/go-api-template:main
+          image: ghcr.io/lihongjie0209/go-api-template:sha-0000000
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

@@ -1,4 +1,4 @@
-.PHONY: run build docker-build test test-race vet verify modules-check test-integration ci-test-integration integration-policy-check compose-check lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
+.PHONY: run build docker-build test test-race vet verify modules-check test-integration ci-test-integration integration-policy-check compose-check k8s-render-check lint fmt proto proto-lint proto-breaking proto-check swagger swagger-check migrate-up migrate-down dev-up dev-down dev-logs
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || echo unknown)
@@ -52,6 +52,9 @@ integration-policy-check:
 
 compose-check:
 	docker compose config --quiet
+
+k8s-render-check:
+	sh scripts/test-production-render.sh
 
 dev-up:
 	VERSION="$(VERSION)" COMMIT="$(COMMIT)" BUILD_TIME="$(BUILD_TIME)" docker compose up --build -d --wait

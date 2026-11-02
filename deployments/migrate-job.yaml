@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: go-api-template-migrate
+  generateName: go-api-template-migrate-
   namespace: microservices
   labels:
     app.kubernetes.io/name: go-api-template
@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: ghcr.io/lihongjie0209/go-api-template:main
+          image: ghcr.io/lihongjie0209/go-api-template:sha-0000000
           imagePullPolicy: IfNotPresent
           command: [/app/migrate]
           args: [-config, /app/config/config.yaml, -env, production, -direction, up]

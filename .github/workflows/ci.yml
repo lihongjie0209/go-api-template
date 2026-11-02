@@ -88,7 +88,9 @@ jobs:
           go vet ./...
       # microgen:template-only:end
       - name: Validate Kubernetes manifests
-        run: go run github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0 -strict -summary deployments/*.yaml
+        run: |
+          make k8s-render-check
+          go run github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0 -strict -summary deployments/*.yaml
 
   integration:
     runs-on: ubuntu-latest

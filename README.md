@@ -66,9 +66,11 @@ gRPC request messages are configurable up to 64 MiB (`grpc.max_receive_bytes`, 1
 
 After unit and integration tests pass, main-branch pushes publish `main` and `sha-*` image tags, and version-tag pushes publish version and `sha-*` tags to `ghcr.io/lihongjie0209/go-api-template`. CI builds `linux/amd64` and `linux/arm64` images with Git metadata, an SBOM, and build provenance. Pull requests run verification and integration tests without building or publishing an image. Batch local changes before pushing to avoid starting CI for each small edit.
 
-The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference, run the migration Job, and then deploy the service:
+The production baseline in `deployments/kubernetes.yaml` includes HTTP/gRPC Service ports, rolling updates, startup/liveness/readiness probes, resource limits, HPA, PDB, topology spreading, a restricted security context, and NetworkPolicy. Its image tag is deliberately a non-release placeholder. Select the image digest from a successful CI run after verifying that same digest in the test environment. Use it for both the migration Job and the application Deployment so they cannot resolve different builds. Create the Secret outside Git using `deployments/secret.example.yaml` as a field reference:
 
 ```bash
+set -euo pipefail
+export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
 kubectl create namespace microservices --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/app?sslmode=require' \
@@ -82,9 +84,9 @@ kubectl create secret generic go-api-template-tls --namespace microservices \
   --from-file=grpc-tls.crt='/secure/path/grpc-tls.crt' \
   --from-file=grpc-tls.key='/secure/path/grpc-tls.key' \
   --from-file=authorization-ca.crt='/secure/path/authorization-ca.crt'
-kubectl apply -f deployments/migrate-job.yaml
-kubectl wait --namespace microservices --for=condition=complete job/go-api-template-migrate --timeout=5m
-kubectl apply -f deployments/kubernetes.yaml
+migration_job=$(sh scripts/render-production-manifest.sh migration "$IMAGE_REF" | kubectl create -f - -o name)
+kubectl wait --namespace microservices --for=condition=complete "$migration_job" --timeout=5m
+sh scripts/render-production-manifest.sh application "$IMAGE_REF" | kubectl apply -f -
 ```
 
 Replace the example values through your secret manager in production. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
