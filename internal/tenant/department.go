@@ -25,9 +25,10 @@ import (
 var departmentCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,62}$`)
 
 const (
-	maxDepartmentNameLength = 256
-	maxDepartmentNodes      = 10000
-	maxDepartmentSortOrder  = 1_000_000_000
+	maxDepartmentNameLength  = 256
+	maxDepartmentNodes       = 10000
+	maxDepartmentSortOrder   = 1_000_000_000
+	maxDepartmentAssignments = 1000
 )
 
 type Department struct {
@@ -524,7 +525,7 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 		return err
 	}
 	departmentID = strings.TrimSpace(departmentID)
-	if departmentID == "" || len(departmentID) > maxTenantIDLength || version <= 0 || len(assignments) > 1000 {
+	if departmentID == "" || len(departmentID) > maxTenantIDLength || version <= 0 || len(assignments) > maxDepartmentAssignments {
 		return ErrInvalid
 	}
 	seen := make(map[string]struct{}, len(assignments))
@@ -566,45 +567,11 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 			if err := ensureDepartmentParent(ctx, tx, actor.TenantID, &departmentID); err != nil {
 				return err
 			}
-			if len(ids) > 0 {
-				query, args, inErr := sqlx.In(`SELECT count(*) FROM tenant_memberships WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL`, actor.TenantID, ids)
-				if inErr != nil {
-					return fmt.Errorf("build department member validation: %w", inErr)
-				}
-				var count int
-				if err := tx.GetContext(ctx, &count, tx.Rebind(query), args...); err != nil {
-					return err
-				}
-				if count != len(ids) {
-					return ErrInvalid
-				}
-			}
-			now := time.Now()
-			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND department_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, departmentID); err != nil {
+			if err := lockActiveDepartmentMembers(ctx, tx, actor.TenantID, ids); err != nil {
 				return err
 			}
-			for _, assignment := range assignments {
-				if assignment.IsPrimary {
-					if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=false,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND is_primary=true AND deleted_at IS NULL`), now, actor.ID, actor.TenantID, assignment.MembershipID); err != nil {
-						return err
-					}
-				}
-				var linkID string
-				findErr := tx.GetContext(ctx, &linkID, tx.Rebind(`SELECT id FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND membership_id=?`), actor.TenantID, departmentID, assignment.MembershipID)
-				switch {
-				case findErr == nil:
-					_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=?`), assignment.IsPrimary, now, actor.ID, actor.TenantID, linkID)
-				case errors.Is(findErr, sql.ErrNoRows):
-					_, err = tx.ExecContext(ctx, tx.Rebind(`INSERT INTO tenant_department_members(id,tenant_id,department_id,membership_id,is_primary,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), actor.TenantID, departmentID, assignment.MembershipID, assignment.IsPrimary, now, actor.ID, now, actor.ID)
-				default:
-					err = findErr
-				}
-				if err != nil {
-					if isUniqueViolation(err) {
-						return ErrConflict
-					}
-					return err
-				}
+			if err := syncDepartmentMembers(ctx, tx, actor.TenantID, departmentID, actor.ID, assignments, time.Now()); err != nil {
+				return err
 			}
 			securityEntry.SubjectName = departmentName
 			securityEntry.Succeeded = true
@@ -621,6 +588,120 @@ func (s *DepartmentService) SetMembers(ctx context.Context, departmentID string,
 		_ = s.security.Record(ctx, securityEntry)
 	}
 	return err
+}
+
+type departmentMemberLink struct {
+	ID           string `db:"id"`
+	MembershipID string `db:"membership_id"`
+	IsPrimary    bool   `db:"is_primary"`
+	Version      int64  `db:"version"`
+}
+
+func lockActiveDepartmentMembers(ctx context.Context, tx *sqlx.Tx, tenantID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	query, args, err := sqlx.In(`SELECT id FROM tenant_memberships WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL ORDER BY id FOR UPDATE`, tenantID, ids)
+	if err != nil {
+		return ErrInvalid
+	}
+	active := []string{}
+	if err := tx.SelectContext(ctx, &active, tx.Rebind(query), args...); err != nil {
+		return err
+	}
+	if len(active) != len(ids) {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func syncDepartmentMembers(ctx context.Context, tx *sqlx.Tx, tenantID, departmentID, actorID string, assignments []DepartmentMemberAssignment, now time.Time) error {
+	current := []departmentMemberLink{}
+	query := tx.Rebind(`SELECT id,membership_id,is_primary,version FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND deleted_at IS NULL ORDER BY membership_id,id LIMIT 1001 FOR UPDATE`)
+	if err := tx.SelectContext(ctx, &current, query, tenantID, departmentID); err != nil {
+		return err
+	}
+	if len(current) > maxDepartmentAssignments {
+		return ErrConflict
+	}
+	wanted := make(map[string]DepartmentMemberAssignment, len(assignments))
+	primaryIDs := make([]string, 0, len(assignments))
+	for _, assignment := range assignments {
+		wanted[assignment.MembershipID] = assignment
+		if assignment.IsPrimary {
+			primaryIDs = append(primaryIDs, assignment.MembershipID)
+		}
+	}
+	active := make(map[string]departmentMemberLink, len(current))
+	for _, link := range current {
+		if _, exists := active[link.MembershipID]; exists {
+			return ErrConflict
+		}
+		active[link.MembershipID] = link
+		if _, keep := wanted[link.MembershipID]; keep {
+			continue
+		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actorID, now, actorID, tenantID, link.ID, link.Version)
+		if err := requireDepartmentMemberWrite(result, err); err != nil {
+			return err
+		}
+	}
+	if len(primaryIDs) > 0 {
+		query, args, err := sqlx.In(`UPDATE tenant_department_members SET is_primary=false,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id IN (?) AND department_id<>? AND is_primary=true AND deleted_at IS NULL`, now, actorID, tenantID, primaryIDs, departmentID)
+		if err != nil {
+			return ErrInvalid
+		}
+		if _, err := tx.ExecContext(ctx, tx.Rebind(query), args...); err != nil {
+			return err
+		}
+	}
+	for _, assignment := range assignments {
+		if link, exists := active[assignment.MembershipID]; exists {
+			if link.IsPrimary == assignment.IsPrimary {
+				continue
+			}
+			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), assignment.IsPrimary, now, actorID, tenantID, link.ID, link.Version)
+			if err := requireDepartmentMemberWrite(result, err); err != nil {
+				return err
+			}
+			continue
+		}
+		var historical departmentMemberLink
+		query := tx.Rebind(`SELECT id,membership_id,is_primary,version FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND membership_id=? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC,id DESC LIMIT 1 FOR UPDATE`)
+		err := tx.GetContext(ctx, &historical, query, tenantID, departmentID, assignment.MembershipID)
+		switch {
+		case err == nil:
+			result, updateErr := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_department_members SET is_primary=?,deleted_at=NULL,deleted_by=NULL,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NOT NULL`), assignment.IsPrimary, now, actorID, tenantID, historical.ID, historical.Version)
+			if err := requireDepartmentMemberWrite(result, updateErr); err != nil {
+				return err
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			result, insertErr := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO tenant_department_members(id,tenant_id,department_id,membership_id,is_primary,created_at,created_by,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,?,1)`), uuid.NewString(), tenantID, departmentID, assignment.MembershipID, assignment.IsPrimary, now, actorID, now, actorID)
+			if err := requireDepartmentMemberWrite(result, insertErr); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
+func requireDepartmentMemberWrite(result sql.Result, err error) error {
+	if isUniqueViolation(err) {
+		return ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func claimDepartmentAssignmentVersion(ctx context.Context, tx *sqlx.Tx, tenantID, departmentID string, version int64, actorID string, scope datapermission.SQLPredicate) (string, error) {

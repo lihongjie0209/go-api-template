@@ -516,11 +516,6 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 			return err
 		}
 		now := time.Now()
-		for _, table := range []string{"tenant_member_roles", "tenant_department_members", "tenant_administrators"} {
-			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id); err != nil {
-				return err
-			}
-		}
 		args := append([]any{now, actor.ID, now, actor.ID, actor.TenantID, id, version}, scope.Args...)
 		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_memberships AS tm SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tm.tenant_id=? AND tm.id=? AND tm.version=? AND tm.deleted_at IS NULL AND `+scope.Clause), args...)
 		if err != nil {
@@ -532,6 +527,11 @@ func (s *MembershipService) Remove(ctx context.Context, id string, version int64
 		}
 		if rows != 1 {
 			return ErrStaleVersion
+		}
+		for _, table := range []string{"tenant_member_roles", "tenant_department_members", "tenant_administrators"} {
+			if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, id); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

@@ -3696,19 +3696,53 @@ func testTenantLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	if err := departments.SetMembers(departmentCtx, child.ID, child.Version, []tenant.DepartmentMemberAssignment{{MembershipID: membershipID, IsPrimary: true}}); err != nil {
 		t.Fatal(err)
 	}
+	var assignedBefore, assignedAfter struct {
+		ID        string    `db:"id"`
+		Version   int64     `db:"version"`
+		UpdatedAt time.Time `db:"updated_at"`
+	}
+	assignmentQuery := db.Rebind(`SELECT id,version,updated_at FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND membership_id=? AND deleted_at IS NULL`)
+	if err := db.GetContext(departmentCtx, &assignedBefore, assignmentQuery, created.ID, child.ID, membershipID); err != nil {
+		t.Fatal(err)
+	}
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+1, []tenant.DepartmentMemberAssignment{{MembershipID: membershipID, IsPrimary: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.GetContext(departmentCtx, &assignedAfter, assignmentQuery, created.ID, child.ID, membershipID); err != nil {
+		t.Fatal(err)
+	}
+	if assignedAfter.ID != assignedBefore.ID || assignedAfter.Version != assignedBefore.Version || !assignedAfter.UpdatedAt.Equal(assignedBefore.UpdatedAt) {
+		t.Fatalf("unchanged department assignment was rewritten: before=%+v after=%+v", assignedBefore, assignedAfter)
+	}
 	if err := departments.Delete(departmentCtx, child.ID, child.Version); !errors.Is(err, tenant.ErrConflict) {
 		t.Fatalf("delete assigned department error=%v", err)
 	}
-	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+1, nil); err != nil {
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := departments.Delete(departmentCtx, child.ID, child.Version); !errors.Is(err, tenant.ErrStaleVersion) {
 		t.Fatalf("stale department delete error=%v", err)
 	}
-	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+1, nil); !errors.Is(err, tenant.ErrStaleVersion) {
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+2, nil); !errors.Is(err, tenant.ErrStaleVersion) {
 		t.Fatalf("stale department assignment error=%v", err)
 	}
-	if err := departments.Delete(departmentCtx, child.ID, child.Version+2); err != nil {
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+3, []tenant.DepartmentMemberAssignment{{MembershipID: membershipID, IsPrimary: true}}); err != nil {
+		t.Fatalf("restore department assignment: %v", err)
+	}
+	var assignedRestored struct {
+		ID      string `db:"id"`
+		Version int64  `db:"version"`
+	}
+	if err := db.GetContext(departmentCtx, &assignedRestored, db.Rebind(`SELECT id,version FROM tenant_department_members WHERE tenant_id=? AND department_id=? AND membership_id=? AND deleted_at IS NULL`), created.ID, child.ID, membershipID); err != nil {
+		t.Fatal(err)
+	}
+	if assignedRestored.ID != assignedBefore.ID || assignedRestored.Version <= assignedBefore.Version {
+		t.Fatalf("department assignment history was not restored: before=%+v restored=%+v", assignedBefore, assignedRestored)
+	}
+	if err := departments.SetMembers(departmentCtx, child.ID, child.Version+4, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := departments.Delete(departmentCtx, child.ID, child.Version+5); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := departments.DeleteTarget(departmentCtx, child.ID); !errors.Is(err, tenant.ErrNotFound) {

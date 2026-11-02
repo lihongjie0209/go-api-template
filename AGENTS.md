@@ -842,6 +842,13 @@ deleted_by text
   metadata. Physical deletes from audited tables are forbidden.
 - Update, delete, and state-transition SQL must include the expected version in
   its predicate. Zero affected rows map to the shared version-conflict error.
+- Replacing an association set must preserve unchanged active links and their
+  audit versions. Soft-delete only removed links; update only changed links.
+  When restoring a historical link, select a deleted row deterministically,
+  guard the restore with its version, and check one affected row. Lock active
+  parent/member rows before association rows in a consistent order across
+  competing mutations; a count query alone does not keep them active until
+  commit.
 - Mutation pre-reads must load authoritative rows without remote presentation
   enrichment. For create/update responses, read the resulting row inside the
   write transaction before commit so a failed read rolls back rather than
