@@ -2604,6 +2604,22 @@ func testManagedAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sq
 	if err != nil || platformOptions.Total != 1 || len(platformOptions.Items) != 1 || platformOptions.Items[0].ID != grantPermission.ID {
 		t.Fatalf("platform permission options=%+v err=%v", platformOptions, err)
 	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id=? AND deleted_at IS NULL`), grantPermission.ID, primaryActionID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("remove platform permission primary link: %v", err)
+	}
+	platformWithSecondary, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.platform.catalog.read"}})
+	if err != nil || platformWithSecondary.Total != 1 || len(platformWithSecondary.Items) != 1 || platformWithSecondary.Items[0].ID != grantPermission.ID {
+		t.Fatalf("platform secondary action did not retain grantability: options=%+v err=%v", platformWithSecondary, err)
+	}
+	if err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		_, execErr := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=NULL,deleted_by=NULL WHERE permission_id=? AND action_id=? AND deleted_at IS NOT NULL`), grantPermission.ID, primaryActionID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("restore platform permission primary link: %v", err)
+	}
 	tenantOptions, err := grants.PageGrantablePermissions(actorCtx, authorization.PlatformGrantablePermissionPageInput{Request: pagination.Request{Keyword: "integration.permissions.read"}})
 	if err != nil || tenantOptions.Total != 0 || len(tenantOptions.Items) != 0 {
 		t.Fatalf("tenant permission leaked into platform options=%+v err=%v", tenantOptions, err)
