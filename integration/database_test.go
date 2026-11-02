@@ -68,6 +68,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type integrationLifecycleLocker struct{}
@@ -188,7 +189,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			assertOutboxDeadListIndex(t, ctx, db, databaseType)
 			assertPlatformPermissionReferenceIndex(t, ctx, db, databaseType)
 			assertTenantSelectionIndex(t, ctx, db, databaseType)
-			assertOutboxLegacyErrorProjection(t, ctx, db)
+			assertOutboxRepairCompatibility(t, ctx, db)
 			if databaseType == "postgres" {
 				assertPostgresOutboxCleanupIndexes(t, ctx, db)
 				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
@@ -335,15 +336,16 @@ func assertTenantSelectionIndex(t *testing.T, ctx context.Context, db *sqlx.DB, 
 	}
 }
 
-func assertOutboxLegacyErrorProjection(t *testing.T, ctx context.Context, db *sqlx.DB) {
+func assertOutboxRepairCompatibility(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
+	repair := eventbus.NewRepairService(db, appdb.NewTransactor(db))
+	actorCtx := platformprincipal.SystemContext(ctx, "outbox-legacy-integration")
 	for _, test := range []struct{ name, lastError string }{
 		{name: "secret", lastError: "bearer secret-value " + strings.Repeat("x", 32<<10)},
 		{name: "padded", lastError: "decode_failed" + strings.Repeat(" ", 32<<10)},
 	} {
 		id := "legacy-outbox-" + test.name + "-" + uuid.NewString()
 		now := time.Now()
-		actorCtx := platformprincipal.SystemContext(ctx, "outbox-legacy-integration")
 		err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
 			query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'',?,?,?,?,?,?,1)`)
 			_, err := tx.ExecContext(actorCtx, query, id, "platform.integration.legacy.v1", []byte{}, "", "", now, 3, test.lastError, now, now, "outbox-legacy-integration", now, "outbox-legacy-integration")
@@ -352,10 +354,62 @@ func assertOutboxLegacyErrorProjection(t *testing.T, ctx context.Context, db *sq
 		if err != nil {
 			t.Fatalf("insert %s legacy dead outbox event: %v", test.name, err)
 		}
-		page, err := eventbus.NewRepairService(db, appdb.NewTransactor(db)).Dead(actorCtx, pagination.Request{Keyword: id})
+		page, err := repair.Dead(actorCtx, pagination.Request{Keyword: id})
 		if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != id || page.Items[0].LastError != "legacy_failure" {
 			t.Fatalf("%s legacy dead outbox projection: page=%+v err=%v", test.name, page, err)
 		}
+		if err := repair.Replay(actorCtx, id, page.Items[0].Version); !errors.Is(err, eventbus.ErrRepairConflict) {
+			t.Fatalf("%s corrupt legacy event replay = %v, want conflict", test.name, err)
+		}
+	}
+	oversizedID := "oversized-outbox-" + uuid.NewString()
+	now := time.Now()
+	err := appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'',?,?,?,?,?,?,1)`)
+		_, err := tx.ExecContext(actorCtx, query, oversizedID, "platform.integration.replay.v1", bytes.Repeat([]byte("x"), (1<<20)+1), "", "", now, 3, "publish_failed", now, now, "outbox-legacy-integration", now, "outbox-legacy-integration")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repair.Replay(actorCtx, oversizedID, 1); !errors.Is(err, eventbus.ErrRepairConflict) {
+		t.Fatalf("oversized dead event replay = %v, want conflict", err)
+	}
+	id := "replayable-outbox-" + uuid.NewString()
+	envelope, err := proto.Marshal(&commonv1.EventEnvelope{
+		EventId: id, EventType: "platform.integration.replay.v1", AggregateType: "integration", SchemaVersion: 1, OccurredAt: timestamppb.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = time.Now()
+	err = appdb.NewTransactor(db).Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+		query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,dead_at,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'',?,?,?,?,?,?,1)`)
+		_, err := tx.ExecContext(actorCtx, query, id, "platform.integration.replay.v1", envelope, "", "", now, 3, "publish_failed", now, now, "outbox-legacy-integration", now, "outbox-legacy-integration")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayCtx := platformprincipal.SystemContext(ctx, "outbox-replay-operator")
+	if err := repair.Replay(replayCtx, id, 1); err != nil {
+		t.Fatalf("replay valid dead event: %v", err)
+	}
+	if err := repair.Replay(replayCtx, id, 1); !errors.Is(err, eventbus.ErrRepairConflict) {
+		t.Fatalf("replay already scheduled event = %v, want conflict", err)
+	}
+	var row struct {
+		Attempts  int64        `db:"attempts"`
+		DeadAt    sql.NullTime `db:"dead_at"`
+		LastError string       `db:"last_error"`
+		UpdatedBy string       `db:"updated_by"`
+		Version   int64        `db:"version"`
+	}
+	if err := db.GetContext(ctx, &row, db.Rebind(`SELECT attempts,dead_at,last_error,updated_by,version FROM event_outbox WHERE id=?`), id); err != nil {
+		t.Fatal(err)
+	}
+	if row.Attempts != 0 || row.DeadAt.Valid || row.LastError != "" || row.UpdatedBy != "outbox-replay-operator" || row.Version != 2 {
+		t.Fatalf("replayed row = %+v", row)
 	}
 }
 
