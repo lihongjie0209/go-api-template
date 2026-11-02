@@ -195,6 +195,12 @@ and post-callback lock loss. The same CI run verified this change.
 
 ## Object storage and file audit decisions
 
+Object-store construction now uses the configured bounded provider timeout,
+including S3 credential-chain loading. Enabled storage cannot silently return
+an empty client, and a late success after the startup deadline is rejected.
+The service-local app test proves these constructor boundaries without network
+access; CI revalidation is pending.
+
 | Concern | Current decision and evidence |
 | --- | --- |
 | Provider abstraction | `objectstorage.Store` is provider-neutral and the first adapters use the official AWS SDK v2 and Alibaba Cloud OSS SDK v2. Business file code depends only on the interface. Provider, bucket, region, endpoint and credentials are configuration-layer concerns; production custom endpoints require HTTPS and credential pairs are validated. |

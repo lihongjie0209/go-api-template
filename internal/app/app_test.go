@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/files"
+	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
 	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
@@ -41,6 +42,27 @@ func TestInfrastructureStartupErrorsAreSafe(t *testing.T) {
 		t.Fatal("unsupported object storage started")
 	} else {
 		assertStartupReason(t, err, "object_storage_startup_failed")
+	}
+}
+
+func TestObjectStorageStartupIsBoundedAndRejectsMissingStore(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{ObjectStorage: config.ObjectStorage{Enabled: true, Timeout: 20 * time.Millisecond}}
+	store, err := newObjectStorageWithFactory(cfg, nil, func(ctx context.Context, _ config.ObjectStorage) (objectstorage.Store, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("object storage constructor received no deadline")
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	if store != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("object storage constructor after deadline = store:%v error:%v", store, err)
+	}
+	store, err = newObjectStorageWithFactory(cfg, nil, func(context.Context, config.ObjectStorage) (objectstorage.Store, error) {
+		return nil, nil
+	})
+	if store != nil || !errors.Is(err, errObjectStorageStartupFailed) {
+		t.Fatalf("missing object storage client accepted: store:%v error:%v", store, err)
 	}
 }
 

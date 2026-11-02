@@ -236,9 +236,24 @@ func newLocker(client *redis.Client, cfg config.Config, metrics *observability.M
 }
 
 func newObjectStorage(cfg config.Config, metrics *observability.Metrics) (objectstorage.Store, error) {
-	store, err := objectstorage.New(context.Background(), cfg.ObjectStorage)
+	return newObjectStorageWithFactory(cfg, metrics, objectstorage.New)
+}
+
+func newObjectStorageWithFactory(cfg config.Config, metrics *observability.Metrics, factory func(context.Context, config.ObjectStorage) (objectstorage.Store, error)) (objectstorage.Store, error) {
+	if !cfg.ObjectStorage.Enabled {
+		return nil, nil
+	}
+	startupCtx, cancel := context.WithTimeout(context.Background(), cfg.ObjectStorage.Timeout)
+	defer cancel()
+	store, err := factory(startupCtx, cfg.ObjectStorage)
 	if err != nil {
 		return nil, observability.SafeError(err, errObjectStorageStartupFailed)
+	}
+	if err := startupCtx.Err(); err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, errObjectStorageStartupFailed
 	}
 	store = objectstorage.WithTimeout(store, cfg.ObjectStorage.Timeout)
 	return objectstorage.Observe(store, metrics, cfg.ObjectStorage.Provider), nil
