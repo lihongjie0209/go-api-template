@@ -28,6 +28,7 @@ var (
 	ErrPolicyConflict               = errors.New("data permission: policy conflict")
 	ErrVersionNotDraft              = errors.New("data permission: version is not draft")
 	ErrPolicyScope                  = errors.New("data permission: policy scope denied")
+	ErrPolicySnapshotTooLarge       = errors.New("data permission: published policy snapshot exceeds maximum")
 	errActorResolutionFailed        = errors.New("data_permission_actor_resolution_failed")
 	errCommittedPolicyRefreshFailed = errors.New("committed_policy_refresh_failed")
 )
@@ -160,30 +161,59 @@ func (r *Repository) LoadAllPublished(ctx context.Context) ([]Policy, error) {
 }
 
 func loadAllPublished(ctx context.Context, queryer sqlx.QueryerContext) ([]Policy, error) {
-	rows := []struct {
-		Code, Scope, Document string
-		TenantID              sql.NullString `db:"tenant_id"`
-	}{}
+	return loadAllPublishedWithLimits(ctx, queryer, maxPublishedPolicyRows, maxPublishedPolicyDocumentBytes)
+}
+
+const (
+	maxPublishedPolicyRows          = 10_000
+	maxPublishedPolicyDocumentBytes = 128 << 20
+)
+
+func loadAllPublishedWithLimits(ctx context.Context, queryer sqlx.QueryerContext, maxRows, maxBytes int) ([]Policy, error) {
+	if maxRows <= 0 || maxBytes <= 0 {
+		return nil, ErrPolicySnapshotTooLarge
+	}
 	query := `SELECT p.code,p.scope,p.tenant_id,v.document FROM data_permission_policies p
 		JOIN data_permission_policy_versions v ON v.policy_id=p.id AND v.version_number=p.published_version_number
 		 AND v.status='published' AND v.deleted_at IS NULL
 		LEFT JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL
 		WHERE p.status='active' AND p.deleted_at IS NULL
 		 AND (p.scope='global' OR (p.scope='tenant' AND t.id IS NOT NULL))
-		ORDER BY p.scope,COALESCE(p.tenant_id,''),p.code`
-	if err := sqlx.SelectContext(ctx, queryer, &rows, query); err != nil {
+		ORDER BY p.scope,COALESCE(p.tenant_id,''),p.code LIMIT ` + fmt.Sprint(maxRows+1)
+	rows, err := queryer.QueryContext(ctx, query)
+	if err != nil {
 		return nil, fmt.Errorf("load published data policies: %w", err)
 	}
-	policies := make([]Policy, 0, len(rows))
-	for _, row := range rows {
-		policy, err := ParsePolicy([]byte(row.Document))
+	defer func() { _ = rows.Close() }()
+	policies := make([]Policy, 0)
+	usedBytes := 0
+	for rows.Next() {
+		var code, scope, document string
+		var tenantID sql.NullString
+		if err := rows.Scan(&code, &scope, &tenantID, &document); err != nil {
+			return nil, fmt.Errorf("scan published data policy: %w", err)
+		}
+		if len(policies) >= maxRows || len(document) > maxBytes-usedBytes {
+			return nil, ErrPolicySnapshotTooLarge
+		}
+		usedBytes += len(document)
+		policy, err := ParsePolicy([]byte(document))
 		if err != nil {
 			return nil, err
 		}
-		if policy.Metadata.Code != row.Code || string(policy.Scope.Type) != row.Scope || policy.Scope.TenantID != row.TenantID.String {
+		if policy.Metadata.Code != code || string(policy.Scope.Type) != scope || policy.Scope.TenantID != tenantID.String {
 			return nil, ErrInvalidPolicy
 		}
 		policies = append(policies, policy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read published data policies: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close published data policies: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return policies, nil
 }

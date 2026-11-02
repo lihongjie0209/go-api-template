@@ -329,6 +329,9 @@ TTL, and invalidation for its own data.
 - Subject role and department projections used by data permission must each
   use a bounded SQL result and fail closed on overflow; a small capability
   request must not load unlimited associations for one member.
+- Published data-permission snapshot loads must stream rows with both a row
+  limit and an aggregate document-byte budget. A limit or read/close failure
+  must reject the replacement; never publish a partial policy snapshot.
 - Every HTTP route and gRPC method must bind an explicit authorization
   descriptor in the same code registration call: public/internal/authenticated
   mode, canonical resource, action, and whether data permission is required.

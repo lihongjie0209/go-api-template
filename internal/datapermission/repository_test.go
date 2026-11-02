@@ -1,6 +1,7 @@
 package datapermission
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -38,6 +39,55 @@ func TestLoadPublishedPoliciesRequiresLiveTenantForTenantScope(t *testing.T) {
 	require.Equal(t, PolicyScopeGlobal, policies[0].Scope.Type)
 	require.Equal(t, PolicyScopeTenant, policies[1].Scope.Type)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLoadPublishedPoliciesBoundsDatabaseResult(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	mock.ExpectQuery(`(?s)SELECT p.code,p.scope,p.tenant_id,v.document.*LIMIT 10001`).
+		WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}))
+	policies, err := NewRepository(sqlx.NewDb(raw, "sqlmock")).LoadAllPublished(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, policies)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLoadPublishedPoliciesRejectsRowAndByteOverflow(t *testing.T) {
+	document := func(code string) string {
+		data, err := MarshalPolicy(Policy{
+			APIVersion: PolicyAPIVersion, Kind: PolicyKind,
+			Metadata: PolicyMetadata{Code: code, Name: code},
+			Scope:    PolicyBoundary{Type: PolicyScopeGlobal},
+			Spec:     PolicySpec{Resource: "tenant.member", Actions: []string{"read"}, Effect: EffectAllow},
+		})
+		require.NoError(t, err)
+		return string(data)
+	}
+	first, second := document("first"), document("second")
+	for _, test := range []struct {
+		name     string
+		maxRows  int
+		maxBytes int
+		limit    int
+	}{
+		{name: "rows", maxRows: 1, maxBytes: 1 << 20, limit: 2},
+		{name: "bytes", maxRows: 2, maxBytes: len(first) + len(second) - 1, limit: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = raw.Close() })
+			mock.ExpectQuery(`(?s)SELECT p.code,p.scope,p.tenant_id,v.document.*LIMIT ` + fmt.Sprint(test.limit)).
+				WillReturnRows(sqlmock.NewRows([]string{"code", "scope", "tenant_id", "document"}).
+					AddRow("first", "global", nil, first).
+					AddRow("second", "global", nil, second)).RowsWillBeClosed()
+			policies, err := loadAllPublishedWithLimits(t.Context(), sqlx.NewDb(raw, "sqlmock"), test.maxRows, test.maxBytes)
+			require.ErrorIs(t, err, ErrPolicySnapshotTooLarge)
+			require.Empty(t, policies)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestRepositoryRevisionIncludesPolicyTenantChanges(t *testing.T) {
