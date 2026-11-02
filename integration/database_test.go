@@ -2305,6 +2305,34 @@ func testPermissionLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) str
 	if err != nil || converted.NodeType != "permission" || converted.Version != leafGroup.Version+1 {
 		t.Fatalf("convert leaf group to permission=%+v err=%v", converted, err)
 	}
+	primaryActions, err := service.GetActions(actorCtx, converted.ID)
+	if err != nil || len(primaryActions) != 1 {
+		t.Fatalf("converted permission primary actions=%+v err=%v", primaryActions, err)
+	}
+	var secondaryActionID string
+	if err := db.GetContext(ctx, &secondaryActionID, db.Rebind(`SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?`), "tenant.member", "read"); err != nil {
+		t.Fatal(err)
+	}
+	converted, err = service.SetActions(actorCtx, converted.ID, converted.Version, []string{primaryActions[0].ID, secondaryActionID})
+	if err != nil {
+		t.Fatalf("add secondary action before node conversion: %v", err)
+	}
+	convertedGroup, err := service.Update(actorCtx, converted.ID, converted.Version, permission.Input{ParentID: &group.ID, Key: converted.Key, Name: converted.Name, NodeType: "group", Status: "active"})
+	if err != nil || convertedGroup.NodeType != "group" {
+		t.Fatalf("convert permission to group: record=%+v err=%v", convertedGroup, err)
+	}
+	var activeGroupLinks int
+	if err := db.GetContext(ctx, &activeGroupLinks, db.Rebind(`SELECT count(*) FROM permission_resource_actions WHERE permission_id=? AND deleted_at IS NULL`), converted.ID); err != nil || activeGroupLinks != 0 {
+		t.Fatalf("group retained permission links: count=%d err=%v", activeGroupLinks, err)
+	}
+	converted, err = service.Update(actorCtx, convertedGroup.ID, convertedGroup.Version, permission.Input{ParentID: &group.ID, Key: convertedGroup.Key, Name: convertedGroup.Name, NodeType: "permission", Resource: "integration.permissions", Action: "read", Status: "active"})
+	if err != nil {
+		t.Fatalf("convert group back to permission: %v", err)
+	}
+	primaryActions, err = service.GetActions(actorCtx, converted.ID)
+	if err != nil || len(primaryActions) != 1 || primaryActions[0].ID == secondaryActionID {
+		t.Fatalf("old secondary action returned after node conversion: actions=%+v err=%v", primaryActions, err)
+	}
 
 	return leaf.ID
 }

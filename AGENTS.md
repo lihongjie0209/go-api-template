@@ -389,7 +389,9 @@ TTL, and invalidation for its own data.
   granted merely because the seed was updated. An otherwise identical seed
   must verify its active primary link from the database and repair a missing
   link transactionally, incrementing the permission version and recording the
-  change. The data-policy revision and
+  change. Converting a permission node between group and permission types
+  must soft-delete all old action links before attaching the new primary
+  action; group nodes must not retain effective links. The data-policy revision and
   every row-action decision in a batch must use one pinned immutable policy
   snapshot, even during a concurrent refresh; a failed authoritative grant
   read fails closed. A failed

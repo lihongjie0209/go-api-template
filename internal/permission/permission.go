@@ -604,7 +604,11 @@ func (s *Service) Seed(ctx context.Context, input Input) (Record, bool, error) {
 		if rows != 1 {
 			return ErrConflict
 		}
-		if current.Resource != input.Resource || current.Action != input.Action {
+		if current.NodeType != input.NodeType {
+			if err := deactivateAllPermissionLinks(ctx, tx, id); err != nil {
+				return err
+			}
+		} else if current.Resource != input.Resource || current.Action != input.Action {
 			if err := deactivatePrimaryLink(ctx, tx, id, current.Resource, current.Action); err != nil {
 				return err
 			}
@@ -769,7 +773,7 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		if current.IsSystem {
 			return ErrConflict
 		}
-		if current.NodeType == "permission" && (current.Resource != input.Resource || current.Action != input.Action) {
+		if current.NodeType == "permission" && input.NodeType == "permission" && (current.Resource != input.Resource || current.Action != input.Action) {
 			oldScope, err := primaryActionScope(ctx, tx, current.Resource, current.Action)
 			if err != nil {
 				return err
@@ -797,10 +801,16 @@ func (s *Service) Update(ctx context.Context, id string, version int64, input In
 		if n != 1 {
 			return ErrStaleVersion
 		}
-		if current.Resource != input.Resource || current.Action != input.Action {
+		if current.NodeType != input.NodeType {
+			if err := deactivateAllPermissionLinks(ctx, tx, id); err != nil {
+				return err
+			}
+		} else if current.Resource != input.Resource || current.Action != input.Action {
 			if err := deactivatePrimaryLink(ctx, tx, id, current.Resource, current.Action); err != nil {
 				return err
 			}
+		}
+		if current.NodeType != input.NodeType || current.Resource != input.Resource || current.Action != input.Action {
 			if err := syncPrimaryLink(ctx, tx, id, input.Resource, input.Action, a); err != nil {
 				return err
 			}
@@ -877,6 +887,11 @@ func deactivatePrimaryLink(ctx context.Context, tx *sqlx.Tx, permissionID, resou
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND action_id IN (SELECT a.id FROM authorization_resource_actions a JOIN authorization_resources r ON r.id=a.resource_id WHERE r.resource_key=? AND a.action_key=?) AND deleted_at IS NULL`), permissionID, resource, action)
+	return err
+}
+
+func deactivateAllPermissionLinks(ctx context.Context, tx *sqlx.Tx, permissionID string) error {
+	_, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=? AND deleted_at IS NULL`), permissionID)
 	return err
 }
 

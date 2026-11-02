@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"io"
@@ -122,6 +123,40 @@ func TestPermissionUpdatePropagatesNewActionScopeLookupFailure(t *testing.T) {
 	_, err = service.Update(ctx, id, 1, Input{Key: "platform.user.update", Name: "Update user", NodeType: "permission", Resource: "identity.user", Action: "update", Status: "active"})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NotErrorIs(t, err, ErrInvalid)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPermissionToGroupConversionRetiresAllActionLinks(t *testing.T) {
+	t.Parallel()
+	id := "08896c3a-4c82-473e-90c8-b59f60446139"
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "sqlmock")
+	service := New(NewRepository(db), database.NewTransactor(db), nil, nil, nil, nil, nil)
+	currentColumns := strings.Split(columns, ", ")
+	now := time.Now()
+	currentValues := []driver.Value{id, nil, "platform.user.read", "Read users", "permission", "identity.user", "read", "", 0, "active", false, now, "creator", now, "updater", 4}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(currentColumns).AddRow(currentValues...))
+	mock.ExpectQuery(`SELECT .* FROM permissions WHERE deleted_at IS NULL ORDER BY`).
+		WillReturnRows(sqlmock.NewRows(currentColumns).AddRow(currentValues...))
+	mock.ExpectExec(`UPDATE permissions SET parent_id=\?`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=\? AND deleted_at IS NULL`).
+		WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 2))
+	updatedValues := append([]driver.Value{}, currentValues...)
+	updatedValues[4] = "group"
+	updatedValues[5] = ""
+	updatedValues[6] = ""
+	updatedValues[15] = int64(5)
+	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).
+		WillReturnRows(sqlmock.NewRows(append(append([]string{}, currentColumns...), "parent_name")).AddRow(append(updatedValues, "")...))
+	mock.ExpectCommit()
+	updated, err := service.Update(platformprincipal.SystemContext(t.Context(), "admin"), id, 4, Input{Key: "platform.user.read", Name: "Read users", NodeType: "group", Status: "active"})
+	require.NoError(t, err)
+	require.Equal(t, "group", updated.NodeType)
+	require.EqualValues(t, 5, updated.Version)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
