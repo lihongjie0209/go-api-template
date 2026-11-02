@@ -7,10 +7,12 @@ import (
 
 	"github.com/lihongjie0209/go-api-template/internal/background"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"go.uber.org/fx"
 )
 
-var ErrStartupUnavailable = errors.New("event bus startup unavailable")
+var ErrStartupUnavailable = errors.New("event_bus_startup_unavailable")
+var errShutdownUnavailable = errors.New("event_bus_shutdown_unavailable")
 
 func newBus(lifecycle fx.Lifecycle, cfg config.Config) (*Bus, error) {
 	return newBusWithFactory(lifecycle, cfg, New)
@@ -33,7 +35,7 @@ func newBusWithFactory(lifecycle fx.Lifecycle, cfg config.Config, factory func(c
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, context.DeadlineExceeded
 		}
-		return nil, ErrStartupUnavailable
+		return nil, observability.SafeError(err, ErrStartupUnavailable)
 	}
 	if err := startupCtx.Err(); err != nil {
 		if bus != nil {
@@ -42,9 +44,9 @@ func newBusWithFactory(lifecycle fx.Lifecycle, cfg config.Config, factory func(c
 		return nil, err
 	}
 	if bus == nil {
-		return nil, ErrStartupUnavailable
+		return nil, observability.SafeError(ErrStartupUnavailable, ErrStartupUnavailable)
 	}
-	lifecycle.Append(fx.StopHook(func() error { return Close(bus) }))
+	lifecycle.Append(fx.StopHook(func() error { return observability.SafeError(Close(bus), errShutdownUnavailable) }))
 	return bus, nil
 }
 

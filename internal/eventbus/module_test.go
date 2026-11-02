@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 )
 
 func TestNewBusBoundsStreamProvisioning(t *testing.T) {
@@ -40,6 +41,9 @@ func TestNewBusDoesNotExposeConnectionDetails(t *testing.T) {
 	})
 	if bus != nil || !errors.Is(err, ErrStartupUnavailable) || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("unsafe event bus startup result: bus=%v error=%v", bus, err)
+	}
+	if reason, ok := observability.SafeReason(err); !ok || reason != "event_bus_startup_unavailable" {
+		t.Fatalf("startup failure reason = %q, %t; want classified event-bus reason", reason, ok)
 	}
 	if lifecycle.hook.OnStop != nil {
 		t.Fatal("failed event bus constructor registered a stop hook")
