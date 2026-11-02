@@ -10,6 +10,7 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestRepairServiceDeadScopesAndBoundsPage(t *testing.T) {
@@ -46,8 +47,12 @@ func TestRepairServiceReplayUsesAuditActorAndVersion(t *testing.T) {
 	db := sqlx.NewDb(raw, "pgx")
 	service := NewRepairService(db, database.NewTransactor(db))
 	ctx := platformprincipal.SystemContext(t.Context(), "operator")
+	envelope, err := proto.Marshal(completeOutboxEnvelope("event-1"))
+	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}).AddRow("event-1", "platform.event.v1", envelope))
 	mock.ExpectExec(`UPDATE event_outbox SET attempts=0`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "event-1", int64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -64,13 +69,33 @@ func TestRepairServiceReplayRejectsDeterministicallyInvalidEvent(t *testing.T) {
 	db := sqlx.NewDb(raw, "pgx")
 	service := NewRepairService(db, database.NewTransactor(db))
 	ctx := platformprincipal.SystemContext(t.Context(), "operator")
+	envelope, err := proto.Marshal(completeOutboxEnvelope("event-1"))
+	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}).AddRow("event-1", "platform.event.v1", envelope))
 	mock.ExpectExec(`UPDATE event_outbox SET attempts=0.*last_error <> 'decode_failed'`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "event-1", int64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
+	require.ErrorIs(t, service.Replay(ctx, "event-1", 3), ErrRepairConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRepairServiceReplayRejectsCorruptLegacyEnvelope(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	service := NewRepairService(db, database.NewTransactor(db))
+	ctx := platformprincipal.SystemContext(t.Context(), "operator")
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config\('app.actor_id', \$1, true\)`).WithArgs("operator").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id,subject,envelope FROM event_outbox`).WithArgs("event-1", int64(3)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope"}).AddRow("event-1", "platform.event.v1", []byte("corrupt")))
+	mock.ExpectRollback()
 	require.ErrorIs(t, service.Replay(ctx, "event-1", 3), ErrRepairConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
