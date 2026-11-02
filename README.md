@@ -89,7 +89,7 @@ kubectl wait --namespace microservices --for=condition=complete "$migration_job"
 sh scripts/render-production-manifest.sh application "$IMAGE_REF" | kubectl apply -f -
 ```
 
-Replace the example values through your secret manager in production. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
+Replace the example values through your secret manager in production. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, NATS, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
 
 ## Shared gRPC contracts
 

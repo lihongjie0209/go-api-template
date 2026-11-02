@@ -34,7 +34,7 @@ test-race:
 vet:
 	go vet ./...
 
-verify: modules-check test test-race vet lint swagger-check proto-check integration-policy-check compose-check
+verify: modules-check test test-race vet lint swagger-check proto-check integration-policy-check compose-check k8s-render-check
 
 modules-check:
 	go mod tidy -diff
