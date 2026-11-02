@@ -1768,8 +1768,22 @@ func authorizationLinkOwnerColumn(table, ownerID, valueColumn string) (string, e
 }
 
 func softDeleteAdministratorLink(ctx context.Context, tx *sqlx.Tx, tenantID, membershipID, actorID string) error {
+	links := []struct {
+		ID      string `db:"id"`
+		Version int64  `db:"version"`
+	}{}
+	query := tx.Rebind(`SELECT id,version FROM tenant_administrators WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL ORDER BY id LIMIT 2 FOR UPDATE`)
+	if err := tx.SelectContext(ctx, &links, query, tenantID, membershipID); err != nil {
+		return err
+	}
+	if len(links) == 0 {
+		return ErrTenantAuthorizationNotFound
+	}
+	if len(links) != 1 {
+		return ErrTenantAuthorizationConflict
+	}
 	now := time.Now()
-	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_administrators SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND membership_id=? AND deleted_at IS NULL`), now, actorID, now, actorID, tenantID, membershipID)
+	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_administrators SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND id=? AND version=? AND deleted_at IS NULL`), now, actorID, now, actorID, tenantID, links[0].ID, links[0].Version)
 	if err != nil {
 		return err
 	}
@@ -1778,7 +1792,7 @@ func softDeleteAdministratorLink(ctx context.Context, tx *sqlx.Tx, tenantID, mem
 		return fmt.Errorf("delete authorization link affected rows: %w", rowsErr)
 	}
 	if n != 1 {
-		return ErrTenantAuthorizationNotFound
+		return ErrTenantAuthorizationConflict
 	}
 	return nil
 }

@@ -1232,11 +1232,14 @@ func TestReplaceLinksRejectsOversizedActiveSet(t *testing.T) {
 func TestSoftDeleteAdministratorLinkIsTenantAndMemberScoped(t *testing.T) {
 	for _, test := range []struct {
 		name         string
+		linkCount    int
 		affectedRows int64
 		wantErr      error
 	}{
-		{name: "one active link", affectedRows: 1},
-		{name: "missing or foreign link", affectedRows: 0, wantErr: ErrTenantAuthorizationNotFound},
+		{name: "one active link", linkCount: 1, affectedRows: 1},
+		{name: "missing or foreign link", wantErr: ErrTenantAuthorizationNotFound},
+		{name: "duplicate active links", linkCount: 2, wantErr: ErrTenantAuthorizationConflict},
+		{name: "stale link version", linkCount: 1, wantErr: ErrTenantAuthorizationConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			raw, mock, err := sqlmock.New()
@@ -1245,9 +1248,17 @@ func TestSoftDeleteAdministratorLinkIsTenantAndMemberScoped(t *testing.T) {
 			mock.ExpectBegin()
 			tx, err := sqlx.NewDb(raw, "sqlmock").Beginx()
 			require.NoError(t, err)
-			mock.ExpectExec(`UPDATE tenant_administrators SET deleted_at=.*WHERE tenant_id=\? AND membership_id=\? AND deleted_at IS NULL`).
-				WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "member-1").
-				WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
+			rows := sqlmock.NewRows([]string{"id", "version"})
+			for i := range test.linkCount {
+				rows.AddRow("link-"+strconv.Itoa(i), 7)
+			}
+			mock.ExpectQuery(`SELECT id,version FROM tenant_administrators WHERE tenant_id=\? AND membership_id=\? AND deleted_at IS NULL ORDER BY id LIMIT 2 FOR UPDATE`).
+				WithArgs("tenant-1", "member-1").WillReturnRows(rows)
+			if test.linkCount == 1 {
+				mock.ExpectExec(`UPDATE tenant_administrators SET deleted_at=.*WHERE tenant_id=\? AND id=\? AND version=\? AND deleted_at IS NULL`).
+					WithArgs(sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1", "tenant-1", "link-0", int64(7)).
+					WillReturnResult(sqlmock.NewResult(0, test.affectedRows))
+			}
 			err = softDeleteAdministratorLink(t.Context(), tx, "tenant-1", "member-1", "actor-1")
 			if test.wantErr != nil {
 				require.ErrorIs(t, err, test.wantErr)
