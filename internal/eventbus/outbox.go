@@ -240,7 +240,7 @@ func decodeClaimedEnvelope(record outboxRecord) (*commonv1.EventEnvelope, error)
 }
 
 func validOutboxEnvelope(subject string, envelope *commonv1.EventEnvelope) bool {
-	if envelope == nil || !validOutboxIdentity(subject, envelope.EventId) || !validOutboxIdentity(envelope.EventType, envelope.EventId) {
+	if envelope == nil || !validOutboxIdentity(subject, envelope.EventId) || envelope.EventType != subject {
 		return false
 	}
 	if strings.TrimSpace(envelope.AggregateType) == "" || len(envelope.AggregateType) > 128 || envelope.SchemaVersion == 0 {

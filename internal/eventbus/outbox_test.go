@@ -97,7 +97,7 @@ func TestOutboxDispatchEndsSpanWhenBatchPanics(t *testing.T) {
 	envelope, err := proto.Marshal(completeOutboxEnvelope("event-1"))
 	require.NoError(t, err)
 	err = dispatchSafely(t.Context(), func(ctx context.Context) error {
-		return outbox.dispatchRecord(ctx, outboxRecord{ID: "event-1", Subject: "platform.test", Envelope: envelope})
+		return outbox.dispatchRecord(ctx, outboxRecord{ID: "event-1", Subject: "platform.event.v1", Envelope: envelope})
 	})
 	require.ErrorIs(t, err, errOutboxDispatchPanicked)
 	require.Len(t, recorder.Ended(), 1)
@@ -143,13 +143,13 @@ func TestOutboxStoreUsesCallerTransaction(t *testing.T) {
 	tx, err := sqlxDB.BeginTxx(t.Context(), nil)
 	require.NoError(t, err)
 	mock.ExpectExec(`INSERT INTO event_outbox \(id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,`).
-		WithArgs("event-1", "platform.security.recorded.v1", sqlmock.AnyArg(), "", "", sqlmock.AnyArg(), sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1").
+		WithArgs("event-1", "platform.event.v1", sqlmock.AnyArg(), "", "", sqlmock.AnyArg(), sqlmock.AnyArg(), "actor-1", sqlmock.AnyArg(), "actor-1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectRollback()
 
 	outbox := &Outbox{cfg: config.EventBus{Enabled: true}, bus: &Bus{}}
 	ctx := platformprincipal.SystemContext(t.Context(), "actor-1")
-	require.NoError(t, outbox.Store(ctx, tx, "platform.security.recorded.v1", completeOutboxEnvelope("event-1")))
+	require.NoError(t, outbox.Store(ctx, tx, "platform.event.v1", completeOutboxEnvelope("event-1")))
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -171,6 +171,7 @@ func TestOutboxStoreRejectsIncompleteEventBeforeSQL(t *testing.T) {
 	}{
 		{name: "missing event type", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "" }},
 		{name: "event type outside stream", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "orders.created.v1" }},
+		{name: "event type differs from subject", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "platform.other.v1" }},
 		{name: "missing aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = "" }},
 		{name: "oversized aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = strings.Repeat("a", 129) }},
 		{name: "zero schema version", mutate: func(value *commonv1.EventEnvelope) { value.SchemaVersion = 0 }},
@@ -196,6 +197,7 @@ func TestDecodeClaimedEnvelopeRejectsIncompleteMetadata(t *testing.T) {
 	}{
 		{name: "missing event type", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "" }},
 		{name: "event type outside stream", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "orders.created.v1" }},
+		{name: "event type differs from subject", mutate: func(value *commonv1.EventEnvelope) { value.EventType = "platform.other.v1" }},
 		{name: "missing aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = "" }},
 		{name: "oversized aggregate type", mutate: func(value *commonv1.EventEnvelope) { value.AggregateType = strings.Repeat("a", 129) }},
 		{name: "zero schema version", mutate: func(value *commonv1.EventEnvelope) { value.SchemaVersion = 0 }},
