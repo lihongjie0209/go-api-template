@@ -150,7 +150,7 @@ func (s *Service) recordSecurityTx(ctx context.Context, tx *sqlx.Tx, entry secur
 		return nil
 	}
 	if err := s.security.RecordTx(ctx, tx, entry); err != nil {
-		return fmt.Errorf("%w: %v", ErrSecurityUnavailable, err)
+		return ErrSecurityUnavailable
 	}
 	return nil
 }

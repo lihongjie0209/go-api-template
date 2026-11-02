@@ -26,6 +26,14 @@ type transactionalSecurityRecorder struct {
 	entries []securitylog.Entry
 }
 
+func TestRecordSecurityTxDoesNotExposeOutboxDetails(t *testing.T) {
+	t.Parallel()
+	service := &Service{security: &transactionalSecurityRecorder{err: errors.New("outbox password=secret-value")}}
+	err := service.recordSecurityTx(t.Context(), nil, securitylog.Entry{EventType: securitylog.EventLogin})
+	require.ErrorIs(t, err, ErrSecurityUnavailable)
+	require.NotContains(t, err.Error(), "secret-value")
+}
+
 func TestForceLogoutAllRejectsMissingUserBeforeRevocation(t *testing.T) {
 	t.Parallel()
 	raw, mock, err := sqlmock.New()

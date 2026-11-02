@@ -64,15 +64,16 @@ func (r *securityRecorder) RecordTx(_ context.Context, _ *sqlx.Tx, entry securit
 }
 
 type failingTransactionalSecurityRecorder struct {
-	txErr      error
-	standalone []securitylog.Entry
+	txErr         error
+	standaloneErr error
+	standalone    []securitylog.Entry
 }
 
 func (*failingTransactionalSecurityRecorder) Enabled() bool    { return true }
 func (*failingTransactionalSecurityRecorder) FailClosed() bool { return true }
 func (r *failingTransactionalSecurityRecorder) Record(_ context.Context, entry securitylog.Entry) error {
 	r.standalone = append(r.standalone, entry)
-	return nil
+	return r.standaloneErr
 }
 func (r *failingTransactionalSecurityRecorder) RecordTx(context.Context, *sqlx.Tx, securitylog.Entry) error {
 	return r.txErr
@@ -479,7 +480,7 @@ func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing
 	}
 	t.Cleanup(func() { _ = raw.Close() })
 	db := sqlx.NewDb(raw, "pgx")
-	security := &failingTransactionalSecurityRecorder{txErr: errors.New("security outbox unavailable")}
+	security := &failingTransactionalSecurityRecorder{txErr: errors.New("security outbox password=secret-value unavailable")}
 	service := New(db, database.NewTransactor(db), &operationRecorder{}, security, config.Config{})
 	hash, err := service.hasher.Hash("correct-secret-value")
 	if err != nil {
@@ -502,8 +503,21 @@ func TestService_AuthenticateRollsBackWhenSecurityEventCannotBeStored(t *testing
 	if !errors.Is(err, ErrSecurityUnavailable) || account.ID != "" || credential != "" {
 		t.Fatalf("AuthenticateAndIssue() account=%+v credential=%q error=%v", account, credential, err)
 	}
+	if strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("AuthenticateAndIssue() leaked security outbox details: %v", err)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRejectAuthenticationDoesNotExposeSecurityRecorderDetails(t *testing.T) {
+	t.Parallel()
+	security := &failingTransactionalSecurityRecorder{standaloneErr: errors.New("outbox password=secret-value")}
+	service := &Service{security: security}
+	err := service.rejectAuthentication(t.Context(), securitylog.Entry{EventType: securitylog.EventLogin}, ErrInvalidCredentials)
+	if !errors.Is(err, ErrSecurityUnavailable) || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("rejectAuthentication() error=%v, want safe unavailable", err)
 	}
 }
 

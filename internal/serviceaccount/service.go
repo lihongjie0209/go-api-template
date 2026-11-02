@@ -378,7 +378,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 	}
 	if !valid {
 		if recordErr := s.recordFailure(ctx, value, failedEntry); recordErr != nil && s.security.FailClosed() {
-			return Account{}, "", fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
+			return Account{}, "", ErrSecurityUnavailable
 		}
 		return Account{}, "", ErrInvalidCredentials
 	}
@@ -416,7 +416,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 		}
 		entry := securitylog.Entry{EventType: securitylog.EventLogin, Identifier: clientID, SubjectID: value.ID, SubjectName: value.Name, SubjectType: string(platformprincipal.TypeServiceAccount), TokenID: tokenID, Succeeded: true}
 		if recordErr := s.security.RecordTx(accountCtx, tx, entry); recordErr != nil {
-			return fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
+			return ErrSecurityUnavailable
 		}
 		authenticatedAt = now
 		return nil
@@ -436,7 +436,7 @@ func (s *Service) authenticateAndIssue(ctx context.Context, clientID, secret str
 
 func (s *Service) rejectAuthentication(ctx context.Context, entry securitylog.Entry, authenticationErr error) error {
 	if recordErr := s.security.Record(ctx, entry); recordErr != nil && s.security.FailClosed() {
-		return fmt.Errorf("%w: %v", ErrSecurityUnavailable, recordErr)
+		return ErrSecurityUnavailable
 	}
 	return authenticationErr
 }
