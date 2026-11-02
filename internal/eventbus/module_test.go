@@ -3,6 +3,7 @@ package eventbus
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,5 +28,44 @@ func TestNewBusBoundsStreamProvisioning(t *testing.T) {
 	}
 	if lifecycle.hook.OnStop != nil {
 		t.Fatal("failed event bus constructor registered a stop hook")
+	}
+}
+
+func TestNewBusDoesNotExposeConnectionDetails(t *testing.T) {
+	t.Parallel()
+	lifecycle := new(captureLifecycle)
+	cfg := config.Config{EventBus: config.EventBus{Enabled: true, StartupTimeout: time.Second}}
+	bus, err := newBusWithFactory(lifecycle, cfg, func(context.Context, config.Config) (*Bus, error) {
+		return nil, errors.New("connect nats://user:secret-value@example.internal:4222 failed")
+	})
+	if bus != nil || !errors.Is(err, ErrStartupUnavailable) || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("unsafe event bus startup result: bus=%v error=%v", bus, err)
+	}
+	if lifecycle.hook.OnStop != nil {
+		t.Fatal("failed event bus constructor registered a stop hook")
+	}
+}
+
+func TestNewBusRejectsMissingClientAndLateSuccess(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		factory func(context.Context, config.Config) (*Bus, error)
+		want    error
+	}{
+		{name: "missing client", factory: func(context.Context, config.Config) (*Bus, error) { return nil, nil }, want: ErrStartupUnavailable},
+		{name: "late success", factory: func(ctx context.Context, _ config.Config) (*Bus, error) {
+			<-ctx.Done()
+			return nil, nil
+		}, want: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lifecycle := new(captureLifecycle)
+			cfg := config.Config{EventBus: config.EventBus{Enabled: true, StartupTimeout: 20 * time.Millisecond}}
+			bus, err := newBusWithFactory(lifecycle, cfg, test.factory)
+			if bus != nil || !errors.Is(err, test.want) || lifecycle.hook.OnStop != nil {
+				t.Fatalf("invalid constructor result accepted: bus=%v error=%v stop hook registered=%t", bus, err, lifecycle.hook.OnStop != nil)
+			}
+		})
 	}
 }

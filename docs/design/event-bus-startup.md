@@ -10,6 +10,11 @@ A failure aborts service startup. The NATS client owns initial connection
 attempts, so with multiple unreachable URLs total construction time may exceed
 `startup_timeout`; the configured per-endpoint connection timeout and URL cap
 bound those attempts separately.
+Fx receives a fixed dependency error for connection/provisioning failures,
+because SDK errors may include credential-bearing NATS URLs. A known timeout
+or cancellation remains distinguishable without exporting its raw wrapper.
+An enabled constructor returning no client, or returning only after its
+deadline, is rejected before any lifecycle stop hook is registered.
 
 | Concern | Decision and rationale |
 | --- | --- |

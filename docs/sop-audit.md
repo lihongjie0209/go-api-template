@@ -537,7 +537,9 @@ and post-callback lock loss. The same CI run verified this change.
 
 Fx event-bus construction now uses the bounded startup Context documented in
 [event-bus-startup.md](design/event-bus-startup.md). Its separate connection
-timeout is capped and stream provisioning cannot wait indefinitely. Focused
+timeout is capped and stream provisioning cannot wait indefinitely. Constructor
+errors exposed to Fx use fixed safe text instead of SDK errors that may contain
+credential-bearing NATS URLs. Focused
 configuration, event-bus and app unit tests pass locally; CI revalidation is
 pending with the next substantial batch.
 
