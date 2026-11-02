@@ -36,6 +36,24 @@ func TestFileVersionConflictUsesStaleVersionCode(t *testing.T) {
 	}
 }
 
+func TestFileUploadStagingOutageUsesUnavailableCode(t *testing.T) {
+	t.Parallel()
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/files/upload", nil)
+	handler := &FileHandler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	handler.fail(context, files.ErrUploadUnavailable)
+	var response struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusServiceUnavailable || response.Code != apperror.CodeDependencyUnavailable {
+		t.Fatalf("upload staging outage status=%d code=%d", recorder.Code, response.Code)
+	}
+}
+
 func TestTenantStaleVersionUsesDedicatedCode(t *testing.T) {
 	for _, test := range []struct {
 		name string

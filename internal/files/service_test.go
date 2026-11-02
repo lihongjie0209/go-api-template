@@ -190,6 +190,32 @@ func TestStageUploadPropagatesCancellation(t *testing.T) {
 	}
 }
 
+type failingUploadReader struct{}
+
+func (failingUploadReader) Read([]byte) (int, error) {
+	return 0, errors.New("password=upload-reader-test-secret")
+}
+
+type uploadWriterFunc func([]byte) (int, error)
+
+func (f uploadWriterFunc) Write(buffer []byte) (int, error) { return f(buffer) }
+
+func TestStageUploadHidesReaderErrorAndClassifiesWriterFailure(t *testing.T) {
+	staged, err := stageUpload(t.Context(), failingUploadReader{}, 5)
+	if staged != nil || !errors.Is(err, ErrInvalidInput) || strings.Contains(err.Error(), "upload-reader-test-secret") {
+		t.Fatalf("staged=%v error=%v", staged, err)
+	}
+	for _, writer := range []uploadWriterFunc{
+		func([]byte) (int, error) { return 0, errors.New("password=upload-writer-test-secret") },
+		func([]byte) (int, error) { return 0, nil },
+	} {
+		_, err := (stagingWriter{writer: writer}).Write([]byte("hello"))
+		if !errors.Is(err, ErrUploadUnavailable) || strings.Contains(err.Error(), "upload-writer-test-secret") {
+			t.Fatalf("writer error=%v", err)
+		}
+	}
+}
+
 func TestProcessDeletionPersistsRetryAfterStorageFailure(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	if err != nil {

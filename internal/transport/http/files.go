@@ -199,6 +199,8 @@ func (h *FileHandler) fail(c *gin.Context, err error) {
 		Fail(c, h.logger, apperror.Invalid("invalid file input", err))
 	case errors.Is(err, files.ErrDisabled):
 		Fail(c, h.logger, apperror.Unavailable("file service is unavailable", err))
+	case errors.Is(err, files.ErrUploadUnavailable):
+		Fail(c, h.logger, apperror.Unavailable("file upload is unavailable", err))
 	default:
 		Fail(c, h.logger, apperror.Internal(err))
 	}

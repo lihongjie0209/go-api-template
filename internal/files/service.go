@@ -37,6 +37,7 @@ var (
 	ErrForbidden              = errors.New("file access denied")
 	ErrVersionConflict        = errors.New("file version conflict")
 	ErrInvalidInput           = errors.New("invalid file input")
+	ErrUploadUnavailable      = errors.New("file upload staging unavailable")
 	errObjectUploadFailed     = errors.New("object_upload_failed")
 	errObjectDeleteFailed     = errors.New("object_delete_failed")
 	errObjectPresignFailed    = errors.New("object_presign_failed")
@@ -97,6 +98,16 @@ type contextReader struct {
 	reader io.Reader
 }
 
+type stagingWriter struct{ writer io.Writer }
+
+func (w stagingWriter) Write(buffer []byte) (int, error) {
+	count, err := w.writer.Write(buffer)
+	if err != nil || count != len(buffer) {
+		return count, ErrUploadUnavailable
+	}
+	return count, nil
+}
+
 func (r contextReader) Read(buffer []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
@@ -111,7 +122,7 @@ func (r contextReader) Read(buffer []byte) (int, error) {
 func stageUpload(ctx context.Context, body io.Reader, declaredSize int64) (_ *stagedUpload, resultErr error) {
 	file, err := os.CreateTemp("", "go-api-upload-*")
 	if err != nil {
-		return nil, fmt.Errorf("stage upload: %w", err)
+		return nil, ErrUploadUnavailable
 	}
 	defer func() {
 		if resultErr != nil {
@@ -122,26 +133,29 @@ func stageUpload(ctx context.Context, body io.Reader, declaredSize int64) (_ *st
 	}()
 	digest := sha256.New()
 	read := contextReader{ctx: ctx, reader: body}
-	written, err := io.Copy(io.MultiWriter(file, digest), io.LimitReader(read, declaredSize+1))
+	written, err := io.Copy(io.MultiWriter(stagingWriter{writer: file}, digest), io.LimitReader(read, declaredSize+1))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("%w: read upload: %v", ErrInvalidInput, err)
+		if errors.Is(err, ErrUploadUnavailable) {
+			return nil, ErrUploadUnavailable
+		}
+		return nil, ErrInvalidInput
 	}
 	if written != declaredSize {
 		return nil, fmt.Errorf("%w: declared size %d does not match content size %d", ErrInvalidInput, declaredSize, written)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind staged upload: %w", err)
+		return nil, ErrUploadUnavailable
 	}
 	header := make([]byte, 512)
 	headerSize, err := io.ReadFull(file, header)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("inspect staged upload: %w", err)
+		return nil, ErrUploadUnavailable
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind staged upload: %w", err)
+		return nil, ErrUploadUnavailable
 	}
 	return &stagedUpload{file: file, contentType: http.DetectContentType(header[:headerSize]), checksum: hex.EncodeToString(digest.Sum(nil))}, nil
 }
