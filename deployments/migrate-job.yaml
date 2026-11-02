@@ -34,7 +34,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: go-api-template
-                  key: APP_DATABASE_DSN
+                  key: APP_MIGRATION_DATABASE_URL
           resources:
             requests:
               cpu: 50m

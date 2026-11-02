@@ -73,7 +73,8 @@ set -euo pipefail
 export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
 kubectl create namespace microservices --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic go-api-template --namespace microservices \
-  --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/app?sslmode=require' \
+  --from-literal=APP_DATABASE_DSN='postgres://user:password@postgres:5432/go_api_template_db?sslmode=require' \
+  --from-literal=APP_MIGRATION_DATABASE_URL='postgres://user:password@postgres:5432/go_api_template_db?sslmode=require' \
   --from-literal=APP_REDIS_ADDRESS='redis:6379' \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
   --from-literal=APP_JWT_KEY_ID='production-2026-01' \
