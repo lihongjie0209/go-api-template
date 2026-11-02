@@ -182,6 +182,8 @@ const (
 	MinAccessTokenTTL  = time.Minute
 	MaxAccessTokenTTL  = 24 * time.Hour
 	MaxRefreshTokenTTL = 90 * 24 * time.Hour
+	MaxJWTKeyIDBytes   = 128
+	MaxJWTPublicKeys   = 16
 )
 
 type JWT struct {
@@ -536,6 +538,15 @@ func stringToStringSliceHook() mapstructure.DecodeHookFuncType {
 }
 
 var validProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var validJWTKeyID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
+
+// ValidateJWTKeyID bounds local signing and verification key identifiers.
+func ValidateJWTKeyID(id string) error {
+	if len(id) > MaxJWTKeyIDBytes || !validJWTKeyID.MatchString(id) {
+		return errors.New("jwt key id must be 1-128 ASCII letters, digits, dots, underscores, colons, slashes, or hyphens, starting with a letter or digit")
+	}
+	return nil
+}
 
 // IsDeployedEnvironment applies production security controls to every profile
 // except the explicit local development and isolated unit-test profiles.
@@ -823,10 +834,21 @@ func (c Config) Validate() error {
 	if (c.JWT.KeyID != "") != hasSigningKey {
 		return errors.New("jwt.key_id and an asymmetric private key must be configured together")
 	}
+	if c.JWT.KeyID != "" {
+		if err := ValidateJWTKeyID(c.JWT.KeyID); err != nil {
+			return err
+		}
+	}
+	if len(c.JWT.PublicKeys) > MaxJWTPublicKeys {
+		return fmt.Errorf("jwt.public_keys may contain at most %d keys", MaxJWTPublicKeys)
+	}
 	if len(c.JWT.PublicKeys) > 0 && !hasSigningKey {
 		return errors.New("jwt.public_keys require an active signing key")
 	}
 	for index, key := range c.JWT.PublicKeys {
+		if err := ValidateJWTKeyID(key.KeyID); err != nil {
+			return fmt.Errorf("jwt.public_keys[%d]: %w", index, err)
+		}
 		if (key.PublicKey != "") == (key.PublicKeyFile != "") {
 			return fmt.Errorf("jwt.public_keys[%d] requires exactly one of public_key or public_key_file", index)
 		}

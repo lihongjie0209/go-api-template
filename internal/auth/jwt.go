@@ -117,6 +117,10 @@ func NewWithDatabase(cfg config.Config, db *sqlx.DB) *Service {
 		s.initErr = errors.New("jwt key id and private key must be configured together")
 		return s
 	}
+	if len(cfg.JWT.PublicKeys) > config.MaxJWTPublicKeys {
+		s.initErr = fmt.Errorf("jwt public keys exceed %d", config.MaxJWTPublicKeys)
+		return s
+	}
 	pem, err := keyMaterial(cfg.JWT.PrivateKey, cfg.JWT.PrivateKeyFile)
 	if err != nil {
 		s.initErr = err
@@ -456,8 +460,8 @@ func (s *Service) JWKS() JWKS {
 	return result
 }
 func parsePrivateKey(id, algorithm string, pem []byte) (signingKey, error) {
-	if id == "" {
-		return signingKey{}, errors.New("jwt key id is required")
+	if err := config.ValidateJWTKeyID(id); err != nil {
+		return signingKey{}, err
 	}
 	switch algorithm {
 	case "RS256":
@@ -477,8 +481,8 @@ func parsePrivateKey(id, algorithm string, pem []byte) (signingKey, error) {
 	}
 }
 func parsePublicKey(id, algorithm string, pem []byte) (signingKey, error) {
-	if id == "" {
-		return signingKey{}, errors.New("jwt key id is required")
+	if err := config.ValidateJWTKeyID(id); err != nil {
+		return signingKey{}, err
 	}
 	switch algorithm {
 	case "RS256":

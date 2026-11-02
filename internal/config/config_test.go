@@ -911,8 +911,8 @@ func TestConfig_JWTKeyMaterialSourcesAreExclusive(t *testing.T) {
 		name string
 		key  JWTVerificationKey
 	}{
-		{name: "two public sources", key: JWTVerificationKey{PublicKey: "inline", PublicKeyFile: "/run/secrets/old.pem"}},
-		{name: "missing public source", key: JWTVerificationKey{}},
+		{name: "two public sources", key: JWTVerificationKey{KeyID: "old", PublicKey: "inline", PublicKeyFile: "/run/secrets/old.pem"}},
+		{name: "missing public source", key: JWTVerificationKey{KeyID: "old"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validDevelopmentConfig(t)
@@ -923,6 +923,25 @@ func TestConfig_JWTKeyMaterialSourcesAreExclusive(t *testing.T) {
 				t.Fatalf("ambiguous public key validation = %v", err)
 			}
 		})
+	}
+}
+
+func TestConfig_BoundsLocalJWTKeyIdentifiersAndRotationWindow(t *testing.T) {
+	t.Parallel()
+	if err := ValidateJWTKeyID(strings.Repeat("a", MaxJWTKeyIDBytes)); err != nil {
+		t.Fatalf("maximum-size key ID rejected: %v", err)
+	}
+	for _, id := range []string{"", "-leading", "with space", "with\nnewline", strings.Repeat("a", MaxJWTKeyIDBytes+1)} {
+		if err := ValidateJWTKeyID(id); err == nil {
+			t.Fatalf("invalid JWT key ID %q accepted", id)
+		}
+	}
+	cfg := validDevelopmentConfig(t)
+	cfg.JWT.KeyID = "active"
+	cfg.JWT.PrivateKey = "inline"
+	cfg.JWT.PublicKeys = make([]JWTVerificationKey, MaxJWTPublicKeys+1)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("unbounded JWT rotation window = %v", err)
 	}
 }
 

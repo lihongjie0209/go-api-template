@@ -78,6 +78,26 @@ func TestService_RejectsIncompleteLocalKeyConfigurationAtConstructor(t *testing.
 	}
 }
 
+func TestService_BoundsLocalKeysAtDirectConstructor(t *testing.T) {
+	jwtConfig, err := testutil.JWTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwtConfig.KeyID = strings.Repeat("x", config.MaxJWTKeyIDBytes+1)
+	if service := New(config.Config{JWT: jwtConfig}); service.initErr == nil {
+		t.Fatal("direct constructor accepted an oversized active key ID")
+	}
+	jwtConfig.KeyID = "active"
+	jwtConfig.PublicKeys = make([]config.JWTVerificationKey, config.MaxJWTPublicKeys+1)
+	if service := New(config.Config{JWT: jwtConfig}); service.initErr == nil {
+		t.Fatal("direct constructor accepted an unbounded public-key list")
+	}
+	jwtConfig.PublicKeys = []config.JWTVerificationKey{{KeyID: "bad\nheader", Algorithm: "RS256", PublicKey: "unused"}}
+	if service := New(config.Config{JWT: jwtConfig}); service.initErr == nil {
+		t.Fatal("direct constructor accepted an unsafe public key ID")
+	}
+}
+
 func (f verifierFunc) VerifyBearer(ctx context.Context, raw string) (platformprincipal.Principal, error) {
 	return f(ctx, raw)
 }

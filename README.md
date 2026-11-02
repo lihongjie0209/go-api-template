@@ -115,6 +115,8 @@ The migration Job reads the same ConfigMap as the application, so database name,
 
 JWT signing-key rotation has three phases. First deploy the new **public** key as a `jwt.public_keys` entry while the old private key and `kid` remain active. After this rollout completes, every pod publishes both keys through JWKS and accepts tokens signed by either one. Wait for downstream JWKS caches to refresh, then create a new versioned signing Secret, such as `go-api-template-signing-v2`, containing both its `APP_JWT_KEY_ID` and `jwt-private.pem`. Update the Deployment's key-ID `secretKeyRef` and signing volume `secretName` to that same new Secret in one release that retains the old public key. Old pods keep the old Secret and new pods use the new one, so they verify each other's tokens during the second rollout. Remove the old public key in a final rollout only after its last access token has expired and verifier caches have refreshed. A Secret volume update alone does not rotate the running signer: keys are loaded at process startup, so each phase requires a rollout. Public-key entries may use `public_key_file` pointing to another file in the signing Secret volume.
 
+Local JWT key IDs use 1–128 ASCII letters, digits, dots, underscores, colons, slashes, or hyphens, starting with a letter or digit. The local rotation window accepts at most 16 previous public keys.
+
 ## Shared gRPC contracts
 
 Protobuf definitions are governed by Buf through `buf.yaml` and reproducible generation settings in `buf.gen.yaml`. Run `make proto-lint`, `make proto-breaking`, and `make proto`; CI rejects incompatible schema changes and generated-code drift.

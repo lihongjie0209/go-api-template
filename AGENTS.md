@@ -984,6 +984,10 @@ deleted_by text
   direct constructor cannot silently prefer a stale inline key. A partial
   `kid`/private-key pair or local public keys without an active signer must
   fail initialization rather than silently disable local JWT handling.
+- Local JWT `kid` values use bounded, printable ASCII identifiers (at most 128
+  bytes); at most 16 prior public keys may be configured. Enforce these bounds
+  in configuration validation and direct signer construction before building
+  the JWKS or verification map.
 - Key-rotation tests must use two distinct private keys and prove both rollout
   phases can verify the other phase's tokens while JWKS publishes both `kid`s.
   Rotating a mounted Secret requires a process rollout because signer keys are
