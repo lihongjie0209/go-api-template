@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"database/sql/driver"
 	"encoding/base64"
@@ -896,11 +897,6 @@ func TestService_KeyRotationKeepsOldTokensVerifiableAndPublishesBothKeys(t *test
 		t.Fatal(err)
 	}
 	oldJWT.KeyID = "rsa-old"
-	oldService := New(config.Config{JWT: oldJWT})
-	oldToken, err := oldService.Issue("service-a")
-	if err != nil {
-		t.Fatal(err)
-	}
 	oldPrivate, err := jwtlib.ParseRSAPrivateKeyFromPEM([]byte(oldJWT.PrivateKey))
 	if err != nil {
 		t.Fatal(err)
@@ -911,20 +907,45 @@ func TestService_KeyRotationKeepsOldTokensVerifiableAndPublishesBothKeys(t *test
 	}
 	oldPublicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: oldPublicDER})
 
-	newJWT, err := testutil.JWTConfig()
+	newPrivate, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if oldPrivate.PublicKey.N.Cmp(newPrivate.PublicKey.N) == 0 {
+		t.Fatal("rotation fixture reused the old RSA key")
+	}
+	newPublicDER, err := x509.MarshalPKIXPublicKey(&newPrivate.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPublicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: newPublicDER})
+	newJWT := oldJWT
 	newJWT.KeyID = "rsa-new"
+	newJWT.PrivateKey = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(newPrivate)}))
+	oldJWT.PublicKeys = []config.JWTVerificationKey{{KeyID: "rsa-new", Algorithm: "RS256", PublicKey: string(newPublicPEM)}}
+	oldService := New(config.Config{JWT: oldJWT})
+	oldToken, err := oldService.Issue("service-a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	newJWT.PublicKeys = []config.JWTVerificationKey{{KeyID: "rsa-old", Algorithm: "RS256", PublicKey: string(oldPublicPEM)}}
 	rotated := New(config.Config{JWT: newJWT})
 	claims, err := rotated.Parse(oldToken)
 	if err != nil || claims.Subject != "service-a" {
 		t.Fatalf("rotated Parse() claims=%+v err=%v", claims, err)
 	}
-	keys := rotated.JWKS().Keys
-	if len(keys) != 2 || keys[0].KID != "rsa-new" && keys[1].KID != "rsa-new" {
-		t.Fatalf("rotated JWKS=%+v", keys)
+	newToken, err := rotated.Issue("service-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims, err := oldService.Parse(newToken); err != nil || claims.Subject != "service-a" {
+		t.Fatalf("old pod Parse(new token) claims=%+v err=%v", claims, err)
+	}
+	for _, service := range []*Service{oldService, rotated} {
+		keys := service.JWKS().Keys
+		if len(keys) != 2 || keys[0].KID != "rsa-new" && keys[1].KID != "rsa-new" || keys[0].KID != "rsa-old" && keys[1].KID != "rsa-old" {
+			t.Fatalf("rotation JWKS=%+v", keys)
+		}
 	}
 }
 

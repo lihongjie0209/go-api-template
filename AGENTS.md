@@ -977,6 +977,10 @@ deleted_by text
 - JWT key material must choose exactly one inline or file source. Reject both
   sources at configuration validation and again at the signer boundary so a
   direct constructor cannot silently prefer a stale inline key.
+- Key-rotation tests must use two distinct private keys and prove both rollout
+  phases can verify the other phase's tokens while JWKS publishes both `kid`s.
+  Rotating a mounted Secret requires a process rollout because signer keys are
+  loaded at startup.
 
 ## Shared-component review
 
