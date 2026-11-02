@@ -1,6 +1,7 @@
 package tenant
 
 import (
+	"context"
 	"regexp"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func departmentMemberSyncTx(t *testing.T) (*sqlx.Tx, sqlmock.Sqlmock) {
 	})
 	db := sqlx.NewDb(raw, "sqlmock")
 	mock.ExpectBegin()
-	tx, err := db.BeginTxx(t.Context(), nil)
+	tx, err := db.BeginTxx(context.Background(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx, mock
