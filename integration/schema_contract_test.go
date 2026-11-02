@@ -119,30 +119,49 @@ func assertAuditTriggers(t *testing.T, ctx context.Context, db *sqlx.DB, databas
 		return
 	}
 	var triggers []struct {
-		Table string `db:"table_key"`
-		Name  string `db:"trigger_key"`
+		Table     string `db:"table_key"`
+		Name      string `db:"trigger_key"`
+		Event     string `db:"event_key"`
+		Statement string `db:"statement_text"`
 	}
-	if err := db.SelectContext(ctx, &triggers, `SELECT event_object_table AS table_key, trigger_name AS trigger_key
+	if err := db.SelectContext(ctx, &triggers, `SELECT event_object_table AS table_key, trigger_name AS trigger_key,
+		event_manipulation AS event_key, action_statement AS statement_text
 		FROM information_schema.triggers
 		WHERE trigger_schema=DATABASE() AND action_timing='BEFORE'`); err != nil {
 		t.Fatalf("load MySQL audit triggers: %v", err)
 	}
-	covered := make(map[string]map[string]struct{}, len(tables))
+	type triggerContract struct {
+		event     string
+		statement string
+	}
+	covered := make(map[string]map[string]triggerContract, len(tables))
 	for _, trigger := range triggers {
 		if covered[trigger.Table] == nil {
-			covered[trigger.Table] = make(map[string]struct{})
+			covered[trigger.Table] = make(map[string]triggerContract)
 		}
-		covered[trigger.Table][trigger.Name] = struct{}{}
+		covered[trigger.Table][trigger.Name] = triggerContract{event: trigger.Event, statement: trigger.Statement}
 	}
 	for _, name := range tables {
-		suffixes := []string{"_audit_bi", "_audit_bu", "_audit_bd"}
+		events := []struct {
+			suffix string
+			event  string
+		}{{"_audit_bi", "INSERT"}, {"_audit_bu", "UPDATE"}, {"_audit_bd", "DELETE"}}
 		if name == "operation_logs" || name == "security_logs" {
 			// Only the reviewed retention worker may physically purge these logs.
-			suffixes = suffixes[:2]
+			events = events[:2]
 		}
-		for _, suffix := range suffixes {
-			if _, ok := covered[name][name+suffix]; !ok {
-				t.Errorf("migrated table %s is missing audit trigger %s", name, name+suffix)
+		for _, expected := range events {
+			triggerName := name + expected.suffix
+			contract, ok := covered[name][triggerName]
+			if !ok {
+				t.Errorf("migrated table %s is missing audit trigger %s", name, triggerName)
+				continue
+			}
+			if contract.event != expected.event {
+				t.Errorf("migrated table %s trigger %s fires on %s, want %s", name, triggerName, contract.event, expected.event)
+			}
+			if expected.event == "DELETE" && !strings.Contains(strings.ToUpper(contract.statement), "SIGNAL SQLSTATE '45000'") {
+				t.Errorf("migrated table %s delete trigger %s does not reject physical deletion", name, triggerName)
 			}
 		}
 	}
