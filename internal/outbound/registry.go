@@ -2,7 +2,7 @@ package outbound
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 
 	"github.com/lihongjie0209/go-api-template/internal/config"
@@ -18,13 +18,19 @@ type Registry struct {
 	mu   sync.RWMutex
 }
 
+var (
+	ErrHTTPClientInit  = errors.New("outbound_http_client_init_failed")
+	ErrGRPCClientInit  = errors.New("outbound_grpc_client_init_failed")
+	ErrGRPCClientClose = errors.New("outbound_grpc_client_close_failed")
+)
+
 func NewRegistry(lc fx.Lifecycle, cfg config.Config, metrics *observability.Metrics) (*Registry, error) {
 	registry := &Registry{http: make(map[string]*HTTPClient, len(cfg.Outbound.HTTP)), grpc: make(map[string]*grpc.ClientConn, len(cfg.Outbound.GRPC))}
 	for name, upstream := range cfg.Outbound.HTTP {
 		client, err := NewHTTPClient(name, upstream, metrics)
 		if err != nil {
 			_ = registry.close()
-			return nil, fmt.Errorf("create outbound HTTP client %q: %w", name, err)
+			return nil, observability.SafeError(err, ErrHTTPClientInit)
 		}
 		registry.http[name] = client
 	}
@@ -39,7 +45,7 @@ func NewRegistry(lc fx.Lifecycle, cfg config.Config, metrics *observability.Metr
 		connection, err := grpcclient.Dial(clientCfg)
 		if err != nil {
 			_ = registry.close()
-			return nil, fmt.Errorf("create outbound gRPC client %q: %w", name, err)
+			return nil, observability.SafeError(err, ErrGRPCClientInit)
 		}
 		registry.grpc[name] = connection
 	}
@@ -66,9 +72,9 @@ func (r *Registry) close() error {
 		client.CloseIdleConnections()
 	}
 	var closeErr error
-	for name, connection := range r.grpc {
+	for _, connection := range r.grpc {
 		if err := connection.Close(); err != nil && closeErr == nil {
-			closeErr = fmt.Errorf("close outbound gRPC client %q: %w", name, err)
+			closeErr = observability.SafeError(err, ErrGRPCClientClose)
 		}
 	}
 	return closeErr
