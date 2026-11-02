@@ -64,7 +64,7 @@ func TestBackfillLegacyPermissionLinksOnce(t *testing.T) {
 	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}))
-	mock.ExpectQuery("SELECT p.id AS permission_id,a.id AS action_id").WillReturnRows(sqlmock.NewRows([]string{"permission_id", "action_id"}).AddRow("08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58"))
+	mock.ExpectQuery("SELECT p.id AS permission_id,a.id AS action_id").WithArgs(maxLegacyPermissionLinks + 1).WillReturnRows(sqlmock.NewRows([]string{"permission_id", "action_id"}).AddRow("08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58"))
 	mock.ExpectQuery("SELECT id,deleted_at FROM permission_resource_actions").WithArgs("08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58").WillReturnRows(sqlmock.NewRows([]string{"id", "deleted_at"}))
 	mock.ExpectExec("INSERT INTO permission_resource_actions").WithArgs(sqlmock.AnyArg(), "08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58", sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO authorization_catalog_syncs").WithArgs(sqlmock.AnyArg(), codeActor, sqlmock.AnyArg(), codeActor).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -73,6 +73,28 @@ func TestBackfillLegacyPermissionLinksOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, backfillLegacyPermissionLinks(t.Context(), tx, generator))
 	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBackfillLegacyPermissionLinksRejectsOverflowBeforeWriting(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	sqlxDB := sqlx.NewDb(db, "pgx")
+	generator, err := stableid.New(Namespace)
+	require.NoError(t, err)
+	rows := sqlmock.NewRows([]string{"permission_id", "action_id"})
+	for range maxLegacyPermissionLinks + 1 {
+		rows.AddRow("08896c3a-4c82-473e-90c8-b59f60446139", "18f4762f-f4f9-47d5-bd7a-6f07af436f58")
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT source FROM authorization_catalog_syncs WHERE source='legacy-permissions'").WillReturnRows(sqlmock.NewRows([]string{"source"}))
+	mock.ExpectQuery("SELECT p.id AS permission_id,a.id AS action_id").WithArgs(maxLegacyPermissionLinks + 1).WillReturnRows(rows)
+	mock.ExpectRollback()
+	tx, err := sqlxDB.Beginx()
+	require.NoError(t, err)
+	require.ErrorIs(t, backfillLegacyPermissionLinks(t.Context(), tx, generator), errLegacyLinkLimit)
+	require.NoError(t, tx.Rollback())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

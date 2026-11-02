@@ -18,15 +18,17 @@ import (
 )
 
 var (
-	ErrSourceConflict = errors.New("resource catalog: code key belongs to another source")
-	ErrStaleBuild     = errors.New("resource catalog: older build cannot overwrite a newer catalog")
+	ErrSourceConflict  = errors.New("resource catalog: code key belongs to another source")
+	ErrStaleBuild      = errors.New("resource catalog: older build cannot overwrite a newer catalog")
+	errLegacyLinkLimit = errors.New("resource catalog: legacy permission links exceed maximum")
 )
 
 const (
 	// Namespace is immutable across deployments. Its UUIDv5 values are stable
 	// identities for code-owned resource and action records.
-	Namespace = "308ae342-3c2c-4f7e-b786-f6323730fe76"
-	codeActor = "system:resource-catalog"
+	Namespace                = "308ae342-3c2c-4f7e-b786-f6323730fe76"
+	codeActor                = "system:resource-catalog"
+	maxLegacyPermissionLinks = 10_000
 )
 
 type Syncer struct {
@@ -139,12 +141,15 @@ func backfillLegacyPermissionLinks(ctx context.Context, tx *sqlx.Tx, generator s
 		PermissionID string `db:"permission_id"`
 		ActionID     string `db:"action_id"`
 	}{}
-	err = tx.SelectContext(ctx, &rows, `SELECT p.id AS permission_id,a.id AS action_id FROM permissions p
+	err = tx.SelectContext(ctx, &rows, tx.Rebind(`SELECT p.id AS permission_id,a.id AS action_id FROM permissions p
 		JOIN authorization_resources r ON r.resource_key=p.resource AND r.deleted_at IS NULL
 		JOIN authorization_resource_actions a ON a.resource_id=r.id AND a.action_key=p.action AND a.deleted_at IS NULL
-		WHERE p.node_type='permission' AND p.deleted_at IS NULL AND p.resource<>'' AND p.action<>''`)
+		WHERE p.node_type='permission' AND p.deleted_at IS NULL AND p.resource<>'' AND p.action<>'' LIMIT ?`), maxLegacyPermissionLinks+1)
 	if err != nil {
 		return fmt.Errorf("load legacy permission links: %w", err)
+	}
+	if len(rows) > maxLegacyPermissionLinks {
+		return errLegacyLinkLimit
 	}
 	for _, row := range rows {
 		var existing struct {
