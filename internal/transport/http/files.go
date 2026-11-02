@@ -201,6 +201,8 @@ func (h *FileHandler) fail(c *gin.Context, err error) {
 		Fail(c, h.logger, apperror.Unavailable("file service is unavailable", err))
 	case errors.Is(err, files.ErrUploadUnavailable):
 		Fail(c, h.logger, apperror.Unavailable("file upload is unavailable", err))
+	case errors.Is(err, files.ErrCoordinationUnavailable):
+		Fail(c, h.logger, apperror.Unavailable("file upload coordination is unavailable", err))
 	default:
 		Fail(c, h.logger, apperror.Internal(err))
 	}

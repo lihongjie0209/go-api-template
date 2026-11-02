@@ -25,3 +25,9 @@ already have a partial index on active lineage.
 | Presentation | No response model or timezone change. The cutoff remains the start of a month in +08. |
 | Tests | Unit tests verify bounded purge/lineage cleanup SQL, independent outbox class budgets for MySQL/PostgreSQL, and cutoff behavior. The service-local PostgreSQL/MySQL Testcontainers suite checks the dialect indexes, clears two expired rows from each outbox class with one batch per class, retains pending/recent rows, and executes down migration. CI execution is pending. |
 | Shared capability and dictionary | Reuses the lifecycle manager and migration runner. Sensitive, high-volume logs are unsuitable dictionary data. |
+
+CI run `41401562122` found that the orphan-partition integration fixture used
+the current month, which migration `000004` already creates. The fixture now
+uses month `+8`, beyond migration's `+6` premake range but within the test
+manager's premake range. The failure was in test setup; CI revalidation is
+pending.

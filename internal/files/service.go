@@ -32,17 +32,18 @@ import (
 )
 
 var (
-	ErrDisabled               = errors.New("file service is disabled")
-	ErrNotFound               = errors.New("file not found")
-	ErrForbidden              = errors.New("file access denied")
-	ErrVersionConflict        = errors.New("file version conflict")
-	ErrInvalidInput           = errors.New("invalid file input")
-	ErrUploadUnavailable      = errors.New("file upload staging unavailable")
-	errObjectUploadFailed     = errors.New("object_upload_failed")
-	errObjectDeleteFailed     = errors.New("object_delete_failed")
-	errObjectPresignFailed    = errors.New("object_presign_failed")
-	errFileRepairFailed       = errors.New("file_repair_failed")
-	errFileOperationLogFailed = errors.New("file_operation_log_failed")
+	ErrDisabled                = errors.New("file service is disabled")
+	ErrNotFound                = errors.New("file not found")
+	ErrForbidden               = errors.New("file access denied")
+	ErrVersionConflict         = errors.New("file version conflict")
+	ErrInvalidInput            = errors.New("invalid file input")
+	ErrUploadUnavailable       = errors.New("file upload staging unavailable")
+	ErrCoordinationUnavailable = errors.New("file upload coordination unavailable")
+	errObjectUploadFailed      = errors.New("object_upload_failed")
+	errObjectDeleteFailed      = errors.New("object_delete_failed")
+	errObjectPresignFailed     = errors.New("object_presign_failed")
+	errFileRepairFailed        = errors.New("file_repair_failed")
+	errFileOperationLogFailed  = errors.New("file_operation_log_failed")
 )
 
 var safeObjectSegment = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -228,48 +229,54 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Record, error)
 	request := map[string]any{"name": name, "content_type": staged.contentType, "size_bytes": input.Size, "checksum_sha256": record.ChecksumSHA256}
 	entry := operationlog.Entry{Operation: "file.upload", ResourceType: "file", ResourceID: id, ResourceName: name, Source: "backend", Protocol: "service", Request: request}
 	started := time.Now()
-	if err := s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		return insertUploadIntent(ctx, tx, record, actor.ID, started.Add(s.cfg.UploadStaleAfter))
-	}); err != nil {
-		s.recordFailure(ctx, entry, started)
-		return Record{}, fmt.Errorf("record file upload intent: %w", err)
-	}
-	stored, err := s.storage.Put(ctx, objectstorage.PutInput{Key: objectKey, Body: staged.file, Size: input.Size, ContentType: staged.contentType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
-	if err != nil {
-		s.repairUploadAfterFailure(ctx, id)
-		s.recordFailure(ctx, entry, started)
-		return Record{}, fmt.Errorf("upload object: %w", safeStorageFailure(err, errObjectUploadFailed))
-	}
-	record.ETag = stored.ETag
 	var uploaded Record
-	err = s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
-		if err := insert(ctx, tx, record, actor.ID); err != nil {
-			return err
+	intentCreated := false
+	err = s.withCommittedUploadLock(ctx, id, func(lockCtx context.Context) error {
+		if err := s.transactor.Within(lockCtx, nil, func(tx *sqlx.Tx) error {
+			return insertUploadIntent(lockCtx, tx, record, actor.ID, started.Add(s.cfg.UploadStaleAfter))
+		}); err != nil {
+			return fmt.Errorf("record file upload intent: %w", err)
 		}
-		result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE file_upload_intents SET status='completed',deleted_at=?,deleted_by=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), time.Now(), actor.ID, id)
+		intentCreated = true
+		stored, err := s.storage.Put(lockCtx, objectstorage.PutInput{Key: objectKey, Body: staged.file, Size: input.Size, ContentType: staged.contentType, Metadata: map[string]string{"sha256": record.ChecksumSHA256}})
 		if err != nil {
-			return err
+			return fmt.Errorf("upload object: %w", safeStorageFailure(err, errObjectUploadFailed))
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return err
+		record.ETag = stored.ETag
+		if err := s.transactor.Within(lockCtx, nil, func(tx *sqlx.Tx) error {
+			if err := insert(lockCtx, tx, record, actor.ID); err != nil {
+				return err
+			}
+			result, err := tx.ExecContext(lockCtx, tx.Rebind(`UPDATE file_upload_intents SET status='completed',deleted_at=?,deleted_by=? WHERE id=? AND status='pending' AND deleted_at IS NULL`), time.Now(), actor.ID, id)
+			if err != nil {
+				return err
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows != 1 {
+				return errors.New("file upload intent is no longer pending")
+			}
+			where, args := fileScope(actor, id)
+			query := tx.Rebind(`SELECT ` + recordColumns + ` FROM files WHERE ` + where + ` AND deleted_at IS NULL`)
+			if err := tx.GetContext(lockCtx, &uploaded, query, args...); err != nil {
+				return fmt.Errorf("read uploaded file in transaction: %w", err)
+			}
+			entry.Duration = time.Since(started)
+			entry.Succeeded = true
+			return s.operations.RecordTx(lockCtx, tx, entry)
+		}); err != nil {
+			return fmt.Errorf("record uploaded file: %w", err)
 		}
-		if rows != 1 {
-			return errors.New("file upload intent is no longer pending")
-		}
-		where, args := fileScope(actor, id)
-		query := tx.Rebind(`SELECT ` + recordColumns + ` FROM files WHERE ` + where + ` AND deleted_at IS NULL`)
-		if err := tx.GetContext(ctx, &uploaded, query, args...); err != nil {
-			return fmt.Errorf("read uploaded file in transaction: %w", err)
-		}
-		entry.Duration = time.Since(started)
-		entry.Succeeded = true
-		return s.operations.RecordTx(ctx, tx, entry)
+		return nil
 	})
 	if err != nil {
-		s.repairUploadAfterFailure(ctx, id)
+		if intentCreated {
+			s.repairUploadAfterFailure(ctx, id)
+		}
 		s.recordFailure(ctx, entry, started)
-		return Record{}, fmt.Errorf("record uploaded file: %w", err)
+		return Record{}, err
 	}
 	return s.presentBestEffort(ctx, uploaded), nil
 }
@@ -714,6 +721,27 @@ func (s *Service) withUploadLock(ctx context.Context, id string, fn func(context
 		return fn(ctx)
 	}
 	return cache.WithLock(ctx, s.locker, "file:upload:"+id, s.lockTTL, s.lockRetry, fn)
+}
+
+func (s *Service) withCommittedUploadLock(ctx context.Context, id string, fn func(context.Context) error) error {
+	if s.locker == nil {
+		return fn(ctx)
+	}
+	entered := false
+	err := cache.WithCommittedLock(ctx, s.locker, "file:upload:"+id, s.lockTTL, s.lockRetry, func(lockCtx context.Context) error {
+		entered = true
+		return fn(lockCtx)
+	})
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if !entered || errors.Is(err, cache.ErrLockLost) {
+		return ErrCoordinationUnavailable
+	}
+	return err
 }
 
 func (s *Service) validateUpload(input UploadInput) error {

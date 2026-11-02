@@ -9,11 +9,13 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
 	"github.com/lihongjie0209/go-api-template/internal/database"
 	"github.com/lihongjie0209/go-api-template/internal/objectstorage"
@@ -38,8 +40,58 @@ type storageStub struct {
 	deleteErr    error
 	presignErr   error
 	presignInput objectstorage.PresignInput
+	onPut        func(objectstorage.PutInput)
 }
 type operationStub struct{}
+
+var errUploadLeaseHeld = errors.New("upload lease is held")
+
+type uploadLeaseLocker struct {
+	held       atomic.Bool
+	key        string
+	blockedKey string
+	lockErr    error
+	extendErr  error
+	unlockErr  error
+}
+
+func (l *uploadLeaseLocker) Lock(_ context.Context, key string, _, _ time.Duration) (cache.Lock, error) {
+	if l.lockErr != nil {
+		return nil, l.lockErr
+	}
+	if l.held.Swap(true) {
+		l.blockedKey = key
+		return nil, errUploadLeaseHeld
+	}
+	l.key = key
+	return uploadLease{locker: l}, nil
+}
+
+func (*uploadLeaseLocker) TryLock(context.Context, string, time.Duration) (cache.Lock, bool, error) {
+	return nil, false, errors.New("unexpected TryLock")
+}
+
+type uploadLease struct{ locker *uploadLeaseLocker }
+
+func (l uploadLease) Extend(context.Context) error { return l.locker.extendErr }
+func (l uploadLease) Unlock(context.Context) error {
+	l.locker.held.Store(false)
+	return l.locker.unlockErr
+}
+func (l uploadLease) Until() time.Time { return time.Now().Add(time.Minute) }
+
+type uploadLockCheckingOperations struct{ held *atomic.Bool }
+
+func (uploadLockCheckingOperations) Enabled() bool { return true }
+func (uploadLockCheckingOperations) Record(context.Context, operationlog.Entry) error {
+	return nil
+}
+func (o uploadLockCheckingOperations) RecordTx(context.Context, *sqlx.Tx, operationlog.Entry) error {
+	if !o.held.Load() {
+		return errors.New("upload lease released before metadata commit")
+	}
+	return nil
+}
 
 type cancelingWriter struct {
 	writer io.Writer
@@ -84,6 +136,9 @@ func (*failingReadOperationStub) RecordTx(context.Context, *sqlx.Tx, operationlo
 }
 
 func (s *storageStub) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
+	if s.onPut != nil {
+		s.onPut(input)
+	}
 	s.putType = input.ContentType
 	_, s.putSeeker = input.Body.(io.Seeker)
 	if file, ok := input.Body.(*os.File); ok {
@@ -275,6 +330,96 @@ func TestServiceUploadPersistsCleanupRetryWhenObjectStoreFails(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUploadHoldsRepairLeaseThroughObjectWriteAndMetadataCommit(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	db := sqlx.NewDb(raw, "pgx")
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO file_upload_intents`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT set_config('app.actor_id', $1, true)`)).WithArgs("user-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO files .*object_delete_attempts, object_delete_error`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE file_upload_intents SET status='completed'`).WillReturnResult(sqlmock.NewResult(0, 1))
+	now := time.Now()
+	mock.ExpectQuery(`SELECT id, tenant_id, object_key`).WithArgs(sqlmock.AnyArg(), "tenant-1").WillReturnRows(
+		sqlmock.NewRows(strings.Split(strings.ReplaceAll(recordColumns, " ", ""), ",")).AddRow(
+			"upload-1", "tenant-1", "files/tenant-1/upload-1/report.txt", "report.txt", "text/plain; charset=utf-8", int64(5), "etag-1", "checksum",
+			now, "user-1", now, "user-1", int64(1), nil, nil, nil, int64(0), "", nil,
+		),
+	)
+	mock.ExpectCommit()
+	locker := &uploadLeaseLocker{unlockErr: errors.New("lease release unavailable")}
+	storage := &storageStub{putInfo: objectstorage.Info{ETag: "etag-1"}}
+	service := New(db, database.NewTransactor(db), storage, locker, uploadLockCheckingOperations{held: &locker.held}, nil, slog.Default(), config.Config{
+		Files:           config.Files{Enabled: true, MaxSizeBytes: 1024, UploadStaleAfter: time.Millisecond, DeletionBatchSize: 1},
+		DistributedLock: config.DistributedLock{TTL: time.Minute, RetryDelay: time.Millisecond},
+	})
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+	storage.onPut = func(input objectstorage.PutInput) {
+		if !locker.held.Load() {
+			t.Error("upload lease was not held while writing the object")
+		}
+		parts := strings.Split(input.Key, "/")
+		if len(parts) != 4 {
+			t.Fatalf("unexpected object key %q", input.Key)
+		}
+		mock.ExpectQuery(`SELECT id,object_key,attempts FROM file_upload_intents`).WithArgs(sqlmock.AnyArg(), 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "object_key", "attempts"}).AddRow(parts[2], input.Key, 0))
+		if err := service.ProcessPendingUploads(ctx); !errors.Is(err, errUploadLeaseHeld) {
+			t.Errorf("repair worker error=%v, want lease contention", err)
+		}
+		if locker.key != "file:upload:"+parts[2] || locker.blockedKey != locker.key {
+			t.Errorf("upload lease key=%q repair lease key=%q", locker.key, locker.blockedKey)
+		}
+	}
+	if _, err := service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if locker.held.Load() || !strings.HasPrefix(locker.key, "file:upload:") || len(storage.deleted) != 0 {
+		t.Fatalf("lease held=%t key=%q deletes=%v", locker.held.Load(), locker.key, storage.deleted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUploadLockOutageFailsBeforeIntentOrObjectWrite(t *testing.T) {
+	t.Parallel()
+	locker := &uploadLeaseLocker{lockErr: errors.New("redis password=secret-value")}
+	storage := &storageStub{}
+	service := &Service{
+		enabled: true, db: &sqlx.DB{}, transactor: &database.Transactor{}, storage: storage,
+		locker: locker, operations: operationStub{}, cfg: config.Files{MaxSizeBytes: 1024},
+		lockTTL: time.Second, lockRetry: time.Millisecond,
+	}
+	ctx := platformprincipal.WithContext(t.Context(), platformprincipal.Principal{ID: "user-1", Type: platformprincipal.TypeUser, TenantID: "tenant-1"})
+	_, err := service.Upload(ctx, UploadInput{Name: "report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
+	if !errors.Is(err, ErrCoordinationUnavailable) || strings.Contains(err.Error(), "secret-value") || locker.held.Load() || len(storage.putBody) != 0 {
+		t.Fatalf("lock outage error=%v held=%t object bytes=%d", err, locker.held.Load(), len(storage.putBody))
+	}
+}
+
+func TestUploadLeaseLossCancelsCallbackAndHidesRedisDetails(t *testing.T) {
+	t.Parallel()
+	locker := &uploadLeaseLocker{extendErr: errors.Join(cache.ErrLockLost, errors.New("redis password=secret-value"))}
+	service := &Service{locker: locker, lockTTL: 30 * time.Millisecond, lockRetry: time.Millisecond}
+	callbackCanceled := false
+	err := service.withCommittedUploadLock(t.Context(), "file-1", func(ctx context.Context) error {
+		<-ctx.Done()
+		callbackCanceled = true
+		return ctx.Err()
+	})
+	if !callbackCanceled || !errors.Is(err, ErrCoordinationUnavailable) || strings.Contains(err.Error(), "secret-value") || locker.held.Load() {
+		t.Fatalf("callback canceled=%t error=%v held=%t", callbackCanceled, err, locker.held.Load())
 	}
 }
 

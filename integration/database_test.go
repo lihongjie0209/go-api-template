@@ -1499,7 +1499,10 @@ func testPostgresLogPartitions(t *testing.T, ctx context.Context, db *sqlx.DB) {
 func testPostgresUnattachedPartitionFails(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
 	now := time.Now().In(time.FixedZone("UTC+8", 8*60*60))
-	name := fmt.Sprintf("operation_logs_y%04dm%02d", now.Year(), int(now.Month()))
+	// The migration already creates months -12 through +6. Pick +8 so the
+	// orphan fixture cannot collide with a real partition from migration.
+	target := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, 8, 0)
+	name := fmt.Sprintf("operation_logs_y%04dm%02d", target.Year(), int(target.Month()))
 	if _, err := db.ExecContext(ctx, `CREATE TABLE "`+name+`" (id text)`); err != nil {
 		t.Fatalf("create unattached partition-name table: %v", err)
 	}
@@ -1509,7 +1512,7 @@ func testPostgresUnattachedPartitionFails(t *testing.T, ctx context.Context, db 
 		}
 	}()
 	manager := datalifecycle.New(db, config.Config{App: config.App{Name: "integration"}, Database: config.Database{Type: "postgres"}, DistributedLock: config.DistributedLock{TTL: time.Second}, DataLifecycle: config.DataLifecycle{
-		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PremakeMonths: 1, PartitionMaxPerRun: 1,
+		Enabled: true, Interval: time.Hour, Timeout: time.Minute, PremakeMonths: 8, PartitionMaxPerRun: 1,
 	}}, slog.Default(), nil, integrationLifecycleLocker{})
 	if err := manager.Maintain(ctx); !errors.Is(err, datalifecycle.ErrPartitionNameOccupied) {
 		t.Fatalf("unattached partition name error=%v, want occupied", err)
@@ -3649,9 +3652,13 @@ func testManualWorkerCompletionTransaction(t *testing.T, ctx context.Context, db
 type integrationStorage struct {
 	deleted   []string
 	deleteErr error
+	onPut     func(context.Context, objectstorage.PutInput)
 }
 
-func (s *integrationStorage) Put(_ context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
+func (s *integrationStorage) Put(ctx context.Context, input objectstorage.PutInput) (objectstorage.Info, error) {
+	if s.onPut != nil {
+		s.onPut(ctx, input)
+	}
 	_, err := io.Copy(io.Discard, input.Body)
 	return objectstorage.Info{Key: input.Key, Size: input.Size, ContentType: input.ContentType, ETag: "integration-etag"}, err
 }
@@ -3671,10 +3678,27 @@ func (*integrationStorage) Presign(_ context.Context, input objectstorage.Presig
 
 func testFileLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB) {
 	t.Helper()
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = redisClient.Close() }()
+	locker := cache.NewLocker(redisClient, cache.WithLockKeyPrefix("integration-file-lock:"))
 	storage := &integrationStorage{}
 	cfg := config.Config{Files: config.Files{Enabled: true, MaxSizeBytes: 1024, DeletionInterval: time.Minute, DeletionRetryDelay: time.Minute, DeletionBatchSize: 10}, DistributedLock: config.DistributedLock{TTL: time.Second, RetryDelay: 10 * time.Millisecond}}
-	service := files.New(db, appdb.NewTransactor(db), storage, nil, discardOperationRecorder{}, nil, slog.Default(), cfg)
+	cfg.Files.UploadStaleAfter = time.Millisecond
+	service := files.New(db, appdb.NewTransactor(db), storage, locker, discardOperationRecorder{}, nil, slog.Default(), cfg)
 	ownerCtx := platformprincipal.WithContext(ctx, platformprincipal.Principal{ID: "file-owner", Type: platformprincipal.TypeUser, TenantID: "file-tenant"})
+	storage.onPut = func(_ context.Context, _ objectstorage.PutInput) {
+		storage.onPut = nil
+		time.Sleep(5 * time.Millisecond)
+		repairCtx, cancel := context.WithTimeout(ownerCtx, 100*time.Millisecond)
+		defer cancel()
+		if err := service.ProcessPendingUploads(repairCtx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("repair during active upload error=%v, want lock contention deadline", err)
+		}
+		if len(storage.deleted) != 0 {
+			t.Errorf("repair deleted active upload object: %v", storage.deleted)
+		}
+	}
 	created, err := service.Upload(ownerCtx, files.UploadInput{Name: "../report.txt", Size: 5, Body: bytes.NewBufferString("hello")})
 	if err != nil || created.OriginalName != "report.txt" || created.ContentType != "text/plain; charset=utf-8" || created.Version != 1 {
 		t.Fatalf("uploaded file=%+v err=%v", created, err)

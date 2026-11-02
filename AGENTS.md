@@ -534,6 +534,10 @@ TTL, and invalidation for its own data.
 - File upload/delete repair and failed-operation logs must use
   `observability.SafeError` with fixed component reasons; database, object
   storage, and queue errors may contain credentials or sensitive object keys.
+- An upload must hold the same renewable file-ID lease as stale-intent repair
+  from intent creation through object write and final metadata/event commit.
+  Repair starts after the upload releases that lease. Once the final
+  transaction commits, a release error must not report the upload as failed.
 - HTTP error boundaries, authentication/security-log failures, idempotency,
   and rate-limit middleware must also classify errors before logging. Preserve
   request/trace IDs and bounded operation names for correlation, never the raw
