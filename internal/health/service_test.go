@@ -101,6 +101,40 @@ func TestService_ReadyReturnsAfterCallerCancellationWhenDriverIgnoresContext(t *
 	release()
 }
 
+func TestService_ReadyHonorsDependencyTimeoutWhenDriverIgnoresContext(t *testing.T) {
+	connector := &blockingPingConnector{started: make(chan struct{}), release: make(chan struct{})}
+	database := sql.OpenDB(connector)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(connector.release) }) }
+	t.Cleanup(func() {
+		release()
+		_ = database.Close()
+	})
+	service := New(sqlx.NewDb(database, "blocked"), nil, config.Config{
+		Database: config.Database{Enabled: true},
+		Health:   config.Health{DatabaseTimeout: 100 * time.Millisecond, RedisTimeout: 100 * time.Millisecond},
+	})
+	fallback := time.AfterFunc(2*time.Second, release)
+	defer fallback.Stop()
+
+	started := time.Now()
+	status, ready := service.Ready(t.Context())
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Ready() waited %s for a driver that ignored its dependency timeout", elapsed)
+	}
+	if ready || status.Status != "not_ready" || status.Dependencies["database"].Status != "down" {
+		t.Fatalf("Ready() with timed-out driver = %#v, %t", status, ready)
+	}
+	select {
+	case <-connector.started:
+	default:
+		t.Fatal("database driver never started")
+	}
+	if count := connector.pingCount.Load(); count != 1 {
+		t.Fatalf("driver Ping() calls = %d, want 1", count)
+	}
+}
+
 func TestService_Ready(t *testing.T) {
 	t.Parallel()
 	server, err := miniredis.Run()

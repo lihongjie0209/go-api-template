@@ -38,11 +38,19 @@ func New(db *sqlx.DB, client *redis.Client, cfg config.Config) *Service {
 func (s *Service) Live() Status { return Status{Status: "up"} }
 
 func (s *Service) Ready(ctx context.Context) (Status, bool) {
+	// The per-dependency Contexts cannot stop a driver that ignores cancellation.
+	// Bound the aggregation itself by the longest configured dependency timeout.
+	probeTimeout := max(s.cfg.DatabaseTimeout, s.cfg.RedisTimeout)
+	if probeTimeout <= 0 {
+		probeTimeout = 2 * time.Second
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	// Keep one slot per dependency so a cancelled caller can never leave a
 	// completed probe blocked while publishing its result.
 	results := make(chan result, 2)
-	go s.checkDatabase(ctx, results)
-	go s.checkRedis(ctx, results)
+	go s.checkDatabase(probeCtx, results)
+	go s.checkRedis(probeCtx, results)
 	status := Status{Status: "ready", Dependencies: make(map[string]Dependency, 2)}
 	ready := true
 	for range 2 {
@@ -50,7 +58,7 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 		case item := <-results:
 			status.Dependencies[item.name] = item.dependency
 			ready = ready && item.ready
-		case <-ctx.Done():
+		case <-probeCtx.Done():
 			for _, name := range []string{"database", "redis"} {
 				if _, found := status.Dependencies[name]; !found {
 					status.Dependencies[name] = Dependency{Status: "down"}
@@ -60,7 +68,7 @@ func (s *Service) Ready(ctx context.Context) (Status, bool) {
 			return status, false
 		}
 	}
-	if ctx.Err() != nil {
+	if probeCtx.Err() != nil {
 		status.Status = "not_ready"
 		return status, false
 	}
