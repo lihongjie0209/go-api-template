@@ -184,6 +184,7 @@ func TestRepositoryAndMigrations(t *testing.T) {
 			assertServiceMigrationHistory(t, ctx, db, databaseType, migrationCfg.Table)
 			assertMandatoryAuditColumns(t, ctx, db, databaseType, migrationCfg.Table)
 			assertOutboxDeadListIndex(t, ctx, db, databaseType)
+			assertPlatformPermissionReferenceIndex(t, ctx, db, databaseType)
 			assertOutboxLegacyErrorProjection(t, ctx, db)
 			if databaseType == "postgres" {
 				testPostgresMigrationLockTimeout(t, ctx, db, migrationCfg)
@@ -240,6 +241,26 @@ func assertOutboxDeadListIndex(t *testing.T, ctx context.Context, db *sqlx.DB, d
 	}
 	if definition != "deleted_at,published_at,dead_at,id" {
 		t.Fatalf("unexpected MySQL outbox dead-list index: %s", definition)
+	}
+}
+
+func assertPlatformPermissionReferenceIndex(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType string) {
+	t.Helper()
+	var definition string
+	if databaseType == "postgres" {
+		if err := db.GetContext(ctx, &definition, `SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='platform_principal_permissions' AND indexname='platform_principal_permissions_permission_idx'`); err != nil {
+			t.Fatalf("inspect PostgreSQL platform permission reference index: %v", err)
+		}
+		if !strings.Contains(definition, "(permission_id)") || !strings.Contains(definition, "deleted_at IS NULL") {
+			t.Fatalf("unexpected PostgreSQL platform permission reference index: %s", definition)
+		}
+		return
+	}
+	if err := db.GetContext(ctx, &definition, `SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='platform_principal_permissions' AND index_name='platform_principal_permissions_permission_idx'`); err != nil {
+		t.Fatalf("inspect MySQL platform permission reference index: %v", err)
+	}
+	if definition != "permission_id,deleted_at" {
+		t.Fatalf("unexpected MySQL platform permission reference index: %s", definition)
 	}
 }
 

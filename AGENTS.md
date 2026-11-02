@@ -394,7 +394,9 @@ TTL, and invalidation for its own data.
   action; group nodes must not retain effective links. Deleting a permission
   must soft-delete its owned action links in the same transaction after
   reference checks, including platform principal grants, tenant ceilings, and
-  tenant role grants. Reactivating a deleted code-owned permission must clear
+  tenant role grants. Reference checks use indexed `SELECT 1 ... LIMIT 1`
+  existence queries so they stop at the first live relation. Reactivating a
+  deleted code-owned permission must clear
   stale links before restoring its current primary action. Do not query legacy
   tables that have been removed by migrations when checking references.
   The data-policy revision and

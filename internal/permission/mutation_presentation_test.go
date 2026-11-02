@@ -111,12 +111,12 @@ func TestPermissionDeleteRetiresActionLinksWithoutLegacyMenuTable(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, false))
 	for _, query := range []string{
-		`SELECT count\(\*\) FROM permissions WHERE parent_id=\? AND deleted_at IS NULL`,
-		`SELECT count\(\*\) FROM platform_principal_permissions WHERE permission_id=\? AND deleted_at IS NULL`,
-		`SELECT count\(\*\) FROM tenant_permission_grants WHERE permission_id=\? AND deleted_at IS NULL`,
-		`SELECT count\(\*\) FROM tenant_role_permissions WHERE permission_id=\? AND deleted_at IS NULL`,
+		`SELECT 1 FROM permissions WHERE parent_id=\? AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM platform_principal_permissions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM tenant_permission_grants WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM tenant_role_permissions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`,
 	} {
-		mock.ExpectQuery(query).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		mock.ExpectQuery(query).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"1"}))
 	}
 	mock.ExpectExec(`UPDATE permissions SET deleted_at=\?`).WithArgs(sqlmock.AnyArg(), "admin", sqlmock.AnyArg(), "admin", id, int64(4)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE permission_resource_actions SET deleted_at=CURRENT_TIMESTAMP WHERE permission_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 2))
@@ -136,8 +136,8 @@ func TestPermissionDeleteRejectsActivePlatformGrant(t *testing.T) {
 	mock.ExpectQuery(`SELECT p.id,p.parent_id`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, true))
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* FROM permissions WHERE id=\? AND deleted_at IS NULL FOR UPDATE`).WithArgs(id).WillReturnRows(actionPermissionRows(id, 4, false))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM permissions WHERE parent_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM platform_principal_permissions WHERE permission_id=\? AND deleted_at IS NULL`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT 1 FROM permissions WHERE parent_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	mock.ExpectQuery(`SELECT 1 FROM platform_principal_permissions WHERE permission_id=\? AND deleted_at IS NULL LIMIT 1`).WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	mock.ExpectRollback()
 	require.ErrorIs(t, service.Delete(platformprincipal.SystemContext(t.Context(), "admin"), id, 4), ErrInUse)
 	require.NoError(t, mock.ExpectationsWereMet())

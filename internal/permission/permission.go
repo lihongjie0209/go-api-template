@@ -958,18 +958,18 @@ func (s *Service) Delete(ctx context.Context, id string, version int64) error {
 		if current.IsSystem {
 			return ErrConflict
 		}
-		children, err := referenceCount(ctx, tx, `SELECT count(*) FROM permissions WHERE parent_id=? AND deleted_at IS NULL`, id)
+		children, err := referenceExists(ctx, tx, `SELECT 1 FROM permissions WHERE parent_id=? AND deleted_at IS NULL LIMIT 1`, id)
 		if err != nil {
 			return err
 		}
-		if children > 0 {
+		if children {
 			return ErrHasChildren
 		}
-		used, err := permissionReferenceCount(ctx, tx, id)
+		used, err := permissionReferenced(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if used > 0 {
+		if used {
 			return ErrInUse
 		}
 		q := tx.Rebind(`UPDATE permissions SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL AND is_system=false`)
@@ -1017,29 +1017,33 @@ func getForUpdate(ctx context.Context, tx *sqlx.Tx, id string) (Record, error) {
 	}
 	return record, nil
 }
-func referenceCount(ctx context.Context, tx *sqlx.Tx, query, id string) (int, error) {
-	var count int
-	if err := tx.GetContext(ctx, &count, tx.Rebind(query), id); err != nil {
-		return 0, err
+func referenceExists(ctx context.Context, tx *sqlx.Tx, query, id string) (bool, error) {
+	var found int
+	err := tx.GetContext(ctx, &found, tx.Rebind(query), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	return count, nil
+	if err != nil {
+		return false, err
+	}
+	return found == 1, nil
 }
-func permissionReferenceCount(ctx context.Context, tx *sqlx.Tx, id string) (int, error) {
+func permissionReferenced(ctx context.Context, tx *sqlx.Tx, id string) (bool, error) {
 	queries := []string{
-		`SELECT count(*) FROM platform_principal_permissions WHERE permission_id=? AND deleted_at IS NULL`,
-		`SELECT count(*) FROM tenant_permission_grants WHERE permission_id=? AND deleted_at IS NULL`,
-		`SELECT count(*) FROM tenant_role_permissions WHERE permission_id=? AND deleted_at IS NULL`,
+		`SELECT 1 FROM platform_principal_permissions WHERE permission_id=? AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM tenant_permission_grants WHERE permission_id=? AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM tenant_role_permissions WHERE permission_id=? AND deleted_at IS NULL LIMIT 1`,
 	}
 	for _, query := range queries {
-		count, err := referenceCount(ctx, tx, query, id)
+		exists, err := referenceExists(ctx, tx, query, id)
 		if err != nil {
-			return 0, err
+			return false, err
 		}
-		if count > 0 {
-			return count, nil
+		if exists {
+			return true, nil
 		}
 	}
-	return 0, nil
+	return false, nil
 }
 func (s *Service) mutate(ctx context.Context, operation, id string, request any, fn func(*sqlx.Tx) error) error {
 	return s.mutateWithSeedRecovery(ctx, operation, id, request, fn, nil, nil)

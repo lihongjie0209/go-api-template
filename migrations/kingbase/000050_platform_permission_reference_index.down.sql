@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS platform_principal_permissions_permission_idx;
