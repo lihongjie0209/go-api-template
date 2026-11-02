@@ -40,6 +40,7 @@ const (
 	maxRoleDescriptionLength = 4096
 	maxRoleKeywordLength     = 256
 	maxAuthorizationLinks    = 1000
+	maxRoleCandidateLinks    = 100_000
 )
 
 var authorizationLinkLimitClause = fmt.Sprintf(" LIMIT %d", maxAuthorizationLinks+1)
@@ -901,8 +902,8 @@ func (s *TenantAuthorizationService) assignableRoles(ctx context.Context, actor 
 	return s.assignableRolesWithEffective(ctx, actor, roleIDs, effective)
 }
 
-func (s *TenantAuthorizationService) assignableRolesWithEffective(ctx context.Context, actor platformprincipal.Principal, roleIDs, effective []string) (map[string]bool, error) {
-	result := make(map[string]bool, len(roleIDs))
+func (s *TenantAuthorizationService) assignableRolesWithEffective(ctx context.Context, actor platformprincipal.Principal, roleIDs, effective []string) (result map[string]bool, err error) {
+	result = make(map[string]bool, len(roleIDs))
 	if len(roleIDs) == 0 {
 		return result, nil
 	}
@@ -914,19 +915,34 @@ func (s *TenantAuthorizationService) assignableRolesWithEffective(ctx context.Co
 		PermissionID string `db:"permission_id"`
 		Valid        int    `db:"valid"`
 	}
-	query, args, err := sqlx.In(`SELECT rp.role_id,rp.permission_id,CASE WHEN g.permission_id IS NOT NULL AND p.id IS NOT NULL AND `+tenantGrantablePermissionWhere+` THEN 1 ELSE 0 END AS valid FROM tenant_role_permissions rp LEFT JOIN permissions p ON p.id=rp.permission_id LEFT JOIN tenant_permission_grants g ON g.tenant_id=rp.tenant_id AND g.permission_id=rp.permission_id AND g.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id IN (?) AND rp.deleted_at IS NULL`, actor.TenantID, roleIDs)
+	query, args, err := sqlx.In(`SELECT rp.role_id,rp.permission_id,CASE WHEN g.permission_id IS NOT NULL AND p.id IS NOT NULL AND `+tenantGrantablePermissionWhere+` THEN 1 ELSE 0 END AS valid FROM tenant_role_permissions rp LEFT JOIN permissions p ON p.id=rp.permission_id LEFT JOIN tenant_permission_grants g ON g.tenant_id=rp.tenant_id AND g.permission_id=rp.permission_id AND g.deleted_at IS NULL WHERE rp.tenant_id=? AND rp.role_id IN (?) AND rp.deleted_at IS NULL`+fmt.Sprintf(` LIMIT %d`, maxRoleCandidateLinks+1), actor.TenantID, roleIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build role candidate permissions query: %w", err)
 	}
-	links := []permissionLink{}
-	if err := s.db.SelectContext(ctx, &links, s.db.Rebind(query), args...); err != nil {
+	rows, err := s.db.QueryxContext(ctx, s.db.Rebind(query), args...)
+	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			result = nil
+			err = closeErr
+		}
+	}()
 	effectiveSet := make(map[string]struct{}, len(effective))
 	for _, id := range effective {
 		effectiveSet[id] = struct{}{}
 	}
-	for _, link := range links {
+	count := 0
+	for rows.Next() {
+		if count == maxRoleCandidateLinks {
+			return nil, errAuthorizationLinkLimit
+		}
+		count++
+		var link permissionLink
+		if err := rows.StructScan(&link); err != nil {
+			return nil, err
+		}
 		_, ok := result[link.RoleID]
 		if !ok {
 			continue
@@ -935,6 +951,9 @@ func (s *TenantAuthorizationService) assignableRolesWithEffective(ctx context.Co
 		if link.Valid != 1 || !held {
 			result[link.RoleID] = false
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

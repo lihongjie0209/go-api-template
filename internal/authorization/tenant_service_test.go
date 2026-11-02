@@ -896,6 +896,39 @@ func TestRoleAssignmentChecksRejectOversizedPermissions(t *testing.T) {
 	}
 }
 
+func TestAssignableRoleCandidatesRejectOversizedLinkSet(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	rows := sqlmock.NewRows([]string{"role_id", "permission_id", "valid"})
+	for range maxRoleCandidateLinks + 1 {
+		rows.AddRow("role-1", "permission-1", 1)
+	}
+	mock.ExpectQuery(`SELECT rp.role_id,rp.permission_id,CASE WHEN .* FROM tenant_role_permissions rp .*LIMIT 100001`).
+		WithArgs("tenant-1", "role-1").WillReturnRows(rows)
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	actor := platformprincipal.Principal{TenantID: "tenant-1"}
+	result, err := service.assignableRolesWithEffective(t.Context(), actor, []string{"role-1"}, []string{"permission-1"})
+	require.Nil(t, result)
+	require.ErrorIs(t, err, errAuthorizationLinkLimit)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAssignableRoleCandidatesRejectCursorCloseFailure(t *testing.T) {
+	raw, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+	want := errors.New("candidate cursor close failed")
+	mock.ExpectQuery(`SELECT rp.role_id,rp.permission_id,CASE WHEN .* FROM tenant_role_permissions rp .*LIMIT 100001`).
+		WithArgs("tenant-1", "role-1").
+		WillReturnRows(sqlmock.NewRows([]string{"role_id", "permission_id", "valid"}).CloseError(want))
+	service := &TenantAuthorizationService{db: sqlx.NewDb(raw, "sqlmock")}
+	result, err := service.assignableRolesWithEffective(t.Context(), platformprincipal.Principal{TenantID: "tenant-1"}, []string{"role-1"}, nil)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, want)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestSetRolePermissionsCanRemoveNoLongerAssignablePermission(t *testing.T) {
 	raw, mock, err := sqlmock.New()
 	require.NoError(t, err)
