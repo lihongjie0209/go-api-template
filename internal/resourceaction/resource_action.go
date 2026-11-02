@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	MaxResourceKeyLength = 128
-	MaxActionKeyLength   = 64
+	MaxResourceKeyLength       = 128
+	MaxActionKeyLength         = 64
+	MaxCatalogNameBytes        = 256
+	MaxCatalogDescriptionBytes = 4096
 )
 
 var (
@@ -127,7 +129,9 @@ func NewRegistry(definitions []ResourceDefinition) (*Registry, error) {
 }
 
 func (r *Registry) add(definition ResourceDefinition) error {
-	if !validResourceKey(definition.Key) || strings.TrimSpace(definition.Name) == "" {
+	definition.Name = strings.TrimSpace(definition.Name)
+	definition.Description = strings.TrimSpace(definition.Description)
+	if !validResourceKey(definition.Key) || definition.Name == "" || len(definition.Name) > MaxCatalogNameBytes || len(definition.Description) > MaxCatalogDescriptionBytes {
 		return fmt.Errorf("%w: invalid resource definition %q", ErrInvalidResourceAction, definition.Key)
 	}
 	if definition.Scope != ResourceScopePlatform && definition.Scope != ResourceScopeTenant && definition.Scope != ResourceScopePrincipal {
@@ -140,21 +144,19 @@ func (r *Registry) add(definition ResourceDefinition) error {
 		return fmt.Errorf("%w: %q", ErrDuplicateResource, definition.Key)
 	}
 
-	definition.Name = strings.TrimSpace(definition.Name)
-	definition.Description = strings.TrimSpace(definition.Description)
 	definition.Actions = slices.Clone(definition.Actions)
 	seen := make(map[string]struct{}, len(definition.Actions))
 	for index := range definition.Actions {
 		action := &definition.Actions[index]
-		if !validActionKey(action.Key) || strings.TrimSpace(action.Name) == "" {
+		action.Name = strings.TrimSpace(action.Name)
+		action.Description = strings.TrimSpace(action.Description)
+		if !validActionKey(action.Key) || action.Name == "" || len(action.Name) > MaxCatalogNameBytes || len(action.Description) > MaxCatalogDescriptionBytes {
 			return fmt.Errorf("%w: invalid action %q for resource %q", ErrInvalidResourceAction, action.Key, definition.Key)
 		}
 		if _, exists := seen[action.Key]; exists {
 			return fmt.Errorf("%w: %s:%s", ErrDuplicateAction, definition.Key, action.Key)
 		}
 		seen[action.Key] = struct{}{}
-		action.Name = strings.TrimSpace(action.Name)
-		action.Description = strings.TrimSpace(action.Description)
 		r.actions[ResourceAction{Resource: definition.Key, Action: action.Key}.String()] = *action
 	}
 	r.resources[definition.Key] = definition

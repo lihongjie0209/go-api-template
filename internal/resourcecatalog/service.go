@@ -99,7 +99,7 @@ func NewService(db *sqlx.DB, tx *database.Transactor, operations operationlog.Tr
 }
 
 func validateResource(input ResourceInput) error {
-	if !resourceaction.ValidResourceKey(input.Key) || strings.TrimSpace(input.Name) == "" || len(input.Name) > 256 || len(input.Description) > 4096 ||
+	if !resourceaction.ValidResourceKey(input.Key) || strings.TrimSpace(input.Name) == "" || len(input.Name) > resourceaction.MaxCatalogNameBytes || len(input.Description) > resourceaction.MaxCatalogDescriptionBytes ||
 		(input.Scope != resourceaction.ResourceScopePlatform && input.Scope != resourceaction.ResourceScopeTenant && input.Scope != resourceaction.ResourceScopePrincipal) ||
 		(input.Status != "active" && input.Status != "disabled") {
 		return ErrInvalid
@@ -111,7 +111,7 @@ func validateAction(input ActionInput) error {
 	if _, err := uuid.Parse(input.ResourceID); err != nil {
 		return ErrInvalid
 	}
-	if !resourceaction.ValidActionKey(input.Key) || strings.TrimSpace(input.Name) == "" || len(input.Name) > 256 || len(input.Description) > 4096 ||
+	if !resourceaction.ValidActionKey(input.Key) || strings.TrimSpace(input.Name) == "" || len(input.Name) > resourceaction.MaxCatalogNameBytes || len(input.Description) > resourceaction.MaxCatalogDescriptionBytes ||
 		(input.Status != "active" && input.Status != "disabled") {
 		return ErrInvalid
 	}

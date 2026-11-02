@@ -7,7 +7,7 @@ future administration and are never changed by this sync.
 
 | Concern | Decision and rationale |
 | --- | --- |
-| Contract | Startup sync takes the complete validated backend registry, build time and commit. Resource keys and action keys are immutable; names, descriptions and scopes are replaced from code. Missing code-owned rows become disabled. Manual records have protected POST management APIs. |
+| Contract | Startup sync takes the complete validated backend registry, build time and commit. Resource keys and action keys are immutable; names, descriptions and scopes are replaced from code. Code and manual definitions share the 256-byte name and 4096-byte description limits, checked before reconciliation. Missing code-owned rows become disabled. Manual records have protected POST management APIs. |
 | Authentication | An in-process startup command uses the explicit `system:resource-catalog` principal. No public HTTP or gRPC registration endpoint exists. |
 | Authorization | Only `source=code` rows may be updated or disabled. A manual key colliding with a code declaration aborts startup. Existing endpoint descriptors and their fail-closed checks remain in force. |
 | Operation log | No queue operation event is emitted during startup; database audit records the system actor and each changed row. Startup failure is logged and prevents readiness. |

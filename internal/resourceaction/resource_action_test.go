@@ -2,6 +2,7 @@ package resourceaction
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -76,6 +77,35 @@ func TestRegistryRejectsDuplicates(t *testing.T) {
 		Actions: []ActionDefinition{{Key: "read", Name: "Read"}, {Key: "read", Name: "Read again"}},
 	}})
 	require.True(t, errors.Is(err, ErrDuplicateAction))
+}
+
+func TestRegistryEnforcesCatalogDisplayBounds(t *testing.T) {
+	t.Parallel()
+	base := ResourceDefinition{
+		Key: "tenant.member", Name: strings.Repeat("n", 256), Description: strings.Repeat("d", 4096),
+		Scope:   ResourceScopeTenant,
+		Actions: []ActionDefinition{{Key: "read", Name: strings.Repeat("n", 256), Description: strings.Repeat("d", 4096)}},
+	}
+	_, err := NewRegistry([]ResourceDefinition{base})
+	require.NoError(t, err, "catalog display limits must accept their boundary values")
+
+	for _, test := range []struct {
+		name   string
+		change func(*ResourceDefinition)
+	}{
+		{name: "resource name", change: func(d *ResourceDefinition) { d.Name += "x" }},
+		{name: "resource description", change: func(d *ResourceDefinition) { d.Description += "x" }},
+		{name: "action name", change: func(d *ResourceDefinition) { d.Actions[0].Name += "x" }},
+		{name: "action description", change: func(d *ResourceDefinition) { d.Actions[0].Description += "x" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			definition := base
+			definition.Actions = append([]ActionDefinition(nil), base.Actions...)
+			test.change(&definition)
+			_, err := NewRegistry([]ResourceDefinition{definition})
+			require.ErrorIs(t, err, ErrInvalidResourceAction)
+		})
+	}
 }
 
 func TestPlatformResourceDefinitions(t *testing.T) {

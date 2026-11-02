@@ -354,10 +354,12 @@ TTL, and invalidation for its own data.
   Missing metadata fails startup and CI. Paths and handler names are not policy
   identities. Resource/action definitions owned by code are reconciled at
   startup; only code-owned definitions absent from code are disabled. Manual
-  definitions remain independently manageable. One-time startup backfills of
-  legacy permission links must have a fixed row limit and fail the transaction
-  before writing when that limit is exceeded; never materialize an unbounded
-  catalog during service startup.
+  definitions remain independently manageable. Validate code-owned display
+  names and descriptions against the same bounded catalog contract as manual
+  definitions before starting database reconciliation. One-time startup
+  backfills of legacy permission links must have a fixed row limit and fail
+  the transaction before writing when that limit is exceeded; never
+  materialize an unbounded catalog during service startup.
 - Frontend authorization uses server-side capability evaluation only. Page
   capabilities evaluate canonical resource/action pairs against registered
   target operations. Row capabilities accept only bounded resource IDs and
