@@ -29,6 +29,7 @@ var ErrDefaultPartitionOccupied = errors.New("default partition contains rows fo
 var ErrPartitionNameOccupied = errors.New("partition name is occupied by an unattached table")
 var ErrLifecycleDatabaseUnavailable = errors.New("data lifecycle database is unavailable")
 var errDataLifecycleMaintenanceFailed = errors.New("data_lifecycle_maintenance_failed")
+var errDataLifecycleStartupFailed = errors.New("data_lifecycle_startup_failed")
 
 type Manager struct {
 	db              *sqlx.DB
@@ -440,7 +441,10 @@ func start(lifecycle fx.Lifecycle, manager *Manager) {
 	lifecycle.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			if err := manager.Maintain(ctx); err != nil {
-				return err
+				if errors.Is(err, ErrLifecycleDatabaseUnavailable) {
+					return err
+				}
+				return observability.SafeError(err, errDataLifecycleStartupFailed)
 			}
 			worker.Start()
 			return nil

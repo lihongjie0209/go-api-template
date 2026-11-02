@@ -49,6 +49,7 @@ import (
 
 var (
 	errDatabaseStartupFailed        = errors.New("database_startup_failed")
+	errDatabaseShutdownFailed       = errors.New("database_shutdown_failed")
 	errRedisStartupFailed           = errors.New("redis_startup_failed")
 	errRedisShutdownFailed          = errors.New("redis_shutdown_failed")
 	errObjectStorageStartupFailed   = errors.New("object_storage_startup_failed")
@@ -204,7 +205,7 @@ func newDatabase(lc fx.Lifecycle, cfg config.Config) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, observability.SafeError(err, errDatabaseStartupFailed)
 	}
-	lc.Append(fx.StopHook(func() error { return db.Close() }))
+	lc.Append(fx.StopHook(func() error { return observability.SafeError(db.Close(), errDatabaseShutdownFailed) }))
 	return db, nil
 }
 

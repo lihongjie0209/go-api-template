@@ -16,6 +16,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lihongjie0209/go-api-template/internal/cache"
 	"github.com/lihongjie0209/go-api-template/internal/config"
+	"github.com/lihongjie0209/go-api-template/internal/observability"
 	"github.com/lihongjie0209/go-api-template/internal/requestid"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
 	"go.uber.org/fx"
@@ -38,6 +39,31 @@ func TestEnabledLifecycleFailsStartupWithoutDatabase(t *testing.T) {
 	}
 	if err := lifecycle.hooks[0].OnStart(t.Context()); !errors.Is(err, ErrLifecycleDatabaseUnavailable) {
 		t.Fatalf("OnStart() error=%v", err)
+	}
+}
+
+func TestEnabledLifecycleRedactsStartupMaintenanceError(t *testing.T) {
+	raw, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	manager := &Manager{
+		db: sqlx.NewDb(raw, "mysql"), dialect: "mysql", appName: "orders", lockTTL: time.Second,
+		cfg:    config.DataLifecycle{Enabled: true, Timeout: time.Second},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		locker: lifecycleLockerStub{try: func(context.Context, string, time.Duration) (cache.Lock, bool, error) {
+			return nil, false, errors.New("redis password=secret-value")
+		}},
+	}
+	lifecycle := &lifecycleHookCapture{}
+	start(lifecycle, manager)
+	if len(lifecycle.hooks) != 1 {
+		t.Fatalf("enabled lifecycle hooks=%d, want one", len(lifecycle.hooks))
+	}
+	err = lifecycle.hooks[0].OnStart(t.Context())
+	if reason, ok := observability.SafeReason(err); !ok || reason != "data_lifecycle_startup_failed" || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("OnStart() error=%v reason=%q, want classified redacted maintenance failure", err, reason)
 	}
 }
 

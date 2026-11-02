@@ -28,6 +28,9 @@ Subsequent local lifecycle hardening classifies event-bus and scheduler startup
 errors before Fx can log them. Scheduler tests cover invalid timezone and sample
 specification values plus a database error during the initial refresh; these
 changes are awaiting the next batched CI push.
+The data-retention startup hook now classifies maintenance failures without
+exposing Redis or database details, and database shutdown errors are likewise
+classified before Fx receives them. Focused lifecycle unit tests pass locally.
 
 The source of truth is `AGENTS.md`. A feature is `verified` only after its
 applicable contract, authentication, authorization, logging, cache, lock,
