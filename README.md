@@ -75,7 +75,7 @@ set -euo pipefail
 export IMAGE_REF='ghcr.io/lihongjie0209/go-api-template@sha256:<verified-64-hex-digest>'
 kubectl create namespace microservices-staging --dry-run=client -o yaml | kubectl apply -f -
 kubectl label namespace microservices-staging platform-environment=staging --overwrite
-# Provision the application, TLS, and signing Secrets in microservices-staging with staging-only values here.
+# Provision the application, TLS, and immutable versioned signing Secrets in microservices-staging with staging-only values here.
 staging_job=$(sh scripts/render-deployment-manifest.sh migration "$IMAGE_REF" staging | kubectl create -f - -o name)
 kubectl wait --namespace microservices-staging --for=condition=complete "$staging_job" --timeout=5m
 sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" staging | kubectl apply -f -
@@ -94,15 +94,17 @@ kubectl create secret generic go-api-template --namespace microservices \
   --from-literal=APP_MIGRATION_DATABASE_URL='postgres://user:password@postgres:5432/go_api_template_db?sslmode=require' \
   --from-literal=APP_REDIS_ADDRESS='redis:6379' \
   --from-literal=APP_REDIS_PASSWORD='replace-me' \
-  --from-literal=APP_JWT_KEY_ID='production-2026-01' \
   --from-literal=APP_AUTH_JWKS_URL='https://identity.example.com/.well-known/jwks.json' \
   --from-literal=APP_SECURITY_LOG_HASH_KEY='replace-with-at-least-32-random-bytes'
 kubectl create secret generic go-api-template-tls --namespace microservices \
   --from-file=grpc-tls.crt='/secure/path/grpc-tls.crt' \
   --from-file=grpc-tls.key='/secure/path/grpc-tls.key' \
   --from-file=authorization-ca.crt='/secure/path/authorization-ca.crt'
-kubectl create secret generic go-api-template-signing --namespace microservices \
+kubectl create secret generic go-api-template-signing-v1 --namespace microservices \
+  --from-literal=APP_JWT_KEY_ID='production-2026-01' \
   --from-file=jwt-private.pem='/secure/path/jwt-private.pem'
+kubectl patch secret go-api-template-signing-v1 --namespace microservices \
+  --type=merge -p '{"immutable":true}'
 migration_job=$(sh scripts/render-deployment-manifest.sh migration "$IMAGE_REF" | kubectl create -f - -o name)
 kubectl wait --namespace microservices --for=condition=complete "$migration_job" --timeout=5m
 sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" | kubectl apply -f -
@@ -111,7 +113,7 @@ sh scripts/render-deployment-manifest.sh application "$IMAGE_REF" | kubectl appl
 Replace the example values through your secret manager in production. The NetworkPolicy admits HTTP/gRPC traffic from the service's own namespace and from namespaces labeled `platform-environment=production`. Label only trusted production gateway and client namespaces this way; give each environment its own gateway namespace so a shared namespace cannot cross the environment boundary. The NetworkPolicy assumes DNS uses the standard `k8s-app=kube-dns` label and allows dependency egress only on DNS, MySQL/PostgreSQL, Redis, NATS, OTLP/HTTP, and HTTPS ports; adapt selectors and ports to the target cluster.
 The migration Job reads the same ConfigMap as the application, so database name, schema, and migration table overrides apply to both. Its database URL comes from the `APP_MIGRATION_DATABASE_URL` Secret key.
 
-JWT signing-key rotation has three phases. First deploy the new **public** key as a `jwt.public_keys` entry while the old private key and `kid` remain active. After this rollout completes, every pod publishes both keys through JWKS and accepts tokens signed by either one. Wait for downstream JWKS caches to refresh, then update the signing Secret file and `APP_JWT_KEY_ID` together and roll out a release that retains the old public key. Old and new pods can now verify each other's tokens during the second rollout. Remove the old public key in a final rollout only after its last access token has expired and verifier caches have refreshed. A Secret volume update alone does not rotate the running signer: keys are loaded at process startup, so each phase requires a rollout. Public-key entries may use `public_key_file` pointing to another file in the signing Secret volume.
+JWT signing-key rotation has three phases. First deploy the new **public** key as a `jwt.public_keys` entry while the old private key and `kid` remain active. After this rollout completes, every pod publishes both keys through JWKS and accepts tokens signed by either one. Wait for downstream JWKS caches to refresh, then create a new versioned signing Secret, such as `go-api-template-signing-v2`, containing both its `APP_JWT_KEY_ID` and `jwt-private.pem`. Update the Deployment's key-ID `secretKeyRef` and signing volume `secretName` to that same new Secret in one release that retains the old public key. Old pods keep the old Secret and new pods use the new one, so they verify each other's tokens during the second rollout. Remove the old public key in a final rollout only after its last access token has expired and verifier caches have refreshed. A Secret volume update alone does not rotate the running signer: keys are loaded at process startup, so each phase requires a rollout. Public-key entries may use `public_key_file` pointing to another file in the signing Secret volume.
 
 ## Shared gRPC contracts
 

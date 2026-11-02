@@ -22,6 +22,7 @@ type deploymentConfigManifest struct {
 	} `yaml:"metadata"`
 	Data       map[string]string `yaml:"data"`
 	StringData map[string]string `yaml:"stringData"`
+	Immutable  bool              `yaml:"immutable"`
 	Spec       struct {
 		Ingress []struct {
 			From []struct {
@@ -133,12 +134,18 @@ func TestProductionNetworkPolicyAllowsOnlySameEnvironmentNamespaces(t *testing.T
 func TestProductionDeploymentEnvironmentLoadsProfile(t *testing.T) {
 	configMap := deploymentManifest(t, "../../deployments/kubernetes.yaml", "ConfigMap")
 	secret := deploymentManifest(t, "../../deployments/secret.example.yaml", "Secret")
+	signingSecret := deploymentManifestNamed(t, "../../deployments/secret.example.yaml", "Secret", "go-api-template-signing-v1")
 	for key, value := range configMap.Data {
 		if strings.HasPrefix(key, "APP_") {
 			t.Setenv(key, value)
 		}
 	}
 	for key, value := range secret.StringData {
+		if strings.HasPrefix(key, "APP_") {
+			t.Setenv(key, value)
+		}
+	}
+	for key, value := range signingSecret.StringData {
 		if strings.HasPrefix(key, "APP_") {
 			t.Setenv(key, value)
 		}
@@ -164,7 +171,7 @@ func TestProductionSigningKeyUsesReadOnlySecretVolume(t *testing.T) {
 	configMap := deploymentManifest(t, "../../deployments/kubernetes.yaml", "ConfigMap")
 	deployment := deploymentManifest(t, "../../deployments/kubernetes.yaml", "Deployment")
 	applicationSecret := deploymentManifestNamed(t, "../../deployments/secret.example.yaml", "Secret", "go-api-template")
-	signingSecret := deploymentManifestNamed(t, "../../deployments/secret.example.yaml", "Secret", "go-api-template-signing")
+	signingSecret := deploymentManifestNamed(t, "../../deployments/secret.example.yaml", "Secret", "go-api-template-signing-v1")
 	const signingPath = "/run/secrets/signing"
 	if configMap.Data["APP_JWT_PRIVATE_KEY_FILE"] != signingPath+"/jwt-private.pem" {
 		t.Fatalf("JWT private key file = %q", configMap.Data["APP_JWT_PRIVATE_KEY_FILE"])
@@ -172,22 +179,36 @@ func TestProductionSigningKeyUsesReadOnlySecretVolume(t *testing.T) {
 	if _, exists := applicationSecret.StringData["APP_JWT_PRIVATE_KEY"]; exists {
 		t.Fatal("application environment Secret still contains JWT private key material")
 	}
+	if _, exists := applicationSecret.StringData["APP_JWT_KEY_ID"]; exists {
+		t.Fatal("application environment Secret still owns the signing key ID")
+	}
 	if _, exists := signingSecret.StringData["jwt-private.pem"]; !exists {
 		t.Fatal("signing Secret lacks jwt-private.pem")
+	}
+	if signingSecret.StringData["APP_JWT_KEY_ID"] == "" {
+		t.Fatal("signing Secret lacks APP_JWT_KEY_ID")
+	}
+	if !signingSecret.Immutable {
+		t.Fatal("versioned signing Secret must be immutable")
 	}
 	if len(deployment.Spec.Template.Spec.Containers) != 1 {
 		t.Fatalf("deployment has %d containers", len(deployment.Spec.Template.Spec.Containers))
 	}
 	mounted := false
-	for _, mount := range deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+	container := deployment.Spec.Template.Spec.Containers[0]
+	for _, mount := range container.VolumeMounts {
 		mounted = mounted || mount.Name == "signing" && mount.MountPath == signingPath && mount.ReadOnly
+	}
+	keyIDFromSigningSecret := false
+	for _, entry := range container.Env {
+		keyIDFromSigningSecret = keyIDFromSigningSecret || entry.Name == "APP_JWT_KEY_ID" && entry.ValueFrom.SecretKeyRef.Name == signingSecret.Metadata.Name && entry.ValueFrom.SecretKeyRef.Key == entry.Name
 	}
 	volumeFound := false
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		volumeFound = volumeFound || volume.Name == "signing" && volume.Secret.SecretName == signingSecret.Metadata.Name && volume.Secret.DefaultMode == 0o440
 	}
-	if !mounted || !volumeFound || deployment.Spec.Template.Spec.SecurityContext.FSGroup == 0 {
-		t.Fatalf("signing Secret mount invalid: mounted=%t volume_found=%t fs_group=%d", mounted, volumeFound, deployment.Spec.Template.Spec.SecurityContext.FSGroup)
+	if !mounted || !volumeFound || !keyIDFromSigningSecret || deployment.Spec.Template.Spec.SecurityContext.FSGroup == 0 {
+		t.Fatalf("signing Secret mount invalid: mounted=%t volume_found=%t key_id_source=%t fs_group=%d", mounted, volumeFound, keyIDFromSigningSecret, deployment.Spec.Template.Spec.SecurityContext.FSGroup)
 	}
 }
 

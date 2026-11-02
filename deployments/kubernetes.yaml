@@ -84,6 +84,12 @@ spec:
                 name: go-api-template
             - secretRef:
                 name: go-api-template
+          env:
+            - name: APP_JWT_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: go-api-template-signing-v1
+                  key: APP_JWT_KEY_ID
           ports:
             - name: http
               containerPort: 8080
@@ -153,7 +159,7 @@ spec:
             defaultMode: 0440
         - name: signing
           secret:
-            secretName: go-api-template-signing
+            secretName: go-api-template-signing-v1
             defaultMode: 0440
 ---
 apiVersion: v1

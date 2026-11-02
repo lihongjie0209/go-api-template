@@ -974,6 +974,11 @@ deleted_by text
 - Mount asymmetric JWT signing keys from a dedicated read-only Secret volume;
   do not inject private PEM material through `envFrom`. Keep the configured
   key-file path, Secret key, volume mount, and non-root read permissions aligned.
+  Put the `kid` and private-key file in one immutable, versioned Secret.
+  Reference that Secret from both the Pod's explicit `env` entry and volume.
+  Rotation creates a new Secret name and changes both Pod references in one
+  rollout. In-place mutation can give a restarted Pod a mismatched `kid` and
+  private key.
 - JWT key material must choose exactly one inline or file source. Reject both
   sources at configuration validation and again at the signer boundary so a
   direct constructor cannot silently prefer a stale inline key. A partial
