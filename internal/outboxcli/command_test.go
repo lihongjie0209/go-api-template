@@ -4,10 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
+	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestDeadListCommandEncodesResult(t *testing.T) {
@@ -46,6 +52,67 @@ func TestDeadReplayCommandRequiresAndPassesOptimisticVersion(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("replay runner was not called")
+	}
+}
+
+func TestDeadReplayCommandAcceptsCorrectedEnvelopeFile(t *testing.T) {
+	called := false
+	command := newCommand(func(context.Context, listOptions) (eventbus.DeadPage, error) {
+		return eventbus.DeadPage{}, errors.New("unexpected list")
+	}, func(_ context.Context, options replayOptions) error {
+		called = true
+		if options.envelopeFile != "/tmp/corrected.json" || options.id != "event-1" || options.version != 4 {
+			t.Fatalf("replay options = %+v", options)
+		}
+		return nil
+	})
+	command.SetArgs([]string{"dead", "replay", "--actor", "operator", "--id", "event-1", "--version", "4", "--envelope-file", "/tmp/corrected.json"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("replay runner was not called")
+	}
+}
+
+func TestLoadReplacementEnvelopeBoundsAndValidatesJSON(t *testing.T) {
+	valid := &commonv1.EventEnvelope{EventId: "event-1", EventType: "platform.event.v1", AggregateType: "test", SchemaVersion: 1, OccurredAt: timestamppb.Now()}
+	data, err := protojson.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		content []byte
+		valid   bool
+	}{
+		{name: "valid", content: data, valid: true},
+		{name: "invalid JSON", content: []byte(`{"eventId":`)},
+		{name: "oversized file", content: bytes.Repeat([]byte{'x'}, maxReplacementJSONBytes+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "envelope.json")
+			if err := os.WriteFile(path, test.content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := loadReplacementEnvelope(path)
+			if !test.valid {
+				if !errors.Is(err, eventbus.ErrRepairInvalid) || encoded != nil {
+					t.Fatalf("invalid file result = (%d bytes, %v)", len(encoded), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var actual commonv1.EventEnvelope
+			if err := proto.Unmarshal(encoded, &actual); err != nil || !proto.Equal(valid, &actual) {
+				t.Fatalf("decoded replacement = %v, error = %v", &actual, err)
+			}
+		})
+	}
+	if _, err := loadReplacementEnvelope(filepath.Join(t.TempDir(), "missing.json")); !errors.Is(err, eventbus.ErrRepairInvalid) {
+		t.Fatalf("missing file error = %v", err)
 	}
 }
 

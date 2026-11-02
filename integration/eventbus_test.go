@@ -160,6 +160,11 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 				}
 				repair := eventbus.NewRepairService(db, transactor)
 				require.ErrorIs(t, repair.Replay(actorCtx, invalidID, row.Version), eventbus.ErrRepairConflict)
+				corrected, marshalErr := proto.Marshal(&commonv1.EventEnvelope{
+					EventId: invalidID, EventType: "platform.integration.outbox.v1", AggregateType: "integration", SchemaVersion: 1, OccurredAt: timestamppb.Now(),
+				})
+				require.NoError(t, marshalErr)
+				require.NoError(t, repair.ReplaceAndReplay(actorCtx, invalidID, row.Version, corrected))
 				break
 			}
 			if time.Now().After(deadline) {
@@ -169,10 +174,9 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 		}
 		select {
 		case event := <-received:
-			if event.GetEventId() == invalidID {
-				t.Fatalf("invalid event was published: %s", event.GetEventId())
-			}
-		default:
+			require.Equal(t, invalidID, event.GetEventId())
+		case <-time.After(5 * time.Second):
+			t.Fatal("corrected dead event was not published after replay")
 		}
 	})
 	t.Run("reject corrupt legacy dead letter", func(t *testing.T) {

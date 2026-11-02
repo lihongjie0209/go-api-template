@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -14,7 +16,10 @@ import (
 	"github.com/lihongjie0209/go-api-template/internal/eventbus"
 	"github.com/lihongjie0209/go-api-template/internal/pagination"
 	platformprincipal "github.com/lihongjie0209/microservice-platform-go/principal"
+	commonv1 "github.com/lihongjie0209/platform-protos/gen/go/platform/common/v1"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 type commonOptions struct {
@@ -31,8 +36,9 @@ type listOptions struct {
 
 type replayOptions struct {
 	commonOptions
-	id      string
-	version int64
+	id           string
+	version      int64
+	envelopeFile string
 }
 
 type listRunner func(context.Context, listOptions) (eventbus.DeadPage, error)
@@ -84,6 +90,7 @@ func newCommand(list listRunner, replay replayRunner) *cobra.Command {
 	}
 	replayCommand.Flags().StringVar(&replayOptions.id, "id", "", "dead event ID")
 	replayCommand.Flags().Int64Var(&replayOptions.version, "version", 0, "expected event version")
+	replayCommand.Flags().StringVar(&replayOptions.envelopeFile, "envelope-file", "", "corrected protobuf JSON envelope file (optional)")
 	_ = replayCommand.MarkFlagRequired("id")
 	_ = replayCommand.MarkFlagRequired("version")
 
@@ -109,12 +116,46 @@ func runList(ctx context.Context, options listOptions) (eventbus.DeadPage, error
 }
 
 func runReplay(ctx context.Context, options replayOptions) error {
+	var replacement []byte
+	if options.envelopeFile != "" {
+		var err error
+		replacement, err = loadReplacementEnvelope(options.envelopeFile)
+		if err != nil {
+			return err
+		}
+	}
 	service, closeDatabase, actorCtx, err := openService(ctx, options.commonOptions)
 	if err != nil {
 		return err
 	}
 	defer closeDatabase()
+	if replacement != nil {
+		return service.ReplaceAndReplay(actorCtx, options.id, options.version, replacement)
+	}
 	return service.Replay(actorCtx, options.id, options.version)
+}
+
+const maxReplacementJSONBytes = 2 << 20
+
+func loadReplacementEnvelope(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, eventbus.ErrRepairInvalid
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxReplacementJSONBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxReplacementJSONBytes {
+		return nil, eventbus.ErrRepairInvalid
+	}
+	var envelope commonv1.EventEnvelope
+	if err := protojson.Unmarshal(data, &envelope); err != nil {
+		return nil, eventbus.ErrRepairInvalid
+	}
+	encoded, err := proto.Marshal(&envelope)
+	if err != nil {
+		return nil, eventbus.ErrRepairInvalid
+	}
+	return encoded, nil
 }
 
 func openService(ctx context.Context, options commonOptions) (*eventbus.RepairService, func(), context.Context, error) {

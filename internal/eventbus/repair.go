@@ -88,6 +88,19 @@ func safeOutboxReason(value string) string {
 }
 
 func (s *RepairService) Replay(ctx context.Context, id string, version int64) error {
+	return s.replay(ctx, id, version, nil)
+}
+
+// ReplaceAndReplay validates a corrected protobuf envelope and atomically
+// replaces the dead row's bytes while making it available for dispatch.
+func (s *RepairService) ReplaceAndReplay(ctx context.Context, id string, version int64, envelope []byte) error {
+	if len(envelope) == 0 || len(envelope) > maxOutboxEnvelopeBytes {
+		return ErrRepairInvalid
+	}
+	return s.replay(ctx, id, version, envelope)
+}
+
+func (s *RepairService) replay(ctx context.Context, id string, version int64, replacement []byte) error {
 	actor, err := platformprincipal.Require(ctx)
 	if err != nil {
 		return err
@@ -100,19 +113,35 @@ func (s *RepairService) Replay(ctx context.Context, id string, version int64) er
 	}
 	return s.transactor.Within(ctx, nil, func(tx *sqlx.Tx) error {
 		var record outboxRecord
-		query := tx.Rebind("SELECT id,subject,envelope FROM event_outbox WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL AND OCTET_LENGTH(envelope)<=? FOR UPDATE")
-		if err := tx.GetContext(ctx, &record, query, id, version, maxOutboxEnvelopeBytes); err != nil {
+		query := "SELECT id,subject,envelope FROM event_outbox WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL AND OCTET_LENGTH(envelope)<=? FOR UPDATE"
+		args := []any{id, version, maxOutboxEnvelopeBytes}
+		if replacement != nil {
+			query = "SELECT id,subject FROM event_outbox WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL FOR UPDATE"
+			args = []any{id, version}
+		}
+		if err := tx.GetContext(ctx, &record, tx.Rebind(query), args...); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrRepairConflict
 			}
 			return fmt.Errorf("load dead outbox event: %w", err)
 		}
+		if replacement != nil {
+			record.Envelope = replacement
+		}
 		if _, err := decodeClaimedEnvelope(record); err != nil {
+			if replacement != nil {
+				return ErrRepairInvalid
+			}
 			return ErrRepairConflict
 		}
 		now := time.Now()
-		query = tx.Rebind("UPDATE event_outbox SET attempts=0,available_at=?,dead_at=NULL,last_error='',locked_by='',locked_until=NULL,updated_at=?,version=version+1 WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL AND last_error <> 'decode_failed'")
-		result, err := tx.ExecContext(ctx, query, now, now, id, version)
+		query = "UPDATE event_outbox SET attempts=0,available_at=?,dead_at=NULL,last_error='',locked_by='',locked_until=NULL,updated_at=?,version=version+1 WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL"
+		args = []any{now, now, id, version}
+		if replacement != nil {
+			query = "UPDATE event_outbox SET envelope=?,attempts=0,available_at=?,dead_at=NULL,last_error='',locked_by='',locked_until=NULL,updated_at=?,version=version+1 WHERE id=? AND version=? AND dead_at IS NOT NULL AND published_at IS NULL AND deleted_at IS NULL"
+			args = []any{replacement, now, now, id, version}
+		}
+		result, err := tx.ExecContext(ctx, tx.Rebind(query), args...)
 		if err != nil {
 			return fmt.Errorf("replay dead outbox event: %w", err)
 		}
