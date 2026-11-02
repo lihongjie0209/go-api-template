@@ -1540,6 +1540,7 @@ func testPostgresArchivePartition(t *testing.T, ctx context.Context, db *sqlx.DB
 	if err := manager.Maintain(ctx); err != nil {
 		t.Fatalf("archive expired partition: %v", err)
 	}
+	firstArchivedIndexes := []string{}
 	for _, partition := range []string{"operation_logs_y2020m01", "operation_logs_y2020m02"} {
 		var archived string
 		archiveErr := db.GetContext(ctx, &archived, `SELECT tablename FROM pg_tables WHERE schemaname='integration_archive' AND tablename LIKE $1`, partition+"_%")
@@ -1551,6 +1552,7 @@ func testPostgresArchivePartition(t *testing.T, ctx context.Context, db *sqlx.DB
 			if archiveErr != nil || archived == partition || !strings.HasPrefix(archived, partition+"_") || remains {
 				t.Fatalf("first partition archive=%q err=%v remains=%t", archived, archiveErr, remains)
 			}
+			firstArchivedIndexes = assertArchivedPartitionIndexes(t, ctx, db, archived)
 		} else if !errors.Is(archiveErr, sql.ErrNoRows) || !remains {
 			t.Fatalf("second partition archived too early=%q err=%v remains=%t", archived, archiveErr, remains)
 		}
@@ -1562,6 +1564,31 @@ func testPostgresArchivePartition(t *testing.T, ctx context.Context, db *sqlx.DB
 	if err := db.GetContext(ctx, &archived, `SELECT tablename FROM pg_tables WHERE schemaname='integration_archive' AND tablename LIKE $1`, "operation_logs_y2020m02_%"); err != nil || !strings.HasPrefix(archived, "operation_logs_y2020m02_") {
 		t.Fatalf("second partition archive=%q err=%v", archived, err)
 	}
+	secondArchivedIndexes := assertArchivedPartitionIndexes(t, ctx, db, archived)
+	for _, first := range firstArchivedIndexes {
+		for _, second := range secondArchivedIndexes {
+			if first == second {
+				t.Fatalf("archived partition indexes collide: %q", first)
+			}
+		}
+	}
+}
+
+func assertArchivedPartitionIndexes(t *testing.T, ctx context.Context, db *sqlx.DB, table string) []string {
+	t.Helper()
+	indexes := []string{}
+	if err := db.SelectContext(ctx, &indexes, `SELECT indexname FROM pg_indexes WHERE schemaname='integration_archive' AND tablename=$1 ORDER BY indexname`, table); err != nil {
+		t.Fatalf("list archived indexes for %s: %v", table, err)
+	}
+	if len(indexes) == 0 {
+		t.Fatalf("archived partition %s has no indexes", table)
+	}
+	for _, index := range indexes {
+		if !strings.HasPrefix(index, "archive_idx_") || len(index) > 63 {
+			t.Fatalf("archived index name=%q", index)
+		}
+	}
+	return indexes
 }
 
 func testTenantAuthorizationLifecycle(t *testing.T, ctx context.Context, db *sqlx.DB, databaseType, permissionID string) {

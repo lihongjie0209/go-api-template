@@ -504,9 +504,16 @@ func TestRetainPartitionsArchivesWithSourceSchemaIdentity(t *testing.T) {
 	if archived == archivePartitionName("billing", child) || len(archived) > 63 {
 		t.Fatalf("archive name does not isolate schemas or exceeds identifier limit: %q", archived)
 	}
+	archivePrimaryIndex := archiveIndexName("orders", child+"_pkey")
+	if archivePrimaryIndex == archiveIndexName("billing", child+"_pkey") || archivePrimaryIndex == archiveIndexName("orders", child+"_tenant_idx") || len(archivePrimaryIndex) > 63 {
+		t.Fatalf("archive index name does not isolate schema/index or exceeds identifier limit: %q", archivePrimaryIndex)
+	}
 	mock.ExpectQuery(`SELECT child_namespace.nspname AS schema_name,child.relname AS name`).WithArgs("operation_logs").WillReturnRows(sqlmock.NewRows([]string{"schema_name", "name"}).AddRow("orders", child))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "operation_logs" DETACH PARTITION "orders"."` + child + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "orders"."` + child + `" RENAME TO "` + archived + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT index_class.relname`).WithArgs("orders", archived).WillReturnRows(sqlmock.NewRows([]string{"relname"}).AddRow(child + "_pkey").AddRow(child + "_tenant_idx"))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER INDEX "orders"."` + child + `_pkey" RENAME TO "` + archivePrimaryIndex + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER INDEX "orders"."` + child + `_tenant_idx" RENAME TO "` + archiveIndexName("orders", child+"_tenant_idx") + `"`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE "orders"."` + archived + `" SET SCHEMA "shared_archive"`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := retainPartitions(t.Context(), tx, "operation_logs", time.Date(2026, time.January, 1, 0, 0, 0, 0, platformLocation), "shared_archive", 12); err != nil {
 		t.Fatal(err)

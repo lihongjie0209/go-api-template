@@ -15,6 +15,12 @@ PostgreSQL/Kingbase use partial `(published_at, id)` and `(dead_at, id)` indexes
 on non-deleted rows. PostgreSQL/Kingbase retain monthly log partitions and
 already have a partial index on active lineage.
 
+When retired partitions move to a shared archive schema, their associated
+indexes move too. The lifecycle worker renames each detached partition index
+to a bounded stable digest of its original schema and index name before moving
+the table. This follows PostgreSQL's documented [`SET SCHEMA` behavior](https://www.postgresql.org/docs/17/sql-altertable.html)
+and [`ALTER INDEX RENAME` behavior](https://www.postgresql.org/docs/17/sql-alterindex.html).
+
 | Concern | Decision and rationale |
 | --- | --- |
 | Contract | No public API changes. Existing retention cutoffs and batch size remain authoritative. Published and dead outbox classes each receive at most the configured batch count per maintenance run, so neither can starve the other. |

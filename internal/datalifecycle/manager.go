@@ -364,6 +364,26 @@ func retainPartitions(ctx context.Context, tx *sqlx.Tx, parent string, cutoff ti
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+qualifiedChild+` RENAME TO `+quoteIdentifier(archivedName)); err != nil {
 			return fmt.Errorf("rename expired partition %s for archive: %w", child.Name, err)
 		}
+		indexes := []string{}
+		indexQuery := `SELECT index_class.relname
+			FROM pg_index index_info
+			JOIN pg_class table_class ON table_class.oid=index_info.indrelid
+			JOIN pg_namespace table_namespace ON table_namespace.oid=table_class.relnamespace
+			JOIN pg_class index_class ON index_class.oid=index_info.indexrelid
+			WHERE table_namespace.nspname=$1 AND table_class.relname=$2
+			ORDER BY index_class.relname LIMIT 65`
+		if err := tx.SelectContext(ctx, &indexes, indexQuery, child.Schema, archivedName); err != nil {
+			return fmt.Errorf("list expired partition indexes %s: %w", child.Name, err)
+		}
+		if len(indexes) > 64 {
+			return fmt.Errorf("expired partition %s has too many indexes", child.Name)
+		}
+		for _, index := range indexes {
+			archivedIndex := archiveIndexName(child.Schema, index)
+			if _, err := tx.ExecContext(ctx, `ALTER INDEX `+quoteIdentifier(child.Schema)+`.`+quoteIdentifier(index)+` RENAME TO `+quoteIdentifier(archivedIndex)); err != nil {
+				return fmt.Errorf("rename expired partition index %s: %w", index, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteIdentifier(child.Schema)+`.`+quoteIdentifier(archivedName)+` SET SCHEMA `+quoteIdentifier(archiveSchema)); err != nil {
 			return fmt.Errorf("archive expired partition %s: %w", child.Name, err)
 		}
@@ -375,6 +395,11 @@ func retainPartitions(ctx context.Context, tx *sqlx.Tx, parent string, cutoff ti
 func archivePartitionName(sourceSchema, partition string) string {
 	digest := sha256.Sum256([]byte(sourceSchema))
 	return fmt.Sprintf("%s_%x", partition, digest[:8])
+}
+
+func archiveIndexName(sourceSchema, index string) string {
+	digest := sha256.Sum256([]byte(sourceSchema + "\x00" + index))
+	return fmt.Sprintf("archive_idx_%x", digest[:16])
 }
 
 func monthStart(value time.Time) time.Time {

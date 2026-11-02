@@ -465,9 +465,10 @@ TTL, and invalidation for its own data.
   expired PostgreSQL/Kingbase log partitions after the configured retention
   cutoff. Business APIs and queue consumers must not physically delete logs.
 - When multiple service schemas can share a PostgreSQL/Kingbase archive schema,
-  archived partition names must include a stable source-schema identity within
-  the database identifier limit. Detach, rename, and move must commit together;
-  a failed move must leave the original partition attached.
+  archived partition and associated index names must include a stable
+  source-schema identity within the database identifier limit. Detach, rename,
+  and move must commit together; a failed move must leave the original
+  partition attached.
 - PostgreSQL/Kingbase partition retirement must be bounded per log table and
   advance from the oldest expired month. A backlog must make progress across
   runs without forcing every historical partition into one transaction.
