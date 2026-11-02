@@ -1344,11 +1344,6 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 				return err
 			}
 			now := time.Now()
-			for _, table := range []string{"tenant_member_roles", "tenant_role_permissions"} {
-				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, roleID); err != nil {
-					return err
-				}
-			}
 			args := append([]any{now, actor.ID, now, actor.ID, actor.TenantID, roleID, version}, scope.Args...)
 			result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE tenant_roles AS tr SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tr.tenant_id=? AND tr.id=? AND tr.version=? AND tr.deleted_at IS NULL AND `+scope.Clause), args...)
 			if err != nil {
@@ -1360,6 +1355,11 @@ func (s *TenantAuthorizationService) DeleteRole(ctx context.Context, roleID stri
 			}
 			if rows != 1 {
 				return ErrTenantAuthorizationStaleVersion
+			}
+			for _, table := range []string{"tenant_member_roles", "tenant_role_permissions"} {
+				if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE `+table+` SET deleted_at=?,deleted_by=?,updated_at=?,updated_by=?,version=version+1 WHERE tenant_id=? AND role_id=? AND deleted_at IS NULL`), now, actor.ID, now, actor.ID, actor.TenantID, roleID); err != nil {
+					return err
+				}
 			}
 			return nil
 		})
@@ -1519,6 +1519,21 @@ func (s *TenantAuthorizationService) ensureRolesAssignable(ctx context.Context, 
 	if len(roleIDs) == 0 {
 		return s.ensureAssignable(ctx, tx, actor, nil)
 	}
+	roleIDs, err := normalizeIDs(roleIDs)
+	if err != nil {
+		return err
+	}
+	lockQuery, lockArgs, inErr := sqlx.In(`SELECT id FROM tenant_roles WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL ORDER BY id FOR UPDATE`, actor.TenantID, roleIDs)
+	if inErr != nil {
+		return fmt.Errorf("build role lock query: %w", inErr)
+	}
+	lockedIDs := []string{}
+	if err := tx.SelectContext(ctx, &lockedIDs, tx.Rebind(lockQuery), lockArgs...); err != nil {
+		return fmt.Errorf("lock assignable tenant roles: %w", err)
+	}
+	if len(lockedIDs) != len(roleIDs) {
+		return ErrTenantAuthorizationInvalid
+	}
 	query, args, inErr := sqlx.In(`SELECT DISTINCT permission_id FROM tenant_role_permissions WHERE tenant_id=? AND role_id IN (?) AND deleted_at IS NULL`+authorizationLinkLimitClause, actor.TenantID, roleIDs)
 	if inErr != nil {
 		return fmt.Errorf("build role permission query: %w", inErr)
@@ -1529,17 +1544,6 @@ func (s *TenantAuthorizationService) ensureRolesAssignable(ctx context.Context, 
 	}
 	if len(permissions) > maxAuthorizationLinks {
 		return errAuthorizationLinkLimit
-	}
-	var roleCount int
-	countQuery, countArgs, inErr := sqlx.In(`SELECT count(*) FROM tenant_roles WHERE tenant_id=? AND id IN (?) AND status='active' AND deleted_at IS NULL`, actor.TenantID, roleIDs)
-	if inErr != nil {
-		return fmt.Errorf("build role validation query: %w", inErr)
-	}
-	if err := tx.GetContext(ctx, &roleCount, tx.Rebind(countQuery), countArgs...); err != nil {
-		return fmt.Errorf("count assignable tenant roles: %w", err)
-	}
-	if roleCount != len(roleIDs) {
-		return ErrTenantAuthorizationInvalid
 	}
 	return s.ensureAssignable(ctx, tx, actor, permissions)
 }
