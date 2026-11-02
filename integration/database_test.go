@@ -372,6 +372,13 @@ func assertOutboxRepairCompatibility(t *testing.T, ctx context.Context, db *sqlx
 	if err != nil {
 		t.Fatal(err)
 	}
+	var projected []byte
+	if err := db.GetContext(ctx, &projected, db.Rebind(`SELECT CASE WHEN OCTET_LENGTH(envelope)<=? THEN envelope ELSE NULL END FROM event_outbox WHERE id=?`), 1<<20, oversizedID); err != nil {
+		t.Fatalf("project bounded outbox envelope: %v", err)
+	}
+	if projected != nil {
+		t.Fatalf("oversized outbox envelope was materialized: %d bytes", len(projected))
+	}
 	if err := repair.Replay(actorCtx, oversizedID, 1); !errors.Is(err, eventbus.ErrRepairConflict) {
 		t.Fatalf("oversized dead event replay = %v, want conflict", err)
 	}

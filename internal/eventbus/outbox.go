@@ -258,9 +258,9 @@ func (o *Outbox) claim(ctx context.Context) (outboxRecord, bool, error) {
 	actorCtx := platformprincipal.SystemContext(ctx, o.appName+":outbox-dispatcher")
 	var record outboxRecord
 	err := o.transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
-		query := tx.Rebind(`SELECT id,subject,envelope,trace_parent,trace_state,attempts,created_at FROM event_outbox WHERE published_at IS NULL AND dead_at IS NULL AND deleted_at IS NULL AND available_at<=? AND (locked_until IS NULL OR locked_until<?) ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
+		query := tx.Rebind(`SELECT id,subject,CASE WHEN OCTET_LENGTH(envelope)<=? THEN envelope ELSE NULL END AS envelope,trace_parent,trace_state,attempts,created_at FROM event_outbox WHERE published_at IS NULL AND dead_at IS NULL AND deleted_at IS NULL AND available_at<=? AND (locked_until IS NULL OR locked_until<?) ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
 		now := time.Now()
-		if err := tx.GetContext(actorCtx, &record, query, now, now); err != nil {
+		if err := tx.GetContext(actorCtx, &record, query, maxOutboxEnvelopeBytes, now, now); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(actorCtx, tx.Rebind(`UPDATE event_outbox SET locked_by=?,locked_until=?,updated_at=?,updated_by=?,version=version+1 WHERE id=? AND published_at IS NULL AND deleted_at IS NULL`), o.workerID, now.Add(o.cfg.DispatchLease), now, o.appName+":outbox-dispatcher", record.ID)

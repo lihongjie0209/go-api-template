@@ -334,8 +334,8 @@ func TestOutboxDispatchDeadLettersMismatchedEnvelopeWithoutPublishing(t *testing
 	require.NoError(t, err)
 	now := time.Now()
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id,subject,envelope,trace_parent,trace_state,attempts,created_at FROM event_outbox`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+	mock.ExpectQuery(`SELECT id,subject,CASE WHEN OCTET_LENGTH\(envelope\)<=\? THEN envelope ELSE NULL END AS envelope,trace_parent,trace_state,attempts,created_at FROM event_outbox`).
+		WithArgs(maxOutboxEnvelopeBytes, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope", "trace_parent", "trace_state", "attempts", "created_at"}).
 			AddRow("stored-event", "platform.test.recorded.v1", storedEnvelope, "", "", 0, now))
 	mock.ExpectExec(`UPDATE event_outbox SET locked_by=`).
@@ -358,6 +358,35 @@ func TestOutboxDispatchDeadLettersMismatchedEnvelopeWithoutPublishing(t *testing
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	require.Contains(t, recorder.Body.String(), `event_outbox_dispatch_outcomes_total{outcome="dead_letter"} 1`)
+}
+
+func TestOutboxDispatchDeadLettersEnvelopeExcludedByDatabaseSizeCap(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	now := time.Now()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id,subject,CASE WHEN OCTET_LENGTH\(envelope\)<=\? THEN envelope ELSE NULL END AS envelope,trace_parent,trace_state,attempts,created_at FROM event_outbox`).
+		WithArgs(maxOutboxEnvelopeBytes, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "subject", "envelope", "trace_parent", "trace_state", "attempts", "created_at"}).
+			AddRow("oversized-event", "platform.test.recorded.v1", nil, "", "", 0, now))
+	mock.ExpectExec(`UPDATE event_outbox SET locked_by=`).
+		WithArgs("worker-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "api:outbox-dispatcher", "oversized-event").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE event_outbox SET attempts=attempts\+1,dead_at=.* WHERE id=\? AND locked_by=\? AND published_at IS NULL AND deleted_at IS NULL$`).
+		WithArgs(sqlmock.AnyArg(), "decode_failed", sqlmock.AnyArg(), "api:outbox-dispatcher", "oversized-event", "worker-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	outbox := &Outbox{
+		cfg:     config.EventBus{DispatchBatchSize: 1, DispatchLease: time.Minute, ConsumerMaxDeliver: 1},
+		appName: "api", workerID: "worker-1", transactor: database.NewTransactor(sqlx.NewDb(db, "sqlmock")),
+		metrics: observability.NewMetrics(config.Config{}, nil, nil), logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	require.NoError(t, outbox.dispatchBatch(t.Context()))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestOutboxPublishFailureRemainsPendingAfterDeliveryLimit(t *testing.T) {

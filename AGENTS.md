@@ -640,6 +640,10 @@ available. A feature must not introduce a second transport for the same event.
   decoding a claimed row. Generic outbox events may omit payload or request
   Context when the event contract permits it. Consumer idempotency keys must
   use that same canonical ID.
+- The outbox dispatcher must apply its envelope byte cap in the SQL projection
+  before scanning a claimed row. A legacy or corrupt oversized blob must reach
+  the bounded decode-failure/dead-letter path without being materialized in Go;
+  the operator's corrected-envelope replacement path must remain usable for it.
 - A request must not synchronously execute work whose configured maximum can
   exceed the HTTP/gRPC deadline or server write timeout. Persist the job request
   and outbox event atomically, return a durable run ID, and expose queued,

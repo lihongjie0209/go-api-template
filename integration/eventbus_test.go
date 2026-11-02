@@ -209,6 +209,48 @@ func TestTransactionalOutboxDeliversCommittedEvent(t *testing.T) {
 		require.NoError(t, err)
 		require.ErrorIs(t, repair.ReplaceAndReplay(actorCtx, invalidID, retiredVersion, corrected), eventbus.ErrRepairConflict)
 	})
+	t.Run("repair oversized stored envelope", func(t *testing.T) {
+		const eventID = "integration-oversized-envelope-1"
+		now := time.Now()
+		err := transactor.Within(actorCtx, nil, func(tx *sqlx.Tx) error {
+			query := tx.Rebind(`INSERT INTO event_outbox (id,subject,envelope,trace_parent,trace_state,available_at,attempts,locked_by,last_error,created_at,created_by,updated_at,updated_by,version) VALUES (?,?,?,?,?,?,?,'','',?,?,?,?,1)`)
+			_, err := tx.ExecContext(actorCtx, query, eventID, "platform.integration.outbox.v1", make([]byte, (1<<20)+1), "", "", now, cfg.EventBus.ConsumerMaxDeliver-1, now, "integration-eventbus:test", now, "integration-eventbus:test")
+			return err
+		})
+		require.NoError(t, err)
+		var row struct {
+			DeadAt    sql.NullTime `db:"dead_at"`
+			LastError string       `db:"last_error"`
+			Version   int64        `db:"version"`
+			Bytes     int64        `db:"envelope_bytes"`
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			require.NoError(t, db.GetContext(ctx, &row, `SELECT dead_at,last_error,version,OCTET_LENGTH(envelope) AS envelope_bytes FROM event_outbox WHERE id=$1`, eventID))
+			if row.DeadAt.Valid {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("oversized event was not dead-lettered")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		require.Equal(t, "decode_failed", row.LastError)
+		require.Greater(t, row.Bytes, int64(1<<20))
+		repair := eventbus.NewRepairService(db, transactor)
+		require.ErrorIs(t, repair.Replay(actorCtx, eventID, row.Version), eventbus.ErrRepairConflict)
+		corrected, err := proto.Marshal(&commonv1.EventEnvelope{
+			EventId: eventID, EventType: "platform.integration.outbox.v1", AggregateType: "integration", SchemaVersion: 1, OccurredAt: timestamppb.Now(),
+		})
+		require.NoError(t, err)
+		require.NoError(t, repair.ReplaceAndReplay(actorCtx, eventID, row.Version, corrected))
+		select {
+		case delivered := <-received:
+			require.Equal(t, eventID, delivered.GetEventId())
+		case <-time.After(5 * time.Second):
+			t.Fatal("corrected oversized event was not published")
+		}
+	})
 }
 
 func startNATS(t *testing.T, ctx context.Context) string {
