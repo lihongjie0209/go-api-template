@@ -932,7 +932,7 @@ func TestService_KeyRotationKeepsOldTokensVerifiableAndPublishesBothKeys(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if oldPrivate.PublicKey.N.Cmp(newPrivate.PublicKey.N) == 0 {
+	if oldPrivate.N.Cmp(newPrivate.N) == 0 {
 		t.Fatal("rotation fixture reused the old RSA key")
 	}
 	newPublicDER, err := x509.MarshalPKIXPublicKey(&newPrivate.PublicKey)
